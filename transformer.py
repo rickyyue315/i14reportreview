@@ -19,6 +19,9 @@ def transform(df_input: pd.DataFrame):
 
     df = df_input.dropna(subset=["Buyer"]).copy()
 
+    _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
+    df = df[~_footer_mask].copy()
+
     status_col = df["Shop Stock Status"].fillna("")
 
     categories = [
