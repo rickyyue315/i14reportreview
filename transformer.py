@@ -178,11 +178,13 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     return buf
 
 
-def _auto_width(ws, min_width=8, max_width=50):
-    for col_cells in ws.columns:
+def _auto_width(ws, min_width=8, max_width=50, sample_rows=200):
+    for col_idx in range(1, ws.max_column + 1):
+        col_letter = get_column_letter(col_idx)
         max_len = 0
-        col_letter = get_column_letter(col_cells[0].column)
-        for cell in col_cells:
+        scan_end = min(ws.max_row, 1 + sample_rows)
+        for row_idx in range(1, scan_end + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
             if cell.value is not None:
                 val_len = len(str(cell.value))
                 if val_len > max_len:
