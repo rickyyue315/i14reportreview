@@ -362,13 +362,14 @@ if uploaded_file is not None:
         total_overstock = summary_df[summary_df["Buyer"] == "總計"]["總計"].values[0]
         total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
         total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
+        total_skus = raw_df["SKU"].dropna().nunique()
         
         # 取得各分類統計值
         cat_counts = {}
         for cat in categories:
             cat_counts[cat] = summary_df[summary_df["Buyer"] == "總計"][cat].values[0]
             
-        r1_col1, r1_col2, r1_col3 = st.columns(3)
+        r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
         with r1_col1:
             st.markdown(f"""
             <div class="metric-card" style="border-left-color: #EF4444;">
@@ -379,13 +380,21 @@ if uploaded_file is not None:
             """, unsafe_allow_html=True)
         with r1_col2:
             st.markdown(f"""
+            <div class="metric-card" style="border-left-color: #10B981;">
+                <div class="metric-title">影響SKU總數</div>
+                <div class="metric-value">{total_skus:,}</div>
+                <div class="metric-desc">個包含異常庫存商品(SKUs)</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with r1_col3:
+            st.markdown(f"""
             <div class="metric-card" style="border-left-color: #3B82F6;">
                 <div class="metric-title">影響採購人員數 (Buyers)</div>
                 <div class="metric-value">{total_buyers:,}</div>
                 <div class="metric-desc">位採購人員名下有異常品項</div>
             </div>
             """, unsafe_allow_html=True)
-        with r1_col3:
+        with r1_col4:
             st.markdown(f"""
             <div class="metric-card" style="border-left-color: #8B5CF6;">
                 <div class="metric-title">影響品牌總數 (Brands)</div>
