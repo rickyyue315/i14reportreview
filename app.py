@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from transformer import transform, generate_excel, validate_input
 import time
 from openpyxl import load_workbook
@@ -446,8 +447,8 @@ if uploaded_file is not None:
         st.markdown("<h3 style='color: #1E40AF; margin-top: 0; margin-bottom: 8px;'>🎉 報表處理完畢，已就緒！</h3>", unsafe_allow_html=True)
         st.markdown("<p style='color: #475569; font-size: 0.95rem; margin-bottom: 20px;'>本工具已為您自動設定好專業的 Excel 表格樣式、欄寬自動調整與自定義篩選器。</p>", unsafe_allow_html=True)
         
-        today = datetime.now().strftime("%Y%m%d")
-        download_name = f"I14 by SKUxShop_To Buyer_{today}.xlsx"
+        hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+        download_name = f"I14 by SKUxShop_To Buyer_{hk_time}.xlsx"
         
         st.download_button(
             label="📥 下載完整分析報表 (.xlsx)",
