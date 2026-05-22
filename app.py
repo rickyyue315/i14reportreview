@@ -278,55 +278,77 @@ button[kind="primary"]:hover {
     background-color: var(--bg-file-uploader);
 }
 
-/* ========== 主題切換按鈕樣式 ========== */
-#theme-toggle-btn {
+/* ========== 固定位置主題切換按鈕 (右上角) ========== */
+#kilo-theme-btn {
+    position: fixed;
+    top: 14px;
+    right: 24px;
+    z-index: 99999;
     display: inline-flex;
     align-items: center;
     gap: 8px;
     background: var(--toggle-bg);
     color: var(--text-primary);
-    border: 1px solid var(--toggle-border);
+    border: 1px solid var(--border-primary);
     border-radius: 20px;
     padding: 8px 18px;
     cursor: pointer;
     font-size: 0.85rem;
     font-family: 'Inter', 'Noto Sans TC', sans-serif;
     transition: all 0.2s ease;
-    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
-#theme-toggle-btn:hover {
+#kilo-theme-btn:hover {
     border-color: var(--accent-primary);
     color: var(--accent-primary);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
 }
 </style>
+""", unsafe_allow_html=True)
 
+# 2b. 注入 JS 邏輯 (透過 st.components 以確保可執行)
+st.components.v1.html("""
 <script>
-function toggleTheme() {
-    const html = document.documentElement;
-    const isDark = html.classList.toggle('dark');
-    localStorage.setItem('kilo-theme', isDark ? 'dark' : 'light');
-    updateToggleButton(isDark);
-}
-function updateToggleButton(isDark) {
-    const btn = document.getElementById('theme-toggle-btn');
-    if (btn) {
-        btn.innerHTML = isDark ? '☀️ 日間模式' : '🌙 夜間模式';
-    }
-}
 (function() {
-    const saved = localStorage.getItem('kilo-theme');
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const isDark = saved === 'dark' || (!saved && prefersDark);
-    if (isDark) document.documentElement.classList.add('dark');
-    function init() { updateToggleButton(isDark); }
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+    var pDoc = window.parent.document;
+    var html = pDoc.documentElement;
+    var body = pDoc.body;
+
+    function toggleTheme() {
+        var isDark = html.classList.toggle('dark');
+        localStorage.setItem('kilo-theme', isDark ? 'dark' : 'light');
+        updateBtn(isDark);
+    }
+
+    function updateBtn(isDark) {
+        var btn = pDoc.getElementById('kilo-theme-btn');
+        if (btn) btn.textContent = isDark ? '☀️ 日間模式' : '🌙 夜間模式';
+    }
+
+    var saved = localStorage.getItem('kilo-theme');
+    var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var isDark = saved === 'dark' || (!saved && prefersDark);
+
+    if (isDark) html.classList.add('dark');
+    else html.classList.remove('dark');
+
+    function createButton() {
+        if (pDoc.getElementById('kilo-theme-btn')) return;
+        var btn = pDoc.createElement('button');
+        btn.id = 'kilo-theme-btn';
+        btn.textContent = isDark ? '☀️ 日間模式' : '🌙 夜間模式';
+        btn.addEventListener('click', toggleTheme);
+        body.appendChild(btn);
+    }
+
+    if (pDoc.readyState === 'loading') {
+        pDoc.addEventListener('DOMContentLoaded', createButton);
     } else {
-        init();
+        createButton();
     }
 })();
 </script>
-""", unsafe_allow_html=True)
+""", height=0)
 
 # 3. 側邊欄設計 (Sidebar)
 with st.sidebar:
@@ -338,12 +360,6 @@ with st.sidebar:
     """, unsafe_allow_html=True)
     
     st.divider()
-    
-    st.markdown("""
-    <div style="text-align: center; margin: 6px 0 12px 0;">
-        <button id="theme-toggle-btn" onclick="toggleTheme()">🌙 夜間模式</button>
-    </div>
-    """, unsafe_allow_html=True)
     
     st.markdown("### 📋 系統操作指南")
     st.markdown("""
