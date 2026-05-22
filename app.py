@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from transformer import transform, generate_excel, validate_input
+from transformer import transform, generate_excel, validate_input, _resolve_column_name
 import time
 from openpyxl import load_workbook
 from io import BytesIO
@@ -407,7 +407,12 @@ if uploaded_file is not None:
             
         st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
         
-        r2_col1, r2_col2 = st.columns(2)
+        transfer_col = _resolve_column_name("After new Safety Qty / ND can transfer out of QTY", set(raw_df.columns))
+        transfer_qty_total = 0
+        if transfer_col:
+            transfer_qty_total = int(pd.to_numeric(raw_df[transfer_col], errors="coerce").fillna(0).sum())
+
+        r2_col1, r2_col2, r2_col3 = st.columns(3)
         with r2_col1:
             st.markdown(f"""
             <div class="metric-card" style="border-left-color: #F59E0B;">
@@ -422,6 +427,14 @@ if uploaded_file is not None:
                 <div class="metric-title">Overstock (>2*Monthly Sold Qty & >2pcs)</div>
                 <div class="metric-value">{int(cat_counts.get(categories[1], 0)):,}</div>
                 <div class="metric-desc">「大於月均銷售量兩倍且庫存大於 2 件」之異常筆數</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with r2_col3:
+            st.markdown(f"""
+            <div class="metric-card" style="border-left-color: #06B6D4;">
+                <div class="metric-title">New Safety Qty / ND 調整後的預計總數</div>
+                <div class="metric-value">{transfer_qty_total:,}</div>
+                <div class="metric-desc">After new Safety Qty / ND can transfer out of TOTAL QTY</div>
             </div>
             """, unsafe_allow_html=True)
             

@@ -284,6 +284,11 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     cat1_val = int(summary_df[summary_df["Buyer"] == "\u7e3d\u8a08"][categories[0]].values[0])
     cat2_val = int(summary_df[summary_df["Buyer"] == "\u7e3d\u8a08"][categories[1]].values[0])
 
+    transfer_col = _resolve_column_name("After new Safety Qty / ND can transfer out of QTY", set(raw_df.columns))
+    transfer_qty_total = 0
+    if transfer_col:
+        transfer_qty_total = int(pd.to_numeric(raw_df[transfer_col], errors="coerce").fillna(0).sum())
+
     ws_dashboard.merge_cells("A1:D1")
     title_cell = ws_dashboard.cell(row=1, column=1, value="\u7570\u5e38\u5eab\u5b58\u6578\u64da\u5206\u6790\u6458\u8981 (Analysis Dashboard)")
     title_cell.font = Font(bold=True, size=14, color="1E40AF")
@@ -320,6 +325,7 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     row2_metrics = [
         ("Overstock (P90D 0 Sales)", cat1_val, "\u300c\u904e\u53bb 90 \u5929\u5167\u96f6\u92b7\u552e\u300d\u4e4b\u7570\u5e38\u7b46\u6578", "F59E0B"),
         ("Overstock (>2*Monthly Sold Qty & >2pcs)", cat2_val, "\u300c\u5927\u65bc\u6708\u5747\u92b7\u552e\u91cf\u5169\u500d\u4e14\u5eab\u5b58\u5927\u65bc 2 \u4ef6\u300d\u4e4b\u7570\u5e38\u7b46\u6578", "EC4899"),
+        ("New Safety Qty / ND \u8abf\u6574\u5f8c\u7684\u9810\u8a08\u7e3d\u6578", transfer_qty_total, "After new Safety Qty / ND can transfer out of TOTAL QTY", "06B6D4"),
     ]
 
     for i, (name, value, desc, color) in enumerate(row2_metrics):
