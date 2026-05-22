@@ -183,13 +183,15 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     title_cell.alignment = Alignment(horizontal="center", vertical="center")
 
     row1_metrics = [
-        ("\u7e3d Overstock \u7b46\u6578", total_overstock, "EF4444"),
-        ("\u5f71\u97ff\u63a1\u8cfc\u4eba\u54e1\u6578 (Buyers)", total_buyers, "3B82F6"),
-        ("\u5f71\u97ff\u54c1\u724c\u7e3d\u6578 (Brands)", total_brands, "8B5CF6"),
-        ("\u5f71\u97ffSKU\u7e3d\u6578", total_skus, "10B981"),
+        ("\u7e3d Overstock \u7b46\u6578", total_overstock, "\u6240\u6709\u5eab\u5b58\u7570\u5e38\u4e4b\u7e3d\u8a08\u7b46\u6578", "EF4444"),
+        ("\u5f71\u97ff\u63a1\u8cfc\u4eba\u54e1\u6578 (Buyers)", total_buyers, "\u4f4d\u63a1\u8cfc\u4eba\u54e1\u540d\u4e0b\u6709\u7570\u5e38\u54c1\u9805", "3B82F6"),
+        ("\u5f71\u97ff\u54c1\u724c\u7e3d\u6578 (Brands)", total_brands, "\u500b\u54c1\u724c\u5305\u542b\u7570\u5e38\u5eab\u5b58\u5546\u54c1", "8B5CF6"),
+        ("\u5f71\u97ffSKU\u7e3d\u6578", total_skus, "\u500b\u5305\u542b\u7570\u5e38\u5eab\u5b58\u5546\u54c1(SKUs)", "10B981"),
     ]
 
-    for i, (name, value, color) in enumerate(row1_metrics):
+    desc_font = Font(size=9, color="6B7280", italic=True)
+
+    for i, (name, value, desc, color) in enumerate(row1_metrics):
         col = i + 1
         tc = ws_dashboard.cell(row=3, column=col, value=name)
         tc.font = Font(bold=True, size=11, color="FFFFFF")
@@ -203,24 +205,34 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
         vc.number_format = "#,##0"
         vc.border = thin_border
 
+        dc = ws_dashboard.cell(row=5, column=col, value=desc)
+        dc.font = desc_font
+        dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        dc.border = thin_border
+
     row2_metrics = [
-        ("Overstock (P90D 0 Sales)", cat1_val, "F59E0B"),
-        ("Overstock (>2*Monthly Sold Qty & >2pcs)", cat2_val, "EC4899"),
+        ("Overstock (P90D 0 Sales)", cat1_val, "\u300c\u904e\u53bb 90 \u5929\u5167\u96f6\u92b7\u552e\u300d\u4e4b\u7570\u5e38\u7b46\u6578", "F59E0B"),
+        ("Overstock (>2*Monthly Sold Qty & >2pcs)", cat2_val, "\u300c\u5927\u65bc\u6708\u5747\u92b7\u552e\u91cf\u5169\u500d\u4e14\u5eab\u5b58\u5927\u65bc 2 \u4ef6\u300d\u4e4b\u7570\u5e38\u7b46\u6578", "EC4899"),
     ]
 
-    for i, (name, value, color) in enumerate(row2_metrics):
+    for i, (name, value, desc, color) in enumerate(row2_metrics):
         col = i + 1
-        tc = ws_dashboard.cell(row=6, column=col, value=name)
+        tc = ws_dashboard.cell(row=7, column=col, value=name)
         tc.font = Font(bold=True, size=11, color="FFFFFF")
         tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
         tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         tc.border = thin_border
 
-        vc = ws_dashboard.cell(row=7, column=col, value=value)
+        vc = ws_dashboard.cell(row=8, column=col, value=value)
         vc.font = Font(bold=True, size=20, color=color)
         vc.alignment = Alignment(horizontal="center", vertical="center")
         vc.number_format = "#,##0"
         vc.border = thin_border
+
+        dc = ws_dashboard.cell(row=9, column=col, value=desc)
+        dc.font = desc_font
+        dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        dc.border = thin_border
 
     if progress_callback:
         progress_callback(0.95, "\u8abf\u6574\u683c\u5f0f\u4e2d...")
