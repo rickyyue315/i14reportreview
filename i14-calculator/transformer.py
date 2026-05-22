@@ -26,6 +26,9 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
         progress_callback(0.1, "\u6e05\u7406\u8cc7\u6599\u4e2d...")
 
     _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
+    if "Item_Shop" in df.columns:
+        _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
+        _footer_mask = _footer_mask | _item_shop_mask
     df = df[~_footer_mask].copy()
 
     status_col = df["Shop Stock Status"].fillna("")
