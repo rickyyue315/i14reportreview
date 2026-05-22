@@ -5,6 +5,7 @@ from transformer import transform, generate_excel, validate_input
 import time
 from openpyxl import load_workbook
 from io import BytesIO
+from version import __version__
 
 # 1. 設置網頁基本資訊
 st.set_page_config(
@@ -193,7 +194,7 @@ with st.sidebar:
     st.divider()
     st.markdown(
         '<div style="color: #94A3B8; font-size: 0.75rem; text-align: center; line-height: 1.5;">'
-        'I14 報表計算工具 v01.00.01<br>'
+        f'I14 報表計算工具 v{__version__}<br>'
         'Developed by Ricky Yue<br>'
         'Powered by Streamlit & Zeabur'
         '</div>',
@@ -463,7 +464,7 @@ st.divider()
 st.markdown(
     '<div style="text-align: center; color: #94A3B8; font-size: 0.8rem; padding: 10px 0;">'
     'I14 報表轉換與分析系統 &nbsp;&nbsp;•&nbsp;&nbsp; Streamlit + Zeabur &nbsp;&nbsp;•&nbsp;&nbsp; '
-    'v01.00.01 &nbsp;&nbsp;•&nbsp;&nbsp; Developed by Ricky Yue'
+    f'v{__version__} &nbsp;&nbsp;•&nbsp;&nbsp; Developed by Ricky Yue'
     '</div>',
     unsafe_allow_html=True,
 )

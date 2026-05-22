@@ -7,7 +7,4 @@ venv/
 dist/
 build/
 .streamlit/secrets.toml
-<<<<<<< HEAD
-=======
 *.xlsx
->>>>>>> fbd1f30 (Initial commit: I14 report calculator Streamlit app)
