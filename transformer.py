@@ -90,13 +90,13 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
     ) & (adj_ss > 0)
 
     df["Recommendation of new Safety Qty / ND"] = ""
-    df.loc[cond_overstock_2x, "Recommendation of new Safety Qty / ND"] = 3
+    df.loc[cond_overstock_2x, "Recommendation of new Safety Qty / ND"] = "3"
     df.loc[cond_overstock_0, "Recommendation of new Safety Qty / ND"] = "ND"
 
     shop_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", pd.Series([0] * len(df))))
 
     rec = df["Recommendation of new Safety Qty / ND"]
-    mask_3 = (rec == 3) & (shop_stock > 3)
+    mask_3 = (rec == "3") & (shop_stock > 3)
     mask_nd = (rec == "ND") & (shop_stock > 0)
 
     df["After new Safety Qty / ND can transfer out of QTY"] = ""
