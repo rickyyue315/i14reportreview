@@ -104,4 +104,8 @@ if uploaded_file is not None:
         )
 
 st.divider()
-st.caption("I14 \u5831\u8868\u8a08\u7b97\u5de5\u5177 \u00b7 Streamlit + Zeabur")
+st.markdown(
+    "I14 \u5831\u8868\u8a08\u7b97\u5de5\u5177 \u00b7 Streamlit + Zeabur &nbsp;&nbsp;|&nbsp;&nbsp; "
+    '<span style="color:gray;font-size:0.8em">v00.00.01 \u00b7 Developed by Ricky Yue</span>',
+    unsafe_allow_html=True,
+)
