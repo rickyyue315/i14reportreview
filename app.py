@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from transformer import transform, generate_excel, validate_input
+import time
+from openpyxl import load_workbook
+from io import BytesIO
 
 st.set_page_config(page_title="I14 \u5831\u8868\u8a08\u7b97\u5de5\u5177", page_icon="\U0001f4ca", layout="wide")
 
@@ -17,12 +20,31 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
-    with st.spinner("\u8b80\u53d6\u6a94\u6848\u4e2d..."):
-        try:
-            df_input = pd.read_excel(uploaded_file, engine="openpyxl")
-        except Exception as e:
-            st.error(f"\u274c \u8b80\u53d6\u6a94\u6848\u5931\u6557: {e}")
-            st.stop()
+    _prog = st.progress(0, text="讀取檔案中... 0% | 初始化中...")
+    _t0 = time.time()
+    try:
+        _raw = uploaded_file.read()
+        _wb = load_workbook(BytesIO(_raw), data_only=True)
+        _ws = _wb.active
+        _n = _ws.max_row
+        if _n <= 1:
+            df_input = pd.DataFrame()
+        else:
+            _hdr = list(next(_ws.iter_rows(min_row=1, max_row=1, values_only=True)))
+            _rows = []
+            for _i, _r in enumerate(_ws.iter_rows(min_row=2, max_row=_n, values_only=True), start=1):
+                _rows.append(list(_r))
+                if _i % 500 == 0 or _i == _n - 1:
+                    _pct = _i / (_n - 1)
+                    _elapsed = time.time() - _t0
+                    _eta = (_elapsed / _pct) - _elapsed if _pct > 0 else 0
+                    _prog.progress(min(_pct, 1.0), text=f"讀取檔案中... {_pct*100:.0f}% | 已用: {_elapsed:.0f}s | 預計剩餘: {_eta:.0f}s")
+            df_input = pd.DataFrame(_rows, columns=_hdr)
+    except Exception as e:
+        _prog.empty()
+        st.error(f"❌ 讀取檔案失敗: {e}")
+        st.stop()
+    _prog.empty()
 
     st.success(f"\u2705 \u6a94\u6848\u8b80\u53d6\u6210\u529f\uff01\u5171 **{len(df_input):,}** \u884c\uff0c**{len(df_input.columns)}** \u6b04")
 
@@ -39,13 +61,20 @@ if uploaded_file is not None:
     st.divider()
 
     if st.button("\U0001f680 \u7522\u751f\u5831\u8868", type="primary", use_container_width=True):
-        with st.spinner("\u8655\u7406\u4e2d..."):
-            try:
-                summary_df, raw_df, categories = transform(df_input)
-                buf = generate_excel(summary_df, raw_df, categories)
-            except Exception as e:
-                st.error(f"\u274c \u8655\u7406\u5931\u6557: {e}")
-                st.stop()
+        _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
+        _t0_2 = time.time()
+        def _cb(pct, msg):
+            _e = time.time() - _t0_2
+            _eta2 = (_e / pct) - _e if pct > 0 else 0
+            _prog2.progress(min(pct, 1.0), text=f"處理中... {pct*100:.0f}% | {msg} | 已用: {_e:.0f}s | 預計剩餘: {_eta2:.0f}s")
+        try:
+            summary_df, raw_df, categories = transform(df_input, progress_callback=_cb)
+            buf = generate_excel(summary_df, raw_df, categories, progress_callback=_cb)
+        except Exception as e:
+            _prog2.empty()
+            st.error(f"\u274c \u8655\u7406\u5931\u6557: {e}")
+            st.stop()
+        _prog2.empty()
 
         st.success("\u2705 \u5831\u8868\u7522\u751f\u6210\u529f\uff01")
 

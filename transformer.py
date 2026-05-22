@@ -12,12 +12,18 @@ def validate_input(df: pd.DataFrame) -> list[str]:
     return missing
 
 
-def transform(df_input: pd.DataFrame):
+def transform(df_input: pd.DataFrame, progress_callback=None):
     missing = validate_input(df_input)
     if missing:
         raise ValueError(f"\u7f3a\u5c11\u5fc5\u8981\u6b04\u4f4d: {', '.join(missing)}")
 
+    if progress_callback:
+        progress_callback(0.05, "\u9a57\u8b49\u901a\u904e")
+
     df = df_input.dropna(subset=["Buyer"]).copy()
+
+    if progress_callback:
+        progress_callback(0.1, "\u6e05\u7406\u8cc7\u6599\u4e2d...")
 
     _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
     df = df[~_footer_mask].copy()
@@ -31,8 +37,11 @@ def transform(df_input: pd.DataFrame):
 
     group_cols = ["Buyer", "Brand", "SKU"]
 
+    if progress_callback:
+        progress_callback(0.2, "\u5206\u985e\u7d71\u8a08\u4e2d...")
+
     counts = {}
-    for cat in categories:
+    for i, cat in enumerate(categories):
         mask = status_col.str.contains(cat, regex=False, na=False)
         counts[cat] = (
             df[mask]
@@ -40,6 +49,11 @@ def transform(df_input: pd.DataFrame):
             .size()
             .rename(cat)
         )
+        if progress_callback:
+            progress_callback(0.2 + 0.3 * (i + 1) / len(categories), f"\u7d71\u8a08 {cat}...")
+
+    if progress_callback:
+        progress_callback(0.5, "\u6392\u5e8f\u5f59\u7e3d\u4e2d...")
 
     summary = pd.concat(counts.values(), axis=1).fillna(0).astype(int).reset_index()
 
@@ -64,11 +78,17 @@ def transform(df_input: pd.DataFrame):
     raw = df.copy()
     raw["SKU"] = raw["SKU"].apply(lambda x: str(int(x)) if pd.notna(x) else x)
 
+    if progress_callback:
+        progress_callback(0.7, "\u8f49\u63db\u5b8c\u6210")
+
     return summary, raw, categories
 
 
-def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: list[str]) -> BytesIO:
+def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: list[str], progress_callback=None) -> BytesIO:
     wb = Workbook()
+
+    if progress_callback:
+        progress_callback(0.0, "\u5efa\u7acb Excel \u7d50\u69cb...")
 
     ws_raw = wb.active
     ws_raw.title = "RAW"
@@ -77,9 +97,12 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     ws_raw.append(raw_cols)
 
     raw_values = raw_df.values.tolist()
-    for row_vals in raw_values:
+    total_raw = len(raw_values)
+    for i, row_vals in enumerate(raw_values):
         cleaned = [None if isinstance(v, float) and pd.isna(v) else v for v in row_vals]
         ws_raw.append(cleaned)
+        if progress_callback and (i % 1000 == 0 or i == total_raw - 1):
+            progress_callback(0.3 * ((i + 1) / total_raw), f"\u5beb\u5165 RAW ({i+1}/{total_raw})...")
 
     header_fill_raw = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
     thin_border = Border(
@@ -95,6 +118,9 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
         cell.alignment = Alignment(horizontal="center")
 
     ws_raw.auto_filter.ref = ws_raw.dimensions
+
+    if progress_callback:
+        progress_callback(0.35, "\u5efa\u7acb\u6458\u8981\u5de5\u4f5c\u8868...")
 
     ws_summary = wb.create_sheet(title="Shop Stock Status")
 
@@ -114,6 +140,7 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
         cell.border = thin_border
 
     data_start = 5
+    total_summary = len(summary_df)
 
     for row_idx, row_data in summary_df.iterrows():
         excel_row = data_start + row_idx
@@ -133,11 +160,21 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
             if isinstance(val, (int, float)) and col_idx >= 4 and h != "SKU":
                 cell.number_format = "#,##0"
 
+        if progress_callback and (row_idx % 500 == 0 or row_idx == total_summary - 1):
+            progress_callback(0.6 + 0.3 * ((row_idx + 1) / total_summary), f"\u5beb\u5165\u6458\u8981 ({row_idx+1}/{total_summary})...")
+
+    if progress_callback:
+        progress_callback(0.95, "\u8abf\u6574\u683c\u5f0f\u4e2d...")
+
     _auto_width(ws_summary)
 
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
+
+    if progress_callback:
+        progress_callback(1.0, "\u5b8c\u6210!")
+
     return buf
 
 
