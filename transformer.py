@@ -154,16 +154,38 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
             progress_callback(0.2 + 0.3 * (i + 1) / len(categories), f"\u7d71\u8a08 {cat}...")
 
     if progress_callback:
-        progress_callback(0.5, "\u6392\u5e8f\u5f59\u7e3d\u4e2d...")
+        progress_callback(0.5, "\u8a08\u7b97\u5eab\u5b58\u5efa\u8b70\u4e2d...")
+
+    raw = df.copy()
+    raw["SKU"] = raw["SKU"].apply(lambda x: str(int(x)) if pd.notna(x) else x)
+    raw = _add_recommendation_columns(raw)
+
+    transfer_col = "After new Safety Qty / ND can transfer out of QTY"
+    raw["_transfer_num"] = pd.to_numeric(raw[transfer_col], errors="coerce").fillna(0)
+    transfer_summary = (
+        raw.groupby(group_cols, observed=True)["_transfer_num"]
+        .sum()
+        .astype(int)
+        .rename(transfer_col)
+    )
+
+    if progress_callback:
+        progress_callback(0.55, "\u6392\u5e8f\u5f59\u7e3d\u4e2d...")
 
     summary = pd.concat(counts.values(), axis=1).fillna(0).astype(int).reset_index()
 
     summary["SKU"] = summary["SKU"].apply(lambda x: str(int(x)) if pd.notna(x) else x)
     summary["\u7e3d\u8a08"] = summary[categories].sum(axis=1)
 
+    summary = summary.merge(transfer_summary, on=group_cols, how="left")
+    summary[transfer_col] = summary[transfer_col].fillna(0).astype(int)
+
     buyer_order = summary.groupby("Buyer")["\u7e3d\u8a08"].sum().sort_values(ascending=False).index.tolist()
     summary["_buyer_key"] = summary["Buyer"].map({b: i for i, b in enumerate(buyer_order)})
     summary = summary.sort_values(["_buyer_key", "Brand"], ascending=[True, True]).drop(columns=["_buyer_key"]).reset_index(drop=True)
+
+    transfer_total = int(raw["_transfer_num"].sum())
+    raw = raw.drop(columns=["_transfer_num"])
 
     total_row = pd.DataFrame(
         {
@@ -172,16 +194,10 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
             "SKU": [None],
             **{cat: [int(summary[cat].sum())] for cat in categories},
             "\u7e3d\u8a08": [int(summary["\u7e3d\u8a08"].sum())],
+            transfer_col: [transfer_total],
         }
     )
     summary = pd.concat([summary, total_row], ignore_index=True)
-
-    if progress_callback:
-        progress_callback(0.6, "\u8a08\u7b97\u5eab\u5b58\u5efa\u8b70\u4e2d...")
-
-    raw = df.copy()
-    raw["SKU"] = raw["SKU"].apply(lambda x: str(int(x)) if pd.notna(x) else x)
-    raw = _add_recommendation_columns(raw)
 
     if progress_callback:
         progress_callback(0.7, "\u8f49\u63db\u5b8c\u6210")
@@ -238,7 +254,8 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     ws_summary["A3"] = "\u884c\u6578 - Site Code"
     ws_summary["D3"] = "Shop Stock Status"
 
-    headers = ["Buyer", "Brand", "SKU"] + categories + ["\u7e3d\u8a08"]
+    transfer_col = "After new Safety Qty / ND can transfer out of QTY"
+    headers = ["Buyer", "Brand", "SKU"] + categories + ["\u7e3d\u8a08"] + [transfer_col]
     for col_idx, h in enumerate(headers, 1):
         cell = ws_summary.cell(row=4, column=col_idx, value=h)
         cell.font = header_font
