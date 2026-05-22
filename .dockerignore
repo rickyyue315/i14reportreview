@@ -1,0 +1,10 @@
+.git
+.gitignore
+.githooks
+__pycache__
+*.pyc
+*.pyo
+i14-calculator
+VERSION.md
+version.py
+.kilo
