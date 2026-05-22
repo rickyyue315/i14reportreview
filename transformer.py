@@ -163,10 +163,69 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
         if progress_callback and (row_idx % 500 == 0 or row_idx == total_summary - 1):
             progress_callback(0.6 + 0.3 * ((row_idx + 1) / total_summary), f"\u5beb\u5165\u6458\u8981 ({row_idx+1}/{total_summary})...")
 
+    _auto_width(ws_summary)
+
+    if progress_callback:
+        progress_callback(0.90, "\u5efa\u7acb\u5206\u6790\u6458\u8981\u5de5\u4f5c\u8868...")
+
+    ws_dashboard = wb.create_sheet(title="\u7570\u5e38\u5eab\u5b58\u6578\u64da\u5206\u6790\u6458\u8981")
+
+    total_overstock = int(summary_df[summary_df["Buyer"] == "\u7e3d\u8a08"]["\u7e3d\u8a08"].values[0])
+    total_buyers = len(summary_df[summary_df["Buyer"] != "\u7e3d\u8a08"]["Buyer"].dropna().unique())
+    total_brands = len(summary_df[summary_df["Buyer"] != "\u7e3d\u8a08"]["Brand"].dropna().unique())
+    total_skus = raw_df["SKU"].dropna().nunique()
+    cat1_val = int(summary_df[summary_df["Buyer"] == "\u7e3d\u8a08"][categories[0]].values[0])
+    cat2_val = int(summary_df[summary_df["Buyer"] == "\u7e3d\u8a08"][categories[1]].values[0])
+
+    ws_dashboard.merge_cells("A1:D1")
+    title_cell = ws_dashboard.cell(row=1, column=1, value="\u7570\u5e38\u5eab\u5b58\u6578\u64da\u5206\u6790\u6458\u8981 (Analysis Dashboard)")
+    title_cell.font = Font(bold=True, size=14, color="1E40AF")
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    row1_metrics = [
+        ("\u7e3d Overstock \u7b46\u6578", total_overstock, "EF4444"),
+        ("\u5f71\u97ff\u63a1\u8cfc\u4eba\u54e1\u6578 (Buyers)", total_buyers, "3B82F6"),
+        ("\u5f71\u97ff\u54c1\u724c\u7e3d\u6578 (Brands)", total_brands, "8B5CF6"),
+        ("\u5f71\u97ffSKU\u7e3d\u6578", total_skus, "10B981"),
+    ]
+
+    for i, (name, value, color) in enumerate(row1_metrics):
+        col = i + 1
+        tc = ws_dashboard.cell(row=3, column=col, value=name)
+        tc.font = Font(bold=True, size=11, color="FFFFFF")
+        tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+        tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        tc.border = thin_border
+
+        vc = ws_dashboard.cell(row=4, column=col, value=value)
+        vc.font = Font(bold=True, size=20, color=color)
+        vc.alignment = Alignment(horizontal="center", vertical="center")
+        vc.number_format = "#,##0"
+        vc.border = thin_border
+
+    row2_metrics = [
+        ("Overstock (P90D 0 Sales)", cat1_val, "F59E0B"),
+        ("Overstock (>2*Monthly Sold Qty & >2pcs)", cat2_val, "EC4899"),
+    ]
+
+    for i, (name, value, color) in enumerate(row2_metrics):
+        col = i + 1
+        tc = ws_dashboard.cell(row=6, column=col, value=name)
+        tc.font = Font(bold=True, size=11, color="FFFFFF")
+        tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+        tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        tc.border = thin_border
+
+        vc = ws_dashboard.cell(row=7, column=col, value=value)
+        vc.font = Font(bold=True, size=20, color=color)
+        vc.alignment = Alignment(horizontal="center", vertical="center")
+        vc.number_format = "#,##0"
+        vc.border = thin_border
+
     if progress_callback:
         progress_callback(0.95, "\u8abf\u6574\u683c\u5f0f\u4e2d...")
 
-    _auto_width(ws_summary)
+    _auto_width(ws_dashboard)
 
     buf = BytesIO()
     wb.save(buf)

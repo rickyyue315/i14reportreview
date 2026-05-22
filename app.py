@@ -380,26 +380,26 @@ if uploaded_file is not None:
             """, unsafe_allow_html=True)
         with r1_col2:
             st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #10B981;">
-                <div class="metric-title">影響SKU總數</div>
-                <div class="metric-value">{total_skus:,}</div>
-                <div class="metric-desc">個包含異常庫存商品(SKUs)</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with r1_col3:
-            st.markdown(f"""
             <div class="metric-card" style="border-left-color: #3B82F6;">
                 <div class="metric-title">影響採購人員數 (Buyers)</div>
                 <div class="metric-value">{total_buyers:,}</div>
                 <div class="metric-desc">位採購人員名下有異常品項</div>
             </div>
             """, unsafe_allow_html=True)
-        with r1_col4:
+        with r1_col3:
             st.markdown(f"""
             <div class="metric-card" style="border-left-color: #8B5CF6;">
                 <div class="metric-title">影響品牌總數 (Brands)</div>
                 <div class="metric-value">{total_brands:,}</div>
                 <div class="metric-desc">個品牌包含異常庫存商品</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with r1_col4:
+            st.markdown(f"""
+            <div class="metric-card" style="border-left-color: #10B981;">
+                <div class="metric-title">影響SKU總數</div>
+                <div class="metric-value">{total_skus:,}</div>
+                <div class="metric-desc">個包含異常庫存商品(SKUs)</div>
             </div>
             """, unsafe_allow_html=True)
             
