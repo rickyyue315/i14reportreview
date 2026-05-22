@@ -16,59 +16,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. 注入自定義進階 CSS 樣式以實現極簡專業配色（含明暗主題變數）
-st.markdown("""
-<style>
-/* 載入 Google 字型 */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+TC:wght@300;400;500;700&display=swap');
+# 2. 初始化主題狀態
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = False
 
-/* ========== 日間模式 (Light) CSS 變數 ========== */
-:root {
-    --bg-primary: #F8FAFC;
-    --bg-secondary: #F1F5F9;
-    --bg-card: #FFFFFF;
-    --bg-file-uploader: #F8FAFC;
-    --bg-download: #F8FAFC;
-    --bg-tab-hover: #F8FAFC;
-    --bg-error: #FDF2F2;
-    --text-primary: #0F172A;
-    --text-secondary: #64748B;
-    --text-muted: #94A3B8;
-    --text-download-desc: #475569;
-    --border-primary: #E2E8F0;
-    --border-accent: #CBD5E1;
-    --border-download: #1E40AF;
-    --border-error: #F8B4B4;
-    --accent-primary: #1E40AF;
-    --accent-primary-light: #2563EB;
-    --accent-secondary: #93C5FD;
-    --shadow-card: 0 4px 6px -1px rgba(0,0,0,0.02), 0 2px 4px -1px rgba(0,0,0,0.01);
-    --shadow-card-hover: 0 8px 16px -3px rgba(0,0,0,0.04);
-    --shadow-header: 0 10px 25px -5px rgba(30,64,175,0.12);
-    --shadow-button: 0 4px 12px rgba(37,99,235,0.25);
-    --header-gradient-start: #1E40AF;
-    --header-gradient-end: #0F172A;
-    --header-text: #FFFFFF;
-    --header-subtitle: #93C5FD;
-    --button-gradient-start: #1E40AF;
-    --button-gradient-end: #2563EB;
-    --button-text: white;
-    --error-heading: #9B1C1C;
-    --error-desc: #771D1D;
-    --metric-green: #059669;
-    --metric-red: #DC2626;
-    --tab-text: #64748B;
-    --tab-active: #1E40AF;
-    --sidebar-title: #1E40AF;
-    --sidebar-subtitle: #64748B;
-    --sidebar-small: #94A3B8;
-    --footer-text: #94A3B8;
-    --toggle-bg: #FFFFFF;
-    --toggle-border: #E2E8F0;
-}
+# 3. 注入自定義進階 CSS 樣式以實現極簡專業配色（含明暗主題變數）
+_is_dark = st.session_state.dark_mode
 
-/* ========== 夜間模式 (Dark) CSS 變數 — Kilo.ai 配色風格 ========== */
-html.dark {
+if _is_dark:
+    _theme_vars = """
     --bg-primary: #0A0A0A;
     --bg-secondary: #121212;
     --bg-card: #1E1E1E;
@@ -110,69 +66,97 @@ html.dark {
     --footer-text: #6B7280;
     --toggle-bg: #1E1E1E;
     --toggle-border: #333333;
-}
+    --sidebar-bg: #0E0E0E;
+    """
+else:
+    _theme_vars = """
+    --bg-primary: #F8FAFC;
+    --bg-secondary: #F1F5F9;
+    --bg-card: #FFFFFF;
+    --bg-file-uploader: #F8FAFC;
+    --bg-download: #F8FAFC;
+    --bg-tab-hover: #F8FAFC;
+    --bg-error: #FDF2F2;
+    --text-primary: #0F172A;
+    --text-secondary: #64748B;
+    --text-muted: #94A3B8;
+    --text-download-desc: #475569;
+    --border-primary: #E2E8F0;
+    --border-accent: #CBD5E1;
+    --border-download: #1E40AF;
+    --border-error: #F8B4B4;
+    --accent-primary: #1E40AF;
+    --accent-primary-light: #2563EB;
+    --accent-secondary: #93C5FD;
+    --shadow-card: 0 4px 6px -1px rgba(0,0,0,0.02), 0 2px 4px -1px rgba(0,0,0,0.01);
+    --shadow-card-hover: 0 8px 16px -3px rgba(0,0,0,0.04);
+    --shadow-header: 0 10px 25px -5px rgba(30,64,175,0.12);
+    --shadow-button: 0 4px 12px rgba(37,99,235,0.25);
+    --header-gradient-start: #1E40AF;
+    --header-gradient-end: #0F172A;
+    --header-text: #FFFFFF;
+    --header-subtitle: #93C5FD;
+    --button-gradient-start: #1E40AF;
+    --button-gradient-end: #2563EB;
+    --button-text: white;
+    --error-heading: #9B1C1C;
+    --error-desc: #771D1D;
+    --metric-green: #059669;
+    --metric-red: #DC2626;
+    --tab-text: #64748B;
+    --tab-active: #1E40AF;
+    --sidebar-title: #1E40AF;
+    --sidebar-subtitle: #64748B;
+    --sidebar-small: #94A3B8;
+    --footer-text: #94A3B8;
+    --toggle-bg: #FFFFFF;
+    --toggle-border: #E2E8F0;
+    --sidebar-bg: #F1F5F9;
+    """
 
-/* ========== Streamlit 原生元素夜間模式適配 ========== */
-html.dark .stApp {
-    background-color: var(--bg-primary);
-}
-html.dark section[data-testid="stSidebar"] {
-    background-color: #0E0E0E;
-}
-html.dark section[data-testid="stSidebar"] * {
-    color: var(--text-primary);
-}
-html.dark .stMarkdown, html.dark .stMarkdown p, html.dark .stMarkdown span,
-html.dark h1, html.dark h2, html.dark h3, html.dark h4, html.dark h5, html.dark h6 {
-    color: var(--text-primary);
-}
-html.dark .stExpander {
-    background-color: var(--bg-card);
-    border-color: var(--border-primary);
-}
-html.dark .stExpander p, html.dark .stExpander span {
-    color: var(--text-primary);
-}
-html.dark hr, html.dark .stDivider {
-    border-color: var(--border-primary) !important;
-}
-html.dark .stProgress > div > div {
-    background-color: var(--border-primary);
-}
-html.dark [data-testid="stDataFrame"] {
-    color: var(--text-primary);
-}
-html.dark .st-emotion-cache-1qg05tj {
-    color: var(--text-primary);
-}
-html.dark .st-cb, html.dark .st-cm, html.dark .st-cd, html.dark .st-cg, html.dark .st-ch {
-    color: var(--text-primary);
-}
-html.dark .stDataFrame table, html.dark .stTable table {
-    color: var(--text-primary);
-}
+_dark_overrides = ""
+if _is_dark:
+    _dark_overrides = """
+    .stApp { background-color: var(--bg-primary) !important; }
+    section[data-testid="stSidebar"] { background-color: var(--sidebar-bg) !important; }
+    section[data-testid="stSidebar"] * { color: var(--text-primary) !important; }
+    .stMarkdown, .stMarkdown p, .stMarkdown span,
+    h1, h2, h3, h4, h5, h6 { color: var(--text-primary) !important; }
+    .stExpander { background-color: var(--bg-card) !important; border-color: var(--border-primary) !important; }
+    .stExpander p, .stExpander span { color: var(--text-primary) !important; }
+    hr, .stDivider { border-color: var(--border-primary) !important; }
+    [data-testid="stDataFrame"] { color: var(--text-primary) !important; }
+    """
 
-/* ========== 全域字型與背景微調 ========== */
-html, body, [class*="css"] {
+st.markdown(f"""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+TC:wght@300;400;500;700&display=swap');
+
+:root {{
+    {_theme_vars}
+}}
+
+{_dark_overrides}
+
+html, body, [class*="css"] {{
     font-family: 'Inter', 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
-}
+}}
 
-.main .block-container {
+.main .block-container {{
     padding-top: 1.5rem;
     padding-bottom: 3rem;
     max-width: 1200px;
-}
+}}
 
-/* ========== 專業漸層 Header Banner ========== */
-.header-container {
+.header-container {{
     background: linear-gradient(135deg, var(--header-gradient-start) 0%, var(--header-gradient-end) 100%);
     padding: 2.2rem;
     border-radius: 14px;
     color: var(--header-text);
     margin-bottom: 2rem;
     box-shadow: var(--shadow-header);
-}
-.header-title {
+}}
+.header-title {{
     font-size: 2rem;
     font-weight: 700;
     margin: 0;
@@ -180,27 +164,25 @@ html, body, [class*="css"] {
     display: flex;
     align-items: center;
     gap: 12px;
-}
-.header-subtitle {
+}}
+.header-subtitle {{
     font-size: 0.95rem;
     color: var(--header-subtitle);
     margin-top: 8px;
     margin-bottom: 0;
     font-weight: 300;
-}
+}}
 
-/* ========== 自定義精美卡片樣式 ========== */
-.custom-card {
+.custom-card {{
     background-color: var(--bg-card);
     border: 1px solid var(--border-primary);
     border-radius: 12px;
     padding: 1.5rem;
     margin-bottom: 1.5rem;
     box-shadow: var(--shadow-card);
-}
+}}
 
-/* ========== 數據指標卡片 (Metric Cards) ========== */
-.metric-card {
+.metric-card {{
     background-color: var(--bg-card);
     border: 1px solid var(--border-primary);
     border-radius: 10px;
@@ -208,35 +190,34 @@ html, body, [class*="css"] {
     box-shadow: 0 1px 3px rgba(0,0,0,0.02);
     border-left: 5px solid var(--accent-primary);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-.metric-card:hover {
+}}
+.metric-card:hover {{
     transform: translateY(-2px);
     box-shadow: var(--shadow-card-hover);
-}
-.metric-title {
+}}
+.metric-title {{
     font-size: 0.82rem;
     color: var(--text-secondary);
     font-weight: 500;
     margin-bottom: 4px;
-}
-.metric-value {
+}}
+.metric-value {{
     font-size: 1.6rem;
     color: var(--text-primary);
     font-weight: 700;
     line-height: 1.2;
-}
-.metric-desc {
+}}
+.metric-desc {{
     font-size: 0.72rem;
     color: var(--text-muted);
     margin-top: 4px;
-}
+}}
 
-/* ========== Streamlit Tabs 頁籤樣式優化 ========== */
-.stTabs [data-baseweb="tab-list"] {
+.stTabs [data-baseweb="tab-list"] {{
     gap: 10px;
     border-bottom: 1px solid var(--border-primary);
-}
-.stTabs [data-baseweb="tab"] {
+}}
+.stTabs [data-baseweb="tab"] {{
     height: 44px;
     background-color: transparent;
     border-radius: 8px 8px 0px 0px;
@@ -244,19 +225,18 @@ html, body, [class*="css"] {
     color: var(--tab-text);
     font-weight: 500;
     transition: all 0.2s;
-}
-.stTabs [data-baseweb="tab"]:hover {
+}}
+.stTabs [data-baseweb="tab"]:hover {{
     color: var(--accent-primary);
     background-color: var(--bg-tab-hover);
-}
-.stTabs [aria-selected="true"] {
+}}
+.stTabs [aria-selected="true"] {{
     color: var(--tab-active) !important;
     border-bottom: 2px solid var(--tab-active) !important;
     font-weight: 700 !important;
-}
+}}
 
-/* ========== Streamlit 內建按鈕微調 ========== */
-button[kind="primary"] {
+button[kind="primary"] {{
     background: linear-gradient(135deg, var(--button-gradient-start) 0%, var(--button-gradient-end) 100%) !important;
     border: none !important;
     color: var(--button-text) !important;
@@ -264,91 +244,20 @@ button[kind="primary"] {
     border-radius: 8px !important;
     padding: 0.55rem 1.4rem !important;
     transition: all 0.2s ease !important;
-}
-button[kind="primary"]:hover {
+}}
+button[kind="primary"]:hover {{
     transform: translateY(-1px) !important;
     box-shadow: var(--shadow-button) !important;
-}
+}}
 
-/* ========== 檔案上傳框外觀優化 ========== */
-[data-testid="stFileUploader"] {
+[data-testid="stFileUploader"] {{
     border: 2px dashed var(--border-accent);
     border-radius: 12px;
     padding: 1.2rem;
     background-color: var(--bg-file-uploader);
-}
-
-/* ========== 固定位置主題切換按鈕 (右上角) ========== */
-#kilo-theme-btn {
-    position: fixed;
-    top: 14px;
-    right: 24px;
-    z-index: 99999;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: var(--toggle-bg);
-    color: var(--text-primary);
-    border: 1px solid var(--border-primary);
-    border-radius: 20px;
-    padding: 8px 18px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    font-family: 'Inter', 'Noto Sans TC', sans-serif;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-}
-#kilo-theme-btn:hover {
-    border-color: var(--accent-primary);
-    color: var(--accent-primary);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
-}
+}}
 </style>
 """, unsafe_allow_html=True)
-
-# 2b. 注入 JS 邏輯 (透過 st.components 以確保可執行)
-st.components.v1.html("""
-<script>
-(function() {
-    var pDoc = window.parent.document;
-    var html = pDoc.documentElement;
-    var body = pDoc.body;
-
-    function toggleTheme() {
-        var isDark = html.classList.toggle('dark');
-        localStorage.setItem('kilo-theme', isDark ? 'dark' : 'light');
-        updateBtn(isDark);
-    }
-
-    function updateBtn(isDark) {
-        var btn = pDoc.getElementById('kilo-theme-btn');
-        if (btn) btn.textContent = isDark ? '☀️ 日間模式' : '🌙 夜間模式';
-    }
-
-    var saved = localStorage.getItem('kilo-theme');
-    var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    var isDark = saved === 'dark' || (!saved && prefersDark);
-
-    if (isDark) html.classList.add('dark');
-    else html.classList.remove('dark');
-
-    function createButton() {
-        if (pDoc.getElementById('kilo-theme-btn')) return;
-        var btn = pDoc.createElement('button');
-        btn.id = 'kilo-theme-btn';
-        btn.textContent = isDark ? '☀️ 日間模式' : '🌙 夜間模式';
-        btn.addEventListener('click', toggleTheme);
-        body.appendChild(btn);
-    }
-
-    if (pDoc.readyState === 'loading') {
-        pDoc.addEventListener('DOMContentLoaded', createButton);
-    } else {
-        createButton();
-    }
-})();
-</script>
-""", height=0)
 
 # 3. 側邊欄設計 (Sidebar)
 with st.sidebar:
@@ -360,6 +269,11 @@ with st.sidebar:
     """, unsafe_allow_html=True)
     
     st.divider()
+    
+    _toggle_label = "☀️ 切換至日間模式" if _is_dark else "🌙 切換至夜間模式"
+    if st.button(_toggle_label, key="theme_toggle", use_container_width=True):
+        st.session_state.dark_mode = not _is_dark
+        st.rerun()
     
     st.markdown("### 📋 系統操作指南")
     st.markdown("""
