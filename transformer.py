@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
@@ -6,10 +7,109 @@ from openpyxl.utils import get_column_letter
 
 REQUIRED_COLUMNS = ["Buyer", "Brand", "SKU", "Shop Stock Status"]
 
+RAW_COLUMN_ORDER_NAMES = [
+    "Item_Shop",
+    "SKU",
+    "Brand",
+    "Buyer",
+    "Adj. SST",
+    "Vendor MC",
+    "MCH2",
+    "Item Status",
+    "Launch Date",
+    "Item Class",
+    "Site Code",
+    "OM",
+    "Shop Nature",
+    "RP Type",
+    "Shop Stock Status",
+    "Adj. Safety Stock",
+    "Shop Monthly Sold Qty (P90D)",
+    "Safety VS Monthly Sold Qty",
+    "Recommendation of new Safety Qty / ND",
+    "After new Safety Qty / ND can transfer out of QTY",
+    "Buyer reply",
+    "D001 Net Stock Qty (CM)",
+    "Shop Stock Qty (CM)",
+    "Sold Qty (P90D)",
+    "Turnday (P90D Qty)",
+    "Sold Qty (M-2)",
+    "Sold Qty (M-1)",
+    "Sold Qty (CM - MTD)",
+    "Net Sales (M-2)",
+    "Net Sales (M-1)",
+    "Net Sales (CM - MTD)",
+    "Excess Stock Qty",
+    "Excess Stock Value",
+    "Shop On Order PO Qty (CM)",
+    "Shop Pending Receive",
+]
+
+
+def _resolve_column_name(name: str, available: set[str]) -> str | None:
+    if name in available:
+        return name
+    for col in available:
+        if col.startswith(name):
+            return col
+    return None
+
+
+def _reorder_raw_columns(df: pd.DataFrame) -> pd.DataFrame:
+    available = set(df.columns)
+    ordered: list[str] = []
+    for name in RAW_COLUMN_ORDER_NAMES:
+        resolved = _resolve_column_name(name, available)
+        if resolved:
+            ordered.append(resolved)
+    trailing = [c for c in df.columns if c not in ordered]
+    return df[ordered + trailing]
+
 
 def validate_input(df: pd.DataFrame) -> list[str]:
     missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     return missing
+
+
+def _safe_numeric(series: pd.Series, default: float = 0.0) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").fillna(default)
+
+
+def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    status_col = df["Shop Stock Status"].fillna("")
+
+    adj_ss = _safe_numeric(df.get("Adj. Safety Stock", pd.Series([0] * len(df))))
+
+    cond_overstock_2x = status_col.str.contains(
+        "Overstock (>2*Monthly Sold Qty & >2pcs)", regex=False, na=False
+    ) & (adj_ss > 3)
+
+    cond_overstock_0 = status_col.str.contains(
+        "Overstock (P90D 0 Sales)", regex=False, na=False
+    ) & (adj_ss > 0)
+
+    df["Recommendation of new Safety Qty / ND"] = ""
+    df.loc[cond_overstock_2x, "Recommendation of new Safety Qty / ND"] = 3
+    df.loc[cond_overstock_0, "Recommendation of new Safety Qty / ND"] = "ND"
+
+    shop_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", pd.Series([0] * len(df))))
+
+    rec = df["Recommendation of new Safety Qty / ND"]
+    mask_3 = (rec == 3) & (shop_stock > 3)
+    mask_nd = (rec == "ND") & (shop_stock > 0)
+
+    df["After new Safety Qty / ND can transfer out of QTY"] = ""
+    df.loc[mask_3, "After new Safety Qty / ND can transfer out of QTY"] = (
+        shop_stock[mask_3] - 3
+    ).astype(int)
+    df.loc[mask_nd, "After new Safety Qty / ND can transfer out of QTY"] = (
+        shop_stock[mask_nd]
+    ).astype(int)
+
+    df["Buyer reply"] = ""
+
+    return df
 
 
 def transform(df_input: pd.DataFrame, progress_callback=None):
@@ -75,8 +175,12 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
     )
     summary = pd.concat([summary, total_row], ignore_index=True)
 
+    if progress_callback:
+        progress_callback(0.6, "\u8a08\u7b97\u5eab\u5b58\u5efa\u8b70\u4e2d...")
+
     raw = df.copy()
     raw["SKU"] = raw["SKU"].apply(lambda x: str(int(x)) if pd.notna(x) else x)
+    raw = _add_recommendation_columns(raw)
 
     if progress_callback:
         progress_callback(0.7, "\u8f49\u63db\u5b8c\u6210")
@@ -92,6 +196,8 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
 
     ws_raw = wb.active
     ws_raw.title = "RAW"
+
+    raw_df = _reorder_raw_columns(raw_df)
 
     raw_cols = list(raw_df.columns)
     ws_raw.append(raw_cols)
