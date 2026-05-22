@@ -89,9 +89,10 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
         "Overstock (P90D 0 Sales)", regex=False, na=False
     ) & (adj_ss > 0)
 
-    df["Recommendation of new Safety Qty / ND"] = ""
-    df.loc[cond_overstock_2x, "Recommendation of new Safety Qty / ND"] = "3"
-    df.loc[cond_overstock_0, "Recommendation of new Safety Qty / ND"] = "ND"
+    rec_values = np.full(len(df), "", dtype=object)
+    rec_values[cond_overstock_2x.values] = "3"
+    rec_values[cond_overstock_0.values] = "ND"
+    df["Recommendation of new Safety Qty / ND"] = rec_values
 
     shop_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", pd.Series([0] * len(df))))
 
@@ -99,13 +100,10 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
     mask_3 = (rec == "3") & (shop_stock > 3)
     mask_nd = (rec == "ND") & (shop_stock > 0)
 
-    df["After new Safety Qty / ND can transfer out of QTY"] = ""
-    df.loc[mask_3, "After new Safety Qty / ND can transfer out of QTY"] = (
-        shop_stock[mask_3] - 3
-    ).astype(int)
-    df.loc[mask_nd, "After new Safety Qty / ND can transfer out of QTY"] = (
-        shop_stock[mask_nd]
-    ).astype(int)
+    transfer_values = np.full(len(df), "", dtype=object)
+    transfer_values[mask_3.values] = (shop_stock[mask_3] - 3).astype(int).values
+    transfer_values[mask_nd.values] = (shop_stock[mask_nd]).astype(int).values
+    df["After new Safety Qty / ND can transfer out of QTY"] = transfer_values
 
     df["Buyer reply"] = ""
 
