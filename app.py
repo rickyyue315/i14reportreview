@@ -307,7 +307,7 @@ button[kind="primary"]:hover {
 """, unsafe_allow_html=True)
 
 # 2b. 注入 JS 邏輯 (透過 st.components 以確保可執行)
-st.html("""
+st.components.v1.html("""
 <script>
 (function() {
     var pDoc = window.parent.document;
