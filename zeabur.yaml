@@ -2,7 +2,7 @@ services:
   - name: i14-report-review
     type: python
     build:
-      python_version: "3.11"
+      python_version: "3.14"
     run:
       command: streamlit run app.py --server.port=${PORT:-8080} --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false
       port: 8080
