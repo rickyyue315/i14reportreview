@@ -241,7 +241,7 @@ if uploaded_file is not None:
         st.session_state.excel_data = None
 
     # 若尚未載入資料，則執行讀取
-    if "df_input" not in st.session_state or st.session_state.last_uploaded_name != uploaded_file.name:
+    if "df_input" not in st.session_state:
         _prog = st.progress(0, text="讀取檔案中... 0% | 初始化中...")
         _t0 = time.time()
         try:
@@ -250,13 +250,15 @@ if uploaded_file is not None:
             _ws = _wb.active
             _n = _ws.max_row
             if _n <= 1:
-                df_input = pd.DataFrame()
+                _prog.empty()
+                st.error("❌ 上傳的 Excel 檔案沒有資料列（僅含標題或完全空白），請確認檔案內容後再試。")
+                st.stop()
             else:
                 _hdr = list(next(_ws.iter_rows(min_row=1, max_row=1, values_only=True)))
                 _rows = []
                 for _i, _r in enumerate(_ws.iter_rows(min_row=2, max_row=_n, values_only=True), start=1):
                     _rows.append(list(_r))
-                    if _i % 500 == 0 or _i == _n - 1:
+                    if _i == _n - 1 or (_i % 500 == 0 and _i != _n - 1):
                         _pct = _i / (_n - 1)
                         _elapsed = time.time() - _t0
                         _eta = (_elapsed / _pct) - _elapsed if _pct > 0 else 0
@@ -364,15 +366,19 @@ if uploaded_file is not None:
         st.markdown("### 📈 異常庫存數據分析摘要 (Analysis Dashboard)")
         
         # 計算看板指標
-        total_overstock = summary_df[summary_df["Buyer"] == "總計"]["總計"].values[0]
+        _total_row = summary_df[summary_df["Buyer"] == "總計"]
+        if _total_row.empty:
+            st.error("❌ 摘要資料中未找到總計列，無法顯示分析看板。")
+            st.stop()
+        total_overstock = int(_total_row["總計"].values[0])
         total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
         total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
         total_skus = raw_df["SKU"].dropna().nunique()
-        
+
         # 取得各分類統計值
         cat_counts = {}
         for cat in categories:
-            cat_counts[cat] = summary_df[summary_df["Buyer"] == "總計"][cat].values[0]
+            cat_counts[cat] = int(_total_row[cat].values[0])
             
         r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
         with r1_col1:
@@ -410,10 +416,9 @@ if uploaded_file is not None:
             
         st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
         
-        transfer_col = _resolve_column_name("After new Safety Qty / ND can transfer out of QTY", set(raw_df.columns))
-        transfer_qty_total = 0
-        if transfer_col:
-            transfer_qty_total = int(pd.to_numeric(raw_df[transfer_col], errors="coerce").fillna(0).sum())
+        _transfer_col_name = "After new Safety Qty / ND can transfer out of QTY"
+        transfer_col_resolved = _resolve_column_name(_transfer_col_name, set(summary_df.columns))
+        transfer_qty_total = int(_total_row[_transfer_col_name].values[0]) if transfer_col_resolved is not None and _transfer_col_name in _total_row.columns else int(pd.to_numeric(raw_df[_transfer_col_name], errors="coerce").fillna(0).sum()) if _transfer_col_name in raw_df.columns else 0
 
         r2_col1, r2_col2, r2_col3 = st.columns(3)
         with r2_col1:

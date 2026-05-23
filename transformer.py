@@ -49,8 +49,8 @@ RAW_COLUMN_ORDER_NAMES = [
 def _resolve_column_name(name: str, available: set[str]) -> str | None:
     if name in available:
         return name
-    for col in available:
-        if col.startswith(name):
+    for col in sorted(available):
+        if col == name or col.startswith(name + " "):
             return col
     return None
 
@@ -69,6 +69,15 @@ def _reorder_raw_columns(df: pd.DataFrame) -> pd.DataFrame:
 def validate_input(df: pd.DataFrame) -> list[str]:
     missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     return missing
+
+
+def _safe_sku(x):
+    if pd.notna(x):
+        try:
+            return str(int(x))
+        except (ValueError, TypeError):
+            return str(x)
+    return x
 
 
 def _safe_numeric(series: pd.Series, default: float = 0.0) -> pd.Series:
@@ -98,11 +107,13 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     rec = df["Recommendation of new Safety Qty / ND"]
     mask_3 = (rec == "3") & (shop_stock > 3)
-    mask_nd = (rec == "ND") & (shop_stock > 0)
+    mask_nd = (rec == "ND") & (shop_stock > 0) & ~mask_3
 
     transfer_values = np.full(len(df), "", dtype=object)
-    transfer_values[mask_3.values] = (shop_stock[mask_3] - 3).astype(int).values
-    transfer_values[mask_nd.values] = (shop_stock[mask_nd]).astype(int).values
+    if mask_3.any():
+        transfer_values[mask_3.values] = (shop_stock[mask_3] - 3).astype(int).values
+    if mask_nd.any():
+        transfer_values[mask_nd.values] = shop_stock[mask_nd].astype(int).values
     df["After new Safety Qty / ND can transfer out of QTY"] = transfer_values
 
     df["Buyer reply"] = ""
@@ -157,7 +168,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
         progress_callback(0.5, "\u8a08\u7b97\u5eab\u5b58\u5efa\u8b70\u4e2d...")
 
     raw = df.copy()
-    raw["SKU"] = raw["SKU"].apply(lambda x: str(int(x)) if pd.notna(x) else x)
+    raw["SKU"] = raw["SKU"].apply(_safe_sku)
     raw = _add_recommendation_columns(raw)
 
     transfer_col = "After new Safety Qty / ND can transfer out of QTY"
@@ -174,7 +185,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
 
     summary = pd.concat(counts.values(), axis=1).fillna(0).astype(int).reset_index()
 
-    summary["SKU"] = summary["SKU"].apply(lambda x: str(int(x)) if pd.notna(x) else x)
+    summary["SKU"] = summary["SKU"].apply(_safe_sku)
     summary["\u7e3d\u8a08"] = summary[categories].sum(axis=1)
 
     summary = summary.merge(transfer_summary, on=group_cols, how="left")
@@ -221,9 +232,15 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
 
     raw_values = raw_df.values.tolist()
     total_raw = len(raw_values)
+    _batch = []
+    _batch_size = 500
     for i, row_vals in enumerate(raw_values):
         cleaned = [None if isinstance(v, float) and pd.isna(v) else v for v in row_vals]
-        ws_raw.append(cleaned)
+        _batch.append(cleaned)
+        if len(_batch) >= _batch_size or i == total_raw - 1:
+            for _r in _batch:
+                ws_raw.append(_r)
+            _batch.clear()
         if progress_callback and (i % 1000 == 0 or i == total_raw - 1):
             progress_callback(0.3 * ((i + 1) / total_raw), f"\u5beb\u5165 RAW ({i+1}/{total_raw})...")
 
@@ -294,12 +311,15 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
 
     ws_dashboard = wb.create_sheet(title="\u7570\u5e38\u5eab\u5b58\u6578\u64da\u5206\u6790\u6458\u8981")
 
-    total_overstock = int(summary_df[summary_df["Buyer"] == "\u7e3d\u8a08"]["\u7e3d\u8a08"].values[0])
+    _total_row = summary_df[summary_df["Buyer"] == "\u7e3d\u8a08"]
+    if _total_row.empty:
+        raise ValueError("\u6458\u8981\u8cc7\u6599\u4e2d\u672a\u627e\u5230\u7e3d\u8a08\u5217\uff0c\u7121\u6cd5\u751f\u6210\u5206\u6790\u770a\u677f")
+    total_overstock = int(_total_row["\u7e3d\u8a08"].values[0])
     total_buyers = len(summary_df[summary_df["Buyer"] != "\u7e3d\u8a08"]["Buyer"].dropna().unique())
     total_brands = len(summary_df[summary_df["Buyer"] != "\u7e3d\u8a08"]["Brand"].dropna().unique())
     total_skus = raw_df["SKU"].dropna().nunique()
-    cat1_val = int(summary_df[summary_df["Buyer"] == "\u7e3d\u8a08"][categories[0]].values[0])
-    cat2_val = int(summary_df[summary_df["Buyer"] == "\u7e3d\u8a08"][categories[1]].values[0])
+    cat1_val = int(_total_row[categories[0]].values[0])
+    cat2_val = int(_total_row[categories[1]].values[0])
 
     transfer_col = _resolve_column_name("After new Safety Qty / ND can transfer out of QTY", set(raw_df.columns))
     transfer_qty_total = 0
