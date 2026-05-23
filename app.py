@@ -221,6 +221,7 @@ if "processed" not in st.session_state:
     st.session_state.categories = None
     st.session_state.excel_data = None
     st.session_state.last_uploaded_name = None
+    st.session_state.warnings = []
 
 # 6. 檔案上傳區域
 uploaded_file = st.file_uploader(
@@ -239,6 +240,8 @@ if uploaded_file is not None:
         st.session_state.raw_df = None
         st.session_state.categories = None
         st.session_state.excel_data = None
+        st.session_state.warnings = []
+        st.session_state.pop("df_input", None)
 
     # 若尚未載入資料，則執行讀取
     if "df_input" not in st.session_state:
@@ -337,8 +340,14 @@ if uploaded_file is not None:
             _prog2.progress(min(pct, 1.0), text=f"處理中... {pct*100:.0f}% | {msg} | 已用: {_e:.0f}s | 預計剩餘: {_eta2:.0f}s")
             
         try:
-            summary_df, raw_df, categories = transform(df_input, progress_callback=_cb)
-            buf = generate_excel(summary_df, raw_df, categories, progress_callback=_cb)
+            def _cb_transform(pct, msg):
+                _cb(0.7 * pct, msg)
+
+            def _cb_excel(pct, msg):
+                _cb(0.7 + 0.3 * pct, msg)
+
+            summary_df, raw_df, categories, _warnings = transform(df_input, progress_callback=_cb_transform)
+            buf = generate_excel(summary_df, raw_df, categories, progress_callback=_cb_excel)
             
             # 將處理結果儲存至 session state
             st.session_state.processed = True
@@ -346,6 +355,7 @@ if uploaded_file is not None:
             st.session_state.raw_df = raw_df
             st.session_state.categories = categories
             st.session_state.excel_data = buf
+            st.session_state.warnings = _warnings
         except Exception as e:
             _prog2.empty()
             st.error(f"❌ 報表處理失敗: {e}")
@@ -353,6 +363,9 @@ if uploaded_file is not None:
             
         _prog2.empty()
         st.success("🎉 報表產生成功！數據彙總已完成。")
+        if _warnings:
+            for _w in _warnings:
+                st.warning(f"⚠️ {_w}")
 
     # 8. 顯示轉換成果區塊 (若已處理完成，則保持顯示)
     if st.session_state.processed:

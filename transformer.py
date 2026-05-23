@@ -74,7 +74,7 @@ def validate_input(df: pd.DataFrame) -> list[str]:
 def _safe_sku(x):
     if pd.notna(x):
         try:
-            return str(int(x))
+            return str(int(float(x)))
         except (ValueError, TypeError):
             return str(x)
     return x
@@ -126,6 +126,13 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
     if missing:
         raise ValueError(f"\u7f3a\u5c11\u5fc5\u8981\u6b04\u4f4d: {', '.join(missing)}")
 
+    warnings = []
+
+    _optional_cols = ["Adj. Safety Stock", "Shop Stock Qty (CM)"]
+    for _col in _optional_cols:
+        if _col not in df_input.columns:
+            warnings.append(f"缺少可選欄位「{_col}」，建議值與轉移數量將全為 0")
+
     if progress_callback:
         progress_callback(0.05, "\u9a57\u8b49\u901a\u904e")
 
@@ -139,6 +146,9 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
         _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
         _footer_mask = _footer_mask | _item_shop_mask
     df = df[~_footer_mask].copy()
+
+    if df.empty:
+        raise ValueError("\u904e\u6ffe\u5f8c\u7121\u6709\u6548\u8cc7\u6599\u5217\uff0c\u8acb\u78ba\u8a8d\u4f86\u6e90\u6a94\u6848\u4e2d\u7684 Buyer \u6b04\u4f4d\u662f\u5426\u5305\u542b\u6709\u6548\u6578\u64da\uff08\u975e\u7a7a\u767d\u6216\u7e3d\u8a08\u5217\uff09")
 
     status_col = df["Shop Stock Status"].fillna("")
 
@@ -213,7 +223,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
     if progress_callback:
         progress_callback(0.7, "\u8f49\u63db\u5b8c\u6210")
 
-    return summary, raw, categories
+    return summary, raw, categories, warnings
 
 
 def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: list[str], progress_callback=None) -> BytesIO:
