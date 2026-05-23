@@ -16,13 +16,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. 注入自定義進階 CSS 樣式以實現極簡專業配色
+# 2. 注入自定義進階 CSS 樣式以實現暗色專業配色 (參考 kilo.ai 風格)
 st.markdown("""
 <style>
 /* 載入 Google 字型 */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+TC:wght@300;400;500;700&display=swap');
 
-/* 全域字型與背景微調 */
+/* 全域字型與背景微調 (暗色主題) */
 html, body, [class*="css"] {
     font-family: 'Inter', 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
 }
@@ -34,14 +34,14 @@ html, body, [class*="css"] {
     max-width: 1200px;
 }
 
-/* 專業漸層 Header Banner */
+/* 專業漸層 Header Banner (暗色) */
 .header-container {
-    background: linear-gradient(135deg, #1E40AF 0%, #0F172A 100%);
+    background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
     padding: 2.2rem;
     border-radius: 14px;
     color: #FFFFFF;
     margin-bottom: 2rem;
-    box-shadow: 0 10px 25px -5px rgba(30, 64, 175, 0.12);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
 }
 .header-title {
     font-size: 2rem;
@@ -60,75 +60,77 @@ html, body, [class*="css"] {
     font-weight: 300;
 }
 
-/* 自定義精美卡片樣式 */
+/* 自定義精美卡片樣式 (暗色) */
 .custom-card {
-    background-color: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background-color: #1e293b;
+    border: 1px solid #334155;
     border-radius: 12px;
     padding: 1.5rem;
     margin-bottom: 1.5rem;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px -1px rgba(0, 0, 0, 0.01);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.15);
+    color: #f1f5f9;
 }
 
-/* 數據指標卡片 (Metric Cards) */
+/* 數據指標卡片 (Metric Cards) 暗色高對比 */
 .metric-card {
-    background-color: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    background-color: #1e293b;
+    border: 1px solid #334155;
     border-radius: 10px;
     padding: 1.2rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
-    border-left: 5px solid #1E40AF;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    border-left: 5px solid #6366f1;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
+    color: #f1f5f9;
 }
 .metric-card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 16px -3px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 8px 16px -3px rgba(0, 0, 0, 0.3);
 }
 .metric-title {
     font-size: 0.82rem;
-    color: #64748B;
+    color: #94a3b8;
     font-weight: 500;
     margin-bottom: 4px;
 }
 .metric-value {
     font-size: 1.6rem;
-    color: #0F172A;
+    color: #f1f5f9;
     font-weight: 700;
     line-height: 1.2;
 }
 .metric-desc {
     font-size: 0.72rem;
-    color: #94A3B8;
+    color: #64748b;
     margin-top: 4px;
 }
 
-/* Streamlit Tabs 頁籤樣式優化 */
+/* Streamlit Tabs 頁籤樣式優化 (暗色) */
 .stTabs [data-baseweb="tab-list"] {
     gap: 10px;
-    border-bottom: 1px solid #E2E8F0;
+    border-bottom: 1px solid #334155;
 }
 .stTabs [data-baseweb="tab"] {
     height: 44px;
     background-color: transparent;
     border-radius: 8px 8px 0px 0px;
     padding: 10px 16px;
-    color: #64748B;
+    color: #94a3b8;
     font-weight: 500;
     transition: all 0.2s;
 }
 .stTabs [data-baseweb="tab"]:hover {
-    color: #1E40AF;
-    background-color: #F8FAFC;
+    color: #a5b4fc;
+    background-color: #1e293b;
 }
 .stTabs [aria-selected="true"] {
-    color: #1E40AF !important;
-    border-bottom: 2px solid #1E40AF !important;
+    color: #6366f1 !important;
+    border-bottom: 2px solid #6366f1 !important;
     font-weight: 700 !important;
 }
 
-/* 針對 Streamlit 內建按鈕的微調 */
+/* 針對 Streamlit 內建按鈕的微調 (暗色) */
 button[kind="primary"] {
-    background: linear-gradient(135deg, #1E40AF 0%, #2563EB 100%) !important;
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
     border: none !important;
     color: white !important;
     font-weight: 600 !important;
@@ -138,15 +140,16 @@ button[kind="primary"] {
 }
 button[kind="primary"]:hover {
     transform: translateY(-1px) !important;
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25) !important;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4) !important;
 }
 
-/* 檔案上傳框外觀優化 */
+/* 檔案上傳框外觀優化 (暗色) */
 [data-testid="stFileUploader"] {
-    border: 2px dashed #CBD5E1;
+    border: 2px dashed #475569;
     border-radius: 12px;
     padding: 1.2rem;
-    background-color: #F8FAFC;
+    background-color: #1e293b;
+    color: #e2e8f0;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -155,8 +158,8 @@ button[kind="primary"]:hover {
 with st.sidebar:
     st.markdown("""
     <div style="text-align: center; padding: 15px 0 5px 0;">
-        <h2 style="color: #1E40AF; margin-bottom: 2px; font-weight: 700; font-size: 1.6rem;">I14 Analyzer</h2>
-        <p style="color: #64748B; font-size: 0.85rem; margin-top: 0;">自動化報表與數據轉換引擎</p>
+        <h2 style="color: #6366f1; margin-bottom: 2px; font-weight: 700; font-size: 1.6rem;">I14 Analyzer</h2>
+        <p style="color: #94a3b8; font-size: 0.85rem; margin-top: 0;">自動化報表與數據轉換引擎</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -176,10 +179,10 @@ with st.sidebar:
     st.markdown("### 🔍 必要欄位檢核標準")
     st.markdown("""
     為確保計算正確，來源檔案必須包含以下欄位：
-    - ✅ **Buyer** <span style="color:#64748B;font-size:0.8em">(採購人員)</span>
-    - ✅ **Brand** <span style="color:#64748B;font-size:0.8em">(品牌名稱)</span>
-    - ✅ **SKU** <span style="color:#64748B;font-size:0.8em">(品號編碼)</span>
-    - ✅ **Shop Stock Status** <span style="color:#64748B;font-size:0.8em">(庫存狀態明細)</span>
+    - ✅ **Buyer** <span style="color:#94a3b8;font-size:0.8em">(採購人員)</span>
+    - ✅ **Brand** <span style="color:#94a3b8;font-size:0.8em">(品牌名稱)</span>
+    - ✅ **SKU** <span style="color:#94a3b8;font-size:0.8em">(品號編碼)</span>
+    - ✅ **Shop Stock Status** <span style="color:#94a3b8;font-size:0.8em">(庫存狀態明細)</span>
     """, unsafe_allow_html=True)
     
     st.divider()
@@ -194,7 +197,7 @@ with st.sidebar:
     
     st.divider()
     st.markdown(
-        '<div style="color: #94A3B8; font-size: 0.75rem; text-align: center; line-height: 1.5;">'
+        '<div style="color: #64748b; font-size: 0.75rem; text-align: center; line-height: 1.5;">'
         f'I14 報表計算工具 v{__version__}<br>'
         'Developed by Ricky Yue<br>'
         'Powered by Streamlit & Zeabur'
@@ -272,9 +275,9 @@ if uploaded_file is not None:
     missing = validate_input(df_input)
     if missing:
         st.markdown(f"""
-        <div style="background-color: #FDF2F2; border: 1px solid #F8B4B4; padding: 15px; border-radius: 8px; margin-bottom: 1.5rem;">
-            <h4 style="color: #9B1C1C; margin-top: 0; margin-bottom: 8px;">❌ 來源檔案欄位檢驗未通過</h4>
-            <p style="color: #771D1D; margin-bottom: 0; font-size: 0.9rem;">
+        <div style="background-color: #450a0a; border: 1px solid #b91c1c; padding: 15px; border-radius: 8px; margin-bottom: 1.5rem;">
+            <h4 style="color: #f87171; margin-top: 0; margin-bottom: 8px;">❌ 來源檔案欄位檢驗未通過</h4>
+            <p style="color: #fecaca; margin-bottom: 0; font-size: 0.9rem;">
                 檔案內缺少必要欄位：<b>{', '.join(missing)}</b>。<br>
                 請確認您上傳的 Excel 檔案包含以下欄位：Buyer, Brand, SKU, Shop Stock Status。
             </p>
@@ -291,7 +294,7 @@ if uploaded_file is not None:
         st.markdown(f"""
         <div class="metric-card" style="border-left-color: #10B981;">
             <div class="metric-title">檔案解析狀態</div>
-            <div class="metric-value" style="color: #059669;">驗證通過</div>
+            <div class="metric-value" style="color: #4ade80;">驗證通過</div>
             <div class="metric-desc">檔案格式符合解析標準</div>
         </div>
         """, unsafe_allow_html=True)
@@ -357,7 +360,7 @@ if uploaded_file is not None:
         excel_data = st.session_state.excel_data
         
         # 數據統計分析面板 (Dashboard)
-        st.markdown('<div class="custom-card" style="border-top: 4px solid #1E40AF;">', unsafe_allow_html=True)
+        st.markdown('<div class="custom-card" style="border-top: 4px solid #6366f1;">', unsafe_allow_html=True)
         st.markdown("### 📈 異常庫存數據分析摘要 (Analysis Dashboard)")
         
         # 計算看板指標
@@ -376,7 +379,7 @@ if uploaded_file is not None:
             st.markdown(f"""
             <div class="metric-card" style="border-left-color: #EF4444;">
                 <div class="metric-title">總 Overstock 筆數</div>
-                <div class="metric-value" style="color: #DC2626;">{int(total_overstock):,}</div>
+                <div class="metric-value" style="color: #f87171;">{int(total_overstock):,}</div>
                 <div class="metric-desc">所有庫存異常之總計筆數</div>
             </div>
             """, unsafe_allow_html=True)
@@ -456,9 +459,9 @@ if uploaded_file is not None:
 
         # 導出與下載區塊
         st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
-        st.markdown('<div class="custom-card" style="background-color: #F8FAFC; border: 1px solid #1E40AF; text-align: center; padding: 2rem 1.5rem;">', unsafe_allow_html=True)
-        st.markdown("<h3 style='color: #1E40AF; margin-top: 0; margin-bottom: 8px;'>🎉 報表處理完畢，已就緒！</h3>", unsafe_allow_html=True)
-        st.markdown("<p style='color: #475569; font-size: 0.95rem; margin-bottom: 20px;'>本工具已為您自動設定好專業的 Excel 表格樣式、欄寬自動調整與自定義篩選器。</p>", unsafe_allow_html=True)
+        st.markdown('<div class="custom-card" style="background-color: #1e293b; border: 1px solid #6366f1; text-align: center; padding: 2rem 1.5rem;">', unsafe_allow_html=True)
+        st.markdown("<h3 style='color: #6366f1; margin-top: 0; margin-bottom: 8px;'>🎉 報表處理完畢，已就緒！</h3>", unsafe_allow_html=True)
+        st.markdown("<p style='color: #94a3b8; font-size: 0.95rem; margin-bottom: 20px;'>本工具已為您自動設定好專業的 Excel 表格樣式、欄寬自動調整與自定義篩選器。</p>", unsafe_allow_html=True)
         
         hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
         download_name = f"I14 by SKUxShop_To Buyer_{hk_time}.xlsx"
@@ -476,7 +479,7 @@ if uploaded_file is not None:
 # 9. 底部頁尾資訊
 st.divider()
 st.markdown(
-    '<div style="text-align: center; color: #94A3B8; font-size: 0.8rem; padding: 10px 0;">'
+    '<div style="text-align: center; color: #64748b; font-size: 0.8rem; padding: 10px 0;">'
     'I14 報表轉換與分析系統 &nbsp;&nbsp;•&nbsp;&nbsp; Streamlit + Zeabur &nbsp;&nbsp;•&nbsp;&nbsp; '
     f'v{__version__} &nbsp;&nbsp;•&nbsp;&nbsp; Developed by Ricky Yue'
     '</div>',
