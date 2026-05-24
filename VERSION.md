@@ -1,7 +1,19 @@
 # 版本記錄
 
-## v1.1.1 (2026-05-23)
+## v1.1.3 (2026-05-24)
 
+- 
+
+## v1.1.2 (2026-05-23)
+
+- Fix: Streamlit deployment on Python 3.14 (use `>=` deps, update zeabur `python_version` to 3.14, upgrade Docker to 3.13-slim)
+- Fix: File-switch upload does not reload data when same file name is re-uploaded
+- Fix: SKU float-string conversion retains decimal place (e.g. `"123.0"`)
+- Fix: Progress bar regression — `_cb_transform` no longer prints before transform
+- Fix: Align zeabur `python_version` with Dockerfile base image
+- Fix: numpy deprecation warning on `np.full` without explicit dtype
+- Fix: Missing optional column warning only shown in dashboard, not on initial transform
+- Fix: Empty filter result raises clear error instead of crashing
 - Fix: SKU conversion crash on non-numeric values (safe int parsing)
 - Fix: Empty file handling with clear error message
 - Fix: IndexError when summary total row is missing (both app.py and transformer.py)

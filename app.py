@@ -220,7 +220,7 @@ if "processed" not in st.session_state:
     st.session_state.raw_df = None
     st.session_state.categories = None
     st.session_state.excel_data = None
-    st.session_state.last_uploaded_name = None
+    st.session_state.last_uploaded_key = None
     st.session_state.warnings = []
 
 # 6. 檔案上傳區域
@@ -233,8 +233,9 @@ uploaded_file = st.file_uploader(
 # 7. 處理上傳的檔案
 if uploaded_file is not None:
     # 當上傳了新檔案，自動重設先前的處理狀態
-    if st.session_state.last_uploaded_name != uploaded_file.name:
-        st.session_state.last_uploaded_name = uploaded_file.name
+    _file_key = f"{uploaded_file.name}_{uploaded_file.size}"
+    if st.session_state.get("last_uploaded_key") != _file_key:
+        st.session_state.last_uploaded_key = _file_key
         st.session_state.processed = False
         st.session_state.summary_df = None
         st.session_state.raw_df = None
@@ -341,10 +342,10 @@ if uploaded_file is not None:
             
         try:
             def _cb_transform(pct, msg):
-                _cb(0.7 * pct, msg)
+                _cb(0.6 * pct, msg)
 
             def _cb_excel(pct, msg):
-                _cb(0.7 + 0.3 * pct, msg)
+                _cb(0.6 + 0.4 * pct, msg)
 
             summary_df, raw_df, categories, _warnings = transform(df_input, progress_callback=_cb_transform)
             buf = generate_excel(summary_df, raw_df, categories, progress_callback=_cb_excel)

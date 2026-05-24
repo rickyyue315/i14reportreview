@@ -88,7 +88,7 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     status_col = df["Shop Stock Status"].fillna("")
 
-    adj_ss = _safe_numeric(df.get("Adj. Safety Stock", pd.Series([0] * len(df))))
+    adj_ss = _safe_numeric(df.get("Adj. Safety Stock", pd.Series(0, index=df.index)))
 
     cond_overstock_2x = status_col.str.contains(
         "Overstock (>2*Monthly Sold Qty & >2pcs)", regex=False, na=False
@@ -103,7 +103,7 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
     rec_values[cond_overstock_0.values] = "ND"
     df["Recommendation of new Safety Qty / ND"] = rec_values
 
-    shop_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", pd.Series([0] * len(df))))
+    shop_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", pd.Series(0, index=df.index)))
 
     rec = df["Recommendation of new Safety Qty / ND"]
     mask_3 = (rec == "3") & (shop_stock > 3)
@@ -268,6 +268,7 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
         cell.alignment = Alignment(horizontal="center")
 
     ws_raw.auto_filter.ref = ws_raw.dimensions
+    _auto_width(ws_raw)
 
     if progress_callback:
         progress_callback(0.35, "\u5efa\u7acb\u6458\u8981\u5de5\u4f5c\u8868...")
