@@ -91,13 +91,9 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
     adj_ss = _safe_numeric(df.get("Adj. Safety Stock", pd.Series(0, index=df.index)))
     monthly_sold = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", pd.Series(0, index=df.index)))
 
-    cond_overstock_2x = status_col.str.contains(
-        "Overstock (>2*Monthly Sold Qty & >2pcs)", regex=False, na=False
-    )
+    cond_overstock_2x = (status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)")
 
-    cond_overstock_0 = status_col.str.contains(
-        "Overstock (P90D 0 Sales)", regex=False, na=False
-    ) & (adj_ss > 0)
+    cond_overstock_0 = (status_col == "Overstock (P90D 0 Sales)") & (adj_ss > 0)
 
     rec_values = np.full(len(df), "", dtype=object)
 
@@ -175,7 +171,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
 
     counts = {}
     for i, cat in enumerate(categories):
-        mask = status_col.str.contains(cat, regex=False, na=False)
+        mask = (status_col == cat)
         counts[cat] = (
             df[mask]
             .groupby(group_cols, observed=True)
