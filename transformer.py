@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import unicodedata
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
@@ -121,6 +122,15 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
         transfer_values[mask_rec_num.values] = (shop_stock[mask_rec_num] - rec_num[mask_rec_num]).astype(int).values
     if mask_nd.any():
         transfer_values[mask_nd.values] = shop_stock[mask_nd].astype(int).values
+
+    mask_rec_zero = rec_num.notna() & (shop_stock <= rec_num)
+    if mask_rec_zero.any():
+        transfer_values[mask_rec_zero.values] = 0
+
+    mask_nd_zero = (rec == "ND") & (shop_stock == 0)
+    if mask_nd_zero.any():
+        transfer_values[mask_nd_zero.values] = 0
+
     df["After new Safety Qty / ND can transfer out of QTY"] = transfer_values
 
     df["Buyer reply"] = ""
@@ -184,9 +194,8 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
     if progress_callback:
         progress_callback(0.5, "\u8a08\u7b97\u5eab\u5b58\u5efa\u8b70\u4e2d...")
 
-    raw = df.copy()
-    raw["SKU"] = raw["SKU"].apply(_safe_sku)
-    raw = _add_recommendation_columns(raw)
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+    raw = _add_recommendation_columns(df)
 
     transfer_col = "After new Safety Qty / ND can transfer out of QTY"
     raw["_transfer_num"] = pd.to_numeric(raw[transfer_col], errors="coerce").fillna(0)
@@ -210,22 +219,29 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
 
     buyer_order = summary.groupby("Buyer")["\u7e3d\u8a08"].sum().sort_values(ascending=False).index.tolist()
     summary["_buyer_key"] = summary["Buyer"].map({b: i for i, b in enumerate(buyer_order)})
-    summary = summary.sort_values(["_buyer_key", "Brand"], ascending=[True, True]).drop(columns=["_buyer_key"]).reset_index(drop=True)
+    summary = summary.sort_values(["_buyer_key", "Brand", "SKU"], ascending=[True, True, True]).drop(columns=["_buyer_key"]).reset_index(drop=True)
 
     transfer_total = int(raw["_transfer_num"].sum())
     raw = raw.drop(columns=["_transfer_num"])
 
+    total_overstock = int(summary["\u7e3d\u8a08"].sum())
     total_row = pd.DataFrame(
         {
             "Buyer": ["\u7e3d\u8a08"],
             "Brand": [None],
             "SKU": [None],
             **{cat: [int(summary[cat].sum())] for cat in categories},
-            "\u7e3d\u8a08": [int(summary["\u7e3d\u8a08"].sum())],
+            "\u7e3d\u8a08": [total_overstock],
             transfer_col: [transfer_total],
         }
     )
     summary = pd.concat([summary, total_row], ignore_index=True)
+
+    if total_overstock == 0:
+        warnings.append(
+            "\u672a\u5075\u6e2c\u5230\u4efb\u4f55\u7b26\u5408\u689d\u4ef6\u7684\u5eab\u5b58\u7570\u5e38\u8cc7\u6599\u3002\u8acb\u78ba\u8a8d\u4f86\u6e90\u6a94\u6848\u4e2d\u7684\u300cShop Stock Status\u300d\u6b04\u4f4d\u503c\u662f\u5426\u5305\u542b\u4ee5\u4e0b\u5206\u985e\uff1a"
+            + ", ".join(categories)
+        )
 
     if progress_callback:
         progress_callback(0.7, "\u8f49\u63db\u5b8c\u6210")
@@ -420,12 +436,13 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
 def _auto_width(ws, min_width=8, max_width=50, sample_rows=200):
     for col_idx in range(1, ws.max_column + 1):
         col_letter = get_column_letter(col_idx)
-        max_len = 0
+        max_len = 0.0
         scan_end = min(ws.max_row, 1 + sample_rows)
         for row_idx in range(1, scan_end + 1):
             cell = ws.cell(row=row_idx, column=col_idx)
             if cell.value is not None:
-                val_len = len(str(cell.value))
+                s = str(cell.value)
+                val_len = sum(2.0 if unicodedata.east_asian_width(c) in ("W", "F") else 1.0 for c in s)
                 if val_len > max_len:
                     max_len = val_len
         adjusted = min(max(max_len + 2, min_width), max_width)
