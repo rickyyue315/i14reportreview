@@ -89,29 +89,40 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
     status_col = df["Shop Stock Status"].fillna("")
 
     adj_ss = _safe_numeric(df.get("Adj. Safety Stock", pd.Series(0, index=df.index)))
+    monthly_sold = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", pd.Series(0, index=df.index)))
 
     cond_overstock_2x = status_col.str.contains(
         "Overstock (>2*Monthly Sold Qty & >2pcs)", regex=False, na=False
-    ) & (adj_ss > 3)
+    )
 
     cond_overstock_0 = status_col.str.contains(
         "Overstock (P90D 0 Sales)", regex=False, na=False
     ) & (adj_ss > 0)
 
     rec_values = np.full(len(df), "", dtype=object)
-    rec_values[cond_overstock_2x.values] = "3"
+
+    # Overstock (>2x): new safety = max(3, floor(P90D * 0.30))
+    if cond_overstock_2x.any():
+        rec_2x = np.floor(monthly_sold[cond_overstock_2x] * 0.30).clip(lower=3).astype(int)
+        rec_values[cond_overstock_2x.values] = rec_2x.astype(str)
+
     rec_values[cond_overstock_0.values] = "ND"
     df["Recommendation of new Safety Qty / ND"] = rec_values
 
     shop_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", pd.Series(0, index=df.index)))
 
     rec = df["Recommendation of new Safety Qty / ND"]
-    mask_3 = (rec == "3") & (shop_stock > 3)
-    mask_nd = (rec == "ND") & (shop_stock > 0) & ~mask_3
+
+    # Numeric recommendation (from >2x): transfer = shop_stock - rec_num
+    rec_num = pd.to_numeric(rec, errors="coerce")
+    mask_rec_num = rec_num.notna() & (shop_stock > rec_num)
+
+    # ND recommendation: transfer = all shop stock
+    mask_nd = (rec == "ND") & (shop_stock > 0)
 
     transfer_values = np.full(len(df), "", dtype=object)
-    if mask_3.any():
-        transfer_values[mask_3.values] = (shop_stock[mask_3] - 3).astype(int).values
+    if mask_rec_num.any():
+        transfer_values[mask_rec_num.values] = (shop_stock[mask_rec_num] - rec_num[mask_rec_num]).astype(int).values
     if mask_nd.any():
         transfer_values[mask_nd.values] = shop_stock[mask_nd].astype(int).values
     df["After new Safety Qty / ND can transfer out of QTY"] = transfer_values
@@ -128,7 +139,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
 
     warnings = []
 
-    _optional_cols = ["Adj. Safety Stock", "Shop Stock Qty (CM)"]
+    _optional_cols = ["Adj. Safety Stock", "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)"]
     for _col in _optional_cols:
         if _col not in df_input.columns:
             warnings.append(f"缺少可選欄位「{_col}」，建議值與轉移數量將全為 0")
