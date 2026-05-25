@@ -36,12 +36,13 @@ html, body, [class*="css"] {
 
 /* 專業漸層 Header Banner (暗色) */
 .header-container {
-    background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+    background: linear-gradient(135deg, #0f2027 0%, #0a0a0f 100%);
     padding: 2.2rem;
     border-radius: 14px;
     color: #FFFFFF;
     margin-bottom: 2rem;
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    border: 1px solid #00d4ff33;
 }
 .header-title {
     font-size: 2rem;
@@ -54,7 +55,7 @@ html, body, [class*="css"] {
 }
 .header-subtitle {
     font-size: 0.95rem;
-    color: #93C5FD;
+    color: #00d4ff;
     margin-top: 8px;
     margin-bottom: 0;
     font-weight: 300;
@@ -62,77 +63,78 @@ html, body, [class*="css"] {
 
 /* 自定義精美卡片樣式 (暗色) */
 .custom-card {
-    background-color: #1e293b;
-    border: 1px solid #334155;
+    background-color: #12121a;
+    border: 1px solid #1e1e2e;
     border-radius: 12px;
     padding: 1.5rem;
     margin-bottom: 1.5rem;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.15);
-    color: #f1f5f9;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+    color: #ffffff;
 }
 
 /* 數據指標卡片 (Metric Cards) 暗色高對比 */
 .metric-card {
-    background-color: #1e293b;
-    border: 1px solid #334155;
+    background-color: #12121a;
+    border: 1px solid #1e1e2e;
     border-radius: 10px;
     padding: 1.2rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-    border-left: 5px solid #6366f1;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    border-left: 5px solid #00d4ff;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
-    color: #f1f5f9;
+    color: #ffffff;
 }
 .metric-card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 16px -3px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 8px 16px -3px rgba(0, 0, 0, 0.4);
+    border-color: #00d4ff;
 }
 .metric-title {
     font-size: 0.82rem;
-    color: #94a3b8;
+    color: #888899;
     font-weight: 500;
     margin-bottom: 4px;
 }
 .metric-value {
     font-size: 1.6rem;
-    color: #f1f5f9;
+    color: #00d4ff;
     font-weight: 700;
     line-height: 1.2;
 }
 .metric-desc {
     font-size: 0.72rem;
-    color: #64748b;
+    color: #666677;
     margin-top: 4px;
 }
 
 /* Streamlit Tabs 頁籤樣式優化 (暗色) */
 .stTabs [data-baseweb="tab-list"] {
     gap: 10px;
-    border-bottom: 1px solid #334155;
+    border-bottom: 1px solid #1e1e2e;
 }
 .stTabs [data-baseweb="tab"] {
     height: 44px;
     background-color: transparent;
     border-radius: 8px 8px 0px 0px;
     padding: 10px 16px;
-    color: #94a3b8;
+    color: #888899;
     font-weight: 500;
     transition: all 0.2s;
 }
 .stTabs [data-baseweb="tab"]:hover {
-    color: #a5b4fc;
-    background-color: #1e293b;
+    color: #00d4ff;
+    background-color: #12121a;
 }
 .stTabs [aria-selected="true"] {
-    color: #6366f1 !important;
-    border-bottom: 2px solid #6366f1 !important;
+    color: #00d4ff !important;
+    border-bottom: 2px solid #00d4ff !important;
     font-weight: 700 !important;
 }
 
 /* 針對 Streamlit 內建按鈕的微調 (暗色) */
 button[kind="primary"] {
-    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+    background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%) !important;
     border: none !important;
-    color: white !important;
+    color: #0a0a0f !important;
     font-weight: 600 !important;
     border-radius: 8px !important;
     padding: 0.55rem 1.4rem !important;
@@ -140,16 +142,16 @@ button[kind="primary"] {
 }
 button[kind="primary"]:hover {
     transform: translateY(-1px) !important;
-    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4) !important;
+    box-shadow: 0 4px 12px rgba(0, 212, 255, 0.4) !important;
 }
 
 /* 檔案上傳框外觀優化 (暗色) */
 [data-testid="stFileUploader"] {
-    border: 2px dashed #475569;
+    border: 2px dashed #00d4ff44;
     border-radius: 12px;
     padding: 1.2rem;
-    background-color: #1e293b;
-    color: #e2e8f0;
+    background-color: #12121a;
+    color: #ffffff;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -158,8 +160,8 @@ button[kind="primary"]:hover {
 with st.sidebar:
     st.markdown("""
     <div style="text-align: center; padding: 15px 0 5px 0;">
-        <h2 style="color: #6366f1; margin-bottom: 2px; font-weight: 700; font-size: 1.6rem;">I14 Analyzer</h2>
-        <p style="color: #94a3b8; font-size: 0.85rem; margin-top: 0;">自動化報表與數據轉換引擎</p>
+        <h2 style="color: #00d4ff; margin-bottom: 2px; font-weight: 700; font-size: 1.6rem;">I14 Analyzer</h2>
+        <p style="color: #888899; font-size: 0.85rem; margin-top: 0;">自動化報表與數據轉換引擎</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -179,10 +181,10 @@ with st.sidebar:
     st.markdown("### 🔍 必要欄位檢核標準")
     st.markdown("""
     為確保計算正確，來源檔案必須包含以下欄位：
-    - ✅ **Buyer** <span style="color:#94a3b8;font-size:0.8em">(採購人員)</span>
-    - ✅ **Brand** <span style="color:#94a3b8;font-size:0.8em">(品牌名稱)</span>
-    - ✅ **SKU** <span style="color:#94a3b8;font-size:0.8em">(品號編碼)</span>
-    - ✅ **Shop Stock Status** <span style="color:#94a3b8;font-size:0.8em">(庫存狀態明細)</span>
+    - ✅ **Buyer** <span style="color:#00d4ff;font-size:0.8em">(採購人員)</span>
+    - ✅ **Brand** <span style="color:#00d4ff;font-size:0.8em">(品牌名稱)</span>
+    - ✅ **SKU** <span style="color:#00d4ff;font-size:0.8em">(品號編碼)</span>
+    - ✅ **Shop Stock Status** <span style="color:#00d4ff;font-size:0.8em">(庫存狀態明細)</span>
     """, unsafe_allow_html=True)
     
     st.divider()
@@ -197,7 +199,7 @@ with st.sidebar:
     
     st.divider()
     st.markdown(
-        '<div style="color: #64748b; font-size: 0.75rem; text-align: center; line-height: 1.5;">'
+        '<div style="color: #444455; font-size: 0.75rem; text-align: center; line-height: 1.5;">'
         f'I14 報表計算工具 v{__version__}<br>'
         'Developed by Ricky Yue<br>'
         'Powered by Streamlit & Zeabur'
@@ -281,9 +283,9 @@ if uploaded_file is not None:
     missing = validate_input(df_input)
     if missing:
         st.markdown(f"""
-        <div style="background-color: #450a0a; border: 1px solid #b91c1c; padding: 15px; border-radius: 8px; margin-bottom: 1.5rem;">
-            <h4 style="color: #f87171; margin-top: 0; margin-bottom: 8px;">❌ 來源檔案欄位檢驗未通過</h4>
-            <p style="color: #fecaca; margin-bottom: 0; font-size: 0.9rem;">
+        <div style="background-color: #1a0a0a; border: 1px solid #ff4444; padding: 15px; border-radius: 8px; margin-bottom: 1.5rem;">
+            <h4 style="color: #ff6666; margin-top: 0; margin-bottom: 8px;">❌ 來源檔案欄位檢驗未通過</h4>
+            <p style="color: #ffaaaa; margin-bottom: 0; font-size: 0.9rem;">
                 檔案內缺少必要欄位：<b>{', '.join(missing)}</b>。<br>
                 請確認您上傳的 Excel 檔案包含以下欄位：Buyer, Brand, SKU, Shop Stock Status。
             </p>
@@ -298,9 +300,9 @@ if uploaded_file is not None:
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown(f"""
-        <div class="metric-card" style="border-left-color: #10B981;">
+        <div class="metric-card" style="border-left-color: #00ff88;">
             <div class="metric-title">檔案解析狀態</div>
-            <div class="metric-value" style="color: #4ade80;">驗證通過</div>
+            <div class="metric-value" style="color: #00ff88;">驗證通過</div>
             <div class="metric-desc">檔案格式符合解析標準</div>
         </div>
         """, unsafe_allow_html=True)
@@ -397,33 +399,33 @@ if uploaded_file is not None:
         r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
         with r1_col1:
             st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #EF4444;">
+            <div class="metric-card" style="border-left-color: #ff5555;">
                 <div class="metric-title">總 Overstock 筆數</div>
-                <div class="metric-value" style="color: #f87171;">{int(total_overstock):,}</div>
+                <div class="metric-value" style="color: #ff5555;">{int(total_overstock):,}</div>
                 <div class="metric-desc">所有庫存異常之總計筆數</div>
             </div>
             """, unsafe_allow_html=True)
         with r1_col2:
             st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #3B82F6;">
+            <div class="metric-card" style="border-left-color: #5599ff;">
                 <div class="metric-title">影響採購人員數 (Buyers)</div>
-                <div class="metric-value">{total_buyers:,}</div>
+                <div class="metric-value" style="color: #5599ff;">{total_buyers:,}</div>
                 <div class="metric-desc">位採購人員名下有異常品項</div>
             </div>
             """, unsafe_allow_html=True)
         with r1_col3:
             st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #8B5CF6;">
+            <div class="metric-card" style="border-left-color: #9944ff;">
                 <div class="metric-title">影響品牌總數 (Brands)</div>
-                <div class="metric-value">{total_brands:,}</div>
+                <div class="metric-value" style="color: #9944ff;">{total_brands:,}</div>
                 <div class="metric-desc">個品牌包含異常庫存商品</div>
             </div>
             """, unsafe_allow_html=True)
         with r1_col4:
             st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #10B981;">
+            <div class="metric-card" style="border-left-color: #00ff88;">
                 <div class="metric-title">影響SKU總數</div>
-                <div class="metric-value">{total_skus:,}</div>
+                <div class="metric-value" style="color: #00ff88;">{total_skus:,}</div>
                 <div class="metric-desc">個包含異常庫存商品(SKUs)</div>
             </div>
             """, unsafe_allow_html=True)
@@ -437,25 +439,25 @@ if uploaded_file is not None:
         r2_col1, r2_col2, r2_col3 = st.columns(3)
         with r2_col1:
             st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #F59E0B;">
+            <div class="metric-card" style="border-left-color: #ff9944;">
                 <div class="metric-title">Overstock (P90D 0 Sales)</div>
-                <div class="metric-value">{int(cat_counts.get(categories[0], 0)):,}</div>
+                <div class="metric-value" style="color: #ff9944;">{int(cat_counts.get(categories[0], 0)):,}</div>
                 <div class="metric-desc">「過去 90 天內零銷售」之異常筆數</div>
             </div>
             """, unsafe_allow_html=True)
         with r2_col2:
             st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #EC4899;">
+            <div class="metric-card" style="border-left-color: #ff44ff;">
                 <div class="metric-title">Overstock (>2*Monthly Sold Qty & >2pcs)</div>
-                <div class="metric-value">{int(cat_counts.get(categories[1], 0)):,}</div>
+                <div class="metric-value" style="color: #ff44ff;">{int(cat_counts.get(categories[1], 0)):,}</div>
                 <div class="metric-desc">「大於月均銷售量兩倍且庫存大於 2 件」之異常筆數</div>
             </div>
             """, unsafe_allow_html=True)
         with r2_col3:
             st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #06B6D4;">
+            <div class="metric-card" style="border-left-color: #00d4ff;">
                 <div class="metric-title">New Safety Qty / ND 調整後的預計總數</div>
-                <div class="metric-value">{transfer_qty_total:,}</div>
+                <div class="metric-value" style="color: #00d4ff;">{transfer_qty_total:,}</div>
                 <div class="metric-desc">After new Safety Qty / ND can transfer out of TOTAL QTY</div>
             </div>
             """, unsafe_allow_html=True)
@@ -478,9 +480,9 @@ if uploaded_file is not None:
 
         # 導出與下載區塊
         st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
-        st.markdown('<div class="custom-card" style="background-color: #1e293b; border: 1px solid #6366f1; text-align: center; padding: 2rem 1.5rem;">', unsafe_allow_html=True)
-        st.markdown("<h3 style='color: #6366f1; margin-top: 0; margin-bottom: 8px;'>🎉 報表處理完畢，已就緒！</h3>", unsafe_allow_html=True)
-        st.markdown("<p style='color: #94a3b8; font-size: 0.95rem; margin-bottom: 20px;'>本工具已為您自動設定好專業的 Excel 表格樣式、欄寬自動調整與自定義篩選器。</p>", unsafe_allow_html=True)
+        st.markdown('<div class="custom-card" style="background-color: #12121a; border: 1px solid #00d4ff; text-align: center; padding: 2rem 1.5rem;">', unsafe_allow_html=True)
+        st.markdown("<h3 style='color: #00d4ff; margin-top: 0; margin-bottom: 8px;'>🎉 報表處理完畢，已就緒！</h3>", unsafe_allow_html=True)
+        st.markdown("<p style='color: #888899; font-size: 0.95rem; margin-bottom: 20px;'>本工具已為您自動設定好專業的 Excel 表格樣式、欄寬自動調整與自定義篩選器。</p>", unsafe_allow_html=True)
         
         hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
         download_name = f"I14 by SKUxShop_To Buyer_{hk_time}.xlsx"
@@ -498,7 +500,7 @@ if uploaded_file is not None:
 # 9. 底部頁尾資訊
 st.divider()
 st.markdown(
-    '<div style="text-align: center; color: #64748b; font-size: 0.8rem; padding: 10px 0;">'
+    '<div style="text-align: center; color: #444455; font-size: 0.8rem; padding: 10px 0;">'
     'I14 報表轉換與分析系統 &nbsp;&nbsp;•&nbsp;&nbsp; Streamlit + Zeabur &nbsp;&nbsp;•&nbsp;&nbsp; '
     f'v{__version__} &nbsp;&nbsp;•&nbsp;&nbsp; Developed by Ricky Yue'
     '</div>',
