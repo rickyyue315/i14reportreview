@@ -98,9 +98,14 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     rec_values = np.full(len(df), "", dtype=object)
 
-    # Overstock (>2x): new safety = max(3, floor(P90D * 0.30))
+    # Overstock (>2x): new safety = max(3, floor(P90D * rate))
+    # rate based on Shop Nature: Tourist→50%, Mix→40%, else→30%
     if cond_overstock_2x.any():
-        rec_2x = np.floor(monthly_sold[cond_overstock_2x] * 0.30).clip(lower=3).astype(int)
+        shop_nature = df.get("Shop Nature", pd.Series("", index=df.index)).fillna("").astype(str).str.lower()
+        rate = np.full(len(df), 0.30)
+        rate[shop_nature.str.contains("tourist", na=False)] = 0.50
+        rate[shop_nature.str.contains("mix", na=False)] = 0.40
+        rec_2x = np.floor(monthly_sold[cond_overstock_2x] * rate[cond_overstock_2x]).clip(lower=3).astype(int)
         rec_values[cond_overstock_2x.values] = rec_2x.astype(str)
 
     rec_values[cond_overstock_0.values] = "ND"
