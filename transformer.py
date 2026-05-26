@@ -143,7 +143,7 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def transform(df_input: pd.DataFrame, progress_callback=None):
+def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None):
     missing = validate_input(df_input)
     if missing:
         raise ValueError(f"\u7f3a\u5c11\u5fc5\u8981\u6b04\u4f4d: {', '.join(missing)}")
@@ -168,6 +168,17 @@ def transform(df_input: pd.DataFrame, progress_callback=None):
         _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
         _footer_mask = _footer_mask | _item_shop_mask
     df = df[~_footer_mask].copy()
+
+    if shop_natures is not None and "Shop Nature" in df.columns:
+        sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
+        mask = pd.Series(False, index=df.index)
+        if "Tourist" in shop_natures:
+            mask |= sn_col.str.contains("tourist", na=False)
+        if "Mix" in shop_natures:
+            mask |= sn_col.str.contains("mix", na=False)
+        if "Non Tourist" in shop_natures:
+            mask |= ~sn_col.str.contains("tourist|mix", na=False, regex=True) & (sn_col != "")
+        df = df[mask].copy()
 
     if df.empty:
         raise ValueError("\u904e\u6ffe\u5f8c\u7121\u6709\u6548\u8cc7\u6599\u5217\uff0c\u8acb\u78ba\u8a8d\u4f86\u6e90\u6a94\u6848\u4e2d\u7684 Buyer \u6b04\u4f4d\u662f\u5426\u5305\u542b\u6709\u6548\u6578\u64da\uff08\u975e\u7a7a\u767d\u6216\u7e3d\u8a08\u5217\uff09")

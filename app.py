@@ -333,6 +333,15 @@ if uploaded_file is not None:
 
     # 執行報表轉換按鈕
     st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+    SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
+    selected_shop_natures = st.multiselect(
+        "🏷️ 選擇要處理的 Shop Nature 類型",
+        options=SHOP_NATURE_OPTIONS,
+        default=SHOP_NATURE_OPTIONS,
+        help="選擇要處理的店鋪性質。預設全選所有類型。"
+    )
+
     if st.button("⚙️ 執行報表轉換與分析", type="primary", use_container_width=True):
         _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
         _t0_2 = time.time()
@@ -349,7 +358,11 @@ if uploaded_file is not None:
             def _cb_excel(pct, msg):
                 _cb(0.6 + 0.4 * pct, msg)
 
-            summary_df, raw_df, categories, _warnings = transform(df_input, progress_callback=_cb_transform)
+            summary_df, raw_df, categories, _warnings = transform(
+                df_input,
+                progress_callback=_cb_transform,
+                shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None
+            )
             buf = generate_excel(summary_df, raw_df, categories, progress_callback=_cb_excel)
             
             # 將處理結果儲存至 session state
