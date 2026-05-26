@@ -86,7 +86,6 @@ def _safe_numeric(series: pd.Series, default: float = 0.0) -> pd.Series:
 
 
 def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
     status_col = df["Shop Stock Status"].fillna("")
 
     adj_ss = _safe_numeric(df.get("Adj. Safety Stock", pd.Series(0, index=df.index)))
@@ -162,7 +161,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None)
     if progress_callback:
         progress_callback(0.05, "\u9a57\u8b49\u901a\u904e")
 
-    df = df_input.dropna(subset=["Buyer"]).copy()
+    df = df_input.dropna(subset=["Buyer"])
 
     if progress_callback:
         progress_callback(0.1, "\u6e05\u7406\u8cc7\u6599\u4e2d...")
@@ -171,7 +170,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None)
     if "Item_Shop" in df.columns:
         _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
         _footer_mask = _footer_mask | _item_shop_mask
-    df = df[~_footer_mask].copy()
+    df = df[~_footer_mask]
 
     if shop_natures is not None and "Shop Nature" in df.columns:
         sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
@@ -182,7 +181,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None)
             mask |= sn_col.str.contains("mix", na=False)
         if "Non Tourist" in shop_natures:
             mask |= ~sn_col.str.contains("tourist|mix", na=False, regex=True) & (sn_col != "")
-        df = df[mask].copy()
+        df = df[mask]
 
     if df.empty:
         raise ValueError("\u904e\u6ffe\u5f8c\u7121\u6709\u6548\u8cc7\u6599\u5217\uff0c\u8acb\u78ba\u8a8d\u4f86\u6e90\u6a94\u6848\u4e2d\u7684 Buyer \u6b04\u4f4d\u662f\u5426\u5305\u542b\u6709\u6548\u6578\u64da\uff08\u975e\u7a7a\u767d\u6216\u7e3d\u8a08\u5217\uff09")
@@ -242,7 +241,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None)
     summary = summary.sort_values(["_buyer_key", "Brand", "SKU"], ascending=[True, True, True]).drop(columns=["_buyer_key"]).reset_index(drop=True)
 
     transfer_total = int(raw["_transfer_num"].sum())
-    raw = raw.drop(columns=["_transfer_num"])
+    del raw["_transfer_num"]
 
     total_overstock = int(summary["\u7e3d\u8a08"].sum())
     total_row = pd.DataFrame(
@@ -283,13 +282,12 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     raw_cols = list(raw_df.columns)
     ws_raw.append(raw_cols)
 
-    raw_values = raw_df.values.tolist()
-    total_raw = len(raw_values)
+    raw_array = raw_df.to_numpy(dtype=object, na_value=None)
+    total_raw = len(raw_array)
     _batch = []
     _batch_size = 500
-    for i, row_vals in enumerate(raw_values):
-        cleaned = [None if isinstance(v, float) and pd.isna(v) else v for v in row_vals]
-        _batch.append(cleaned)
+    for i, row_vals in enumerate(raw_array):
+        _batch.append(list(row_vals))
         if len(_batch) >= _batch_size or i == total_raw - 1:
             for _r in _batch:
                 ws_raw.append(_r)

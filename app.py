@@ -252,24 +252,29 @@ if uploaded_file is not None:
         _t0 = time.time()
         try:
             _raw = uploaded_file.read()
-            _wb = load_workbook(BytesIO(_raw), data_only=True)
+            _wb = load_workbook(BytesIO(_raw), data_only=True, read_only=True)
             _ws = _wb.active
-            _n = _ws.max_row
-            if _n <= 1:
+            _hdr = list(next(_ws.iter_rows(min_row=1, max_row=1, values_only=True)))
+            _rows = []
+            for _i, _r in enumerate(_ws.iter_rows(min_row=2, values_only=True), start=1):
+                _rows.append(list(_r))
+                if _i % 500 == 0:
+                    _elapsed = time.time() - _t0
+                    _prog.progress(min(_i / (_i + 500), 0.99), text=f"讀取檔案中... {_i} 行 | 已用: {_elapsed:.0f}s")
+            if _i == 0:
                 _prog.empty()
+                _wb.close()
+                del _raw, _wb, _rows, _hdr
                 st.error("❌ 上傳的 Excel 檔案沒有資料列（僅含標題或完全空白），請確認檔案內容後再試。")
                 st.stop()
-            else:
-                _hdr = list(next(_ws.iter_rows(min_row=1, max_row=1, values_only=True)))
-                _rows = []
-                for _i, _r in enumerate(_ws.iter_rows(min_row=2, max_row=_n, values_only=True), start=1):
-                    _rows.append(list(_r))
-                    if _i == _n - 1 or (_i % 500 == 0 and _i != _n - 1):
-                        _pct = _i / (_n - 1)
-                        _elapsed = time.time() - _t0
-                        _eta = (_elapsed / _pct) - _elapsed if _pct > 0 else 0
-                        _prog.progress(min(_pct, 1.0), text=f"讀取檔案中... {_pct*100:.0f}% | 已用: {_elapsed:.0f}s | 預計剩餘: {_eta:.0f}s")
-                df_input = pd.DataFrame(_rows, columns=_hdr)
+            df_input = pd.DataFrame(_rows, columns=_hdr)
+            _wb.close()
+            del _raw, _wb, _rows, _hdr
+            _cat_cols = [c for c in df_input.columns
+                         if df_input[c].dtype == object
+                         and df_input[c].nunique(dropna=False) < 0.3 * len(df_input)]
+            for _c in _cat_cols:
+                df_input[_c] = df_input[_c].astype('category')
             st.session_state.df_input = df_input
         except Exception as e:
             _prog.empty()
