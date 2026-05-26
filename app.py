@@ -90,7 +90,7 @@ html, body, [class*="css"] {
 }
 .metric-title {
     font-size: 0.82rem;
-    color: #888899;
+    color: #b0b0c0;
     font-weight: 500;
     margin-bottom: 4px;
 }
@@ -102,7 +102,7 @@ html, body, [class*="css"] {
 }
 .metric-desc {
     font-size: 0.72rem;
-    color: #666677;
+    color: #9999aa;
     margin-top: 4px;
 }
 
