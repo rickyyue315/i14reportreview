@@ -95,7 +95,6 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
 
     cond_overstock_0 = (
         (status_col == "Overstock (P90D 0 Sales)")
-        & (adj_ss > 0)
         & (df.get("RP Type", pd.Series("", index=df.index)).isin(["ND", "RF"]))
     )
 
