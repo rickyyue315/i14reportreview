@@ -85,7 +85,7 @@ def _safe_numeric(series: pd.Series, default: float = 0.0) -> pd.Series:
     return pd.to_numeric(series, errors="coerce").fillna(default)
 
 
-def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
+def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> pd.DataFrame:
     status_col = df["Shop Stock Status"].fillna("")
 
     adj_ss = _safe_numeric(df.get("Adj. Safety Stock", pd.Series(0, index=df.index)))
@@ -101,13 +101,15 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     rec_values = np.full(len(df), "", dtype=object)
 
-    # Overstock (>2x): new safety = max(3, floor(P90D * rate))
-    # rate based on Shop Nature: Tourist→50%, Mix→40%, else→30%
     if cond_overstock_2x.any():
         shop_nature = df.get("Shop Nature", pd.Series("", index=df.index)).fillna("").astype(str).str.lower()
-        rate = np.full(len(df), 0.30)
-        rate[shop_nature.str.contains("tourist", na=False)] = 0.50
-        rate[shop_nature.str.contains("mix", na=False)] = 0.40
+        _rates = rates if rates is not None else {}
+        _default_rate = _rates.get("default", 0.50)
+        _tourist_rate = _rates.get("tourist", 0.30)
+        _mix_rate = _rates.get("mix", 0.40)
+        rate = np.full(len(df), _default_rate)
+        rate[shop_nature.str.contains("tourist", na=False)] = _tourist_rate
+        rate[shop_nature.str.contains("mix", na=False)] = _mix_rate
         rec_2x = np.floor(monthly_sold[cond_overstock_2x] * rate[cond_overstock_2x]).clip(lower=3).astype(int)
         # If new safety qty > Adj. Safety Stock, cap at Adj. Safety Stock
         adj_ss_2x = adj_ss[cond_overstock_2x].values
@@ -150,7 +152,7 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None):
+def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None, rates=None):
     missing = validate_input(df_input)
     if missing:
         raise ValueError(f"\u7f3a\u5c11\u5fc5\u8981\u6b04\u4f4d: {', '.join(missing)}")
@@ -184,7 +186,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None)
         if "Mix" in shop_natures:
             mask |= sn_col.str.contains("mix", na=False)
         if "Non Tourist" in shop_natures:
-            mask |= ~sn_col.str.contains("tourist|mix", na=False, regex=True) & (sn_col != "")
+            mask |= ~sn_col.str.contains("tourist|mix", na=False, regex=True)
         df = df[mask]
 
     if df.empty:
@@ -218,7 +220,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None)
         progress_callback(0.5, "\u8a08\u7b97\u5eab\u5b58\u5efa\u8b70\u4e2d...")
 
     df["SKU"] = df["SKU"].apply(_safe_sku)
-    raw = _add_recommendation_columns(df)
+    raw = _add_recommendation_columns(df, rates=rates)
 
     transfer_col = "After new Safety Qty / ND can transfer out of QTY"
     raw["_transfer_num"] = pd.to_numeric(raw[transfer_col], errors="coerce").fillna(0)

@@ -342,6 +342,26 @@ if uploaded_file is not None:
         help="選擇要處理的店鋪性質。預設全選所有類型。"
     )
 
+    with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
+        st.markdown("調整各 Shop Nature 類型的安全庫存建議倍率（% of Monthly Sold Qty）。")
+        _rate_cols = st.columns(3)
+        with _rate_cols[0]:
+            rate_tourist = st.slider("Tourist Rate (%)", 0, 100, 30, 1,
+                help="Tourist 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
+        with _rate_cols[1]:
+            rate_mix = st.slider("Mix Rate (%)", 0, 100, 40, 1,
+                help="Mix 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
+        with _rate_cols[2]:
+            rate_non_tourist = st.slider("Non Tourist Rate (%)", 0, 100, 50, 1,
+                help="Non Tourist 及其他類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
+        st.caption(f"目前設定 → Tourist: **{rate_tourist}%** | Mix: **{rate_mix}%** | Non Tourist: **{rate_non_tourist}%**")
+
+    rates = {
+        "tourist": rate_tourist / 100.0,
+        "mix": rate_mix / 100.0,
+        "default": rate_non_tourist / 100.0,
+    }
+
     if st.button("⚙️ 執行報表轉換與分析", type="primary", use_container_width=True):
         _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
         _t0_2 = time.time()
@@ -361,7 +381,8 @@ if uploaded_file is not None:
             summary_df, raw_df, categories, _warnings = transform(
                 df_input,
                 progress_callback=_cb_transform,
-                shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None
+                shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                rates=rates,
             )
             buf = generate_excel(summary_df, raw_df, categories, progress_callback=_cb_excel)
             
