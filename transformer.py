@@ -93,7 +93,11 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     cond_overstock_2x = (status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)")
 
-    cond_overstock_0 = (status_col == "Overstock (P90D 0 Sales)") & (adj_ss > 0)
+    cond_overstock_0 = (
+        (status_col == "Overstock (P90D 0 Sales)")
+        & (adj_ss > 0)
+        & (df.get("RP Type", pd.Series("", index=df.index)) == "ND")
+    )
 
     rec_values = np.full(len(df), "", dtype=object)
 
