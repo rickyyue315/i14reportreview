@@ -270,11 +270,6 @@ if uploaded_file is not None:
             df_input = pd.DataFrame(_rows, columns=_hdr)
             _wb.close()
             del _raw, _wb, _rows, _hdr
-            _cat_cols = [c for c in df_input.columns
-                         if df_input[c].dtype == object
-                         and df_input[c].nunique(dropna=False) < 0.3 * len(df_input)]
-            for _c in _cat_cols:
-                df_input[_c] = df_input[_c].astype('category')
             st.session_state.df_input = df_input
         except Exception as e:
             _prog.empty()
