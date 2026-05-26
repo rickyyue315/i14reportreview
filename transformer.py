@@ -96,7 +96,7 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
     cond_overstock_0 = (
         (status_col == "Overstock (P90D 0 Sales)")
         & (adj_ss > 0)
-        & (df.get("RP Type", pd.Series("", index=df.index)) == "ND")
+        & (df.get("RP Type", pd.Series("", index=df.index)).isin(["ND", "RF"]))
     )
 
     rec_values = np.full(len(df), "", dtype=object)
@@ -117,7 +117,12 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
         rec_2x[over_adj] = adj_ss_2x[over_adj].astype(int)
         rec_values[cond_overstock_2x.values] = rec_2x.astype(str)
 
-    rec_values[cond_overstock_0.values] = "ND"
+    if cond_overstock_0.any():
+        rp = df.get("RP Type", pd.Series("", index=df.index))
+        is_rf = cond_overstock_0 & (rp == "RF")
+        is_nd = cond_overstock_0 & (rp == "ND")
+        rec_values[is_rf.values] = "ND"
+        rec_values[is_nd.values] = "0"
     df["Recommendation of new Safety Qty / ND"] = rec_values
 
     shop_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", pd.Series(0, index=df.index)))
