@@ -1,4 +1,4 @@
-import pandas as pd
+﻿import pandas as pd
 import numpy as np
 import unicodedata
 from io import BytesIO
@@ -106,6 +106,10 @@ def _add_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
         rate[shop_nature.str.contains("tourist", na=False)] = 0.50
         rate[shop_nature.str.contains("mix", na=False)] = 0.40
         rec_2x = np.floor(monthly_sold[cond_overstock_2x] * rate[cond_overstock_2x]).clip(lower=3).astype(int)
+        # If new safety qty > Adj. Safety Stock, cap at Adj. Safety Stock
+        adj_ss_2x = adj_ss[cond_overstock_2x].values
+        over_adj = rec_2x > adj_ss_2x
+        rec_2x[over_adj] = adj_ss_2x[over_adj].astype(int)
         rec_values[cond_overstock_2x.values] = rec_2x.astype(str)
 
     rec_values[cond_overstock_0.values] = "ND"
@@ -463,3 +467,4 @@ def _auto_width(ws, min_width=8, max_width=50, sample_rows=200):
                     max_len = val_len
         adjusted = min(max(max_len + 2, min_width), max_width)
         ws.column_dimensions[col_letter].width = adjusted
+
