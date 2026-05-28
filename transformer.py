@@ -631,6 +631,7 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days):
     sold_qty = _safe_numeric(df.get("Sold Qty (CM - MTD)", pd.Series(0.0, index=df.index)))
     adj_ss = _safe_numeric(df.get("Adj. Safety Stock", pd.Series(0.0, index=df.index)))
     shop_nature = df.get("Shop Nature", pd.Series("", index=df.index)).fillna("").astype(str).str.lower()
+    rp_type = df.get("RP Type", pd.Series("", index=df.index)).fillna("").astype(str).str.strip().str.upper()
 
     if mtd_days > 0:
         projected = (sold_qty / mtd_days) * month_total_days
@@ -647,16 +648,30 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days):
     rate_arr[shop_nature.str.contains("tourist", na=False)] = _tourist_rate
     rate_arr[shop_nature.str.contains("mix", na=False)] = _mix_rate
 
-    recommended = np.ceil(projected.values * rate_arr).clip(min=3).astype(int)
+    is_rf = (rp_type == "RF")
+    is_nd = (rp_type == "ND")
+    is_other = ~is_rf & ~is_nd
 
     adj_ss_arr = adj_ss.values.astype(int)
-    over_adj = recommended > adj_ss_arr
-    recommended[over_adj] = adj_ss_arr[over_adj]
+
+    recommended = np.zeros(len(df), dtype=int)
+
+    if is_rf.any():
+        rec_rf = np.ceil(projected.values[is_rf] * rate_arr[is_rf]).clip(min=3).astype(int)
+        recommended[is_rf] = rec_rf
+
+    if is_other.any():
+        rec_other = np.ceil(projected.values[is_other] * rate_arr[is_other]).clip(min=3).astype(int)
+        ad_other = adj_ss_arr[is_other]
+        over_adj = rec_other > ad_other
+        rec_other[over_adj] = ad_other[over_adj]
+        recommended[is_other] = rec_other
 
     df["Recommendation of new Safety Qty"] = recommended
 
     increase = recommended - adj_ss_arr
-    increase = increase.clip(min=0)
+    increase[is_nd] = 0
+    increase[is_other] = increase[is_other].clip(min=0)
     df["Safety Qty Increase"] = increase
 
     df["Buyer reply"] = ""
