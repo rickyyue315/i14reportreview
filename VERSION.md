@@ -1,5 +1,15 @@
 # 版本記錄
 
+## v1.4.0 (2026-05-28)
+
+- New: OOS Review mode — analyze OOS (0 Stock), Potential OOS (<7 Turnday), and Normal (Safety Qty Insufficient) conditions
+- New: Mode selector (Overstock Review / OOS Review / Combined Review) at top of UI
+- New: MTD date input for OOS projected monthly sold calculation
+- New: OOS-specific output sheets (RAW, Shop Stock Status, By Shop, OOS庫存數據分析摘要)
+- New: `transform_oos()`, `_add_oos_recommendation_columns()`, `_build_oos_by_shop_summary()`, `generate_excel_oos()` in transformer.py
+- Chore: Session state separation between Overstock and OOS processing
+- Chore: Combined Review mode placeholder with "Coming Soon" message
+
 ## v1.3.1 (2026-05-28)
 
 - 

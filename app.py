@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
+import calendar
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from transformer import transform, generate_excel, validate_input, _resolve_column_name
+from transformer import transform, generate_excel, validate_input, _resolve_column_name, transform_oos, generate_excel_oos
 import time
 from openpyxl import load_workbook
 from io import BytesIO
@@ -215,7 +216,11 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# 5. 初始化 Session State (確保下載與重整時狀態持久化)
+# 5. 模式選擇器
+mode_options = ["Overstock Review", "OOS Review", "Combined Review"]
+current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0)
+
+# 6. 初始化 Session State (確保下載與重整時狀態持久化)
 if "processed" not in st.session_state:
     st.session_state.processed = False
     st.session_state.summary_df = None
@@ -225,14 +230,40 @@ if "processed" not in st.session_state:
     st.session_state.last_uploaded_key = None
     st.session_state.warnings = []
 
-# 6. 檔案上傳區域
+if "oos_processed" not in st.session_state:
+    st.session_state.oos_processed = False
+    st.session_state.oos_summary_df = None
+    st.session_state.oos_raw_df = None
+    st.session_state.oos_categories = None
+    st.session_state.oos_excel_data = None
+    st.session_state.oos_warnings = []
+
+# 7. 模式切換狀態清理
+prev_mode = st.session_state.get("mode")
+if prev_mode is not None and prev_mode != current_mode:
+    st.session_state.processed = False
+    st.session_state.summary_df = None
+    st.session_state.raw_df = None
+    st.session_state.categories = None
+    st.session_state.excel_data = None
+    st.session_state.warnings = []
+    st.session_state.oos_processed = False
+    st.session_state.oos_summary_df = None
+    st.session_state.oos_raw_df = None
+    st.session_state.oos_categories = None
+    st.session_state.oos_excel_data = None
+    st.session_state.oos_warnings = []
+    st.session_state.pop("last_uploaded_key", None)
+st.session_state.mode = current_mode
+
+# 8. 檔案上傳區域
 uploaded_file = st.file_uploader(
     "📂 上傳 By SKUxShop 原始 Excel 檔案 (.xlsx)",
     type=["xlsx"],
     help="支援標準 Excel (.xlsx) 格式，檔案上限 200MB，最佳化支援 5 萬行以上大數據處理"
 )
 
-# 7. 處理上傳的檔案
+# 9. 處理上傳的檔案
 if uploaded_file is not None:
     # 當上傳了新檔案，自動重設先前的處理狀態
     _file_key = f"{uploaded_file.name}_{uploaded_file.size}"
@@ -331,205 +362,353 @@ if uploaded_file is not None:
         st.caption(f"目前顯示第 1 至第 20 筆明細（總共 {len(df_input):,} 筆原始資料）")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # 執行報表轉換按鈕
-    st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
-
-    SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
-    selected_shop_natures = st.multiselect(
-        "🏷️ 選擇要處理的 Shop Nature 類型",
-        options=SHOP_NATURE_OPTIONS,
-        default=SHOP_NATURE_OPTIONS,
-        help="選擇要處理的店鋪性質。預設全選所有類型。"
-    )
-
-    with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
-        st.markdown("調整各 Shop Nature 類型的安全庫存建議倍率（% of Monthly Sold Qty）。")
-        _rate_cols = st.columns(3)
-        with _rate_cols[0]:
-            rate_tourist = st.slider("Tourist Rate (%)", 0, 100, 30, 1,
-                help="Tourist 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
-        with _rate_cols[1]:
-            rate_mix = st.slider("Mix Rate (%)", 0, 100, 40, 1,
-                help="Mix 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
-        with _rate_cols[2]:
-            rate_non_tourist = st.slider("Non Tourist Rate (%)", 0, 100, 50, 1,
-                help="Non Tourist 及其他類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
-        st.caption(f"目前設定 → Tourist: **{rate_tourist}%** | Mix: **{rate_mix}%** | Non Tourist: **{rate_non_tourist}%**")
-
-    rates = {
-        "tourist": rate_tourist / 100.0,
-        "mix": rate_mix / 100.0,
-        "default": rate_non_tourist / 100.0,
-    }
-
-    if st.button("⚙️ 執行報表轉換與分析", type="primary", use_container_width=True):
-        _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
-        _t0_2 = time.time()
-        
-        def _cb(pct, msg):
-            _e = time.time() - _t0_2
-            _eta2 = (_e / pct) - _e if pct > 0 else 0
-            _prog2.progress(min(pct, 1.0), text=f"處理中... {pct*100:.0f}% | {msg} | 已用: {_e:.0f}s | 預計剩餘: {_eta2:.0f}s")
-            
-        try:
-            def _cb_transform(pct, msg):
-                _cb(0.6 * pct, msg)
-
-            def _cb_excel(pct, msg):
-                _cb(0.6 + 0.4 * pct, msg)
-
-            summary_df, raw_df, categories, _warnings = transform(
-                df_input,
-                progress_callback=_cb_transform,
-                shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
-                rates=rates,
+    if mode == "Combined Review":
+        st.info("📢 Combined Review 模式即將推出，敬請期待！")
+    else:
+        if mode == "OOS Review":
+            mtd_date = st.date_input(
+                "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
+                value=datetime.now().date(),
+                help="選擇 MTD (Month-To-Date) 截止日期，系統將據此推算月度預估銷售量。"
             )
-            buf = generate_excel(summary_df, raw_df, categories, progress_callback=_cb_excel)
-            
-            # 將處理結果儲存至 session state
-            st.session_state.processed = True
-            st.session_state.summary_df = summary_df
-            st.session_state.raw_df = raw_df
-            st.session_state.categories = categories
-            st.session_state.excel_data = buf
-            st.session_state.warnings = _warnings
-        except Exception as e:
-            _prog2.empty()
-            st.error(f"❌ 報表處理失敗: {e}")
-            st.stop()
-            
-        _prog2.empty()
-        st.success("🎉 報表產生成功！數據彙總已完成。")
-        if _warnings:
-            for _w in _warnings:
-                st.warning(f"⚠️ {_w}")
+            mtd_days = mtd_date.day
+            month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
+            st.caption(f"MTD: {mtd_days}日，當月共 {month_total_days} 日")
 
-    # 8. 顯示轉換成果區塊 (若已處理完成，則保持顯示)
-    if st.session_state.processed:
-        summary_df = st.session_state.summary_df
-        raw_df = st.session_state.raw_df
-        categories = st.session_state.categories
-        excel_data = st.session_state.excel_data
-        
-        # 數據統計分析面板 (Dashboard)
-        st.markdown('<div class="custom-card" style="border-top: 4px solid #6366f1;">', unsafe_allow_html=True)
-        st.markdown("### 📈 異常庫存數據分析摘要 (Analysis Dashboard)")
-        
-        # 計算看板指標
-        _total_row = summary_df[summary_df["Buyer"] == "總計"]
-        if _total_row.empty:
-            st.error("❌ 摘要資料中未找到總計列，無法顯示分析看板。")
-            st.stop()
-        total_overstock = int(_total_row["總計"].values[0])
-        total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
-        total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
-        total_skus = raw_df["SKU"].dropna().nunique()
-
-        # 取得各分類統計值
-        cat_counts = {}
-        for cat in categories:
-            cat_counts[cat] = int(_total_row[cat].values[0])
-            
-        r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
-        with r1_col1:
-            st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #ff5555;">
-                <div class="metric-title">總 Overstock 筆數</div>
-                <div class="metric-value" style="color: #ff5555;">{int(total_overstock):,}</div>
-                <div class="metric-desc">所有庫存異常之總計筆數</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with r1_col2:
-            st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #5599ff;">
-                <div class="metric-title">影響採購人員數 (Buyers)</div>
-                <div class="metric-value" style="color: #5599ff;">{total_buyers:,}</div>
-                <div class="metric-desc">位採購人員名下有異常品項</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with r1_col3:
-            st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #9944ff;">
-                <div class="metric-title">影響品牌總數 (Brands)</div>
-                <div class="metric-value" style="color: #9944ff;">{total_brands:,}</div>
-                <div class="metric-desc">個品牌包含異常庫存商品</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with r1_col4:
-            st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #00ff88;">
-                <div class="metric-title">影響SKU總數</div>
-                <div class="metric-value" style="color: #00ff88;">{total_skus:,}</div>
-                <div class="metric-desc">個包含異常庫存商品(SKUs)</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-        st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-        
-        _transfer_col_name = "After new Safety Qty / ND can transfer out of QTY"
-        transfer_col_resolved = _resolve_column_name(_transfer_col_name, set(summary_df.columns))
-        transfer_qty_total = int(_total_row[_transfer_col_name].values[0]) if transfer_col_resolved is not None and _transfer_col_name in _total_row.columns else int(pd.to_numeric(raw_df[_transfer_col_name], errors="coerce").fillna(0).sum()) if _transfer_col_name in raw_df.columns else 0
-
-        r2_col1, r2_col2, r2_col3 = st.columns(3)
-        with r2_col1:
-            st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #ff9944;">
-                <div class="metric-title">Overstock (P90D 0 Sales)</div>
-                <div class="metric-value" style="color: #ff9944;">{int(cat_counts.get(categories[0], 0)):,}</div>
-                <div class="metric-desc">「過去 90 天內零銷售」之異常筆數</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with r2_col2:
-            st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #ff44ff;">
-                <div class="metric-title">Overstock (>2*Monthly Sold Qty & >2pcs)</div>
-                <div class="metric-value" style="color: #ff44ff;">{int(cat_counts.get(categories[1], 0)):,}</div>
-                <div class="metric-desc">「大於月均銷售量兩倍且庫存大於 2 件」之異常筆數</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with r2_col3:
-            st.markdown(f"""
-            <div class="metric-card" style="border-left-color: #00d4ff;">
-                <div class="metric-title">New Safety Qty / ND 調整後的預計總數</div>
-                <div class="metric-value" style="color: #00d4ff;">{transfer_qty_total:,}</div>
-                <div class="metric-desc">After new Safety Qty / ND can transfer out of TOTAL QTY</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        # 詳細資料索引標籤
-        tab1, tab2 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "📄 原始明細資料預覽 (RAW)"])
-        
-        with tab1:
-            st.markdown("#### 採購人員與品牌之庫存異常交叉統計表")
-            st.markdown("本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
-            st.dataframe(summary_df, use_container_width=True, hide_index=True)
-            
-        with tab2:
-            st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
-            st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽：")
-            st.dataframe(raw_df.head(50), use_container_width=True)
-            st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
-
-        # 導出與下載區塊
         st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
-        st.markdown('<div class="custom-card" style="background-color: #12121a; border: 1px solid #00d4ff; text-align: center; padding: 2rem 1.5rem;">', unsafe_allow_html=True)
-        st.markdown("<h3 style='color: #00d4ff; margin-top: 0; margin-bottom: 8px;'>🎉 報表處理完畢，已就緒！</h3>", unsafe_allow_html=True)
-        st.markdown("<p style='color: #888899; font-size: 0.95rem; margin-bottom: 20px;'>本工具已為您自動設定好專業的 Excel 表格樣式、欄寬自動調整與自定義篩選器。</p>", unsafe_allow_html=True)
-        
-        hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
-        download_name = f"I14 by SKUxShop_To Buyer_{hk_time}.xlsx"
-        
-        st.download_button(
-            label="📥 下載完整分析報表 (.xlsx)",
-            data=excel_data,
-            file_name=download_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-            use_container_width=True,
+
+        SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
+        selected_shop_natures = st.multiselect(
+            "🏷️ 選擇要處理的 Shop Nature 類型",
+            options=SHOP_NATURE_OPTIONS,
+            default=SHOP_NATURE_OPTIONS,
+            help="選擇要處理的店鋪性質。預設全選所有類型。"
         )
-        st.markdown('</div>', unsafe_allow_html=True)
+
+        with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
+            st.markdown("調整各 Shop Nature 類型的安全庫存建議倍率（% of Monthly Sold Qty）。")
+            _rate_cols = st.columns(3)
+            with _rate_cols[0]:
+                rate_tourist = st.slider("Tourist Rate (%)", 0, 100, 30, 1,
+                    help="Tourist 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
+            with _rate_cols[1]:
+                rate_mix = st.slider("Mix Rate (%)", 0, 100, 40, 1,
+                    help="Mix 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
+            with _rate_cols[2]:
+                rate_non_tourist = st.slider("Non Tourist Rate (%)", 0, 100, 50, 1,
+                    help="Non Tourist 及其他類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
+            st.caption(f"目前設定 → Tourist: **{rate_tourist}%** | Mix: **{rate_mix}%** | Non Tourist: **{rate_non_tourist}%**")
+
+        rates = {
+            "tourist": rate_tourist / 100.0,
+            "mix": rate_mix / 100.0,
+            "default": rate_non_tourist / 100.0,
+        }
+
+        if st.button("⚙️ 執行報表轉換與分析", type="primary", use_container_width=True):
+            _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
+            _t0_2 = time.time()
+
+            def _cb(pct, msg):
+                _e = time.time() - _t0_2
+                _eta2 = (_e / pct) - _e if pct > 0 else 0
+                _prog2.progress(min(pct, 1.0), text=f"處理中... {pct*100:.0f}% | {msg} | 已用: {_e:.0f}s | 預計剩餘: {_eta2:.0f}s")
+
+            try:
+                def _cb_transform(pct, msg):
+                    _cb(0.6 * pct, msg)
+
+                def _cb_excel(pct, msg):
+                    _cb(0.6 + 0.4 * pct, msg)
+
+                if mode == "Overstock Review":
+                    summary_df, raw_df, categories, _warnings = transform(
+                        df_input,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                        rates=rates,
+                    )
+                    buf = generate_excel(summary_df, raw_df, categories, progress_callback=_cb_excel)
+                    st.session_state.processed = True
+                    st.session_state.summary_df = summary_df
+                    st.session_state.raw_df = raw_df
+                    st.session_state.categories = categories
+                    st.session_state.excel_data = buf
+                    st.session_state.warnings = _warnings
+                else:  # OOS Review
+                    summary_df, raw_df, categories, _warnings = transform_oos(
+                        df_input,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                        rates=rates,
+                        mtd_days=mtd_days,
+                        month_total_days=month_total_days,
+                    )
+                    buf = generate_excel_oos(summary_df, raw_df, categories, progress_callback=_cb_excel)
+                    st.session_state.oos_processed = True
+                    st.session_state.oos_summary_df = summary_df
+                    st.session_state.oos_raw_df = raw_df
+                    st.session_state.oos_categories = categories
+                    st.session_state.oos_excel_data = buf
+                    st.session_state.oos_warnings = _warnings
+            except Exception as e:
+                _prog2.empty()
+                st.error(f"❌ 報表處理失敗: {e}")
+                st.stop()
+
+            _prog2.empty()
+            st.success("🎉 報表產生成功！數據彙總已完成。")
+            if _warnings:
+                for _w in _warnings:
+                    st.warning(f"⚠️ {_w}")
+
+        # 顯示轉換成果區塊
+        if mode == "Overstock Review" and st.session_state.processed:
+            summary_df = st.session_state.summary_df
+            raw_df = st.session_state.raw_df
+            categories = st.session_state.categories
+            excel_data = st.session_state.excel_data
+
+            st.markdown('<div class="custom-card" style="border-top: 4px solid #6366f1;">', unsafe_allow_html=True)
+            st.markdown("### 📈 異常庫存數據分析摘要 (Analysis Dashboard)")
+
+            _total_row = summary_df[summary_df["Buyer"] == "總計"]
+            if _total_row.empty:
+                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看板。")
+                st.stop()
+            total_overstock = int(_total_row["總計"].values[0])
+            total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
+            total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
+            total_skus = raw_df["SKU"].dropna().nunique()
+
+            cat_counts = {}
+            for cat in categories:
+                cat_counts[cat] = int(_total_row[cat].values[0])
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff5555;">
+                    <div class="metric-title">總 Overstock 筆數</div>
+                    <div class="metric-value" style="color: #ff5555;">{int(total_overstock):,}</div>
+                    <div class="metric-desc">所有庫存異常之總計筆數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #5599ff;">
+                    <div class="metric-title">影響採購人員數 (Buyers)</div>
+                    <div class="metric-value" style="color: #5599ff;">{total_buyers:,}</div>
+                    <div class="metric-desc">位採購人員名下有異常品項</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #9944ff;">
+                    <div class="metric-title">影響品牌總數 (Brands)</div>
+                    <div class="metric-value" style="color: #9944ff;">{total_brands:,}</div>
+                    <div class="metric-desc">個品牌包含異常庫存商品</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #00ff88;">
+                    <div class="metric-title">影響SKU總數</div>
+                    <div class="metric-value" style="color: #00ff88;">{total_skus:,}</div>
+                    <div class="metric-desc">個包含異常庫存商品(SKUs)</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+            _transfer_col_name = "After new Safety Qty / ND can transfer out of QTY"
+            transfer_col_resolved = _resolve_column_name(_transfer_col_name, set(summary_df.columns))
+            transfer_qty_total = int(_total_row[_transfer_col_name].values[0]) if transfer_col_resolved is not None and _transfer_col_name in _total_row.columns else int(pd.to_numeric(raw_df[_transfer_col_name], errors="coerce").fillna(0).sum()) if _transfer_col_name in raw_df.columns else 0
+
+            r2_col1, r2_col2, r2_col3 = st.columns(3)
+            with r2_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff9944;">
+                    <div class="metric-title">Overstock (P90D 0 Sales)</div>
+                    <div class="metric-value" style="color: #ff9944;">{int(cat_counts.get(categories[0], 0)):,}</div>
+                    <div class="metric-desc">「過去 90 天內零銷售」之異常筆數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff44ff;">
+                    <div class="metric-title">Overstock (>2*Monthly Sold Qty & >2pcs)</div>
+                    <div class="metric-value" style="color: #ff44ff;">{int(cat_counts.get(categories[1], 0)):,}</div>
+                    <div class="metric-desc">「大於月均銷售量兩倍且庫存大於 2 件」之異常筆數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #00d4ff;">
+                    <div class="metric-title">New Safety Qty / ND 調整後的預計總數</div>
+                    <div class="metric-value" style="color: #00d4ff;">{transfer_qty_total:,}</div>
+                    <div class="metric-desc">After new Safety Qty / ND can transfer out of TOTAL QTY</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            tab1, tab2 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "📄 原始明細資料預覽 (RAW)"])
+
+            with tab1:
+                st.markdown("#### 採購人員與品牌之庫存異常交叉統計表")
+                st.markdown("本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
+                st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+            with tab2:
+                st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
+                st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽：")
+                st.dataframe(raw_df.head(50), use_container_width=True)
+                st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown('<div class="custom-card" style="background-color: #12121a; border: 1px solid #00d4ff; text-align: center; padding: 2rem 1.5rem;">', unsafe_allow_html=True)
+            st.markdown("<h3 style='color: #00d4ff; margin-top: 0; margin-bottom: 8px;'>🎉 報表處理完畢，已就緒！</h3>", unsafe_allow_html=True)
+            st.markdown("<p style='color: #888899; font-size: 0.95rem; margin-bottom: 20px;'>本工具已為您自動設定好專業的 Excel 表格樣式、欄寬自動調整與自定義篩選器。</p>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 by SKUxShop_To Buyer_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載完整分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True,
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        if mode == "OOS Review" and st.session_state.oos_processed:
+            summary_df = st.session_state.oos_summary_df
+            raw_df = st.session_state.oos_raw_df
+            categories = st.session_state.oos_categories
+            excel_data = st.session_state.oos_excel_data
+
+            st.markdown('<div class="custom-card" style="border-top: 4px solid #ef4444;">', unsafe_allow_html=True)
+            st.markdown("### 📈 OOS 庫存數據分析摘要 (OOS Analysis Dashboard)")
+
+            _total_row = summary_df[summary_df["Buyer"] == "總計"]
+            if _total_row.empty:
+                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看板。")
+                st.stop()
+            total_oos = int(_total_row["總計"].values[0])
+            total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
+            total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
+            total_skus = raw_df["SKU"].dropna().nunique()
+
+            cat_counts = {}
+            for cat in categories:
+                cat_counts[cat] = int(_total_row[cat].values[0])
+
+            safety_increase_total = int(pd.to_numeric(raw_df.get("Safety Qty Increase", pd.Series(0, index=raw_df.index)), errors="coerce").fillna(0).sum())
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff5555;">
+                    <div class="metric-title">總 OOS 筆數</div>
+                    <div class="metric-value" style="color: #ff5555;">{total_oos:,}</div>
+                    <div class="metric-desc">所有 OOS 異常之總計筆數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #5599ff;">
+                    <div class="metric-title">影響採購人員數 (Buyers)</div>
+                    <div class="metric-value" style="color: #5599ff;">{total_buyers:,}</div>
+                    <div class="metric-desc">位採購人員名下有 OOS 品項</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #9944ff;">
+                    <div class="metric-title">影響品牌總數 (Brands)</div>
+                    <div class="metric-value" style="color: #9944ff;">{total_brands:,}</div>
+                    <div class="metric-desc">個品牌包含 OOS 商品</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #00ff88;">
+                    <div class="metric-title">影響SKU總數</div>
+                    <div class="metric-value" style="color: #00ff88;">{total_skus:,}</div>
+                    <div class="metric-desc">個包含 OOS 商品(SKUs)</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+            r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
+            with r2_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff9944;">
+                    <div class="metric-title">OOS (0 Stock)</div>
+                    <div class="metric-value" style="color: #ff9944;">{int(cat_counts.get(categories[0], 0)):,}</div>
+                    <div class="metric-desc">現有庫存為 0 之 OOS 筆數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff44ff;">
+                    <div class="metric-title">Potential OOS (<7 Turnday)</div>
+                    <div class="metric-value" style="color: #ff44ff;">{int(cat_counts.get(categories[1], 0)):,}</div>
+                    <div class="metric-desc">Turnday 不足 7 之潛在 OOS 筆數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #06b6d4;">
+                    <div class="metric-title">Normal (Safety Qty Insufficient)</div>
+                    <div class="metric-value" style="color: #06b6d4;">{int(cat_counts.get(categories[2], 0)):,}</div>
+                    <div class="metric-desc">正常庫存但安全庫存不足筆數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #8b5cf6;">
+                    <div class="metric-title">建議 Safety Qty 增加總量</div>
+                    <div class="metric-value" style="color: #8b5cf6;">{safety_increase_total:,}</div>
+                    <div class="metric-desc">建議新增 Safety Qty 之總量</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            tab1, tab2 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "📄 原始明細資料預覽 (RAW)"])
+
+            with tab1:
+                st.markdown("#### 採購人員與品牌之 OOS 交叉統計表")
+                st.markdown("本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
+                st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+            with tab2:
+                st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
+                st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽：")
+                st.dataframe(raw_df.head(50), use_container_width=True)
+                st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown('<div class="custom-card" style="background-color: #12121a; border: 1px solid #00d4ff; text-align: center; padding: 2rem 1.5rem;">', unsafe_allow_html=True)
+            st.markdown("<h3 style='color: #00d4ff; margin-top: 0; margin-bottom: 8px;'>🎉 OOS 報表處理完畢，已就緒！</h3>", unsafe_allow_html=True)
+            st.markdown("<p style='color: #888899; font-size: 0.95rem; margin-bottom: 20px;'>本工具已為您自動設定好專業的 Excel 表格樣式、欄寬自動調整與自定義篩選器。</p>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 OOS Review_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載 OOS 分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True,
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
 
 # 9. 底部頁尾資訊
 st.divider()

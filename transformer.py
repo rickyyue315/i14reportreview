@@ -612,3 +612,445 @@ def _auto_width(ws, min_width=8, max_width=50, sample_rows=200):
         adjusted = min(max(max_len + 2, min_width), max_width)
         ws.column_dimensions[col_letter].width = adjusted
 
+
+# ─── OOS Review Functions ──────────────────────────────────────────────────────
+
+OOS_CATEGORIES = [
+    "OOS (0 Stock)",
+    "Potential OOS (<7 Turnday)",
+]
+
+SECONDARY_CATEGORY = "Normal (Safety Qty Insufficient)"
+
+EXCLUDED_STATUSES = ["No Stock (non-Active SKU / ND Shop)"]
+
+
+def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days):
+    df = df.copy()
+
+    sold_qty = _safe_numeric(df.get("Sold Qty (CM - MTD)", pd.Series(0.0, index=df.index)))
+    adj_ss = _safe_numeric(df.get("Adj. Safety Stock", pd.Series(0.0, index=df.index)))
+    shop_nature = df.get("Shop Nature", pd.Series("", index=df.index)).fillna("").astype(str).str.lower()
+
+    if mtd_days > 0:
+        projected = (sold_qty / mtd_days) * month_total_days
+    else:
+        projected = pd.Series(0.0, index=df.index)
+
+    df["Projected Monthly Sold Qty"] = np.ceil(projected).astype(int)
+
+    _default_rate = rates.get("default", 0.50)
+    _tourist_rate = rates.get("tourist", 0.30)
+    _mix_rate = rates.get("mix", 0.40)
+
+    rate_arr = np.full(len(df), _default_rate)
+    rate_arr[shop_nature.str.contains("tourist", na=False)] = _tourist_rate
+    rate_arr[shop_nature.str.contains("mix", na=False)] = _mix_rate
+
+    recommended = np.ceil(projected.values * rate_arr).clip(min=3).astype(int)
+
+    adj_ss_arr = adj_ss.values.astype(int)
+    over_adj = recommended > adj_ss_arr
+    recommended[over_adj] = adj_ss_arr[over_adj]
+
+    df["Recommendation of new Safety Qty"] = recommended
+
+    increase = recommended - adj_ss_arr
+    increase = increase.clip(min=0)
+    df["Safety Qty Increase"] = increase
+
+    df["Buyer reply"] = ""
+
+    return df
+
+
+def _build_oos_by_shop_summary(raw):
+    df = raw.copy()
+
+    site_code = df.get("Site Code", pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
+    item_shop = df.get("Item_Shop", pd.Series("", index=df.index))
+    shop_name = [
+        _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
+        for i in range(len(df))
+    ]
+
+    df["Site Code"] = site_code
+    df["Shop Name"] = shop_name
+    df["OM"] = df.get("OM", pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+
+    status_col = df["Shop Stock Status"].fillna("")
+    safety_increase = pd.to_numeric(df.get("Safety Qty Increase", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
+
+    group_cols = ["Site Code", "Shop Name", "OM"]
+    df["_is_oos"] = status_col == "OOS (0 Stock)"
+    df["_is_potential_oos"] = status_col == "Potential OOS (<7 Turnday)"
+    df["_is_normal_insufficient"] = (status_col == "Normal") & (safety_increase > 0)
+    df["_sku_oos"] = df["SKU"].where(df["_is_oos"])
+    df["_sku_potential_oos"] = df["SKU"].where(df["_is_potential_oos"])
+    df["_sku_normal_insufficient"] = df["SKU"].where(df["_is_normal_insufficient"])
+    df["_safety_increase"] = safety_increase
+
+    by_shop = (
+        df.groupby(group_cols, dropna=False, observed=True)
+        .agg(
+            OOS_SKU数量=("_sku_oos", "nunique"),
+            Potential_OOS_SKU数量=("_sku_potential_oos", "nunique"),
+            建議SafetyQty增加筆數=("_is_normal_insufficient", "sum"),
+            其他需調整SKU數量=("_sku_normal_insufficient", "nunique"),
+            建議SafetyQty增加總量=("_safety_increase", "sum"),
+        )
+        .reset_index()
+    )
+
+    for col in by_shop.columns:
+        if col not in group_cols:
+            by_shop[col] = by_shop[col].fillna(0).astype(int)
+
+    if not by_shop.empty:
+        total_row = pd.DataFrame(
+            {
+                "Site Code": ["總計"],
+                "Shop Name": [""],
+                "OM": [""],
+                "OOS_SKU数量": [int(by_shop["OOS_SKU数量"].sum())],
+                "Potential_OOS_SKU数量": [int(by_shop["Potential_OOS_SKU数量"].sum())],
+                "建議SafetyQty增加筆數": [int(by_shop["建議SafetyQty增加筆數"].sum())],
+                "其他需調整SKU數量": [int(by_shop["其他需調整SKU數量"].sum())],
+                "建議SafetyQty增加總量": [int(by_shop["建議SafetyQty增加總量"].sum())],
+            }
+        )
+        by_shop = pd.concat([by_shop.sort_values(["Site Code", "Shop Name", "OM"], kind="stable"), total_row], ignore_index=True)
+
+    return by_shop
+
+
+def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_total_days=None):
+    missing = validate_input(df_input)
+    if missing:
+        raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
+
+    warnings = []
+
+    _optional_cols = ["Adj. Safety Stock", "Shop Stock Qty (CM)", "Sold Qty (CM - MTD)", "Shop Stock Status"]
+    for _col in _optional_cols:
+        if _col not in df_input.columns:
+            warnings.append(f"缺少可選欄位「{_col}」，建議值與轉移數量將全為 0")
+
+    df = df_input.dropna(subset=["Buyer"])
+
+    _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
+    if "Item_Shop" in df.columns:
+        _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
+        _footer_mask = _footer_mask | _item_shop_mask
+    df = df[~_footer_mask]
+
+    if shop_natures is not None and "Shop Nature" in df.columns:
+        sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
+        mask = pd.Series(False, index=df.index)
+        if "Tourist" in shop_natures:
+            mask |= sn_col.str.contains("tourist", na=False)
+        if "Mix" in shop_natures:
+            mask |= sn_col.str.contains("mix", na=False)
+        if "Non Tourist" in shop_natures:
+            mask |= ~sn_col.str.contains("tourist|mix", na=False, regex=True)
+        df = df[mask]
+
+    if df.empty:
+        raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
+
+    status_col = df["Shop Stock Status"].fillna("")
+    exclude_mask = status_col.isin(EXCLUDED_STATUSES) | status_col.str.startswith("Overstock", na=False)
+    df = df[~exclude_mask]
+
+    if df.empty:
+        raise ValueError("過濾 OOS / No Stock / Overstock 後無有效資料列")
+
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+    raw = _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days)
+
+    categories = OOS_CATEGORIES + [SECONDARY_CATEGORY]
+
+    status_col = raw["Shop Stock Status"].fillna("")
+    safety_increase = pd.to_numeric(raw.get("Safety Qty Increase", pd.Series(0, index=raw.index)), errors="coerce").fillna(0)
+
+    group_cols = ["Buyer", "Brand", "SKU"]
+
+    counts = {}
+    for cat in OOS_CATEGORIES:
+        mask = (status_col == cat)
+        counts[cat] = (
+            raw[mask]
+            .groupby(group_cols, observed=True)
+            .size()
+            .rename(cat)
+        )
+
+    normal_mask = (status_col == "Normal") & (safety_increase > 0)
+    counts[SECONDARY_CATEGORY] = (
+        raw[normal_mask]
+        .groupby(group_cols, observed=True)
+        .size()
+        .rename(SECONDARY_CATEGORY)
+    )
+
+    summary = pd.concat(counts.values(), axis=1).fillna(0).astype(int).reset_index()
+    summary["SKU"] = summary["SKU"].apply(_safe_sku)
+    summary["總計"] = summary[categories].sum(axis=1)
+
+    safety_inc_per_group = (
+        raw.groupby(group_cols, observed=True)["Safety Qty Increase"]
+        .sum()
+        .astype(int)
+    )
+    summary = summary.merge(safety_inc_per_group, on=group_cols, how="left")
+    summary["Safety Qty Increase"] = summary["Safety Qty Increase"].fillna(0).astype(int)
+
+    buyer_order = summary.groupby("Buyer")["總計"].sum().sort_values(ascending=False).index.tolist()
+    summary["_buyer_key"] = summary["Buyer"].map({b: i for i, b in enumerate(buyer_order)})
+    summary = summary.sort_values(["_buyer_key", "Brand", "SKU"], ascending=[True, True, True]).drop(columns=["_buyer_key"]).reset_index(drop=True)
+
+    total_oos = int(summary["總計"].sum())
+    total_row = pd.DataFrame(
+        {
+            "Buyer": ["總計"],
+            "Brand": [None],
+            "SKU": [None],
+            **{cat: [int(summary[cat].sum())] for cat in categories},
+            "總計": [total_oos],
+            "Safety Qty Increase": [int(summary["Safety Qty Increase"].sum())],
+        }
+    )
+    summary = pd.concat([summary, total_row], ignore_index=True)
+
+    if total_oos == 0:
+        warnings.append("未偵測到任何符合條件的 OOS 資料。請確認來源檔案中的「Shop Stock Status」欄位值是否包含以下分類: " + ", ".join(categories))
+
+    return summary, raw, categories, warnings
+
+
+def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
+    wb = Workbook()
+
+    if progress_callback:
+        progress_callback(0.0, "建立 Excel 結構...")
+
+    ws_raw = wb.active
+    ws_raw.title = "RAW"
+
+    raw_df = _reorder_raw_columns(raw_df)
+
+    raw_cols = list(raw_df.columns)
+    ws_raw.append(raw_cols)
+
+    raw_array = raw_df.to_numpy(dtype=object, na_value=None)
+    total_raw = len(raw_array)
+    _batch = []
+    _batch_size = 500
+    for i, row_vals in enumerate(raw_array):
+        _batch.append(list(row_vals))
+        if len(_batch) >= _batch_size or i == total_raw - 1:
+            for _r in _batch:
+                ws_raw.append(_r)
+            _batch.clear()
+        if progress_callback and (i % 1000 == 0 or i == total_raw - 1):
+            progress_callback(0.3 * ((i + 1) / total_raw), f"寫入 RAW ({i+1}/{total_raw})...")
+
+    header_fill_raw = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    ncols = len(raw_cols)
+    for col_idx in range(1, ncols + 1):
+        cell = ws_raw.cell(row=1, column=col_idx)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill_raw
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center")
+
+    ws_raw.auto_filter.ref = ws_raw.dimensions
+    _auto_width(ws_raw)
+
+    if progress_callback:
+        progress_callback(0.35, "建立摘要工作表...")
+
+    ws_summary = wb.create_sheet(title="Shop Stock Status")
+
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    bold_font = Font(bold=True, size=11)
+
+    ws_summary["A3"] = "行數 - Site Code"
+    ws_summary["D3"] = "Shop Stock Status"
+
+    headers = ["Buyer", "Brand", "SKU"] + categories + ["總計", "Safety Qty Increase"]
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws_summary.cell(row=4, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    data_start = 5
+    total_summary = len(summary_df)
+
+    for row_idx, row_data in summary_df.iterrows():
+        excel_row = data_start + row_idx
+        is_total = row_data["Buyer"] == "總計"
+
+        for col_idx, h in enumerate(headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws_summary.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            if is_total:
+                cell.font = bold_font
+
+            if isinstance(val, (int, float)) and col_idx >= 4 and h != "SKU":
+                cell.number_format = "#,##0"
+
+        if progress_callback and (row_idx % 500 == 0 or row_idx == total_summary - 1):
+            progress_callback(0.6 + 0.3 * ((row_idx + 1) / total_summary), f"寫入摘要 ({row_idx+1}/{total_summary})...")
+
+    _auto_width(ws_summary)
+
+    if progress_callback:
+        progress_callback(0.72, "建立 By Shop 分析工作表...")
+
+    by_shop_df = _build_oos_by_shop_summary(raw_df)
+
+    ws_by_shop = wb.create_sheet(title="By Shop")
+    by_shop_headers = [
+        "Site Code",
+        "Shop Name",
+        "OM",
+        "OOS_SKU数量",
+        "Potential_OOS_SKU数量",
+        "建議SafetyQty增加筆數",
+        "其他需調整SKU數量",
+        "建議SafetyQty增加總量",
+    ]
+
+    for col_idx, h in enumerate(by_shop_headers, 1):
+        cell = ws_by_shop.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    for row_idx, row_data in by_shop_df.iterrows():
+        excel_row = row_idx + 2
+        is_total = row_data.get("Site Code") == "總計"
+        for col_idx, h in enumerate(by_shop_headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws_by_shop.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_total:
+                cell.font = bold_font
+            if isinstance(val, (int, float)) and col_idx >= 4:
+                cell.number_format = "#,##0"
+
+        if progress_callback and (row_idx % 500 == 0 or row_idx == len(by_shop_df) - 1):
+            progress_callback(0.82 + 0.08 * ((row_idx + 1) / max(len(by_shop_df), 1)), f"寫入 By Shop ({row_idx+1}/{len(by_shop_df)})...")
+
+    _auto_width(ws_by_shop)
+
+    if progress_callback:
+        progress_callback(0.92, "建立分析摘要工作表...")
+
+    ws_dashboard = wb.create_sheet(title="OOS庫存數據分析摘要")
+
+    _total_row = summary_df[summary_df["Buyer"] == "總計"]
+    if _total_row.empty:
+        raise ValueError("摘要資料中未找到總計列，無法生成分析看板")
+    total_oos = int(_total_row["總計"].values[0])
+    total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
+    total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
+    total_skus = raw_df["SKU"].dropna().nunique()
+
+    cat1_val = int(_total_row[categories[0]].values[0]) if len(categories) > 0 else 0
+    cat2_val = int(_total_row[categories[1]].values[0]) if len(categories) > 1 else 0
+    cat3_val = int(_total_row[categories[2]].values[0]) if len(categories) > 2 else 0
+
+    safety_increase_total = int(pd.to_numeric(raw_df.get("Safety Qty Increase", pd.Series(0, index=raw_df.index)), errors="coerce").fillna(0).sum())
+
+    ws_dashboard.merge_cells("A1:D1")
+    title_cell = ws_dashboard.cell(row=1, column=1, value="OOS庫存數據分析摘要 (OOS Analysis Dashboard)")
+    title_cell.font = Font(bold=True, size=14, color="1E40AF")
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    row1_metrics = [
+        ("總 OOS 筆數", total_oos, "所有 OOS 異常之總計筆數", "EF4444"),
+        ("影響採購人員數 (Buyers)", total_buyers, "位採購人員名下有 OOS 品項", "3B82F6"),
+        ("影響品牌總數 (Brands)", total_brands, "個品牌包含 OOS 商品", "8B5CF6"),
+        ("影響SKU總數", total_skus, "個包含 OOS 商品(SKUs)", "10B981"),
+    ]
+
+    desc_font = Font(size=9, color="6B7280", italic=True)
+
+    for i, (name, value, desc, color) in enumerate(row1_metrics):
+        col = i + 1
+        tc = ws_dashboard.cell(row=3, column=col, value=name)
+        tc.font = Font(bold=True, size=11, color="FFFFFF")
+        tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+        tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        tc.border = thin_border
+
+        vc = ws_dashboard.cell(row=4, column=col, value=value)
+        vc.font = Font(bold=True, size=20, color=color)
+        vc.alignment = Alignment(horizontal="center", vertical="center")
+        vc.number_format = "#,##0"
+        vc.border = thin_border
+
+        dc = ws_dashboard.cell(row=5, column=col, value=desc)
+        dc.font = desc_font
+        dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        dc.border = thin_border
+
+    row2_metrics = [
+        ("OOS (0 Stock)", cat1_val, "現有庫存為 0 之 OOS 筆數", "F59E0B"),
+        ("Potential OOS (<7 Turnday)", cat2_val, "Turnday 不足 7 之潛在 OOS 筆數", "EC4899"),
+        ("Normal (Safety Qty Insufficient)", cat3_val, "正常庫存但安全庫存不足筆數", "06B6D4"),
+        ("建議 Safety Qty 增加總量", safety_increase_total, "建議新增 Safety Qty 之總量", "8B5CF6"),
+    ]
+
+    for i, (name, value, desc, color) in enumerate(row2_metrics):
+        col = i + 1
+        tc = ws_dashboard.cell(row=7, column=col, value=name)
+        tc.font = Font(bold=True, size=11, color="FFFFFF")
+        tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+        tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        tc.border = thin_border
+
+        vc = ws_dashboard.cell(row=8, column=col, value=value)
+        vc.font = Font(bold=True, size=20, color=color)
+        vc.alignment = Alignment(horizontal="center", vertical="center")
+        vc.number_format = "#,##0"
+        vc.border = thin_border
+
+        dc = ws_dashboard.cell(row=9, column=col, value=desc)
+        dc.font = desc_font
+        dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        dc.border = thin_border
+
+    if progress_callback:
+        progress_callback(0.95, "調整格式中...")
+
+    _auto_width(ws_dashboard)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    if progress_callback:
+        progress_callback(1.0, "完成!")
+
+    return buf
+
