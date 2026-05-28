@@ -1,6 +1,7 @@
 ﻿import pandas as pd
 import numpy as np
 import unicodedata
+import re
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
@@ -83,6 +84,97 @@ def _safe_sku(x):
 
 def _safe_numeric(series: pd.Series, default: float = 0.0) -> pd.Series:
     return pd.to_numeric(series, errors="coerce").fillna(default)
+
+
+def _extract_shop_name(item_shop, site_code) -> str:
+    if pd.isna(item_shop) or pd.isna(site_code):
+        return ""
+
+    item_text = str(item_shop).strip()
+    site_text = str(site_code).strip()
+    if not item_text or not site_text:
+        return ""
+
+    marker = f"{site_text}-"
+    idx = item_text.rfind(marker)
+    if idx == -1:
+        pattern = rf"{re.escape(site_text)}-(.+)$"
+        match = re.search(pattern, item_text)
+        if not match:
+            return ""
+        shop_text = match.group(1)
+    else:
+        shop_text = item_text[idx + len(marker):]
+
+    return shop_text.strip().strip(",，;；:：")
+
+
+def _build_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
+    df = raw.copy()
+
+    site_code = df.get("Site Code", pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
+    item_shop = df.get("Item_Shop", pd.Series("", index=df.index))
+    shop_name = [
+        _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
+        for i in range(len(df))
+    ]
+
+    df["Site Code"] = site_code
+    df["Shop Name"] = shop_name
+    df["OM"] = df.get("OM", pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+
+    status_col = df["Shop Stock Status"].fillna("")
+    rec_col = df["Recommendation of new Safety Qty / ND"].fillna("").astype(str)
+    rec_num = pd.to_numeric(rec_col, errors="coerce")
+    transfer_col = "After new Safety Qty / ND can transfer out of QTY"
+    transfer_num = pd.to_numeric(df.get(transfer_col, pd.Series(0, index=df.index)), errors="coerce").fillna(0)
+
+    group_cols = ["Site Code", "Shop Name", "OM"]
+    df["_is_0_sales"] = status_col == "Overstock (P90D 0 Sales)"
+    df["_is_2x"] = status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)"
+    df["_is_nd_change"] = df["_is_0_sales"] & (rec_col == "ND")
+    df["_is_safety_change"] = df["_is_2x"] & rec_num.notna()
+    df["_sku_0_sales"] = df["SKU"].where(df["_is_0_sales"])
+    df["_sku_2x"] = df["SKU"].where(df["_is_2x"])
+    df["_transfer_num"] = transfer_num
+
+    by_shop = (
+        df.groupby(group_cols, dropna=False, observed=True)
+        .agg(
+            更改NDRF行數=("_is_nd_change", "sum"),
+            更改Safety行數=("_is_safety_change", "sum"),
+            預計總轉出貨量=("_transfer_num", "sum"),
+            **{
+                "P90D 0 Sales SKU數量": ("_sku_0_sales", "nunique"),
+                ">2*Monthly Sold Qty & >2pcs數量": ("_sku_2x", "nunique"),
+            },
+        )
+        .reset_index()
+    )
+
+    by_shop["更改NDRF行數"] = by_shop["更改NDRF行數"].fillna(0).astype(int)
+    by_shop["更改Safety行數"] = by_shop["更改Safety行數"].fillna(0).astype(int)
+    by_shop["預計總轉出貨量"] = by_shop["預計總轉出貨量"].fillna(0).astype(int)
+    by_shop["P90D 0 Sales SKU數量"] = by_shop["P90D 0 Sales SKU數量"].fillna(0).astype(int)
+    by_shop[">2*Monthly Sold Qty & >2pcs數量"] = by_shop[">2*Monthly Sold Qty & >2pcs數量"].fillna(0).astype(int)
+
+    if not by_shop.empty:
+        total_row = pd.DataFrame(
+            {
+                "Site Code": ["總計"],
+                "Shop Name": [""],
+                "OM": [""],
+                "更改NDRF行數": [int(by_shop["更改NDRF行數"].sum())],
+                "更改Safety行數": [int(by_shop["更改Safety行數"].sum())],
+                "預計總轉出貨量": [int(by_shop["預計總轉出貨量"].sum())],
+                "P90D 0 Sales SKU數量": [int(by_shop["P90D 0 Sales SKU數量"].sum())],
+                ">2*Monthly Sold Qty & >2pcs數量": [int(by_shop[">2*Monthly Sold Qty & >2pcs數量"].sum())],
+            }
+        )
+        by_shop = pd.concat([by_shop.sort_values(["Site Code", "Shop Name", "OM"], kind="stable"), total_row], ignore_index=True)
+
+    return by_shop
 
 
 def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> pd.DataFrame:
@@ -369,7 +461,51 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     _auto_width(ws_summary)
 
     if progress_callback:
-        progress_callback(0.90, "\u5efa\u7acb\u5206\u6790\u6458\u8981\u5de5\u4f5c\u8868...")
+        progress_callback(0.72, "\u5efa\u7acb By Shop \u5206\u6790\u5de5\u4f5c\u8868...")
+
+    by_shop_df = _build_by_shop_summary(raw_df)
+
+    ws_by_shop = wb.create_sheet(title="By Shop")
+    by_shop_headers = [
+        "Site Code",
+        "Shop Name",
+        "OM",
+        "更改NDRF行數",
+        "更改Safety行數",
+        "預計總轉出貨量",
+        "P90D 0 Sales SKU數量",
+        ">2*Monthly Sold Qty & >2pcs數量",
+    ]
+
+    for col_idx, h in enumerate(by_shop_headers, 1):
+        cell = ws_by_shop.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    for row_idx, row_data in by_shop_df.iterrows():
+        excel_row = row_idx + 2
+        is_total = row_data.get("Site Code") == "總計"
+        for col_idx, h in enumerate(by_shop_headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws_by_shop.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_total:
+                cell.font = bold_font
+            if isinstance(val, (int, float)) and col_idx >= 4:
+                cell.number_format = "#,##0"
+
+        if progress_callback and (row_idx % 500 == 0 or row_idx == len(by_shop_df) - 1):
+            progress_callback(0.82 + 0.08 * ((row_idx + 1) / max(len(by_shop_df), 1)), f"\u5beb\u5165 By Shop ({row_idx+1}/{len(by_shop_df)})...")
+
+    _auto_width(ws_by_shop)
+
+    if progress_callback:
+        progress_callback(0.92, "\u5efa\u7acb\u5206\u6790\u6458\u8981\u5de5\u4f5c\u8868...")
 
     ws_dashboard = wb.create_sheet(title="\u7570\u5e38\u5eab\u5b58\u6578\u64da\u5206\u6790\u6458\u8981")
 
