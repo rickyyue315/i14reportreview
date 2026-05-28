@@ -168,13 +168,35 @@ with st.sidebar:
     
     st.divider()
     
-    st.markdown("### 📋 系統操作指南")
+    st.markdown("### 🎯 分析模式說明")
     st.markdown("""
-    1. 📥 **準備來源檔案**：確認您的 Excel 檔案（By SKUxShop）包含下方檢核表所列之必要欄位。
+    於主頁面頂端選擇分析模式後，系統將自動切換對應的計算流程與輸出：
+
+    **📦 Overstock Review**
+    - 篩選庫存過賸品項（P90D 零銷售 / 超過月均兩倍）
+    - 計算新 Safety Qty 與可轉出貨量
+    - 輸出：RAW、Shop Stock Status、By Shop、分析摘要
+
+    **🚨 OOS Review**
+    - 篩選缺貨（0 Stock）及潛在缺貨（Turnday < 7）
+    - 偵測 Safety Qty 不足之正常庫存品項
+    - 支援 MTD 日期選擇與月度預估銷售計算
+    - 輸出：RAW、Shop Stock Status、By Shop、分析摘要
+
+    **🔄 Combined Review**
+    - 同時整合 Overstock 與 OOS 分析結果（敬請期待）
+    """)
+    
+    st.divider()
+    
+    st.markdown("### 📋 系統操作流程")
+    st.markdown("""
+    1. 📥 **準備來源檔案**：確認您的 Excel 檔案（By SKUxShop）包含必要欄位。
     2. 📂 **上傳檔案**：將 Excel 拖曳至右側上傳區域。
-    3. 🔍 **預覽確認**：系統解析完成後，可於主介面預覽前 20 筆資料，核對檔案結構。
-    4. ⚙️ **執行轉換**：點擊「執行報表轉換與分析」，系統將依特定規則過濾、計算並自動產生彙總表。
-    5. 💾 **下載成果**：於視覺化看板中即時查閱統計資訊，並一鍵導出美化後的 Excel 報表。
+    3. 🎯 **選擇模式**：於主頁面頂端選擇 Overstock Review 或 OOS Review。
+    4. 🔧 **設定參數**：根據模式需要，調整 MTD 日期、Shop Nature Rate 等進階選項。
+    5. ⚙️ **執行轉換**：點擊「執行報表轉換與分析」，系統將自動過濾、計算並產生彙總表。
+    6. 💾 **下載成果**：於視覺化看板中即時查閱統計資訊，並一鍵導出美化後的 Excel 報表。
     """)
     
     st.divider()
@@ -186,19 +208,31 @@ with st.sidebar:
     - ✅ **Brand** <span style="color:#00d4ff;font-size:0.8em">(品牌名稱)</span>
     - ✅ **SKU** <span style="color:#00d4ff;font-size:0.8em">(品號編碼)</span>
     - ✅ **Shop Stock Status** <span style="color:#00d4ff;font-size:0.8em">(庫存狀態明細)</span>
+
+    OOS Review 額外建議欄位（非必要，缺少時將顯示提示）：
+    - 📌 **Sold Qty (CM - MTD)** <span style="color:#f59e0b;font-size:0.8em">(月度銷售)</span>
+    - 📌 **Adj. Safety Stock** <span style="color:#f59e0b;font-size:0.8em">(現有安全庫存)</span>
+    - 📌 **Shop Nature** <span style="color:#f59e0b;font-size:0.8em">(店鋪性質)</span>
     """, unsafe_allow_html=True)
     
     st.divider()
     
     st.markdown("### ⚙️ 核心計算規則")
     st.markdown("""
-    系統會針對 `Shop Stock Status` 欄位過濾以下庫存過賸（Overstock）條件並歸類：
-    1. **Overstock (P90D 0 Sales)**
-    2. **Overstock (>2*Monthly Qty & >2pcs)**
-    3. 自動生成採購與品牌的交叉匯總樞紐分析表。
+    **Overstock Review** — 針對 `Shop Stock Status` 過濾以下庫存過賸條件：
+    1. **Overstock (P90D 0 Sales)** — 過去 90 天內零銷售
+    2. **Overstock (>2*Monthly Qty & >2pcs)** — 庫存超過月均銷售兩倍且大於 2 件
+
+    **OOS Review** — 針對 `Shop Stock Status` 過濾以下缺貨條件：
+    1. **OOS (0 Stock)** — 現有庫存為 0
+    2. **Potential OOS (<7 Turnday)** — Turnday 不足 7 天
+    3. **Normal (Safety Qty Insufficient)** — 庫存正常但 Safety Qty 不足以覆蓋預估銷售
+
+    所有模式均自動生成採購與品牌的交叉匯總樞紐分析表。
     """)
     
     st.divider()
+    
     st.markdown(
         '<div style="color: #444455; font-size: 0.75rem; text-align: center; line-height: 1.5;">'
         f'I14 報表計算工具 v{__version__}<br>'

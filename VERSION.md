@@ -1,6 +1,11 @@
 # 版本記錄
 
-## v1.4.0 (2026-05-28)
+## v1.5.0 (2026-05-28)
+
+- New: Comprehensive README.md with full project documentation
+- Update: Sidebar now reflects all three analysis modes (Overstock Review, OOS Review, Combined Review)
+- Update: Sidebar adds OOS-specific required fields and calculation rules
+- Update: Sidebar操作流程 extended to 6 steps covering mode selection and parameter tuning
 
 - New: OOS Review mode — analyze OOS (0 Stock), Potential OOS (<7 Turnday), and Normal (Safety Qty Insufficient) conditions
 - New: Mode selector (Overstock Review / OOS Review / Combined Review) at top of UI
