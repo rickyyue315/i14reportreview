@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from transformer import transform, generate_excel, validate_input, _resolve_column_name, transform_oos, generate_excel_oos
 import time
@@ -367,11 +367,29 @@ if uploaded_file is not None:
         st.info("📢 Combined Review 模式即將推出，敬請期待！")
     else:
         if mode == "OOS Review":
+            st.markdown("""
+            <style>
+            div[data-testid="stDateInput"] label p {
+                color: #ffd700 !important;
+                font-weight: 700 !important;
+                font-size: 1rem !important;
+            }
+            div[data-testid="stDateInput"] {
+                border-color: #ffd700 !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            st.markdown(
+                '<div style="border: 2px solid #ffd700; border-radius: 10px; padding: 15px; '
+                'margin-bottom: 15px; background-color: rgba(255, 215, 0, 0.05);">',
+                unsafe_allow_html=True,
+            )
             mtd_date = st.date_input(
                 "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
-                value=datetime.now().date(),
+                value=datetime.now().date() - timedelta(days=1),
                 help="選擇 MTD (Month-To-Date) 截止日期，系統將據此推算月度預估銷售量。"
             )
+            st.markdown('</div>', unsafe_allow_html=True)
             mtd_days = mtd_date.day
             month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
             st.caption(f"MTD: {mtd_days}日，當月共 {month_total_days} 日")
