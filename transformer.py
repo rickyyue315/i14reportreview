@@ -385,20 +385,25 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     raw_df = _reorder_raw_columns(raw_df)
 
     raw_cols = list(raw_df.columns)
-    ws_raw.append(raw_cols)
+    _display_names = {"Adj. Safety Stock": "Safety Stock (現時)"}
+    header_row = [_display_names.get(c, c) for c in raw_cols]
+    ws_raw.append(header_row)
 
     raw_array = raw_df.to_numpy(dtype=object, na_value=None)
     total_raw = len(raw_array)
     _batch = []
     _batch_size = 500
     for i, row_vals in enumerate(raw_array):
-        _batch.append(list(row_vals))
+        _batch.append([
+            round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+            for v in row_vals
+        ])
         if len(_batch) >= _batch_size or i == total_raw - 1:
             for _r in _batch:
                 ws_raw.append(_r)
             _batch.clear()
         if progress_callback and (i % 1000 == 0 or i == total_raw - 1):
-            progress_callback(0.3 * ((i + 1) / total_raw), f"\u5beb\u5165 RAW ({i+1}/{total_raw})...")
+            progress_callback(0.3 * ((i + 1) / total_raw), f"寫入 RAW ({i+1}/{total_raw})...")
 
     header_fill_raw = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
     thin_border = Border(
@@ -681,6 +686,10 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
         increase[is_other] = increase[is_other].clip(min=0)
     df["Safety Qty Increase"] = increase
 
+    if safety_mode == "increase_only":
+        rec_sync = (adj_ss_arr + increase).astype(int)
+        df["Recommendation of new Safety Qty"] = rec_sync
+
     df["Buyer reply"] = ""
 
     return df
@@ -863,14 +872,19 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
     raw_df = _reorder_raw_columns(raw_df)
 
     raw_cols = list(raw_df.columns)
-    ws_raw.append(raw_cols)
+    _display_names = {"Adj. Safety Stock": "Safety Stock (現時)"}
+    header_row = [_display_names.get(c, c) for c in raw_cols]
+    ws_raw.append(header_row)
 
     raw_array = raw_df.to_numpy(dtype=object, na_value=None)
     total_raw = len(raw_array)
     _batch = []
     _batch_size = 500
     for i, row_vals in enumerate(raw_array):
-        _batch.append(list(row_vals))
+        _batch.append([
+            round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+            for v in row_vals
+        ])
         if len(_batch) >= _batch_size or i == total_raw - 1:
             for _r in _batch:
                 ws_raw.append(_r)
