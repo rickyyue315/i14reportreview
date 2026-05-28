@@ -567,9 +567,6 @@ if uploaded_file is not None:
                 st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
-            st.markdown('<div class="custom-card" style="background-color: #12121a; border: 1px solid #00d4ff; text-align: center; padding: 2rem 1.5rem;">', unsafe_allow_html=True)
-            st.markdown("<h3 style='color: #00d4ff; margin-top: 0; margin-bottom: 8px;'>🎉 報表處理完畢，已就緒！</h3>", unsafe_allow_html=True)
-            st.markdown("<p style='color: #888899; font-size: 0.95rem; margin-bottom: 20px;'>本工具已為您自動設定好專業的 Excel 表格樣式、欄寬自動調整與自定義篩選器。</p>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
             download_name = f"I14 by SKUxShop_To Buyer_{hk_time}.xlsx"
@@ -582,7 +579,6 @@ if uploaded_file is not None:
                 type="primary",
                 use_container_width=True,
             )
-            st.markdown('</div>', unsafe_allow_html=True)
 
         if mode == "OOS Review" and st.session_state.oos_processed:
             summary_df = st.session_state.oos_summary_df
@@ -694,9 +690,6 @@ if uploaded_file is not None:
                 st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
-            st.markdown('<div class="custom-card" style="background-color: #12121a; border: 1px solid #00d4ff; text-align: center; padding: 2rem 1.5rem;">', unsafe_allow_html=True)
-            st.markdown("<h3 style='color: #00d4ff; margin-top: 0; margin-bottom: 8px;'>🎉 OOS 報表處理完畢，已就緒！</h3>", unsafe_allow_html=True)
-            st.markdown("<p style='color: #888899; font-size: 0.95rem; margin-bottom: 20px;'>本工具已為您自動設定好專業的 Excel 表格樣式、欄寬自動調整與自定義篩選器。</p>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
             download_name = f"I14 OOS Review_{hk_time}.xlsx"
@@ -709,7 +702,6 @@ if uploaded_file is not None:
                 type="primary",
                 use_container_width=True,
             )
-            st.markdown('</div>', unsafe_allow_html=True)
 
 # 9. 底部頁尾資訊
 st.divider()
