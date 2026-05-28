@@ -386,15 +386,6 @@ if uploaded_file is not None:
             help="選擇要處理的店鋪性質。預設全選所有類型。"
         )
 
-        SAFETY_MODE_OPTIONS = ["只可增加", "可加可減"]
-        safety_mode = st.radio(
-            "🔒 Safety Qty 計算模式",
-            options=SAFETY_MODE_OPTIONS,
-            index=0,
-            horizontal=True,
-            help="只可增加：Safety Qty 只增不減（不處理 Overstock 的 Safety）；可加可減：同步處理 Overstock 的 Safety，可升可降。"
-        )
-
         with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
             st.markdown("調整各 Shop Nature 類型的安全庫存建議倍率（% of Monthly Sold Qty）。")
             _rate_cols = st.columns(3)
@@ -414,6 +405,15 @@ if uploaded_file is not None:
             "mix": rate_mix / 100.0,
             "default": rate_non_tourist / 100.0,
         }
+
+        SAFETY_MODE_OPTIONS = ["只可增加", "可加可減"]
+        safety_mode = st.radio(
+            "🔒 Safety Qty 計算模式",
+            options=SAFETY_MODE_OPTIONS,
+            index=0,
+            horizontal=True,
+            help="只可增加：Safety Qty 只增不減（不處理 Overstock 的 Safety）；可加可減：同步處理 Overstock 的 Safety，可升可降。"
+        )
 
         safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
 
