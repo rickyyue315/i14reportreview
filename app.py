@@ -389,10 +389,10 @@ if uploaded_file is not None:
                 value=datetime.now().date() - timedelta(days=1),
                 help="選擇 MTD (Month-To-Date) 截止日期，系統將據此推算月度預估銷售量。"
             )
-            st.markdown('</div>', unsafe_allow_html=True)
             mtd_days = mtd_date.day
             month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
             st.caption(f"MTD: {mtd_days}日，當月共 {month_total_days} 日")
+            st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
