@@ -266,7 +266,7 @@ uploaded_file = st.file_uploader(
 
 # 9. 處理上傳的檔案
 if uploaded_file is not None:
-    # 當上傳了新檔案，自動重設先前的處理狀態
+    # 當上傳了新檔案，自動重設所有先前的處理狀態
     _file_key = f"{uploaded_file.name}_{uploaded_file.size}"
     if st.session_state.get("last_uploaded_key") != _file_key:
         st.session_state.last_uploaded_key = _file_key
@@ -276,6 +276,12 @@ if uploaded_file is not None:
         st.session_state.categories = None
         st.session_state.excel_data = None
         st.session_state.warnings = []
+        st.session_state.oos_processed = False
+        st.session_state.oos_summary_df = None
+        st.session_state.oos_raw_df = None
+        st.session_state.oos_categories = None
+        st.session_state.oos_excel_data = None
+        st.session_state.oos_warnings = []
         st.session_state.pop("df_input", None)
 
     # 若尚未載入資料，則執行讀取
