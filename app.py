@@ -386,6 +386,15 @@ if uploaded_file is not None:
             help="選擇要處理的店鋪性質。預設全選所有類型。"
         )
 
+        SAFETY_MODE_OPTIONS = ["只可增加", "可加可減"]
+        safety_mode = st.radio(
+            "🔒 Safety Qty 計算模式",
+            options=SAFETY_MODE_OPTIONS,
+            index=0,
+            horizontal=True,
+            help="只可增加：Safety Qty 只增不減（不處理 Overstock 的 Safety）；可加可減：同步處理 Overstock 的 Safety，可升可降。"
+        )
+
         with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
             st.markdown("調整各 Shop Nature 類型的安全庫存建議倍率（% of Monthly Sold Qty）。")
             _rate_cols = st.columns(3)
@@ -405,6 +414,8 @@ if uploaded_file is not None:
             "mix": rate_mix / 100.0,
             "default": rate_non_tourist / 100.0,
         }
+
+        safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
 
         if st.button("⚙️ 執行報表轉換與分析", type="primary", use_container_width=True):
             _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
@@ -443,6 +454,7 @@ if uploaded_file is not None:
                         rates=rates,
                         mtd_days=mtd_days,
                         month_total_days=month_total_days,
+                        safety_mode=safety_mode_value,
                     )
                     buf = generate_excel_oos(summary_df, raw_df, categories, progress_callback=_cb_excel)
                     st.session_state.oos_processed = True
@@ -668,9 +680,9 @@ if uploaded_file is not None:
             with r2_col4:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #8b5cf6;">
-                    <div class="metric-title">建議 Safety Qty 增加總量</div>
+                    <div class="metric-title">建議 Safety Qty 修改</div>
                     <div class="metric-value" style="color: #8b5cf6;">{safety_increase_total:,}</div>
-                    <div class="metric-desc">建議新增 Safety Qty 之總量</div>
+                    <div class="metric-desc">建議 Safety Qty 修改 之總量</div>
                 </div>
                 """, unsafe_allow_html=True)
 

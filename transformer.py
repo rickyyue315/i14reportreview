@@ -625,7 +625,7 @@ SECONDARY_CATEGORY = "Normal (Safety Qty Insufficient)"
 EXCLUDED_STATUSES = ["No Stock (non-Active SKU / ND Shop)"]
 
 
-def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days):
+def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safety_mode="allow_both"):
     df = df.copy()
 
     sold_qty = _safe_numeric(df.get("Sold Qty (CM - MTD)", pd.Series(0.0, index=df.index)))
@@ -671,7 +671,11 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days):
 
     increase = recommended - adj_ss_arr
     increase[is_nd] = 0
-    increase[is_other] = increase[is_other].clip(min=0)
+    if safety_mode == "increase_only":
+        increase[is_rf] = increase[is_rf].clip(min=0)
+        increase[is_other] = increase[is_other].clip(min=0)
+    else:
+        increase[is_other] = increase[is_other].clip(min=0)
     df["Safety Qty Increase"] = increase
 
     df["Buyer reply"] = ""
@@ -740,7 +744,7 @@ def _build_oos_by_shop_summary(raw):
     return by_shop
 
 
-def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_total_days=None):
+def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_total_days=None, safety_mode="allow_both"):
     missing = validate_input(df_input)
     if missing:
         raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
@@ -782,7 +786,7 @@ def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_
         raise ValueError("過濾 OOS / No Stock / Overstock 後無有效資料列")
 
     df["SKU"] = df["SKU"].apply(_safe_sku)
-    raw = _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days)
+    raw = _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safety_mode=safety_mode)
 
     categories = OOS_CATEGORIES + [SECONDARY_CATEGORY]
 
@@ -1033,7 +1037,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
         ("OOS (0 Stock)", cat1_val, "現有庫存為 0 之 OOS 筆數", "F59E0B"),
         ("Potential OOS (<7 Turnday)", cat2_val, "Turnday 不足 7 之潛在 OOS 筆數", "EC4899"),
         ("Normal (Safety Qty Insufficient)", cat3_val, "正常庫存但安全庫存不足筆數", "06B6D4"),
-        ("建議 Safety Qty 增加總量", safety_increase_total, "建議新增 Safety Qty 之總量", "8B5CF6"),
+        ("建議 Safety Qty 修改", safety_increase_total, "建議 Safety Qty 修改 之總量", "8B5CF6"),
     ]
 
     for i, (name, value, desc, color) in enumerate(row2_metrics):
