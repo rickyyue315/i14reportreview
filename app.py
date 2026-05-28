@@ -255,6 +255,7 @@ if prev_mode is not None and prev_mode != current_mode:
     st.session_state.oos_warnings = []
     st.session_state.pop("last_uploaded_key", None)
 st.session_state.mode = current_mode
+mode = current_mode
 
 # 8. 檔案上傳區域
 uploaded_file = st.file_uploader(
