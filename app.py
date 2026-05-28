@@ -598,7 +598,6 @@ if uploaded_file is not None:
             categories = st.session_state.oos_categories
             excel_data = st.session_state.oos_excel_data
 
-            st.markdown('<div class="custom-card" style="border-top: 4px solid #ef4444;">', unsafe_allow_html=True)
             st.markdown("### 📈 OOS 庫存數據分析摘要 (OOS Analysis Dashboard)")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
@@ -685,8 +684,6 @@ if uploaded_file is not None:
                     <div class="metric-desc">建議 Safety Qty 修改 之總量</div>
                 </div>
                 """, unsafe_allow_html=True)
-
-            st.markdown('</div>', unsafe_allow_html=True)
 
             tab1, tab2 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "📄 原始明細資料預覽 (RAW)"])
 
