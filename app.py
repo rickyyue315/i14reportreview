@@ -390,10 +390,10 @@ if uploaded_file is not None:
             st.markdown("調整各 Shop Nature 類型的安全庫存建議倍率（% of Monthly Sold Qty）。")
             _rate_cols = st.columns(3)
             with _rate_cols[0]:
-                rate_tourist = st.slider("Tourist Rate (%)", 0, 100, 30, 1,
+                rate_tourist = st.slider("Tourist Rate (%)", 0, 100, 50, 1,
                     help="Tourist 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
             with _rate_cols[1]:
-                rate_mix = st.slider("Mix Rate (%)", 0, 100, 40, 1,
+                rate_mix = st.slider("Mix Rate (%)", 0, 100, 50, 1,
                     help="Mix 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
             with _rate_cols[2]:
                 rate_non_tourist = st.slider("Non Tourist Rate (%)", 0, 100, 50, 1,
