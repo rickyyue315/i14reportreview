@@ -369,21 +369,31 @@ if uploaded_file is not None:
         if mode == "OOS Review":
             st.markdown("""
             <style>
+            div[data-testid="stDateInput"] > div {
+                border: 2px solid #ffd700 !important;
+                border-radius: 10px !important;
+                background-color: rgba(255, 215, 0, 0.08) !important;
+                padding: 5px 10px !important;
+            }
             div[data-testid="stDateInput"] label p {
                 color: #ffd700 !important;
                 font-weight: 700 !important;
                 font-size: 1rem !important;
             }
-            div[data-testid="stDateInput"] {
-                border-color: #ffd700 !important;
+            .oos-caption {
+                color: #ffd700 !important;
+                font-weight: 600 !important;
+                font-size: 0.85rem !important;
+                padding: 5px 15px 12px 15px !important;
+                background-color: rgba(255, 215, 0, 0.05) !important;
+                border-left: 2px solid #ffd700 !important;
+                border-right: 2px solid #ffd700 !important;
+                border-bottom: 2px solid #ffd700 !important;
+                border-radius: 0 0 10px 10px !important;
+                margin-top: -2px !important;
             }
             </style>
             """, unsafe_allow_html=True)
-            st.markdown(
-                '<div style="border: 2px solid #ffd700; border-radius: 10px; padding: 15px; '
-                'margin-bottom: 15px; background-color: rgba(255, 215, 0, 0.05);">',
-                unsafe_allow_html=True,
-            )
             mtd_date = st.date_input(
                 "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
                 value=datetime.now().date() - timedelta(days=1),
@@ -391,8 +401,10 @@ if uploaded_file is not None:
             )
             mtd_days = mtd_date.day
             month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
-            st.caption(f"MTD: {mtd_days}日，當月共 {month_total_days} 日")
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<p class="oos-caption">MTD: {mtd_days}日，當月共 {month_total_days} 日</p>',
+                unsafe_allow_html=True,
+            )
 
         st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
