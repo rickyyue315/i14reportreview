@@ -88,6 +88,18 @@ def _safe_numeric(series: pd.Series, default: float = 0.0) -> pd.Series:
     return pd.to_numeric(series, errors="coerce").fillna(default)
 
 
+def _safe_default_series(value, index):
+    if len(index) == 0:
+        return pd.Series(dtype='object')
+    return pd.Series(value, index=index)
+
+
+def _ensure_list(val):
+    if not isinstance(val, list):
+        return [val]
+    return val
+
+
 def _extract_shop_name(item_shop, site_code) -> str:
     if pd.isna(item_shop) or pd.isna(site_code):
         return ""
@@ -114,8 +126,8 @@ def _extract_shop_name(item_shop, site_code) -> str:
 def _build_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
     df = raw.copy()
 
-    site_code = df.get("Site Code", pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
-    item_shop = df.get("Item_Shop", pd.Series("", index=df.index))
+    site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
     shop_name = [
         _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
         for i in range(len(df))
@@ -123,14 +135,14 @@ def _build_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
 
     df["Site Code"] = site_code
     df["Shop Name"] = shop_name
-    df["OM"] = df.get("OM", pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
+    df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     df["SKU"] = df["SKU"].apply(_safe_sku)
 
     status_col = df["Shop Stock Status"].fillna("")
     rec_col = df["Recommendation of new Safety Qty / ND"].fillna("").astype(str)
     rec_num = pd.to_numeric(rec_col, errors="coerce")
     transfer_col = "After new Safety Qty / ND can transfer out of QTY"
-    transfer_num = pd.to_numeric(df.get(transfer_col, pd.Series(0, index=df.index)), errors="coerce").fillna(0)
+    transfer_num = pd.to_numeric(df.get(transfer_col, _safe_default_series(0, df.index)), errors="coerce").fillna(0)
 
     group_cols = ["Site Code", "Shop Name", "OM"]
     df["_is_0_sales"] = status_col == "Overstock (P90D 0 Sales)"
@@ -182,20 +194,20 @@ def _build_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
 def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> pd.DataFrame:
     status_col = df["Shop Stock Status"].fillna("")
 
-    adj_ss = _safe_numeric(df.get("Adj. Safety Stock", pd.Series(0, index=df.index)))
-    monthly_sold = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", pd.Series(0, index=df.index)))
+    adj_ss = _safe_numeric(df.get("Adj. Safety Stock", _safe_default_series(0, df.index)))
+    monthly_sold = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, df.index)))
 
     cond_overstock_2x = (status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)")
 
     cond_overstock_0 = (
         (status_col == "Overstock (P90D 0 Sales)")
-        & (df.get("RP Type", pd.Series("", index=df.index)).isin(["ND", "RF"]))
+        & (df.get("RP Type", _safe_default_series("", df.index)).isin(["ND", "RF"]))
     )
 
     rec_values = np.full(len(df), "", dtype=object)
 
     if cond_overstock_2x.any():
-        shop_nature = df.get("Shop Nature", pd.Series("", index=df.index)).fillna("").astype(str).str.lower()
+        shop_nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.lower()
         _rates = rates if rates is not None else {}
         _default_rate = _rates.get("default", 0.50)
         _tourist_rate = _rates.get("tourist", 0.30)
@@ -211,14 +223,14 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
         rec_values[cond_overstock_2x.values] = rec_2x.astype(str)
 
     if cond_overstock_0.any():
-        rp = df.get("RP Type", pd.Series("", index=df.index))
+        rp = df.get("RP Type", _safe_default_series("", df.index))
         is_rf = cond_overstock_0 & (rp == "RF")
         is_nd = cond_overstock_0 & (rp == "ND")
         rec_values[is_rf.values] = "ND"
         rec_values[is_nd.values] = "0"
     df["Recommendation of new Safety Qty / ND"] = rec_values
 
-    shop_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", pd.Series(0, index=df.index)))
+    shop_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
 
     rec = df["Recommendation of new Safety Qty / ND"]
 
@@ -278,7 +290,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
 
     if shop_natures is not None and "Shop Nature" in df.columns:
         sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
-        mask = pd.Series(False, index=df.index)
+        mask = _safe_default_series(False, df.index)
         if "Tourist" in shop_natures:
             mask |= sn_col.str.contains("tourist", na=False)
         if "Mix" in shop_natures:
@@ -334,7 +346,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
     if progress_callback:
         progress_callback(0.55, "\u6392\u5e8f\u5f59\u7e3d\u4e2d...")
 
-    summary = pd.concat(counts.values(), axis=1).fillna(0).astype(int).reset_index()
+    summary = pd.concat(list(counts.values()), axis=1).fillna(0).astype(int).reset_index()
 
     summary["SKU"] = summary["SKU"].apply(_safe_sku)
     summary["\u7e3d\u8a08"] = summary[categories].sum(axis=1)
@@ -637,15 +649,15 @@ EXCLUDED_STATUSES = ["No Stock (non-Active SKU / ND Shop)"]
 def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safety_mode="allow_both"):
     df = df.copy()
 
-    sold_qty = _safe_numeric(df.get("Sold Qty (CM - MTD)", pd.Series(0.0, index=df.index)))
-    adj_ss = _safe_numeric(df.get("Adj. Safety Stock", pd.Series(0.0, index=df.index)))
-    shop_nature = df.get("Shop Nature", pd.Series("", index=df.index)).fillna("").astype(str).str.lower()
-    rp_type = df.get("RP Type", pd.Series("", index=df.index)).fillna("").astype(str).str.strip().str.upper()
+    sold_qty = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0.0, df.index)))
+    adj_ss = _safe_numeric(df.get("Adj. Safety Stock", _safe_default_series(0.0, df.index)))
+    shop_nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.lower()
+    rp_type = df.get("RP Type", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.upper()
 
     if mtd_days > 0:
         projected = (sold_qty / mtd_days) * month_total_days
     else:
-        projected = pd.Series(0.0, index=df.index)
+        projected = _safe_default_series(0.0, df.index)
 
     df["Projected Monthly Sold Qty"] = np.ceil(projected).astype(int)
 
@@ -699,8 +711,8 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
 def _build_oos_by_shop_summary(raw):
     df = raw.copy()
 
-    site_code = df.get("Site Code", pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
-    item_shop = df.get("Item_Shop", pd.Series("", index=df.index))
+    site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
     shop_name = [
         _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
         for i in range(len(df))
@@ -708,11 +720,11 @@ def _build_oos_by_shop_summary(raw):
 
     df["Site Code"] = site_code
     df["Shop Name"] = shop_name
-    df["OM"] = df.get("OM", pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
+    df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     df["SKU"] = df["SKU"].apply(_safe_sku)
 
     status_col = df["Shop Stock Status"].fillna("")
-    safety_increase = pd.to_numeric(df.get("Safety Qty Increase", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
+    safety_increase = pd.to_numeric(df.get("Safety Qty Increase", _safe_default_series(0, df.index)), errors="coerce").fillna(0)
 
     group_cols = ["Site Code", "Shop Name", "OM"]
     df["_is_oos"] = status_col == "OOS (0 Stock)"
@@ -779,7 +791,7 @@ def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_
 
     if shop_natures is not None and "Shop Nature" in df.columns:
         sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
-        mask = pd.Series(False, index=df.index)
+        mask = _safe_default_series(False, df.index)
         if "Tourist" in shop_natures:
             mask |= sn_col.str.contains("tourist", na=False)
         if "Mix" in shop_natures:
@@ -806,7 +818,7 @@ def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_
     categories = OOS_CATEGORIES + [SECONDARY_CATEGORY]
 
     status_col = raw["Shop Stock Status"].fillna("")
-    safety_increase = pd.to_numeric(raw.get("Safety Qty Increase", pd.Series(0, index=raw.index)), errors="coerce").fillna(0)
+    safety_increase = pd.to_numeric(raw.get("Safety Qty Increase", _safe_default_series(0, raw.index)), errors="coerce").fillna(0)
 
     group_cols = ["Buyer", "Brand", "SKU"]
 
@@ -828,7 +840,7 @@ def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_
         .rename(SECONDARY_CATEGORY)
     )
 
-    summary = pd.concat(counts.values(), axis=1).fillna(0).astype(int).reset_index()
+    summary = pd.concat(list(counts.values()), axis=1).fillna(0).astype(int).reset_index()
     summary["SKU"] = summary["SKU"].apply(_safe_sku)
     summary["總計"] = summary[categories].sum(axis=1)
 
@@ -1018,7 +1030,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
     cat2_val = int(_total_row[categories[1]].values[0]) if len(categories) > 1 else 0
     cat3_val = int(_total_row[categories[2]].values[0]) if len(categories) > 2 else 0
 
-    safety_increase_total = int(pd.to_numeric(raw_df.get("Safety Qty Increase", pd.Series(0, index=raw_df.index)), errors="coerce").fillna(0).sum())
+    safety_increase_total = int(pd.to_numeric(raw_df.get("Safety Qty Increase", _safe_default_series(0, raw_df.index)), errors="coerce").fillna(0).sum())
 
     ws_dashboard.merge_cells("A1:D1")
     title_cell = ws_dashboard.cell(row=1, column=1, value="OOS庫存數據分析摘要 (OOS Analysis Dashboard)")

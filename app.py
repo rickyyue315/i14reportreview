@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from transformer import transform, generate_excel, validate_input, _resolve_column_name, transform_oos, generate_excel_oos
 import time
+import traceback
 from openpyxl import load_workbook
 from io import BytesIO
 from version import __version__
@@ -506,7 +507,9 @@ if uploaded_file is not None:
                     st.session_state.oos_warnings = _warnings
             except Exception as e:
                 _prog2.empty()
-                st.error(f"❌ 報表處理失敗: {e}")
+                _tb = traceback.format_exc()
+                print(f"❌ 報表處理失敗: {e}\n{_tb}")
+                st.error(f"❌ 報表處理失敗: {e}\n\n詳細錯誤: {_tb}")
                 st.stop()
 
             _prog2.empty()
