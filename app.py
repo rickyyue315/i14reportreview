@@ -3,7 +3,7 @@ import pandas as pd
 import calendar
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from transformer import transform, generate_excel, validate_input, _resolve_column_name, transform_oos, generate_excel_oos
+from transformer import transform, generate_excel, validate_input, _resolve_column_name, transform_oos, generate_excel_oos, transform_carry, generate_excel_carry
 import time
 import traceback
 from openpyxl import load_workbook
@@ -184,6 +184,11 @@ with st.sidebar:
     - 支援 MTD 日期選擇與月度預估銷售計算
     - 輸出：RAW、Shop Stock Status、By Shop、分析摘要
 
+    **📋 Carry SKU Review**
+    - 檢視各店舖的 Carry SKU 數量（扣除 ND 且庫存為 0 之誤差列）
+    - 按 RP Type（ND / RF）與 P90D 0 Sales 交叉統計
+    - 輸出：RAW、Summary（雙區塊樞紐：Adj. MCH1 × Adj. SST）、Carry SKU 分析摘要
+
     **🔄 Combined Review**
     - 同時整合 Overstock 與 OOS 分析結果（敬請期待）
     """)
@@ -229,6 +234,11 @@ with st.sidebar:
     2. **Potential OOS (<7 Turnday)** — Turnday 不足 7 天
     3. **Normal (Safety Qty Insufficient)** — 庫存正常但 Safety Qty 不足以覆蓋預估銷售
 
+    **Carry SKU Review** — 檢視各店舖實際 Carry SKU 數量：
+    1. 先清理無效列（刪除 RP Type 為 ND 且 Shop Stock Qty 為 0 之誤差列）
+    2. 依 RP Type (ND / RF) 與 P90D 0 Sales 狀態做雙維度交叉統計
+    3. 雙區塊樞紐：左 (Adj. MCH1) + 右 (Adj. SST)
+
     所有模式均自動生成採購與品牌的交叉匯總樞紐分析表。
     """)
     
@@ -252,7 +262,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 5. 模式選擇器
-mode_options = ["Overstock Review", "OOS Review", "Combined Review"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "Combined Review"]
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0)
 
 # 6. 初始化 Session State (確保下載與重整時狀態持久化)
@@ -273,6 +283,15 @@ if "oos_processed" not in st.session_state:
     st.session_state.oos_excel_data = None
     st.session_state.oos_warnings = []
 
+if "carry_processed" not in st.session_state:
+    st.session_state.carry_processed = False
+    st.session_state.carry_summary_left = None
+    st.session_state.carry_summary_right = None
+    st.session_state.carry_dashboard_df = None
+    st.session_state.carry_raw_df = None
+    st.session_state.carry_excel_data = None
+    st.session_state.carry_warnings = []
+
 # 7. 模式切換狀態清理
 prev_mode = st.session_state.get("mode")
 if prev_mode is not None and prev_mode != current_mode:
@@ -288,6 +307,13 @@ if prev_mode is not None and prev_mode != current_mode:
     st.session_state.oos_categories = None
     st.session_state.oos_excel_data = None
     st.session_state.oos_warnings = []
+    st.session_state.carry_processed = False
+    st.session_state.carry_summary_left = None
+    st.session_state.carry_summary_right = None
+    st.session_state.carry_dashboard_df = None
+    st.session_state.carry_raw_df = None
+    st.session_state.carry_excel_data = None
+    st.session_state.carry_warnings = []
     st.session_state.pop("last_uploaded_key", None)
 st.session_state.mode = current_mode
 mode = current_mode
@@ -317,6 +343,13 @@ if uploaded_file is not None:
         st.session_state.oos_categories = None
         st.session_state.oos_excel_data = None
         st.session_state.oos_warnings = []
+        st.session_state.carry_processed = False
+        st.session_state.carry_summary_left = None
+        st.session_state.carry_summary_right = None
+        st.session_state.carry_dashboard_df = None
+        st.session_state.carry_raw_df = None
+        st.session_state.carry_excel_data = None
+        st.session_state.carry_warnings = []
         st.session_state.pop("df_input", None)
 
     # 若尚未載入資料，則執行讀取
@@ -429,29 +462,34 @@ if uploaded_file is not None:
         )
 
         _is_overstock_mode = (mode == "Overstock Review")
-        _tourist_default = 30 if _is_overstock_mode else 50
-        _mix_default = 40 if _is_overstock_mode else 50
-        _non_tourist_default = 50
+        _is_carry_mode = (mode == "Carry SKU Review")
 
-        with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
-            st.markdown("調整各 Shop Nature 類型的安全庫存建議倍率（% of Monthly Sold Qty）。")
-            _rate_cols = st.columns(3)
-            with _rate_cols[0]:
-                rate_tourist = st.slider("Tourist Rate (%)", 0, 100, _tourist_default, 1,
-                    help="Tourist 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
-            with _rate_cols[1]:
-                rate_mix = st.slider("Mix Rate (%)", 0, 100, _mix_default, 1,
-                    help="Mix 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
-            with _rate_cols[2]:
-                rate_non_tourist = st.slider("Non Tourist Rate (%)", 0, 100, _non_tourist_default, 1,
-                    help="Non Tourist 及其他類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
-            st.caption(f"目前設定 → Tourist: **{rate_tourist}%** | Mix: **{rate_mix}%** | Non Tourist: **{rate_non_tourist}%**")
+        if not _is_carry_mode:
+            _tourist_default = 30 if _is_overstock_mode else 50
+            _mix_default = 40 if _is_overstock_mode else 50
+            _non_tourist_default = 50
 
-        rates = {
-            "tourist": rate_tourist / 100.0,
-            "mix": rate_mix / 100.0,
-            "default": rate_non_tourist / 100.0,
-        }
+            with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
+                st.markdown("調整各 Shop Nature 類型的安全庫存建議倍率（% of Monthly Sold Qty）。")
+                _rate_cols = st.columns(3)
+                with _rate_cols[0]:
+                    rate_tourist = st.slider("Tourist Rate (%)", 0, 100, _tourist_default, 1,
+                        help="Tourist 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
+                with _rate_cols[1]:
+                    rate_mix = st.slider("Mix Rate (%)", 0, 100, _mix_default, 1,
+                        help="Mix 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
+                with _rate_cols[2]:
+                    rate_non_tourist = st.slider("Non Tourist Rate (%)", 0, 100, _non_tourist_default, 1,
+                        help="Non Tourist 及其他類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
+                st.caption(f"目前設定 → Tourist: **{rate_tourist}%** | Mix: **{rate_mix}%** | Non Tourist: **{rate_non_tourist}%**")
+
+            rates = {
+                "tourist": rate_tourist / 100.0,
+                "mix": rate_mix / 100.0,
+                "default": rate_non_tourist / 100.0,
+            }
+        else:
+            rates = {"tourist": 0.5, "mix": 0.5, "default": 0.5}
 
         safety_mode_value = "increase_only"
         if mode == "OOS Review":
@@ -495,6 +533,20 @@ if uploaded_file is not None:
                     st.session_state.categories = categories
                     st.session_state.excel_data = buf
                     st.session_state.warnings = _warnings
+                elif mode == "Carry SKU Review":
+                    summary_left, summary_right, dashboard_df, raw_df, _warnings = transform_carry(
+                        df_input,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                    )
+                    buf = generate_excel_carry(summary_left, summary_right, dashboard_df, raw_df, progress_callback=_cb_excel)
+                    st.session_state.carry_processed = True
+                    st.session_state.carry_summary_left = summary_left
+                    st.session_state.carry_summary_right = summary_right
+                    st.session_state.carry_dashboard_df = dashboard_df
+                    st.session_state.carry_raw_df = raw_df
+                    st.session_state.carry_excel_data = buf
+                    st.session_state.carry_warnings = _warnings
                 else:  # OOS Review
                     summary_df, raw_df, categories, _warnings = transform_oos(
                         df_input,
@@ -760,6 +812,124 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載 OOS 分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if mode == "Carry SKU Review" and st.session_state.carry_processed:
+            summary_left = st.session_state.carry_summary_left
+            summary_right = st.session_state.carry_summary_right
+            dashboard_df = st.session_state.carry_dashboard_df
+            raw_df = st.session_state.carry_raw_df
+            excel_data = st.session_state.carry_excel_data
+
+            st.markdown('<div class="custom-card" style="border-top: 4px solid #6366f1;">', unsafe_allow_html=True)
+            st.markdown("### 📈 Carry SKU 分析摘要 (Carry SKU Analysis Dashboard)")
+
+            _total_row = dashboard_df[dashboard_df["Site Code"] == "總計"]
+            if not _total_row.empty:
+                tr = _total_row.iloc[0]
+            else:
+                tr = None
+
+            shop_count = len(dashboard_df[dashboard_df["Site Code"] != "總計"])
+            total_sku = int(tr["SKU 總數"]) if tr is not None else 0
+            total_rf = int(tr["RF SKU 總數"]) if tr is not None else 0
+            total_nd = int(tr["ND SKU 總數"]) if tr is not None else 0
+            total_p90d0 = int(tr["P90D 0 Sales SKU 總數"]) if tr is not None else 0
+            total_stock_val = tr["SKU Stock Value (CM)"] if tr is not None else 0
+            total_p90d0_stock_val = tr["P90D 0 Sales Stock Value (CM)"] if tr is not None else 0
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff5555;">
+                    <div class="metric-title">影響店舖數</div>
+                    <div class="metric-value" style="color: #ff5555;">{shop_count:,}</div>
+                    <div class="metric-desc">個店舖含有 Carry SKU</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #5599ff;">
+                    <div class="metric-title">Carry SKU 總數</div>
+                    <div class="metric-value" style="color: #5599ff;">{total_sku:,}</div>
+                    <div class="metric-desc">所有店舖 Carry SKU 總列數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #9944ff;">
+                    <div class="metric-title">RF SKU 總數</div>
+                    <div class="metric-value" style="color: #9944ff;">{total_rf:,}</div>
+                    <div class="metric-desc">RP Type 為 RF 的 Carry SKU</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #00ff88;">
+                    <div class="metric-title">ND SKU 總數</div>
+                    <div class="metric-value" style="color: #00ff88;">{total_nd:,}</div>
+                    <div class="metric-desc">RP Type 為 ND 的 Carry SKU</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+            r2_col1, r2_col2, r2_col3 = st.columns(3)
+            with r2_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff9944;">
+                    <div class="metric-title">P90D 0 Sales SKU 總數</div>
+                    <div class="metric-value" style="color: #ff9944;">{total_p90d0:,}</div>
+                    <div class="metric-desc">「過去 90 天內零銷售」之 SKU 筆數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff44ff;">
+                    <div class="metric-title">SKU Stock Value (CM)</div>
+                    <div class="metric-value" style="color: #ff44ff;">{total_stock_val:,.0f}</div>
+                    <div class="metric-desc">所有 Carry SKU 庫存金額總和</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #00d4ff;">
+                    <div class="metric-title">P90D 0 Sales Stock Value (CM)</div>
+                    <div class="metric-value" style="color: #00d4ff;">{total_p90d0_stock_val:,.0f}</div>
+                    <div class="metric-desc">P90D 0 Sales SKU 的庫存金額總和</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+            st.markdown("#### 各店舖 Carry SKU 指標總覽")
+            st.dataframe(dashboard_df, use_container_width=True, hide_index=True)
+
+            tab1, tab2 = st.tabs(["📋 Summary 樞紐表預覽", "📄 RAW 明細（前 50 筆）"])
+            with tab1:
+                st.markdown("#### 左區塊 (Site Code × Adj. MCH1)")
+                st.dataframe(summary_left, use_container_width=True, hide_index=True)
+                st.markdown("#### 右區塊 (Site Code × Adj. SST)")
+                st.dataframe(summary_right, use_container_width=True, hide_index=True)
+            with tab2:
+                st.markdown("#### RAW 原始資料明細（前 50 筆）")
+                st.dataframe(raw_df.head(50), use_container_width=True)
+                st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 Carry SKU Review_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載 Carry SKU 分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

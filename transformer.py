@@ -1105,3 +1105,505 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
 
     return buf
 
+
+# ─── Carry SKU Review Functions ─────────────────────────────────────────────────
+
+CARRY_P90D0_STATUS = "Overstock (P90D 0 Sales)"
+
+
+def _build_carry_pivot(df: pd.DataFrame, category_col: str) -> pd.DataFrame:
+    df = df.copy()
+
+    site_to_name = {}
+    if "Item_Shop" in df.columns:
+        site_code = df["Site Code"].fillna("").astype(str).str.strip()
+        item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
+        for i in range(len(df)):
+            sc = site_code.iloc[i]
+            if sc and sc not in site_to_name:
+                name = _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
+                if name:
+                    site_to_name[sc] = name
+        for sc in site_code.unique():
+            if sc and sc not in site_to_name:
+                site_to_name[sc] = ""
+
+    status = df["Shop Stock Status"].fillna("")
+    df["_status2"] = np.where(status == CARRY_P90D0_STATUS, "Overstock (P90D 0 Sales)", "Other Status")
+
+    rp = df.get("RP Type", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.upper()
+    df["_rp"] = rp
+
+    df = df[df["_rp"].isin(["ND", "RF"])].copy()
+
+    if df.empty:
+        return pd.DataFrame(columns=["Site Code", "Shop Name", category_col, "ND_P90D0", "ND_Other", "ND_Total", "RF_P90D0", "RF_Other", "RF_Total", "Grand_Total"])
+
+    group_cols = ["Site Code", category_col, "_rp", "_status2"]
+    pivot = df.groupby(group_cols, dropna=False, observed=True).size().reset_index(name="count")
+
+    pivot_wide = pivot.pivot_table(
+        index=["Site Code", category_col],
+        columns=["_rp", "_status2"],
+        values="count",
+        fill_value=0,
+    )
+    pivot_wide.columns = [f"{r}_{s}" for r, s in pivot_wide.columns]
+    pivot_wide = pivot_wide.reset_index()
+
+    for r in ["ND", "RF"]:
+        for s in ["Overstock (P90D 0 Sales)", "Other Status"]:
+            col = f"{r}_{s}"
+            if col not in pivot_wide.columns:
+                pivot_wide[col] = 0
+
+    pivot_wide = pivot_wide.rename(columns={
+        "ND_Overstock (P90D 0 Sales)": "ND_P90D0",
+        "ND_Other Status": "ND_Other",
+        "RF_Overstock (P90D 0 Sales)": "RF_P90D0",
+        "RF_Other Status": "RF_Other",
+    })
+
+    pivot_wide["ND_Total"] = (pivot_wide["ND_P90D0"] + pivot_wide["ND_Other"]).astype(int)
+    pivot_wide["RF_Total"] = (pivot_wide["RF_P90D0"] + pivot_wide["RF_Other"]).astype(int)
+    pivot_wide["Grand_Total"] = (pivot_wide["ND_Total"] + pivot_wide["RF_Total"]).astype(int)
+    for c in ["ND_P90D0", "ND_Other", "RF_P90D0", "RF_Other"]:
+        pivot_wide[c] = pivot_wide[c].fillna(0).astype(int)
+
+    pivot_wide.insert(1, "Shop Name", pivot_wide["Site Code"].map(site_to_name).fillna(""))
+
+    pivot_wide = pivot_wide.sort_values(["Site Code", category_col])
+
+    result_rows = []
+    for site, group in pivot_wide.groupby("Site Code", sort=False):
+        result_rows.append(group)
+        subtotal = pd.DataFrame({
+            "Site Code": [f"{site} 合計"],
+            "Shop Name": [""],
+            category_col: [None],
+            "ND_P90D0": [int(group["ND_P90D0"].sum())],
+            "ND_Other": [int(group["ND_Other"].sum())],
+            "ND_Total": [int(group["ND_Total"].sum())],
+            "RF_P90D0": [int(group["RF_P90D0"].sum())],
+            "RF_Other": [int(group["RF_Other"].sum())],
+            "RF_Total": [int(group["RF_Total"].sum())],
+            "Grand_Total": [int(group["Grand_Total"].sum())],
+        })
+        result_rows.append(subtotal)
+
+    result = pd.concat(result_rows, ignore_index=True)
+    return result
+
+
+def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    site_to_name = {}
+    if "Item_Shop" in df.columns:
+        site_code = df["Site Code"].fillna("").astype(str).str.strip()
+        item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
+        for i in range(len(df)):
+            sc = site_code.iloc[i]
+            if sc and sc not in site_to_name:
+                name = _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
+                if name:
+                    site_to_name[sc] = name
+        for sc in site_code.unique():
+            if sc and sc not in site_to_name:
+                site_to_name[sc] = ""
+
+    site_code = df["Site Code"].fillna("").astype(str).str.strip()
+    rp = df.get("RP Type", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.upper()
+    status = df["Shop Stock Status"].fillna("")
+    stock_value = _safe_numeric(df.get("Shop Stock Value (CM)", _safe_default_series(0, df.index)))
+
+    df["_site"] = site_code
+    df["_is_rf"] = (rp == "RF").astype(int)
+    df["_is_nd"] = (rp == "ND").astype(int)
+    df["_is_p90d0"] = (status == CARRY_P90D0_STATUS).astype(int)
+    df["_stock_value"] = stock_value
+    df["_p90d0_stock_value"] = df["_stock_value"].where(df["_is_p90d0"].astype(bool), 0.0)
+
+    agg = df.groupby("_site", dropna=False, observed=True).agg(
+        SKU總數=("_site", "count"),
+        RF_SKU總數=("_is_rf", "sum"),
+        ND_SKU總數=("_is_nd", "sum"),
+        P90D0_Sales_SKU總數=("_is_p90d0", "sum"),
+        SKU_Stock_Value_CM=("_stock_value", "sum"),
+        P90D0_Sales_Stock_Value_CM=("_p90d0_stock_value", "sum"),
+    ).reset_index()
+
+    agg.insert(1, "Shop Name", agg["_site"].map(site_to_name).fillna(""))
+
+    agg = agg.rename(columns={
+        "_site": "Site Code",
+        "SKU總數": "SKU 總數",
+        "RF_SKU總數": "RF SKU 總數",
+        "ND_SKU總數": "ND SKU 總數",
+        "P90D0_Sales_SKU總數": "P90D 0 Sales SKU 總數",
+        "SKU_Stock_Value_CM": "SKU Stock Value (CM)",
+        "P90D0_Sales_Stock_Value_CM": "P90D 0 Sales Stock Value (CM)",
+    })
+
+    agg = agg.sort_values("Site Code")
+
+    total = {}
+    for col in agg.columns:
+        if col == "Site Code":
+            total[col] = "總計"
+        elif col == "Shop Name":
+            total[col] = ""
+        elif agg[col].dtype in ("int64", "float64"):
+            if col in ("SKU Stock Value (CM)", "P90D 0 Sales Stock Value (CM)"):
+                total[col] = round(float(agg[col].sum()), 2)
+            else:
+                total[col] = int(agg[col].sum())
+        else:
+            total[col] = None
+    total_row = pd.DataFrame([total])
+    agg = pd.concat([agg, total_row], ignore_index=True)
+    return agg
+
+
+def transform_carry(
+    df_input: pd.DataFrame,
+    progress_callback=None,
+    shop_natures: list[str] | None = None,
+):
+    missing = validate_input(df_input)
+    if missing:
+        raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
+
+    warnings = []
+
+    _optional_cols = ["RP Type", "Adj. MCH1", "Adj. SST", "Site Code", "Shop Stock Qty (CM)", "Shop Stock Value (CM)"]
+    for _col in _optional_cols:
+        if _col not in df_input.columns:
+            warnings.append(f"缺少可選欄位「{_col}」，相關統計以 0 計")
+
+    if progress_callback:
+        progress_callback(0.05, "驗證通過")
+
+    df = df_input.dropna(subset=["Buyer"])
+
+    if progress_callback:
+        progress_callback(0.1, "清理資料中...")
+
+    _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
+    if "Item_Shop" in df.columns:
+        _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
+        _footer_mask = _footer_mask | _item_shop_mask
+    df = df[~_footer_mask]
+
+    if shop_natures is not None and "Shop Nature" in df.columns:
+        sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
+        mask = _safe_default_series(False, df.index)
+        if "Tourist" in shop_natures:
+            mask |= sn_col.str.contains("tourist", na=False)
+        if "Mix" in shop_natures:
+            mask |= sn_col.str.contains("mix", na=False)
+        if "Non Tourist" in shop_natures:
+            is_tourist_or_mix = sn_col.str.contains("tourist|mix", na=False, regex=True)
+            is_filled = sn_col.notna() & (sn_col.str.strip() != "")
+            mask |= is_filled & ~is_tourist_or_mix
+        df = df[mask]
+
+    if df.empty:
+        raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
+
+    if "RP Type" in df.columns and "Shop Stock Qty (CM)" in df.columns:
+        rp_type = df["RP Type"].fillna("").astype(str).str.strip().str.upper()
+        shop_stock_cm = _safe_numeric(df["Shop Stock Qty (CM)"])
+        mask_nd_zero = (rp_type == "ND") & (shop_stock_cm == 0)
+        df = df[~mask_nd_zero]
+
+    if df.empty:
+        raise ValueError("刪除 ND 且 Shop Stock Qty (CM)=0 的資料後無有效資料列")
+
+    if "RP Type" in df.columns:
+        rp_type_unique = df["RP Type"].fillna("").astype(str).str.strip().str.upper()
+        non_nd_rf = set(rp_type_unique.unique()) - {"ND", "RF", ""}
+        if non_nd_rf:
+            warnings.append(f"偵測到非 ND/RF 的 RP Type 值: {', '.join(sorted(non_nd_rf))}，這些列將不納入樞紐統計")
+
+    if progress_callback:
+        progress_callback(0.2, "正規化 SKU...")
+
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+
+    if progress_callback:
+        progress_callback(0.3, "建構樞紐分析...")
+
+    raw = df.copy()
+
+    summary_left = _build_carry_pivot(df, "Adj. MCH1") if "Adj. MCH1" in df.columns else pd.DataFrame()
+    summary_right = _build_carry_pivot(df, "Adj. SST") if "Adj. SST" in df.columns else pd.DataFrame()
+
+    if progress_callback:
+        progress_callback(0.6, "建構分析摘要...")
+
+    dashboard_df = _build_carry_dashboard(df)
+
+    if progress_callback:
+        progress_callback(0.8, "轉換完成")
+
+    return summary_left, summary_right, dashboard_df, raw, warnings
+
+
+def generate_excel_carry(
+    summary_left: pd.DataFrame,
+    summary_right: pd.DataFrame,
+    dashboard_df: pd.DataFrame,
+    raw_df: pd.DataFrame,
+    progress_callback=None,
+) -> BytesIO:
+    wb = Workbook()
+
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    bold_font = Font(bold=True, size=11)
+    desc_font = Font(size=9, color="6B7280", italic=True)
+
+    if progress_callback:
+        progress_callback(0.0, "建立 Excel 結構...")
+
+    # ── Sheet 1: RAW ──
+    ws_raw = wb.active
+    ws_raw.title = "RAW"
+
+    raw_df_display = _reorder_raw_columns(raw_df)
+    raw_cols = list(raw_df_display.columns)
+    _display_names = {"Adj. Safety Stock": "Safety Stock (現時)"}
+    header_row = [_display_names.get(c, c) for c in raw_cols]
+    ws_raw.append(header_row)
+
+    raw_array = raw_df_display.to_numpy(dtype=object, na_value=None)
+    total_raw = len(raw_array)
+    _batch = []
+    _batch_size = 500
+    for i, row_vals in enumerate(raw_array):
+        _batch.append([
+            round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+            for v in row_vals
+        ])
+        if len(_batch) >= _batch_size or i == total_raw - 1:
+            for _r in _batch:
+                ws_raw.append(_r)
+            _batch.clear()
+        if progress_callback and (i % 1000 == 0 or i == total_raw - 1):
+            progress_callback(0.1 * ((i + 1) / total_raw), f"寫入 RAW ({i+1}/{total_raw})...")
+
+    header_fill_raw = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+    ncols = len(raw_cols)
+    for col_idx in range(1, ncols + 1):
+        cell = ws_raw.cell(row=1, column=col_idx)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill_raw
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center")
+
+    ws_raw.auto_filter.ref = ws_raw.dimensions
+    _auto_width(ws_raw)
+
+    if progress_callback:
+        progress_callback(0.15, "建立 Summary 工作表...")
+
+    # ── Sheet 2: Summary (雙區塊樞紐) ──
+    ws_summary = wb.create_sheet(title="Summary")
+
+    _write_summary_headers(ws_summary, header_font, header_fill, thin_border)
+
+    left_cols = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]   # A-J: Site Code, Shop Name, Adj. MCH1, ND_P90D0, ND_Other, ND_Total, RF_P90D0, RF_Other, RF_Total, Grand_Total
+    right_cols = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21]  # L-U: Site Code, Shop Name, Adj. SST, ND_P90D0, ND_Other, ND_Total, RF_P90D0, RF_Other, RF_Total, Grand_Total
+    detail_cols_left = [4, 5, 7, 8]
+    detail_cols_right = [15, 16, 18, 19]
+
+    data_cols = ["ND_P90D0", "ND_Other", "ND_Total", "RF_P90D0", "RF_Other", "RF_Total", "Grand_Total"]
+    has_left = summary_left is not None and not summary_left.empty
+    has_right = summary_right is not None and not summary_right.empty
+
+    start_row = 7
+    left_len = 0
+    right_len = 0
+
+    if has_left:
+        left_len = len(summary_left)
+        _write_pivot_block(ws_summary, summary_left, start_row, left_cols, detail_cols_left, data_cols,
+                           thin_border, bold_font, progress_callback, prefix="左區塊")
+    if has_right:
+        right_len = len(summary_right)
+        _write_pivot_block(ws_summary, summary_right, start_row, right_cols, detail_cols_right, data_cols,
+                           thin_border, bold_font, progress_callback, prefix="右區塊")
+
+    final_row = start_row + max(left_len, right_len) - 1
+    _auto_width(ws_summary)
+
+    if progress_callback:
+        progress_callback(0.55, "建立分析摘要工作表...")
+
+    # ── Sheet 3: Carry SKU 分析摘要 ──
+    ws_dashboard = wb.create_sheet(title="Carry SKU 分析摘要")
+
+    ws_dashboard.merge_cells("A1:H1")
+    title_cell = ws_dashboard.cell(row=1, column=1, value="Carry SKU 分析摘要 (Carry SKU Analysis Dashboard)")
+    title_cell.font = Font(bold=True, size=14, color="1E40AF")
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    db_headers = list(dashboard_df.columns)
+    for col_idx, h in enumerate(db_headers, 1):
+        cell = ws_dashboard.cell(row=3, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    for row_idx, row_data in dashboard_df.iterrows():
+        excel_row = 4 + row_idx
+        is_total = row_data.get("Site Code") == "總計"
+        for col_idx, h in enumerate(db_headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            if isinstance(val, float) and not isinstance(val, bool):
+                val = round(val, 2)
+            cell = ws_dashboard.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_total:
+                cell.font = bold_font
+            if isinstance(val, (int, float)) and col_idx >= 3:
+                cell.number_format = "#,##0"
+
+    _auto_width(ws_dashboard)
+
+    if progress_callback:
+        progress_callback(0.9, "調整格式中...")
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    if progress_callback:
+        progress_callback(1.0, "完成!")
+
+    return buf
+
+
+def _write_summary_headers(ws, header_font, header_fill, thin_border):
+    """Write rows 3–6 of the Summary sheet (dual-block headers)."""
+
+    def _style(cell):
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    # Row 3 — left block (A, C-E), right block (L, N-P shifted +1)
+    row3_left = {1: "計數 - SKU", 4: "RP Type", 5: "Shop Stock Status2", 6: "Shop Stock Status"}
+    row3_right = {12: "計數 - SKU", 15: "RP Type", 16: "Shop Stock Status2", 17: "Shop Stock Status"}
+    for col_map in [row3_left, row3_right]:
+        for col, val in col_map.items():
+            c = ws.cell(row=3, column=col, value=val)
+            _style(c)
+
+    # Row 4 — shift all by +1; right: +12 (was +11)
+    row4_cols = [
+        (4, "ND"), (5, "ND"), (6, "ND 合計"),
+        (7, "RF"), (8, "RF"), (9, "RF 合計"), (10, "總計SKU"),
+    ]
+    for col, val in row4_cols:
+        c = ws.cell(row=4, column=col, value=val)
+        _style(c)
+        c = ws.cell(row=4, column=col + 11, value=val)
+        _style(c)
+
+    # Row 5 — shift left +1, right +1
+    row5_left = {4: "Overstock (P90D 0 Sales)", 5: "Other Status", 7: "Overstock (P90D 0 Sales)", 8: "Other Status"}
+    row5_right = {15: "Overstock (P90D 0 Sales)", 16: "Other Status", 18: "Overstock (P90D 0 Sales)", 19: "Other Status"}
+    for col, val in row5_left.items():
+        c = ws.cell(row=5, column=col, value=val)
+        _style(c)
+    for col, val in row5_right.items():
+        c = ws.cell(row=5, column=col, value=val)
+        _style(c)
+
+    # Row 6 — add Shop Name
+    c = ws.cell(row=6, column=1, value="Site Code")
+    _style(c)
+    c = ws.cell(row=6, column=2, value="Shop Name")
+    _style(c)
+    c = ws.cell(row=6, column=3, value="Adj. MCH1")
+    _style(c)
+    c = ws.cell(row=6, column=12, value="Site Code")
+    _style(c)
+    c = ws.cell(row=6, column=13, value="Shop Name")
+    _style(c)
+    c = ws.cell(row=6, column=14, value="Adj. SST")
+    _style(c)
+
+
+def _write_pivot_block(ws, pivot_df, start_row, excel_cols, detail_cols, data_cols, thin_border, bold_font,
+                       progress_callback=None, prefix=""):
+    """
+    Write a pivot block to the summary sheet.
+    pivot_df columns: [Site Code, Shop Name, category_col, ND_P90D0, ND_Other, ND_Total, RF_P90D0, RF_Other, RF_Total, Grand_Total]
+    excel_cols: list of 10 column indices [site, shop_name, cat, nd_p90d0, nd_other, nd_total, rf_p90d0, rf_other, rf_total, grand]
+    detail_cols: list of column indices where 0 should be written as None
+    """
+    category_col_name = pivot_df.columns[2]
+
+    total_rows = len(pivot_df)
+    for row_idx, row_data in pivot_df.iterrows():
+        excel_row = start_row + row_idx
+        is_subtotal = "合計" in str(row_data["Site Code"])
+
+        # Col 1: Site Code
+        site_val = row_data["Site Code"]
+        cell = ws.cell(row=excel_row, column=excel_cols[0], value=site_val if site_val else None)
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        if is_subtotal:
+            cell.font = bold_font
+
+        # Col 2: Shop Name
+        shop_val = row_data.get("Shop Name", "")
+        cell = ws.cell(row=excel_row, column=excel_cols[1], value=str(shop_val) if shop_val else None)
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        if is_subtotal:
+            cell.font = bold_font
+
+        # Col 3: category
+        cat_val = row_data.get(category_col_name)
+        if pd.isna(cat_val) or cat_val is None:
+            cat_val = None
+        cell = ws.cell(row=excel_row, column=excel_cols[2], value=str(cat_val) if cat_val is not None else None)
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        if is_subtotal:
+            cell.font = bold_font
+
+        # Cols 4-10: numeric data
+        for di, dc in enumerate(data_cols):
+            col_excel = excel_cols[3 + di]
+            val = int(row_data.get(dc, 0)) if pd.notna(row_data.get(dc)) else 0
+
+            if col_excel in detail_cols:
+                val = val if val > 0 else None
+
+            cell = ws.cell(row=excel_row, column=col_excel, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_subtotal:
+                cell.font = bold_font
+            if isinstance(val, (int, float)) and val is not None:
+                cell.number_format = "#,##0"
+
+        if progress_callback and (row_idx % 500 == 0 or row_idx == total_rows - 1):
+            progress_callback(0.15 + 0.4 * ((row_idx + 1) / max(total_rows, 1)),
+                            f"寫入 Summary {prefix} ({row_idx+1}/{total_rows})...")
+
