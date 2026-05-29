@@ -6,12 +6,6 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
-from openpyxl.formatting.rule import CellIsRule
-
-SUBTOTAL_FILL = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
-SUBTOTAL_FONT = Font(bold=True, size=11, color="1F4E79")
-ALT_ROW_FILL = PatternFill(start_color="F2F7FB", end_color="F2F7FB", fill_type="solid")
-SEPARATOR_FILL = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
 
 REQUIRED_COLUMNS = ["Buyer", "Brand", "SKU", "Shop Stock Status"]
 
@@ -439,7 +433,6 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
 
     ws_raw.auto_filter.ref = ws_raw.dimensions
     _auto_width(ws_raw)
-    ws_raw.freeze_panes = "A2"
 
     if progress_callback:
         progress_callback(0.35, "\u5efa\u7acb\u6458\u8981\u5de5\u4f5c\u8868...")
@@ -479,9 +472,6 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
 
             if is_total:
                 cell.font = bold_font
-                cell.fill = SUBTOTAL_FILL
-            elif row_idx % 2 == 1:
-                cell.fill = ALT_ROW_FILL
 
             if isinstance(val, (int, float)) and col_idx >= 4 and h != "SKU":
                 cell.number_format = "#,##0"
@@ -490,7 +480,6 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
             progress_callback(0.6 + 0.3 * ((row_idx + 1) / total_summary), f"\u5beb\u5165\u6458\u8981 ({row_idx+1}/{total_summary})...")
 
     _auto_width(ws_summary)
-    ws_summary.freeze_panes = "A5"
 
     if progress_callback:
         progress_callback(0.72, "\u5efa\u7acb By Shop \u5206\u6790\u5de5\u4f5c\u8868...")
@@ -535,7 +524,6 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
             progress_callback(0.82 + 0.08 * ((row_idx + 1) / max(len(by_shop_df), 1)), f"\u5beb\u5165 By Shop ({row_idx+1}/{len(by_shop_df)})...")
 
     _auto_width(ws_by_shop)
-    ws_by_shop.freeze_panes = "A2"
 
     if progress_callback:
         progress_callback(0.92, "\u5efa\u7acb\u5206\u6790\u6458\u8981\u5de5\u4f5c\u8868...")
@@ -619,7 +607,6 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
         progress_callback(0.95, "\u8abf\u6574\u683c\u5f0f\u4e2d...")
 
     _auto_width(ws_dashboard)
-    ws_dashboard.freeze_panes = "A4"
 
     buf = BytesIO()
     wb.save(buf)
@@ -935,7 +922,6 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
 
     ws_raw.auto_filter.ref = ws_raw.dimensions
     _auto_width(ws_raw)
-    ws_raw.freeze_panes = "A2"
 
     if progress_callback:
         progress_callback(0.35, "建立摘要工作表...")
@@ -974,9 +960,6 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
 
             if is_total:
                 cell.font = bold_font
-                cell.fill = SUBTOTAL_FILL
-            elif row_idx % 2 == 1:
-                cell.fill = ALT_ROW_FILL
 
             if isinstance(val, (int, float)) and col_idx >= 4 and h != "SKU":
                 cell.number_format = "#,##0"
@@ -985,7 +968,6 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
             progress_callback(0.6 + 0.3 * ((row_idx + 1) / total_summary), f"寫入摘要 ({row_idx+1}/{total_summary})...")
 
     _auto_width(ws_summary)
-    ws_summary.freeze_panes = "A5"
 
     if progress_callback:
         progress_callback(0.72, "建立 By Shop 分析工作表...")
@@ -1023,9 +1005,6 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
             cell.alignment = Alignment(horizontal="center", vertical="center")
             if is_total:
                 cell.font = bold_font
-                cell.fill = SUBTOTAL_FILL
-            elif row_idx % 2 == 1:
-                cell.fill = ALT_ROW_FILL
             if isinstance(val, (int, float)) and col_idx >= 4:
                 cell.number_format = "#,##0"
 
@@ -1033,7 +1012,6 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
             progress_callback(0.82 + 0.08 * ((row_idx + 1) / max(len(by_shop_df), 1)), f"寫入 By Shop ({row_idx+1}/{len(by_shop_df)})...")
 
     _auto_width(ws_by_shop)
-    ws_by_shop.freeze_panes = "A2"
 
     if progress_callback:
         progress_callback(0.92, "建立分析摘要工作表...")
@@ -1117,7 +1095,6 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
         progress_callback(0.95, "調整格式中...")
 
     _auto_width(ws_dashboard)
-    ws_dashboard.freeze_panes = "A4"
 
     buf = BytesIO()
     wb.save(buf)
@@ -1431,7 +1408,6 @@ def generate_excel_carry(
 
     ws_raw.auto_filter.ref = ws_raw.dimensions
     _auto_width(ws_raw)
-    ws_raw.freeze_panes = "A2"
 
     if progress_callback:
         progress_callback(0.15, "建立 Summary 工作表...")
@@ -1464,25 +1440,7 @@ def generate_excel_carry(
                            thin_border, bold_font, progress_callback, prefix="右區塊")
 
     final_row = start_row + max(left_len, right_len) - 1
-
-    # Separator column (K) styling
-    for row in range(3, final_row + 1):
-        cell = ws_summary.cell(row=row, column=11)
-        cell.fill = SEPARATOR_FILL
-        cell.border = thin_border
-    ws_summary.column_dimensions["K"].width = 0.5
-
-    # Conditional formatting: highlight high overstock (>100) in P90D0 columns
-    red_fill = PatternFill(start_color="FDE8E8", end_color="FDE8E8", fill_type="solid")
-    red_font = Font(color="991B1B")
-    for col_letter in ["D", "G", "O", "R"]:
-        ws_summary.conditional_formatting.add(
-            f"{col_letter}{start_row}:{col_letter}{final_row}",
-            CellIsRule(operator="greaterThan", formula=["100"], fill=red_fill, font=red_font)
-        )
-
     _auto_width(ws_summary)
-    ws_summary.freeze_panes = "A7"
 
     if progress_callback:
         progress_callback(0.55, "建立分析摘要工作表...")
@@ -1516,15 +1474,11 @@ def generate_excel_carry(
             cell.border = thin_border
             cell.alignment = Alignment(horizontal="center", vertical="center")
             if is_total:
-                cell.font = SUBTOTAL_FONT
-                cell.fill = SUBTOTAL_FILL
-            elif row_idx % 2 == 1:
-                cell.fill = ALT_ROW_FILL
+                cell.font = bold_font
             if isinstance(val, (int, float)) and col_idx >= 3:
                 cell.number_format = "#,##0"
 
     _auto_width(ws_dashboard)
-    ws_dashboard.freeze_panes = "A4"
 
     if progress_callback:
         progress_callback(0.9, "調整格式中...")
@@ -1591,13 +1545,6 @@ def _write_summary_headers(ws, header_font, header_fill, thin_border):
     c = ws.cell(row=6, column=14, value="Adj. SST")
     _style(c)
 
-    ws.merge_cells("A3:C3")
-    ws.merge_cells("L3:N3")
-    ws.merge_cells("D4:F4")
-    ws.merge_cells("G4:I4")
-    ws.merge_cells("O4:Q4")
-    ws.merge_cells("R4:T4")
-
 
 def _write_pivot_block(ws, pivot_df, start_row, excel_cols, detail_cols, data_cols, thin_border, bold_font,
                        progress_callback=None, prefix=""):
@@ -1620,10 +1567,7 @@ def _write_pivot_block(ws, pivot_df, start_row, excel_cols, detail_cols, data_co
         cell.border = thin_border
         cell.alignment = Alignment(horizontal="center", vertical="center")
         if is_subtotal:
-            cell.font = SUBTOTAL_FONT
-            cell.fill = SUBTOTAL_FILL
-        elif row_idx % 2 == 1:
-            cell.fill = ALT_ROW_FILL
+            cell.font = bold_font
 
         # Col 2: Shop Name
         shop_val = row_data.get("Shop Name", "")
@@ -1631,10 +1575,7 @@ def _write_pivot_block(ws, pivot_df, start_row, excel_cols, detail_cols, data_co
         cell.border = thin_border
         cell.alignment = Alignment(horizontal="center", vertical="center")
         if is_subtotal:
-            cell.font = SUBTOTAL_FONT
-            cell.fill = SUBTOTAL_FILL
-        elif row_idx % 2 == 1:
-            cell.fill = ALT_ROW_FILL
+            cell.font = bold_font
 
         # Col 3: category
         cat_val = row_data.get(category_col_name)
@@ -1644,10 +1585,7 @@ def _write_pivot_block(ws, pivot_df, start_row, excel_cols, detail_cols, data_co
         cell.border = thin_border
         cell.alignment = Alignment(horizontal="center", vertical="center")
         if is_subtotal:
-            cell.font = SUBTOTAL_FONT
-            cell.fill = SUBTOTAL_FILL
-        elif row_idx % 2 == 1:
-            cell.fill = ALT_ROW_FILL
+            cell.font = bold_font
 
         # Cols 4-10: numeric data
         for di, dc in enumerate(data_cols):
@@ -1661,10 +1599,7 @@ def _write_pivot_block(ws, pivot_df, start_row, excel_cols, detail_cols, data_co
             cell.border = thin_border
             cell.alignment = Alignment(horizontal="center", vertical="center")
             if is_subtotal:
-                cell.font = SUBTOTAL_FONT
-                cell.fill = SUBTOTAL_FILL
-            elif row_idx % 2 == 1:
-                cell.fill = ALT_ROW_FILL
+                cell.font = bold_font
             if isinstance(val, (int, float)) and val is not None:
                 cell.number_format = "#,##0"
 
