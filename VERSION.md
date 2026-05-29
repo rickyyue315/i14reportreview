@@ -1,5 +1,9 @@
 # 版本記錄
 
+## v1.4.1 (2026-05-29)
+
+- 
+
 ## v1.5.0 (2026-05-28)
 
 - New: Comprehensive README.md with full project documentation

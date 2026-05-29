@@ -52,10 +52,9 @@ RAW_COLUMN_ORDER_NAMES = [
 
 
 def _resolve_column_name(name: str, available: set[str]) -> str | None:
-    if name in available:
-        return name
-    for col in sorted(available):
-        if col == name or col.startswith(name + " "):
+    stripped = name.strip()
+    for col in available:
+        if col.strip() == stripped:
             return col
     return None
 
@@ -285,11 +284,13 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
         if "Mix" in shop_natures:
             mask |= sn_col.str.contains("mix", na=False)
         if "Non Tourist" in shop_natures:
-            mask |= ~sn_col.str.contains("tourist|mix", na=False, regex=True)
+            is_tourist_or_mix = sn_col.str.contains("tourist|mix", na=False, regex=True)
+            is_filled = sn_col.notna() & (sn_col.str.strip() != "")
+            mask |= is_filled & ~is_tourist_or_mix
         df = df[mask]
 
     if df.empty:
-        raise ValueError("\u904e\u6ffe\u5f8c\u7121\u6709\u6548\u8cc7\u6599\u5217\uff0c\u8acb\u78ba\u8a8d\u4f86\u6e90\u6a94\u6848\u4e2d\u7684 Buyer \u6b04\u4f4d\u662f\u5426\u5305\u542b\u6709\u6548\u6578\u64da\uff08\u975e\u7a7a\u767d\u6216\u7e3d\u8a08\u5217\uff09")
+        raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
 
     status_col = df["Shop Stock Status"].fillna("")
 
@@ -784,7 +785,9 @@ def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_
         if "Mix" in shop_natures:
             mask |= sn_col.str.contains("mix", na=False)
         if "Non Tourist" in shop_natures:
-            mask |= ~sn_col.str.contains("tourist|mix", na=False, regex=True)
+            is_tourist_or_mix = sn_col.str.contains("tourist|mix", na=False, regex=True)
+            is_filled = sn_col.notna() & (sn_col.str.strip() != "")
+            mask |= is_filled & ~is_tourist_or_mix
         df = df[mask]
 
     if df.empty:

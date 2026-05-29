@@ -328,6 +328,7 @@ if uploaded_file is not None:
             _ws = _wb.active
             _hdr = list(next(_ws.iter_rows(min_row=1, max_row=1, values_only=True)))
             _rows = []
+            _i = 0
             for _i, _r in enumerate(_ws.iter_rows(min_row=2, values_only=True), start=1):
                 _rows.append(list(_r))
                 if _i % 500 == 0:
@@ -575,7 +576,12 @@ if uploaded_file is not None:
 
             _transfer_col_name = "After new Safety Qty / ND can transfer out of QTY"
             transfer_col_resolved = _resolve_column_name(_transfer_col_name, set(summary_df.columns))
-            transfer_qty_total = int(_total_row[_transfer_col_name].values[0]) if transfer_col_resolved is not None and _transfer_col_name in _total_row.columns else int(pd.to_numeric(raw_df[_transfer_col_name], errors="coerce").fillna(0).sum()) if _transfer_col_name in raw_df.columns else 0
+            if transfer_col_resolved is not None and transfer_col_resolved in _total_row.columns:
+                transfer_qty_total = int(_total_row[transfer_col_resolved].values[0])
+            elif transfer_col_resolved is not None and transfer_col_resolved in raw_df.columns:
+                transfer_qty_total = int(pd.to_numeric(raw_df[transfer_col_resolved], errors="coerce").fillna(0).sum())
+            else:
+                transfer_qty_total = 0
 
             r2_col1, r2_col2, r2_col3 = st.columns(3)
             with r2_col1:
