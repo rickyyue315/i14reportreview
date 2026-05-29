@@ -428,17 +428,22 @@ if uploaded_file is not None:
             help="選擇要處理的店鋪性質。預設全選所有類型。"
         )
 
+        _is_overstock_mode = (mode == "Overstock Review")
+        _tourist_default = 30 if _is_overstock_mode else 50
+        _mix_default = 40 if _is_overstock_mode else 50
+        _non_tourist_default = 50
+
         with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
             st.markdown("調整各 Shop Nature 類型的安全庫存建議倍率（% of Monthly Sold Qty）。")
             _rate_cols = st.columns(3)
             with _rate_cols[0]:
-                rate_tourist = st.slider("Tourist Rate (%)", 0, 100, 50, 1,
+                rate_tourist = st.slider("Tourist Rate (%)", 0, 100, _tourist_default, 1,
                     help="Tourist 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
             with _rate_cols[1]:
-                rate_mix = st.slider("Mix Rate (%)", 0, 100, 50, 1,
+                rate_mix = st.slider("Mix Rate (%)", 0, 100, _mix_default, 1,
                     help="Mix 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
             with _rate_cols[2]:
-                rate_non_tourist = st.slider("Non Tourist Rate (%)", 0, 100, 50, 1,
+                rate_non_tourist = st.slider("Non Tourist Rate (%)", 0, 100, _non_tourist_default, 1,
                     help="Non Tourist 及其他類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
             st.caption(f"目前設定 → Tourist: **{rate_tourist}%** | Mix: **{rate_mix}%** | Non Tourist: **{rate_non_tourist}%**")
 
@@ -448,16 +453,17 @@ if uploaded_file is not None:
             "default": rate_non_tourist / 100.0,
         }
 
-        SAFETY_MODE_OPTIONS = ["只可增加", "可加可減"]
-        safety_mode = st.radio(
-            "🔒 Safety Qty 計算模式",
-            options=SAFETY_MODE_OPTIONS,
-            index=0,
-            horizontal=True,
-            help="只可增加：Safety Qty 只增不減（不處理 Overstock 的 Safety）；可加可減：同步處理 Overstock 的 Safety，可升可降。"
-        )
-
-        safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
+        safety_mode_value = "increase_only"
+        if mode == "OOS Review":
+            SAFETY_MODE_OPTIONS = ["只可增加", "可加可減"]
+            safety_mode = st.radio(
+                "🔒 Safety Qty 計算模式",
+                options=SAFETY_MODE_OPTIONS,
+                index=0,
+                horizontal=True,
+                help="只可增加：Safety Qty 只增不減（不處理 Overstock 的 Safety）；可加可減：同步處理 Overstock 的 Safety，可升可降。"
+            )
+            safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
 
         if st.button("⚙️ 執行報表轉換與分析", type="primary", use_container_width=True):
             _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
