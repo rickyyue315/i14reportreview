@@ -1502,48 +1502,40 @@ def _write_summary_headers(ws, header_font, header_fill, thin_border):
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = thin_border
 
-    # Row 3 — left block (A, C-E), right block (L, N-P shifted +1)
-    row3_left = {1: "計數 - SKU", 4: "RP Type", 5: "Shop Stock Status2", 6: "Shop Stock Status"}
-    row3_right = {12: "計數 - SKU", 15: "RP Type", 16: "Shop Stock Status2", 17: "Shop Stock Status"}
-    for col_map in [row3_left, row3_right]:
+    # Row 4 — top labels for the two pivot dimensions.
+    row4_left = {4: "RP Type", 5: "Shop Stock Status2"}
+    row4_right = {15: "RP Type", 16: "Shop Stock Status2"}
+    for col_map in [row4_left, row4_right]:
         for col, val in col_map.items():
-            c = ws.cell(row=3, column=col, value=val)
+            c = ws.cell(row=4, column=col, value=val)
             _style(c)
 
-    # Row 4 — shift all by +1; right: +12 (was +11)
-    row4_cols = [
-        (4, "ND"), (5, "ND"), (6, "ND 合計"),
-        (7, "RF"), (8, "RF"), (9, "RF 合計"), (10, "總計SKU"),
-    ]
-    for col, val in row4_cols:
-        c = ws.cell(row=4, column=col, value=val)
-        _style(c)
-        c = ws.cell(row=4, column=col + 11, value=val)
-        _style(c)
+    # Row 5 — count title and the RP-type/status bands.
+    ws.merge_cells("A5:C5")
+    ws.merge_cells("L5:N5")
+    c = ws.cell(row=5, column=1, value="計數 - SKU")
+    _style(c)
+    c = ws.cell(row=5, column=12, value="計數 - SKU")
+    _style(c)
 
-    # Row 5 — shift left +1, right +1
-    row5_left = {4: "Overstock (P90D 0 Sales)", 5: "Other Status", 7: "Overstock (P90D 0 Sales)", 8: "Other Status"}
-    row5_right = {15: "Overstock (P90D 0 Sales)", 16: "Other Status", 18: "Overstock (P90D 0 Sales)", 19: "Other Status"}
-    for col, val in row5_left.items():
-        c = ws.cell(row=5, column=col, value=val)
-        _style(c)
-    for col, val in row5_right.items():
-        c = ws.cell(row=5, column=col, value=val)
-        _style(c)
+    row5_left = {4: "ND", 5: "ND", 6: "Shop Stock Status", 7: "RF", 8: "RF"}
+    row5_right = {15: "ND", 16: "ND", 17: "Shop Stock Status", 18: "RF", 19: "RF"}
+    for col_map in [row5_left, row5_right]:
+        for col, val in col_map.items():
+            c = ws.cell(row=5, column=col, value=val)
+            _style(c)
 
-    # Row 6 — add Shop Name
-    c = ws.cell(row=6, column=1, value="Site Code")
-    _style(c)
-    c = ws.cell(row=6, column=2, value="Shop Name")
-    _style(c)
-    c = ws.cell(row=6, column=3, value="Adj. MCH1")
-    _style(c)
-    c = ws.cell(row=6, column=12, value="Site Code")
-    _style(c)
-    c = ws.cell(row=6, column=13, value="Shop Name")
-    _style(c)
-    c = ws.cell(row=6, column=14, value="Adj. SST")
-    _style(c)
+    # Row 6 — identifier labels and detail bands.
+    row6_left = {1: "Site Code", 2: "Shop Name", 3: "Adj. MCH1",
+                 4: "Overstock (P90D 0 Sales)", 5: "Other Status", 6: "ND 合計",
+                 7: "Overstock (P90D 0 Sales)", 8: "Other Status", 9: "RF 合計", 10: "總計SKU"}
+    row6_right = {12: "Site Code", 13: "Shop Name", 14: "Adj. SST",
+                  15: "Overstock (P90D 0 Sales)", 16: "Other Status", 17: "ND 合計",
+                  18: "Overstock (P90D 0 Sales)", 19: "Other Status", 20: "RF 合計", 21: "總計SKU"}
+    for col_map in [row6_left, row6_right]:
+        for col, val in col_map.items():
+            c = ws.cell(row=6, column=col, value=val)
+            _style(c)
 
 
 def _write_pivot_block(ws, pivot_df, start_row, excel_cols, detail_cols, data_cols, thin_border, bold_font,
