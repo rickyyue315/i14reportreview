@@ -288,6 +288,8 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
         _footer_mask = _footer_mask | _item_shop_mask
     df = df[~_footer_mask]
 
+    df = df[df["Buyer"].astype(str).str.strip() != "117 - Marketing"]
+
     if shop_natures is not None and "Shop Nature" in df.columns:
         sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
         mask = _safe_default_series(False, df.index)
@@ -788,6 +790,8 @@ def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_
         _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
         _footer_mask = _footer_mask | _item_shop_mask
     df = df[~_footer_mask]
+
+    df = df[df["Buyer"].astype(str).str.strip() != "117 - Marketing"]
 
     if shop_natures is not None and "Shop Nature" in df.columns:
         sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
@@ -1294,6 +1298,8 @@ def transform_carry(
         _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
         _footer_mask = _footer_mask | _item_shop_mask
     df = df[~_footer_mask]
+
+    df = df[df["Buyer"].astype(str).str.strip() != "117 - Marketing"]
 
     if shop_natures is not None and "Shop Nature" in df.columns:
         sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
