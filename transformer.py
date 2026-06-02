@@ -13,6 +13,7 @@ RAW_COLUMN_ORDER_NAMES = [
     "Item_Shop",
     "SKU",
     "Brand",
+    "SKU Desc",
     "Buyer",
     "Adj. SST",
     "Vendor MC",
@@ -21,6 +22,7 @@ RAW_COLUMN_ORDER_NAMES = [
     "Launch Date",
     "Item Class",
     "Site Code",
+    "Shop Name",
     "OM",
     "Shop Nature",
     "RP Type",
@@ -98,6 +100,43 @@ def _ensure_list(val):
     if not isinstance(val, list):
         return [val]
     return val
+
+
+def _extract_sku_desc(item_shop, site_code) -> str:
+    if pd.isna(item_shop) or pd.isna(site_code):
+        return ""
+
+    item_text = str(item_shop).strip()
+    site_text = str(site_code).strip()
+    if not item_text or not site_text:
+        return ""
+
+    item_text = re.sub(r'^\([^)]+\)\s*', '', item_text)
+    item_text = re.sub(r'^\d+\s*-\s*', '', item_text)
+
+    marker = f"{site_text}-"
+    idx = item_text.rfind(marker)
+    if idx == -1:
+        return ""
+
+    return item_text[:idx].strip().strip(",，;；:： ")
+
+
+def _compute_raw_extra_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
+    shop_name = [
+        _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
+        for i in range(len(df))
+    ]
+    sku_desc = [
+        _extract_sku_desc(item_shop.iloc[i], site_code.iloc[i])
+        for i in range(len(df))
+    ]
+    df["Shop Name"] = shop_name
+    df["SKU Desc"] = sku_desc
+    return df
 
 
 def _extract_shop_name(item_shop, site_code) -> str:
@@ -397,6 +436,7 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     ws_raw = wb.active
     ws_raw.title = "RAW"
 
+    raw_df = _compute_raw_extra_columns(raw_df)
     raw_df = _reorder_raw_columns(raw_df)
 
     raw_cols = list(raw_df.columns)
@@ -888,6 +928,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
     ws_raw = wb.active
     ws_raw.title = "RAW"
 
+    raw_df = _compute_raw_extra_columns(raw_df)
     raw_df = _reorder_raw_columns(raw_df)
 
     raw_cols = list(raw_df.columns)
@@ -928,7 +969,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
     _auto_width(ws_raw)
 
     if progress_callback:
-        progress_callback(0.35, "建立摘要工作表...")
+        progress_callback(0.35, "\u5efa\u7acb\u6458\u8981\u5de5\u4f5c\u8868...")
 
     ws_summary = wb.create_sheet(title="Shop Stock Status")
 
@@ -1381,7 +1422,8 @@ def generate_excel_carry(
     ws_raw = wb.active
     ws_raw.title = "RAW"
 
-    raw_df_display = _reorder_raw_columns(raw_df)
+    raw_df_display = _compute_raw_extra_columns(raw_df)
+    raw_df_display = _reorder_raw_columns(raw_df_display)
     raw_cols = list(raw_df_display.columns)
     _display_names = {"Adj. Safety Stock": "Safety Stock (現時)"}
     header_row = [_display_names.get(c, c) for c in raw_cols]
