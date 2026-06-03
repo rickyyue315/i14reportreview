@@ -7,7 +7,7 @@
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Combined Review（敬請期待） |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / Combined Review |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式 |
@@ -87,7 +87,13 @@ OOS Review 建議額外包含：
 
 ### Combined Review
 
-整合 Overstock 與 OOS 分析結果（開發中）。
+整合 Overstock 與 OOS 分析結果，為每個 Site 計算建議 Safety Stock：
+
+1. **Overstock Cap (X)** — 基於月均銷售與 Overstock Rate 計算庫存上限，上限不超過現有 Adj. Safety Stock
+2. **OOS Floor (Y)** — 基於 MTD 預估銷售與 OOS Rate 計算缺貨底線，最低 3
+3. **Combined Safety Stock** = max(Y, Z if Z ≤ X else X)，平衡庫存過賸與缺貨風險
+
+輸出包含 RAW、Shop Stock Status、By Shop、綜合庫存數據分析摘要共 4 個工作表。
 
 ## Excel 輸出結構
 

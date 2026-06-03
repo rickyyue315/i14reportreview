@@ -3,7 +3,7 @@ import pandas as pd
 import calendar
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from transformer import transform, generate_excel, validate_input, _resolve_column_name, transform_oos, generate_excel_oos, transform_carry, generate_excel_carry
+from transformer import transform, generate_excel, validate_input, _resolve_column_name, transform_oos, generate_excel_oos, transform_carry, generate_excel_carry, transform_combined, generate_excel_combined
 import time
 import traceback
 from openpyxl import load_workbook
@@ -190,7 +190,9 @@ with st.sidebar:
     - 輸出：RAW、Summary（雙區塊樞紐：Adj. MCH1 × Adj. SST）、Carry SKU 分析摘要
 
     **🔄 Combined Review**
-    - 同時整合 Overstock 與 OOS 分析結果（敬請期待）
+    - 同時整合 Overstock 與 OOS 分析結果
+    - 自動計算建議 Safety Stock，平衡庫存過賸與缺貨風險
+    - 支援逐 Site 檢視與調整
     """)
     
     st.divider()
@@ -292,6 +294,14 @@ if "carry_processed" not in st.session_state:
     st.session_state.carry_excel_data = None
     st.session_state.carry_warnings = []
 
+if "combined_processed" not in st.session_state:
+    st.session_state.combined_processed = False
+    st.session_state.combined_summary_df = None
+    st.session_state.combined_raw_df = None
+    st.session_state.combined_categories = None
+    st.session_state.combined_excel_data = None
+    st.session_state.combined_warnings = []
+
 # 7. 模式切換狀態清理
 prev_mode = st.session_state.get("mode")
 if prev_mode is not None and prev_mode != current_mode:
@@ -314,6 +324,12 @@ if prev_mode is not None and prev_mode != current_mode:
     st.session_state.carry_raw_df = None
     st.session_state.carry_excel_data = None
     st.session_state.carry_warnings = []
+    st.session_state.combined_processed = False
+    st.session_state.combined_summary_df = None
+    st.session_state.combined_raw_df = None
+    st.session_state.combined_categories = None
+    st.session_state.combined_excel_data = None
+    st.session_state.combined_warnings = []
     st.session_state.pop("last_uploaded_key", None)
 st.session_state.mode = current_mode
 mode = current_mode
@@ -350,6 +366,12 @@ if uploaded_file is not None:
         st.session_state.carry_raw_df = None
         st.session_state.carry_excel_data = None
         st.session_state.carry_warnings = []
+        st.session_state.combined_processed = False
+        st.session_state.combined_summary_df = None
+        st.session_state.combined_raw_df = None
+        st.session_state.combined_categories = None
+        st.session_state.combined_excel_data = None
+        st.session_state.combined_warnings = []
         st.session_state.pop("df_input", None)
 
     # 若尚未載入資料，則執行讀取
@@ -439,7 +461,271 @@ if uploaded_file is not None:
     st.markdown('</div>', unsafe_allow_html=True)
 
     if mode == "Combined Review":
-        st.info("📢 Combined Review 模式即將推出，敬請期待！")
+        mtd_date = st.date_input(
+            "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
+            value=datetime.now().date() - timedelta(days=1),
+            help="選擇 MTD (Month-To-Date) 截止日期，系統將據此推算月度預估銷售量。"
+        )
+        mtd_days = mtd_date.day
+        month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
+        st.caption(f"MTD: {mtd_days}日，當月共 {month_total_days} 日")
+
+        st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+        SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
+        selected_shop_natures = st.multiselect(
+            "🏷️ 選擇要處理的 Shop Nature 類型",
+            options=SHOP_NATURE_OPTIONS,
+            default=SHOP_NATURE_OPTIONS,
+            help="選擇要處理的店鋪性質。預設全選所有類型。"
+        )
+
+        with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
+            st.markdown("**Overstock Rate** — 各 Shop Nature 庫存上限計算倍率。")
+            col_os1, col_os2, col_os3 = st.columns(3)
+            with col_os1:
+                os_rate_tourist = st.slider("Overstock Tourist Rate (%)", 0, 100, 30, 1, key="os_tourist_cb",
+                    help="Tourist 類型 Overstock 上限 = floor(Monthly Sold × Rate)")
+            with col_os2:
+                os_rate_mix = st.slider("Overstock Mix Rate (%)", 0, 100, 40, 1, key="os_mix_cb",
+                    help="Mix 類型 Overstock 上限 = floor(Monthly Sold × Rate)")
+            with col_os3:
+                os_rate_non_tourist = st.slider("Overstock Non Tourist Rate (%)", 0, 100, 50, 1, key="os_non_tourist_cb",
+                    help="Non Tourist 類型 Overstock 上限 = floor(Monthly Sold × Rate)")
+
+            st.markdown("<hr style='margin: 1rem 0;'>", unsafe_allow_html=True)
+            st.markdown("**OOS Rate** — 各 Shop Nature OOS 底線計算倍率。")
+            col_oos1, col_oos2, col_oos3 = st.columns(3)
+            with col_oos1:
+                oos_rate_tourist = st.slider("OOS Tourist Rate (%)", 0, 100, 50, 1, key="oos_tourist_cb",
+                    help="Tourist 類型 OOS 底線 = ceil(Projected Monthly × Rate)")
+            with col_oos2:
+                oos_rate_mix = st.slider("OOS Mix Rate (%)", 0, 100, 50, 1, key="oos_mix_cb",
+                    help="Mix 類型 OOS 底線 = ceil(Projected Monthly × Rate)")
+            with col_oos3:
+                oos_rate_non_tourist = st.slider("OOS Non Tourist Rate (%)", 0, 100, 50, 1, key="oos_non_tourist_cb",
+                    help="Non Tourist 類型 OOS 底線 = ceil(Projected Monthly × Rate)")
+
+            st.caption(f"Overstock → Tourist: **{os_rate_tourist}%** | Mix: **{os_rate_mix}%** | Non Tourist: **{os_rate_non_tourist}%**")
+            st.caption(f"OOS → Tourist: **{oos_rate_tourist}%** | Mix: **{oos_rate_mix}%** | Non Tourist: **{oos_rate_non_tourist}%**")
+
+        rates_overstock = {
+            "tourist": os_rate_tourist / 100.0,
+            "mix": os_rate_mix / 100.0,
+            "default": os_rate_non_tourist / 100.0,
+        }
+        rates_oos = {
+            "tourist": oos_rate_tourist / 100.0,
+            "mix": oos_rate_mix / 100.0,
+            "default": oos_rate_non_tourist / 100.0,
+        }
+
+        SAFETY_MODE_OPTIONS = ["只可增加", "可加可減"]
+        safety_mode = st.radio(
+            "🔒 Safety Qty 計算模式",
+            options=SAFETY_MODE_OPTIONS,
+            index=0,
+            horizontal=True,
+            help="只可增加：Safety Qty 只增不減；可加可減：允許減少。"
+        )
+        safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
+
+        _all_site_codes = sorted(df_input["Site Code"].dropna().unique()) if "Site Code" in df_input.columns else []
+
+        if st.button("⚙️ 執行報表轉換與分析", type="primary", use_container_width=True):
+            _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
+            _t0_2 = time.time()
+
+            def _cb(pct, msg):
+                _e = time.time() - _t0_2
+                _eta2 = (_e / pct) - _e if pct > 0 else 0
+                _prog2.progress(min(pct, 1.0), text=f"處理中... {pct*100:.0f}% | {msg} | 已用: {_e:.0f}s | 預計剩餘: {_eta2:.0f}s")
+
+            try:
+                def _cb_transform(pct, msg):
+                    _cb(0.6 * pct, msg)
+
+                def _cb_excel(pct, msg):
+                    _cb(0.6 + 0.4 * pct, msg)
+
+                summary_df, raw_df, categories, _warnings = transform_combined(
+                    df_input,
+                    progress_callback=_cb_transform,
+                    shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                    rates_overstock=rates_overstock,
+                    rates_oos=rates_oos,
+                    mtd_days=mtd_days,
+                    month_total_days=month_total_days,
+                    safety_mode=safety_mode_value,
+                )
+                buf = generate_excel_combined(summary_df, raw_df, categories, progress_callback=_cb_excel)
+                st.session_state.combined_processed = True
+                st.session_state.combined_summary_df = summary_df
+                st.session_state.combined_raw_df = raw_df
+                st.session_state.combined_categories = categories
+                st.session_state.combined_excel_data = buf
+                st.session_state.combined_warnings = _warnings
+            except Exception as e:
+                _prog2.empty()
+                _tb = traceback.format_exc()
+                print(f"❌ Combined Review 處理失敗: {e}\n{_tb}")
+                st.error(f"❌ Combined Review 處理失敗: {e}\n\n詳細錯誤: {_tb}")
+                st.stop()
+
+            _prog2.empty()
+            st.success("🎉 Combined Review 報表產生成功！數據彙總已完成。")
+            if _warnings:
+                for _w in _warnings:
+                    st.warning(f"⚠️ {_w}")
+
+        if st.session_state.combined_processed:
+            summary_df = st.session_state.combined_summary_df
+            raw_df = st.session_state.combined_raw_df
+            categories = st.session_state.combined_categories
+            excel_data = st.session_state.combined_excel_data
+
+            st.markdown('<div class="custom-card" style="border-top: 4px solid #6366f1;">', unsafe_allow_html=True)
+            st.markdown("### 📈 綜合庫存數據分析摘要 (Combined Analysis Dashboard)")
+
+            _total_row = summary_df[summary_df["Buyer"] == "總計"]
+            if _total_row.empty:
+                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看板。")
+                st.stop()
+            total_combined = int(_total_row["總計"].values[0])
+            total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
+            total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
+            total_skus = raw_df["SKU"].dropna().nunique()
+
+            cat_counts = {}
+            for cat in categories:
+                cat_counts[cat] = int(_total_row.get(cat, 0))
+
+            safety_change_total = int(pd.to_numeric(raw_df.get("Safety Qty Change", pd.Series(0, index=raw_df.index)), errors="coerce").fillna(0).sum())
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff5555;">
+                    <div class="metric-title">總 Combined 筆數</div>
+                    <div class="metric-value" style="color: #ff5555;">{total_combined:,}</div>
+                    <div class="metric-desc">所有 Combined 審查之總計筆數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #5599ff;">
+                    <div class="metric-title">影響採購人員數 (Buyers)</div>
+                    <div class="metric-value" style="color: #5599ff;">{total_buyers:,}</div>
+                    <div class="metric-desc">位採購人員名下有需審查品項</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #9944ff;">
+                    <div class="metric-title">影響品牌總數 (Brands)</div>
+                    <div class="metric-value" style="color: #9944ff;">{total_brands:,}</div>
+                    <div class="metric-desc">個品牌包含需審查商品</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #00ff88;">
+                    <div class="metric-title">影響SKU總數</div>
+                    <div class="metric-value" style="color: #00ff88;">{total_skus:,}</div>
+                    <div class="metric-desc">個包含需審查商品(SKUs)</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+            r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
+            with r2_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff9944;">
+                    <div class="metric-title">Overstock 分類筆數</div>
+                    <div class="metric-value" style="color: #ff9944;">{int(cat_counts.get(categories[0], 0)):,}</div>
+                    <div class="metric-desc">庫存過賸分類筆數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff44ff;">
+                    <div class="metric-title">OOS 分類筆數</div>
+                    <div class="metric-value" style="color: #ff44ff;">{int(cat_counts.get(categories[1], 0)):,}</div>
+                    <div class="metric-desc">缺貨分類筆數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #06b6d4;">
+                    <div class="metric-title">Safety 調整筆數</div>
+                    <div class="metric-value" style="color: #06b6d4;">{int(cat_counts.get(categories[2], 0)):,}</div>
+                    <div class="metric-desc">Balanced (Safety Adjusted) 筆數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #8b5cf6;">
+                    <div class="metric-title">Safety 調整總量</div>
+                    <div class="metric-value" style="color: #8b5cf6;">{safety_change_total:,}</div>
+                    <div class="metric-desc">Safety Qty Change 總和</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+            selected_site_code = st.selectbox(
+                "🏪 選擇 Site Code 檢視明細",
+                options=["全部"] + _all_site_codes,
+                index=0,
+                help="選擇特定 Site Code 過濾下方表格。僅影響 RAW 明細預覽。"
+            )
+
+            tab1, tab2, tab3 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "🏪 By Shop 明細", "📄 RAW 原始明細"])
+
+            with tab1:
+                st.markdown("#### 採購人員與品牌之 Combined 交叉統計表")
+                st.markdown("本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
+                st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+            with tab2:
+                by_shop_df = summary_df  # placeholder, real by_shop is built in excel gen
+                st.markdown("#### 各 Site 層級彙總分析")
+                _raw_for_shop = raw_df.copy()
+                _by_shop_display = None
+                try:
+                    from transformer import _build_combined_by_shop_summary
+                    _by_shop_display = _build_combined_by_shop_summary(_raw_for_shop)
+                except Exception:
+                    pass
+                if _by_shop_display is not None:
+                    st.dataframe(_by_shop_display, use_container_width=True, hide_index=True)
+                else:
+                    st.info("By Shop 明細無法產生，請檢查資料。")
+
+            with tab3:
+                st.markdown("#### RAW 原始資料庫存明細")
+                _filtered_raw = raw_df.copy()
+                if selected_site_code != "全部" and "Site Code" in _filtered_raw.columns:
+                    _filtered_raw = _filtered_raw[_filtered_raw["Site Code"].astype(str).str.strip() == selected_site_code]
+                st.dataframe(_filtered_raw.head(50), use_container_width=True)
+                st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 Combined Review_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載 Combined Review 分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True,
+            )
     else:
         if mode == "OOS Review":
             mtd_date = st.date_input(

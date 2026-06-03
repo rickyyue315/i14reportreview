@@ -301,6 +301,505 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
     return df
 
 
+# ─── Combined Review Functions ──────────────────────────────────────────────────
+
+
+def _add_combined_recommendation_columns(
+    df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode="increase_only"
+):
+    df = df.copy()
+
+    status_col = df["Shop Stock Status"].fillna("")
+    adj_ss = _safe_numeric(df.get("Adj. Safety Stock", _safe_default_series(0, df.index)))
+    monthly_sold = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, df.index)))
+    sold_qty = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0.0, df.index)))
+    shop_nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.lower()
+
+    cond_2x = (status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)")
+
+    # Overstock cap X
+    def _compute_x(monthly_sold_arr, rate_arr, adj_ss_arr):
+        x = np.floor(monthly_sold_arr * rate_arr).clip(lower=3).astype(int)
+        over_adj = x > adj_ss_arr
+        x[over_adj] = adj_ss_arr[over_adj].astype(int)
+        return x
+
+    _os_default = rates_overstock.get("default", 0.50)
+    _os_tourist = rates_overstock.get("tourist", 0.30)
+    _os_mix = rates_overstock.get("mix", 0.40)
+
+    os_rate_arr = np.full(len(df), _os_default)
+    os_rate_arr[shop_nature.str.contains("tourist", na=False)] = _os_tourist
+    os_rate_arr[shop_nature.str.contains("mix", na=False)] = _os_mix
+
+    x_values = np.full(len(df), 0, dtype=int)
+    if cond_2x.any():
+        x_values = _compute_x(monthly_sold.values, os_rate_arr, adj_ss.values)
+
+    # OOS floor Y
+    if mtd_days > 0:
+        projected = (sold_qty / mtd_days) * month_total_days
+    else:
+        projected = _safe_default_series(0.0, df.index)
+
+    df["Projected Monthly Sold Qty"] = np.ceil(projected).astype(int)
+
+    _oos_default = rates_oos.get("default", 0.50)
+    _oos_tourist = rates_oos.get("tourist", 0.50)
+    _oos_mix = rates_oos.get("mix", 0.50)
+
+    oos_rate_arr = np.full(len(df), _oos_default)
+    oos_rate_arr[shop_nature.str.contains("tourist", na=False)] = _oos_tourist
+    oos_rate_arr[shop_nature.str.contains("mix", na=False)] = _oos_mix
+
+    y_values = np.ceil(projected.values * oos_rate_arr).clip(min=3).astype(int)
+
+    # Z = current Adj. Safety Stock
+    z_values = adj_ss.values.astype(int)
+
+    # Combined = max(Y, Z if Z <= X else X)
+    combined = np.zeros(len(df), dtype=int)
+    for i in range(len(df)):
+        x_val = x_values[i]
+        y_val = y_values[i]
+        z_val = z_values[i]
+        if z_val <= x_val:
+            combined[i] = max(y_val, z_val)
+        else:
+            combined[i] = max(y_val, x_val)
+
+    df["Overstock Cap (X)"] = x_values
+    df["OOS Floor (Y)"] = y_values
+    df["Combined Safety Stock"] = combined
+
+    delta = combined - z_values
+    if safety_mode == "increase_only":
+        delta = delta.clip(min=0)
+    df["Safety Qty Change"] = delta
+
+    df["Buyer reply"] = ""
+
+    return df
+
+
+def _build_combined_by_shop_summary(raw):
+    df = raw.copy()
+
+    site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
+    shop_name = [
+        _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
+        for i in range(len(df))
+    ]
+
+    df["Site Code"] = site_code
+    df["Shop Name"] = shop_name
+    df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+
+    status_col = df["Shop Stock Status"].fillna("")
+    safety_change = pd.to_numeric(df.get("Safety Qty Change", _safe_default_series(0, df.index)), errors="coerce").fillna(0)
+
+    group_cols = ["Site Code", "Shop Name", "OM"]
+    df["_is_overstock"] = status_col.str.startswith("Overstock", na=False)
+    df["_is_oos"] = (status_col == "OOS (0 Stock)") | (status_col == "Potential OOS (<7 Turnday)")
+    df["_sku_overstock"] = df["SKU"].where(df["_is_overstock"])
+    df["_sku_oos"] = df["SKU"].where(df["_is_oos"])
+    df["_safety_increase"] = (safety_change > 0).astype(int)
+    df["_safety_decrease"] = (safety_change < 0).astype(int)
+    df["_safety_change"] = safety_change
+
+    by_shop = (
+        df.groupby(group_cols, dropna=False, observed=True)
+        .agg(
+            Overstock_SKU数量=("_sku_overstock", "nunique"),
+            OOS_SKU数量=("_sku_oos", "nunique"),
+            需增加Safety_SKU数量=("_safety_increase", "sum"),
+            需减少Safety_SKU数量=("_safety_decrease", "sum"),
+            安全库存调整总量=("_safety_change", "sum"),
+            Combined_SKU总数=("SKU", "nunique"),
+        )
+        .reset_index()
+    )
+
+    for col in by_shop.columns:
+        if col not in group_cols:
+            by_shop[col] = by_shop[col].fillna(0).astype(int)
+
+    if not by_shop.empty:
+        total_row = pd.DataFrame(
+            {
+                "Site Code": ["總計"],
+                "Shop Name": [""],
+                "OM": [""],
+                "Overstock_SKU数量": [int(by_shop["Overstock_SKU数量"].sum())],
+                "OOS_SKU数量": [int(by_shop["OOS_SKU数量"].sum())],
+                "需增加Safety_SKU数量": [int(by_shop["需增加Safety_SKU数量"].sum())],
+                "需减少Safety_SKU数量": [int(by_shop["需减少Safety_SKU数量"].sum())],
+                "安全库存调整总量": [int(by_shop["安全库存调整总量"].sum())],
+                "Combined_SKU总数": [int(by_shop["Combined_SKU总数"].sum())],
+            }
+        )
+        by_shop = pd.concat([by_shop.sort_values(["Site Code", "Shop Name", "OM"], kind="stable"), total_row], ignore_index=True)
+
+    return by_shop
+
+
+def transform_combined(
+    df_input: pd.DataFrame,
+    progress_callback=None,
+    shop_natures: list[str] | None = None,
+    rates_overstock: dict | None = None,
+    rates_oos: dict | None = None,
+    mtd_days: int | None = None,
+    month_total_days: int | None = None,
+    safety_mode: str = "increase_only",
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str], list[str]]:
+    missing = validate_input(df_input)
+    if missing:
+        raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
+
+    warnings = []
+
+    _optional_cols = ["Adj. Safety Stock", "Sold Qty (CM - MTD)", "Shop Monthly Sold Qty (P90D)", "Shop Nature"]
+    for _col in _optional_cols:
+        if _col not in df_input.columns:
+            warnings.append(f"缺少可選欄位「{_col}」，建議值將可能不準確")
+
+    if progress_callback:
+        progress_callback(0.05, "驗證通過")
+
+    df = df_input.dropna(subset=["Buyer"])
+
+    if progress_callback:
+        progress_callback(0.1, "清理資料中...")
+
+    _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
+    if "Item_Shop" in df.columns:
+        _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
+        _footer_mask = _footer_mask | _item_shop_mask
+    df = df[~_footer_mask]
+
+    df = df[df["Buyer"].astype(str).str.strip() != "117 - Marketing"]
+
+    if shop_natures is not None and "Shop Nature" in df.columns:
+        sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
+        mask = _safe_default_series(False, df.index)
+        if "Tourist" in shop_natures:
+            mask |= sn_col.str.contains("tourist", na=False)
+        if "Mix" in shop_natures:
+            mask |= sn_col.str.contains("mix", na=False)
+        if "Non Tourist" in shop_natures:
+            is_tourist_or_mix = sn_col.str.contains("tourist|mix", na=False, regex=True)
+            is_filled = sn_col.notna() & (sn_col.str.strip() != "")
+            mask |= is_filled & ~is_tourist_or_mix
+        df = df[mask]
+
+    if df.empty:
+        raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
+
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+    raw = _add_combined_recommendation_columns(
+        df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode=safety_mode
+    )
+
+    status_col = raw["Shop Stock Status"].fillna("")
+    safety_change = pd.to_numeric(raw.get("Safety Qty Change", _safe_default_series(0, raw.index)), errors="coerce").fillna(0)
+
+    categories = ["Overstock", "OOS", "Balanced (Safety Adjusted)"]
+
+    group_cols = ["Buyer", "Brand", "SKU"]
+
+    if progress_callback:
+        progress_callback(0.3, "分類統計中...")
+
+    overstock_mask = status_col.str.startswith("Overstock", na=False)
+    oos_mask = (status_col == "OOS (0 Stock)") | (status_col == "Potential OOS (<7 Turnday)")
+    balanced_mask = (safety_change != 0) & ~overstock_mask & ~oos_mask
+
+    counts = {}
+    counts["Overstock"] = (
+        raw[overstock_mask].groupby(group_cols, observed=True).size().rename("Overstock")
+    )
+    counts["OOS"] = (
+        raw[oos_mask].groupby(group_cols, observed=True).size().rename("OOS")
+    )
+    counts["Balanced (Safety Adjusted)"] = (
+        raw[balanced_mask].groupby(group_cols, observed=True).size().rename("Balanced (Safety Adjusted)")
+    )
+
+    if progress_callback:
+        progress_callback(0.5, "合併彙總中...")
+
+    summary = pd.concat(list(counts.values()), axis=1).fillna(0).astype(int).reset_index()
+    summary["SKU"] = summary["SKU"].apply(_safe_sku)
+    summary["總計"] = summary[categories].sum(axis=1)
+
+    safety_change_per_group = (
+        raw.groupby(group_cols, observed=True)["Safety Qty Change"]
+        .sum()
+        .astype(int)
+    )
+    summary = summary.merge(safety_change_per_group, on=group_cols, how="left")
+    summary["Safety Qty Change"] = summary["Safety Qty Change"].fillna(0).astype(int)
+
+    buyer_order = summary.groupby("Buyer")["總計"].sum().sort_values(ascending=False).index.tolist()
+    summary["_buyer_key"] = summary["Buyer"].map({b: i for i, b in enumerate(buyer_order)})
+    summary = summary.sort_values(["_buyer_key", "Brand", "SKU"], ascending=[True, True, True]).drop(columns=["_buyer_key"]).reset_index(drop=True)
+
+    total_cat = int(summary["總計"].sum())
+    total_row = pd.DataFrame(
+        {
+            "Buyer": ["總計"],
+            "Brand": [None],
+            "SKU": [None],
+            **{cat: [int(summary[cat].sum())] for cat in categories},
+            "總計": [total_cat],
+            "Safety Qty Change": [int(summary["Safety Qty Change"].sum())],
+        }
+    )
+    summary = pd.concat([summary, total_row], ignore_index=True)
+
+    if total_cat == 0:
+        warnings.append("未偵測到任何符合條件的 Combined Review 資料。")
+
+    if progress_callback:
+        progress_callback(0.7, "轉換完成")
+
+    return summary, raw, categories, warnings
+
+
+def generate_excel_combined(
+    summary_df: pd.DataFrame,
+    raw_df: pd.DataFrame,
+    categories: list[str],
+    progress_callback=None,
+) -> BytesIO:
+    wb = Workbook()
+
+    if progress_callback:
+        progress_callback(0.0, "建立 Excel 結構...")
+
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    header_fill_raw = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    bold_font = Font(bold=True, size=11)
+    desc_font = Font(size=9, color="6B7280", italic=True)
+
+    # ── Sheet 1: RAW ──
+    ws_raw = wb.active
+    ws_raw.title = "RAW"
+
+    raw_df = _compute_raw_extra_columns(raw_df)
+    raw_df = _reorder_raw_columns(raw_df)
+
+    raw_cols = list(raw_df.columns)
+    _display_names = {"Adj. Safety Stock": "Safety Stock (現時)"}
+    header_row = [_display_names.get(c, c) for c in raw_cols]
+    ws_raw.append(header_row)
+
+    raw_array = raw_df.to_numpy(dtype=object, na_value=None)
+    total_raw = len(raw_array)
+    _batch = []
+    _batch_size = 500
+    for i, row_vals in enumerate(raw_array):
+        _batch.append([
+            round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+            for v in row_vals
+        ])
+        if len(_batch) >= _batch_size or i == total_raw - 1:
+            for _r in _batch:
+                ws_raw.append(_r)
+            _batch.clear()
+        if progress_callback and (i % 1000 == 0 or i == total_raw - 1):
+            progress_callback(0.15 * ((i + 1) / total_raw), f"寫入 RAW ({i+1}/{total_raw})...")
+
+    ncols = len(raw_cols)
+    for col_idx in range(1, ncols + 1):
+        cell = ws_raw.cell(row=1, column=col_idx)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill_raw
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center")
+
+    ws_raw.auto_filter.ref = ws_raw.dimensions
+    _auto_width(ws_raw)
+
+    if progress_callback:
+        progress_callback(0.2, "建立摘要工作表...")
+
+    # ── Sheet 2: Shop Stock Status ──
+    ws_summary = wb.create_sheet(title="Shop Stock Status")
+
+    headers = ["Buyer", "Brand", "SKU"] + categories + ["總計", "Safety Qty Change"]
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws_summary.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    total_summary = len(summary_df)
+    for row_idx, row_data in summary_df.iterrows():
+        excel_row = 2 + row_idx
+        is_total = row_data["Buyer"] == "總計"
+        for col_idx, h in enumerate(headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws_summary.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_total:
+                cell.font = bold_font
+            if isinstance(val, (int, float)) and col_idx >= 4 and h != "SKU":
+                cell.number_format = "#,##0"
+        if progress_callback and (row_idx % 500 == 0 or row_idx == total_summary - 1):
+            progress_callback(0.4 + 0.2 * ((row_idx + 1) / max(total_summary, 1)), f"寫入摘要 ({row_idx+1}/{total_summary})...")
+
+    _auto_width(ws_summary)
+
+    if progress_callback:
+        progress_callback(0.65, "建立 By Shop 分析工作表...")
+
+    # ── Sheet 3: By Shop ──
+    by_shop_df = _build_combined_by_shop_summary(raw_df)
+
+    ws_by_shop = wb.create_sheet(title="By Shop")
+    by_shop_headers = [
+        "Site Code",
+        "Shop Name",
+        "OM",
+        "Overstock_SKU数量",
+        "OOS_SKU数量",
+        "需增加Safety_SKU数量",
+        "需减少Safety_SKU数量",
+        "安全库存调整总量",
+        "Combined_SKU总数",
+    ]
+
+    for col_idx, h in enumerate(by_shop_headers, 1):
+        cell = ws_by_shop.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    for row_idx, row_data in by_shop_df.iterrows():
+        excel_row = row_idx + 2
+        is_total = row_data.get("Site Code") == "總計"
+        for col_idx, h in enumerate(by_shop_headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws_by_shop.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_total:
+                cell.font = bold_font
+            if isinstance(val, (int, float)) and col_idx >= 4:
+                cell.number_format = "#,##0"
+        if progress_callback and (row_idx % 500 == 0 or row_idx == len(by_shop_df) - 1):
+            progress_callback(0.7 + 0.15 * ((row_idx + 1) / max(len(by_shop_df), 1)), f"寫入 By Shop ({row_idx+1}/{len(by_shop_df)})...")
+
+    _auto_width(ws_by_shop)
+
+    if progress_callback:
+        progress_callback(0.88, "建立分析摘要工作表...")
+
+    # ── Sheet 4: 綜合庫存數據分析摘要 ──
+    ws_dashboard = wb.create_sheet(title="綜合庫存數據分析摘要")
+
+    _total_row = summary_df[summary_df["Buyer"] == "總計"]
+    if _total_row.empty:
+        raise ValueError("摘要資料中未找到總計列，無法生成分析看板")
+    total_combined = int(_total_row["總計"].values[0])
+    total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
+    total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
+    total_skus = raw_df["SKU"].dropna().nunique()
+
+    cat_overstock = int(_total_row.get(categories[0], 0))
+    cat_oos = int(_total_row.get(categories[1], 0))
+    cat_balanced = int(_total_row.get(categories[2], 0))
+
+    safety_change_total = int(pd.to_numeric(raw_df.get("Safety Qty Change", _safe_default_series(0, raw_df.index)), errors="coerce").fillna(0).sum())
+
+    ws_dashboard.merge_cells("A1:D1")
+    title_cell = ws_dashboard.cell(row=1, column=1, value="綜合庫存數據分析摘要 (Combined Analysis Dashboard)")
+    title_cell.font = Font(bold=True, size=14, color="1E40AF")
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    row1_metrics = [
+        ("總 Combined 筆數", total_combined, "所有 Combined 審查之總計筆數", "EF4444"),
+        ("影響採購人員數 (Buyers)", total_buyers, "位採購人員名下有需審查品項", "3B82F6"),
+        ("影響品牌總數 (Brands)", total_brands, "個品牌包含需審查商品", "8B5CF6"),
+        ("影響SKU總數", total_skus, "個包含需審查商品(SKUs)", "10B981"),
+    ]
+
+    for i, (name, value, desc, color) in enumerate(row1_metrics):
+        col = i + 1
+        tc = ws_dashboard.cell(row=3, column=col, value=name)
+        tc.font = Font(bold=True, size=11, color="FFFFFF")
+        tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+        tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        tc.border = thin_border
+
+        vc = ws_dashboard.cell(row=4, column=col, value=value)
+        vc.font = Font(bold=True, size=20, color=color)
+        vc.alignment = Alignment(horizontal="center", vertical="center")
+        vc.number_format = "#,##0"
+        vc.border = thin_border
+
+        dc = ws_dashboard.cell(row=5, column=col, value=desc)
+        dc.font = desc_font
+        dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        dc.border = thin_border
+
+    row2_metrics = [
+        ("Overstock 分類筆數", cat_overstock, "庫存過賸分類筆數", "F59E0B"),
+        ("OOS 分類筆數", cat_oos, "缺貨分類筆數", "EC4899"),
+        ("Safety 調整筆數", cat_balanced, "Balanced (Safety Adjusted) 筆數", "06B6D4"),
+        ("Safety 調整總量", safety_change_total, "Safety Qty Change 總和", "8B5CF6"),
+    ]
+
+    for i, (name, value, desc, color) in enumerate(row2_metrics):
+        col = i + 1
+        tc = ws_dashboard.cell(row=7, column=col, value=name)
+        tc.font = Font(bold=True, size=11, color="FFFFFF")
+        tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+        tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        tc.border = thin_border
+
+        vc = ws_dashboard.cell(row=8, column=col, value=value)
+        vc.font = Font(bold=True, size=20, color=color)
+        vc.alignment = Alignment(horizontal="center", vertical="center")
+        vc.number_format = "#,##0"
+        vc.border = thin_border
+
+        dc = ws_dashboard.cell(row=9, column=col, value=desc)
+        dc.font = desc_font
+        dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        dc.border = thin_border
+
+    if progress_callback:
+        progress_callback(0.95, "調整格式中...")
+
+    _auto_width(ws_dashboard)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    if progress_callback:
+        progress_callback(1.0, "完成!")
+
+    return buf
+
+
 def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None, rates=None):
     missing = validate_input(df_input)
     if missing:
