@@ -598,7 +598,7 @@ if uploaded_file is not None:
 
             cat_counts = {}
             for cat in categories:
-                cat_counts[cat] = int(_total_row.get(cat, 0))
+                cat_counts[cat] = int(_total_row[cat].values[0]) if cat in _total_row.columns else 0
 
             safety_change_total = int(pd.to_numeric(raw_df.get("Safety Qty Change", pd.Series(0, index=raw_df.index)), errors="coerce").fillna(0).sum())
 

@@ -722,9 +722,9 @@ def generate_excel_combined(
     total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
     total_skus = raw_df["SKU"].dropna().nunique()
 
-    cat_overstock = int(_total_row.get(categories[0], 0))
-    cat_oos = int(_total_row.get(categories[1], 0))
-    cat_balanced = int(_total_row.get(categories[2], 0))
+    cat_overstock = int(_total_row[categories[0]].values[0]) if categories[0] in _total_row.columns else 0
+    cat_oos = int(_total_row[categories[1]].values[0]) if categories[1] in _total_row.columns else 0
+    cat_balanced = int(_total_row[categories[2]].values[0]) if categories[2] in _total_row.columns else 0
 
     safety_change_total = int(pd.to_numeric(raw_df.get("Safety Qty Change", _safe_default_series(0, raw_df.index)), errors="coerce").fillna(0).sum())
 
