@@ -512,7 +512,7 @@ def transform_combined(
 
     categories = ["Overstock", "OOS", "Balanced (Safety Adjusted)"]
 
-    group_cols = ["Buyer", "Brand", "SKU"]
+    group_cols = ["Buyer", "Brand", "SKU", "SKU Desc"]
 
     if progress_callback:
         progress_callback(0.3, "分類統計中...")
@@ -639,7 +639,7 @@ def generate_excel_combined(
     # ── Sheet 2: Shop Stock Status ──
     ws_summary = wb.create_sheet(title="Shop Stock Status")
 
-    headers = ["Buyer", "Brand", "SKU"] + categories + ["總計", "Safety Qty Change"]
+    headers = ["Buyer", "Brand", "SKU", "SKU Desc"] + categories + ["總計", "Safety Qty Change"]
     for col_idx, h in enumerate(headers, 1):
         cell = ws_summary.cell(row=1, column=col_idx, value=h)
         cell.font = header_font
@@ -908,9 +908,10 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
     total_overstock = int(summary["\u7e3d\u8a08"].sum())
     total_row = pd.DataFrame(
         {
-            "Buyer": ["\u7e3d\u8a08"],
+            "Buyer": ["總計"],
             "Brand": [None],
             "SKU": [None],
+            "SKU Desc": [None],
             **{cat: [int(summary[cat].sum())] for cat in categories},
             "\u7e3d\u8a08": [total_overstock],
             transfer_col: [transfer_total],
