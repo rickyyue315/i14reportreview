@@ -503,6 +503,10 @@ def transform_combined(
         raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
 
     df["SKU"] = df["SKU"].apply(_safe_sku)
+
+    if "SKU Desc" not in df.columns:
+        df = _compute_raw_extra_columns(df)
+
     raw = _add_combined_recommendation_columns(
         df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode=safety_mode
     )
