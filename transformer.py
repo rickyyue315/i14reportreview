@@ -254,7 +254,7 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
         rate = np.full(len(df), _default_rate)
         rate[shop_nature.str.contains("tourist", na=False)] = _tourist_rate
         rate[shop_nature.str.contains("mix", na=False)] = _mix_rate
-        rec_2x = np.floor(monthly_sold[cond_overstock_2x] * rate[cond_overstock_2x]).clip(lower=3).astype(int)
+        rec_2x = np.floor(monthly_sold[cond_overstock_2x] * rate[cond_overstock_2x]).clip(min=3).astype(int)
         # If new safety qty > Adj. Safety Stock, cap at Adj. Safety Stock
         adj_ss_2x = adj_ss[cond_overstock_2x].values
         over_adj = rec_2x > adj_ss_2x
@@ -319,7 +319,7 @@ def _add_combined_recommendation_columns(
 
     # Overstock cap X
     def _compute_x(monthly_sold_arr, rate_arr, adj_ss_arr):
-        x = np.floor(monthly_sold_arr * rate_arr).clip(lower=3).astype(int)
+        x = np.floor(monthly_sold_arr * rate_arr).clip(min=3).astype(int)
         over_adj = x > adj_ss_arr
         x[over_adj] = adj_ss_arr[over_adj].astype(int)
         return x
