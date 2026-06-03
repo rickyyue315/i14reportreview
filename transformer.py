@@ -551,6 +551,30 @@ def transform_combined(
     summary = summary.merge(safety_change_per_group, on=group_cols, how="left")
     summary["Safety Qty Change"] = summary["Safety Qty Change"].fillna(0).astype(int)
 
+    safety_inc_per_group = (
+        raw[raw["Safety Qty Change"] > 0]
+        .groupby(group_cols, observed=True)
+        .size()
+        .rename("增加Safety Qty的店舖數量")
+    )
+    safety_dec_per_group = (
+        raw[raw["Safety Qty Change"] < 0]
+        .groupby(group_cols, observed=True)
+        .size()
+        .rename("減少Safety Qty的店舖數量")
+    )
+    safety_unchanged_per_group = (
+        raw[raw["Safety Qty Change"] == 0]
+        .groupby(group_cols, observed=True)
+        .size()
+        .rename("Safety Qty不變的店舖數量")
+    )
+
+    for _series in [safety_inc_per_group, safety_dec_per_group, safety_unchanged_per_group]:
+        summary = summary.merge(_series, on=group_cols, how="left")
+    for _col in ["增加Safety Qty的店舖數量", "減少Safety Qty的店舖數量", "Safety Qty不變的店舖數量"]:
+        summary[_col] = summary[_col].fillna(0).astype(int)
+
     buyer_order = summary.groupby("Buyer")["總計"].sum().sort_values(ascending=False).index.tolist()
     summary["_buyer_key"] = summary["Buyer"].map({b: i for i, b in enumerate(buyer_order)})
     summary = summary.sort_values(["_buyer_key", "Brand", "SKU"], ascending=[True, True, True]).drop(columns=["_buyer_key"]).reset_index(drop=True)
@@ -564,6 +588,9 @@ def transform_combined(
             **{cat: [int(summary[cat].sum())] for cat in categories},
             "總計": [total_cat],
             "Safety Qty Change": [int(summary["Safety Qty Change"].sum())],
+            "增加Safety Qty的店舖數量": [int(summary["增加Safety Qty的店舖數量"].sum())],
+            "減少Safety Qty的店舖數量": [int(summary["減少Safety Qty的店舖數量"].sum())],
+            "Safety Qty不變的店舖數量": [int(summary["Safety Qty不變的店舖數量"].sum())],
         }
     )
     summary = pd.concat([summary, total_row], ignore_index=True)
@@ -643,7 +670,7 @@ def generate_excel_combined(
     # ── Sheet 2: Shop Stock Status ──
     ws_summary = wb.create_sheet(title="Shop Stock Status")
 
-    headers = ["Buyer", "Brand", "SKU", "SKU Desc"] + categories + ["總計", "Safety Qty Change"]
+    headers = ["Buyer", "Brand", "SKU", "SKU Desc"] + categories + ["總計", "Safety Qty Change", "增加Safety Qty的店舖數量", "減少Safety Qty的店舖數量", "Safety Qty不變的店舖數量"]
     for col_idx, h in enumerate(headers, 1):
         cell = ws_summary.cell(row=1, column=col_idx, value=h)
         cell.font = header_font
