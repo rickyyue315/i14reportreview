@@ -1128,6 +1128,9 @@ if uploaded_file is not None:
             total_p90d0 = int(tr["P90D 0 Sales SKU 總數"]) if tr is not None else 0
             total_stock_val = tr["SKU Stock Value (CM)"] if tr is not None else 0
             total_p90d0_stock_val = tr["P90D 0 Sales Stock Value (CM)"] if tr is not None else 0
+            total_suggested_nd = int(tr.get("建議ND SKU 總數", 0)) if tr is not None else 0
+            total_suggested_nd_stock_val = tr.get("建議ND Stock Value (CM)", 0) if tr is not None else 0
+            total_suggested_nd_stock_qty = tr.get("建議ND Shop Stock Qty (CM)", 0) if tr is not None else 0
 
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
@@ -1188,6 +1191,34 @@ if uploaded_file is not None:
                     <div class="metric-title">P90D 0 Sales Stock Value (CM)</div>
                     <div class="metric-value" style="color: #00d4ff;">{total_p90d0_stock_val:,.0f}</div>
                     <div class="metric-desc">P90D 0 Sales SKU 的庫存金額總和</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+            r3_col1, r3_col2, r3_col3 = st.columns(3)
+            with r3_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #10b981;">
+                    <div class="metric-title">建議ND SKU 總數</div>
+                    <div class="metric-value" style="color: #10b981;">{total_suggested_nd:,}</div>
+                    <div class="metric-desc">建議轉 ND 的 SKU 筆數 (RF + P90D 0 Sales)</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r3_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #f97316;">
+                    <div class="metric-title">建議ND Stock Value (CM)</div>
+                    <div class="metric-value" style="color: #f97316;">{total_suggested_nd_stock_val:,.0f}</div>
+                    <div class="metric-desc">建議轉 ND 的 SKU 庫存金額總和</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r3_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #06b6d4;">
+                    <div class="metric-title">建議ND Shop Stock Qty (CM)</div>
+                    <div class="metric-value" style="color: #06b6d4;">{total_suggested_nd_stock_qty:,.0f}</div>
+                    <div class="metric-desc">建議轉 ND 的 SKU 庫存數量總和</div>
                 </div>
                 """, unsafe_allow_html=True)
 

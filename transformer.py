@@ -26,6 +26,9 @@ RAW_COLUMN_ORDER_NAMES = [
     "OM",
     "Shop Nature",
     "RP Type",
+    "建議新RP Type",
+    "Buyer 回覆 ND/RF",
+    "保留RF原因",
     "Shop Stock Status",
     "Adj. Safety Stock",
     "Shop Monthly Sold Qty (P90D)",
@@ -1796,6 +1799,8 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
     rp = df.get("RP Type", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.upper()
     status = df["Shop Stock Status"].fillna("")
     stock_value = _safe_numeric(df.get("Shop Stock Value (CM)", _safe_default_series(0, df.index)))
+    shop_stock_qty = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
+    suggested_rp = df.get("建議新RP Type", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.upper()
 
     df["_site"] = site_code
     df["_is_rf"] = (rp == "RF").astype(int)
@@ -1803,6 +1808,9 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
     df["_is_p90d0"] = (status == CARRY_P90D0_STATUS).astype(int)
     df["_stock_value"] = stock_value
     df["_p90d0_stock_value"] = df["_stock_value"].where(df["_is_p90d0"].astype(bool), 0.0)
+    df["_suggested_nd"] = (suggested_rp == "ND").astype(int)
+    df["_suggested_nd_stock_value"] = df["_stock_value"].where(df["_suggested_nd"].astype(bool), 0.0)
+    df["_suggested_nd_stock_qty"] = shop_stock_qty.where(df["_suggested_nd"].astype(bool), 0.0)
 
     agg = df.groupby("_site", dropna=False, observed=True).agg(
         SKU總數=("_site", "count"),
@@ -1811,6 +1819,9 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
         P90D0_Sales_SKU總數=("_is_p90d0", "sum"),
         SKU_Stock_Value_CM=("_stock_value", "sum"),
         P90D0_Sales_Stock_Value_CM=("_p90d0_stock_value", "sum"),
+        建議ND_SKU總數=("_suggested_nd", "sum"),
+        建議ND_Stock_Value_CM=("_suggested_nd_stock_value", "sum"),
+        建議ND_Shop_Stock_Qty_CM=("_suggested_nd_stock_qty", "sum"),
     ).reset_index()
 
     agg.insert(1, "Shop Name", agg["_site"].map(site_to_name).fillna(""))
@@ -1823,6 +1834,9 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
         "P90D0_Sales_SKU總數": "P90D 0 Sales SKU 總數",
         "SKU_Stock_Value_CM": "SKU Stock Value (CM)",
         "P90D0_Sales_Stock_Value_CM": "P90D 0 Sales Stock Value (CM)",
+        "建議ND_SKU總數": "建議ND SKU 總數",
+        "建議ND_Stock_Value_CM": "建議ND Stock Value (CM)",
+        "建議ND_Shop_Stock_Qty_CM": "建議ND Shop Stock Qty (CM)",
     })
 
     agg = agg.sort_values("Site Code")
@@ -1834,7 +1848,7 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
         elif col == "Shop Name":
             total[col] = ""
         elif agg[col].dtype in ("int64", "float64"):
-            if col in ("SKU Stock Value (CM)", "P90D 0 Sales Stock Value (CM)"):
+            if col in ("SKU Stock Value (CM)", "P90D 0 Sales Stock Value (CM)", "建議ND Stock Value (CM)", "建議ND Shop Stock Qty (CM)"):
                 total[col] = round(float(agg[col].sum()), 2)
             else:
                 total[col] = int(agg[col].sum())
@@ -1912,6 +1926,16 @@ def transform_carry(
         progress_callback(0.2, "正規化 SKU...")
 
     df["SKU"] = df["SKU"].apply(_safe_sku)
+
+    df["建議新RP Type"] = ""
+    df["Buyer 回覆 ND/RF"] = ""
+    df["保留RF原因"] = ""
+
+    if "RP Type" in df.columns and "Shop Stock Status" in df.columns:
+        rp_type = df["RP Type"].fillna("").astype(str).str.strip().str.upper()
+        status = df["Shop Stock Status"].fillna("")
+        cond = (rp_type == "RF") & (status == CARRY_P90D0_STATUS)
+        df.loc[cond, "建議新RP Type"] = "ND"
 
     if progress_callback:
         progress_callback(0.3, "建構樞紐分析...")
@@ -2031,7 +2055,7 @@ def generate_excel_carry(
     # ── Sheet 3: Carry SKU 分析摘要 ──
     ws_dashboard = wb.create_sheet(title="Carry SKU 分析摘要")
 
-    ws_dashboard.merge_cells("A1:H1")
+    ws_dashboard.merge_cells("A1:J1")
     title_cell = ws_dashboard.cell(row=1, column=1, value="Carry SKU 分析摘要 (Carry SKU Analysis Dashboard)")
     title_cell.font = Font(bold=True, size=14, color="1E40AF")
     title_cell.alignment = Alignment(horizontal="center", vertical="center")
