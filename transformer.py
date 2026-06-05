@@ -1851,11 +1851,17 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
         "P90D 0 Sales SKU 總數", "P90D 0 Sales的店舖貨量",
         "P90D 0 Sales Stock Value (CM)",
         "建議ND SKU 總數", "建議ND Stock Value (CM)", "建議ND Shop Stock Qty (CM)",
+        "Remark",
     ]
     existing = list(agg.columns)
     ordered = [c for c in desired_order if c in existing]
     ordered += [c for c in existing if c not in ordered]
     agg = agg[ordered]
+
+    if "Remark" in agg.columns:
+        agg["Remark"] = ""
+    else:
+        agg["Remark"] = ""
 
     total = {}
     for col in agg.columns:
@@ -2091,18 +2097,27 @@ def generate_excel_carry(
         excel_row = 4 + row_idx
         is_total = row_data.get("Site Code") == "總計"
         for col_idx, h in enumerate(db_headers, 1):
-            val = row_data.get(h)
-            if pd.isna(val):
-                val = None
-            if isinstance(val, float) and not isinstance(val, bool):
-                val = int(round(val))
-            cell = ws_dashboard.cell(row=excel_row, column=col_idx, value=val)
+            cell = ws_dashboard.cell(row=excel_row, column=col_idx)
+            if h == "Remark" and not is_total:
+                col_a = get_column_letter(db_headers.index("Site Code") + 1)
+                col_b = get_column_letter(db_headers.index("Shop Name") + 1)
+                col_c = get_column_letter(db_headers.index("SKU 總數") + 1)
+                col_g = get_column_letter(db_headers.index("P90D 0 Sales SKU 總數") + 1)
+                col_h = get_column_letter(db_headers.index("P90D 0 Sales的店舖貨量") + 1)
+                cell.value = f'=CONCATENATE({col_a}{excel_row},{col_b}{excel_row},":",${col_c}$3,{col_c}{excel_row},";",${col_g}$3,{col_g}{excel_row},"個;",${col_h}$3,{col_h}{excel_row},"件。")'
+            else:
+                val = row_data.get(h)
+                if pd.isna(val):
+                    val = None
+                if isinstance(val, float) and not isinstance(val, bool):
+                    val = int(round(val))
+                cell.value = val
+                if isinstance(val, (int, float)) and col_idx >= 3:
+                    cell.number_format = "#,##0"
             cell.border = thin_border
             cell.alignment = Alignment(horizontal="center", vertical="center")
             if is_total:
                 cell.font = bold_font
-            if isinstance(val, (int, float)) and col_idx >= 3:
-                cell.number_format = "#,##0"
 
     _auto_width(ws_dashboard)
 
