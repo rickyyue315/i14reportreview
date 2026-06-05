@@ -1851,17 +1851,14 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
         "P90D 0 Sales SKU 總數", "P90D 0 Sales的店舖貨量",
         "P90D 0 Sales Stock Value (CM)",
         "建議ND SKU 總數", "建議ND Stock Value (CM)", "建議ND Shop Stock Qty (CM)",
-        "Remark",
+        "Shop Name: P90D 0 Sales SKU 總數/SKU總數 (#P90D 0 Sales的店舖貨量)",
     ]
     existing = list(agg.columns)
     ordered = [c for c in desired_order if c in existing]
     ordered += [c for c in existing if c not in ordered]
     agg = agg[ordered]
 
-    if "Remark" in agg.columns:
-        agg["Remark"] = ""
-    else:
-        agg["Remark"] = ""
+    agg[desired_order[-1]] = ""
 
     total = {}
     for col in agg.columns:
@@ -2098,13 +2095,12 @@ def generate_excel_carry(
         is_total = row_data.get("Site Code") == "總計"
         for col_idx, h in enumerate(db_headers, 1):
             cell = ws_dashboard.cell(row=excel_row, column=col_idx)
-            if h == "Remark" and not is_total:
-                col_a = get_column_letter(db_headers.index("Site Code") + 1)
+            if h == "Shop Name: P90D 0 Sales SKU 總數/SKU總數 (#P90D 0 Sales的店舖貨量)" and not is_total:
                 col_b = get_column_letter(db_headers.index("Shop Name") + 1)
                 col_c = get_column_letter(db_headers.index("SKU 總數") + 1)
                 col_g = get_column_letter(db_headers.index("P90D 0 Sales SKU 總數") + 1)
                 col_h = get_column_letter(db_headers.index("P90D 0 Sales的店舖貨量") + 1)
-                cell.value = f'=CONCATENATE({col_a}{excel_row},{col_b}{excel_row},":",${col_c}$3,{col_c}{excel_row},";",${col_g}$3,{col_g}{excel_row},"個;",${col_h}$3,{col_h}{excel_row},"件。")'
+                cell.value = f'=CONCATENATE({col_b}{excel_row},":",{col_g}{excel_row},"/",{col_c}{excel_row}," (#",{col_h}{excel_row},")")'
             else:
                 val = row_data.get(h)
                 if pd.isna(val):
