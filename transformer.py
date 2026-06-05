@@ -2068,7 +2068,7 @@ def generate_excel_carry(
     ws_dashboard = wb.create_sheet(title="Carry SKU 分析摘要")
 
     db_headers = list(dashboard_df.columns)
-    last_col_letter = openpyxl.utils.get_column_letter(len(db_headers))
+    last_col_letter = get_column_letter(len(db_headers))
     ws_dashboard.merge_cells(f"A1:{last_col_letter}1")
     title_cell = ws_dashboard.cell(row=1, column=1, value="Carry SKU 分析摘要 (Carry SKU Analysis Dashboard)")
     title_cell.font = Font(bold=True, size=14, color="1E40AF")
