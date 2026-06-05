@@ -1808,6 +1808,7 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
     df["_is_p90d0"] = (status == CARRY_P90D0_STATUS).astype(int)
     df["_stock_value"] = stock_value
     df["_p90d0_stock_value"] = df["_stock_value"].where(df["_is_p90d0"].astype(bool), 0.0)
+    df["_p90d0_shop_stock_qty"] = shop_stock_qty.where(df["_is_p90d0"].astype(bool), 0)
     df["_suggested_nd"] = (suggested_rp == "ND").astype(int)
     df["_suggested_nd_stock_value"] = df["_stock_value"].where(df["_suggested_nd"].astype(bool), 0.0)
     df["_suggested_nd_stock_qty"] = shop_stock_qty.where(df["_suggested_nd"].astype(bool), 0.0)
@@ -1819,6 +1820,7 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
         P90D0_Sales_SKU總數=("_is_p90d0", "sum"),
         SKU_Stock_Value_CM=("_stock_value", "sum"),
         P90D0_Sales_Stock_Value_CM=("_p90d0_stock_value", "sum"),
+        P90D0_Sales_Shop_Stock_Qty_CM=("_p90d0_shop_stock_qty", "sum"),
         建議ND_SKU總數=("_suggested_nd", "sum"),
         建議ND_Stock_Value_CM=("_suggested_nd_stock_value", "sum"),
         建議ND_Shop_Stock_Qty_CM=("_suggested_nd_stock_qty", "sum"),
@@ -1834,12 +1836,22 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
         "P90D0_Sales_SKU總數": "P90D 0 Sales SKU 總數",
         "SKU_Stock_Value_CM": "SKU Stock Value (CM)",
         "P90D0_Sales_Stock_Value_CM": "P90D 0 Sales Stock Value (CM)",
+        "P90D0_Sales_Shop_Stock_Qty_CM": "P90D 0 Sales的店舖貨量",
         "建議ND_SKU總數": "建議ND SKU 總數",
         "建議ND_Stock_Value_CM": "建議ND Stock Value (CM)",
         "建議ND_Shop_Stock_Qty_CM": "建議ND Shop Stock Qty (CM)",
     })
 
     agg = agg.sort_values("Site Code")
+
+    cols = list(agg.columns)
+    target = "P90D 0 Sales的店舖貨量"
+    after = "P90D 0 Sales SKU 總數"
+    if target in cols and after in cols:
+        cols.remove(target)
+        idx = cols.index(after) + 1
+        cols.insert(idx, target)
+        agg = agg[cols]
 
     total = {}
     for col in agg.columns:
@@ -2055,12 +2067,13 @@ def generate_excel_carry(
     # ── Sheet 3: Carry SKU 分析摘要 ──
     ws_dashboard = wb.create_sheet(title="Carry SKU 分析摘要")
 
-    ws_dashboard.merge_cells("A1:J1")
+    db_headers = list(dashboard_df.columns)
+    last_col_letter = openpyxl.utils.get_column_letter(len(db_headers))
+    ws_dashboard.merge_cells(f"A1:{last_col_letter}1")
     title_cell = ws_dashboard.cell(row=1, column=1, value="Carry SKU 分析摘要 (Carry SKU Analysis Dashboard)")
     title_cell.font = Font(bold=True, size=14, color="1E40AF")
     title_cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    db_headers = list(dashboard_df.columns)
     for col_idx, h in enumerate(db_headers, 1):
         cell = ws_dashboard.cell(row=3, column=col_idx, value=h)
         cell.font = header_font
