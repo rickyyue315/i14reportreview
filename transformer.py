@@ -129,7 +129,7 @@ def _extract_sku_desc(item_shop, site_code) -> str:
     return item_text[:idx].strip().strip(",，;；:： ")
 
 
-def _compute_raw_extra_columns(df: pd.DataFrame) -> pd.DataFrame:
+def _compute_raw_extra_columns_impl(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
@@ -144,6 +144,17 @@ def _compute_raw_extra_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["Shop Name"] = shop_name
     df["SKU Desc"] = sku_desc
     return df
+
+
+try:
+    import streamlit as st
+    _compute_raw_extra_columns_impl = st.cache_data(_compute_raw_extra_columns_impl)
+except ImportError:
+    pass
+
+
+def _compute_raw_extra_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return _compute_raw_extra_columns_impl(df)
 
 
 def _extract_shop_name(item_shop, site_code) -> str:
@@ -308,6 +319,31 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
     return df
 
 
+def _clean_dataframe(df_input: pd.DataFrame, shop_natures: list[str] | None = None, progress_callback=None) -> pd.DataFrame:
+    df = df_input.dropna(subset=["Buyer"])
+    if progress_callback:
+        progress_callback(0.1, "清理資料中...")
+    _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
+    if "Item_Shop" in df.columns:
+        _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
+        _footer_mask = _footer_mask | _item_shop_mask
+    df = df[~_footer_mask]
+    df = df[df["Buyer"].astype(str).str.strip() != "117 - Marketing"]
+    if shop_natures is not None and "Shop Nature" in df.columns:
+        sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
+        mask = _safe_default_series(False, df.index)
+        if "Tourist" in shop_natures:
+            mask |= sn_col.str.contains("tourist", na=False)
+        if "Mix" in shop_natures:
+            mask |= sn_col.str.contains("mix", na=False)
+        if "Non Tourist" in shop_natures:
+            is_tourist_or_mix = sn_col.str.contains("tourist|mix", na=False, regex=True)
+            is_filled = sn_col.notna() & (sn_col.str.strip() != "")
+            mask |= is_filled & ~is_tourist_or_mix
+        df = df[mask]
+    return df
+
+
 # ─── Combined Review Functions ──────────────────────────────────────────────────
 
 
@@ -365,15 +401,7 @@ def _add_combined_recommendation_columns(
     z_values = adj_ss.values.astype(int)
 
     # Combined = max(Y, Z if Z <= X else X)
-    combined = np.zeros(len(df), dtype=int)
-    for i in range(len(df)):
-        x_val = x_values[i]
-        y_val = y_values[i]
-        z_val = z_values[i]
-        if z_val <= x_val:
-            combined[i] = max(y_val, z_val)
-        else:
-            combined[i] = max(y_val, x_val)
+    combined = np.where(z_values <= x_values, np.maximum(y_values, z_values), np.maximum(y_values, x_values))
 
     df["Overstock Cap (X)"] = x_values
     df["OOS Floor (Y)"] = y_values
@@ -476,31 +504,7 @@ def transform_combined(
     if progress_callback:
         progress_callback(0.05, "驗證通過")
 
-    df = df_input.dropna(subset=["Buyer"])
-
-    if progress_callback:
-        progress_callback(0.1, "清理資料中...")
-
-    _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
-    if "Item_Shop" in df.columns:
-        _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
-        _footer_mask = _footer_mask | _item_shop_mask
-    df = df[~_footer_mask]
-
-    df = df[df["Buyer"].astype(str).str.strip() != "117 - Marketing"]
-
-    if shop_natures is not None and "Shop Nature" in df.columns:
-        sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
-        mask = _safe_default_series(False, df.index)
-        if "Tourist" in shop_natures:
-            mask |= sn_col.str.contains("tourist", na=False)
-        if "Mix" in shop_natures:
-            mask |= sn_col.str.contains("mix", na=False)
-        if "Non Tourist" in shop_natures:
-            is_tourist_or_mix = sn_col.str.contains("tourist|mix", na=False, regex=True)
-            is_filled = sn_col.notna() & (sn_col.str.strip() != "")
-            mask |= is_filled & ~is_tourist_or_mix
-        df = df[mask]
+    df = _clean_dataframe(df_input, shop_natures=shop_natures, progress_callback=progress_callback)
 
     if df.empty:
         raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
@@ -607,6 +611,78 @@ def transform_combined(
     return summary, raw, categories, warnings
 
 
+def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, progress_end=0.3):
+    raw_df = _compute_raw_extra_columns(raw_df)
+    raw_df = _reorder_raw_columns(raw_df)
+
+    raw_cols = list(raw_df.columns)
+    _display_names = {"Adj. Safety Stock": "Safety Stock (現時)"}
+    header_row = [_display_names.get(c, c) for c in raw_cols]
+    ws.append(header_row)
+
+    raw_array = raw_df.to_numpy(dtype=object, na_value=None)
+    total_raw = len(raw_array)
+    _batch = []
+    _batch_size = 500
+    for i, row_vals in enumerate(raw_array):
+        _batch.append([
+            round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+            for v in row_vals
+        ])
+        if len(_batch) >= _batch_size or i == total_raw - 1:
+            for _r in _batch:
+                ws.append(_r)
+            _batch.clear()
+        if progress_callback and (i % 1000 == 0 or i == total_raw - 1):
+            p = progress_start + (progress_end - progress_start) * ((i + 1) / total_raw)
+            progress_callback(p, f"寫入 RAW ({i+1}/{total_raw})...")
+
+    header_fill_raw = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    ncols = len(raw_cols)
+    for col_idx in range(1, ncols + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill_raw
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center")
+
+    ws.auto_filter.ref = ws.dimensions
+    _auto_width(ws)
+
+
+def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None):
+    ws.merge_cells("A1:D1")
+    title_cell = ws.cell(row=1, column=1, value=title)
+    title_cell.font = Font(bold=True, size=14, color="1E40AF")
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for row_offset, metrics in [(3, row1_metrics), (7, row2_metrics)]:
+        for i, (name, value, desc, color) in enumerate(metrics):
+            col = i + 1
+            tc = ws.cell(row=row_offset, column=col, value=name)
+            tc.font = Font(bold=True, size=11, color="FFFFFF")
+            tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+            tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            tc.border = thin_border
+            vc = ws.cell(row=row_offset + 1, column=col, value=value)
+            vc.font = Font(bold=True, size=20, color=color)
+            vc.alignment = Alignment(horizontal="center", vertical="center")
+            vc.number_format = "#,##0"
+            vc.border = thin_border
+            dc = ws.cell(row=row_offset + 2, column=col, value=desc)
+            dc.font = desc_font
+            dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            dc.border = thin_border
+
+    if progress_callback:
+        progress_callback(0.95, "調整格式中...")
+    _auto_width(ws)
+
+
 def generate_excel_combined(
     summary_df: pd.DataFrame,
     raw_df: pd.DataFrame,
@@ -622,7 +698,6 @@ def generate_excel_combined(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
     )
-    header_fill_raw = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     bold_font = Font(bold=True, size=11)
@@ -632,40 +707,7 @@ def generate_excel_combined(
     ws_raw = wb.active
     ws_raw.title = "RAW"
 
-    raw_df = _compute_raw_extra_columns(raw_df)
-    raw_df = _reorder_raw_columns(raw_df)
-
-    raw_cols = list(raw_df.columns)
-    _display_names = {"Adj. Safety Stock": "Safety Stock (現時)"}
-    header_row = [_display_names.get(c, c) for c in raw_cols]
-    ws_raw.append(header_row)
-
-    raw_array = raw_df.to_numpy(dtype=object, na_value=None)
-    total_raw = len(raw_array)
-    _batch = []
-    _batch_size = 500
-    for i, row_vals in enumerate(raw_array):
-        _batch.append([
-            round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
-            for v in row_vals
-        ])
-        if len(_batch) >= _batch_size or i == total_raw - 1:
-            for _r in _batch:
-                ws_raw.append(_r)
-            _batch.clear()
-        if progress_callback and (i % 1000 == 0 or i == total_raw - 1):
-            progress_callback(0.15 * ((i + 1) / total_raw), f"寫入 RAW ({i+1}/{total_raw})...")
-
-    ncols = len(raw_cols)
-    for col_idx in range(1, ncols + 1):
-        cell = ws_raw.cell(row=1, column=col_idx)
-        cell.font = Font(bold=True)
-        cell.fill = header_fill_raw
-        cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center")
-
-    ws_raw.auto_filter.ref = ws_raw.dimensions
-    _auto_width(ws_raw)
+    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.15)
 
     if progress_callback:
         progress_callback(0.2, "建立摘要工作表...")
@@ -766,36 +808,12 @@ def generate_excel_combined(
 
     safety_change_total = int(pd.to_numeric(raw_df.get("Safety Qty Change", _safe_default_series(0, raw_df.index)), errors="coerce").fillna(0).sum())
 
-    ws_dashboard.merge_cells("A1:D1")
-    title_cell = ws_dashboard.cell(row=1, column=1, value="綜合庫存數據分析摘要 (Combined Analysis Dashboard)")
-    title_cell.font = Font(bold=True, size=14, color="1E40AF")
-    title_cell.alignment = Alignment(horizontal="center", vertical="center")
-
     row1_metrics = [
         ("總 Combined 筆數", total_combined, "所有 Combined 審查之總計筆數", "EF4444"),
         ("影響採購人員數 (Buyers)", total_buyers, "位採購人員名下有需審查品項", "3B82F6"),
         ("影響品牌總數 (Brands)", total_brands, "個品牌包含需審查商品", "8B5CF6"),
         ("影響SKU總數", total_skus, "個包含需審查商品(SKUs)", "10B981"),
     ]
-
-    for i, (name, value, desc, color) in enumerate(row1_metrics):
-        col = i + 1
-        tc = ws_dashboard.cell(row=3, column=col, value=name)
-        tc.font = Font(bold=True, size=11, color="FFFFFF")
-        tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-        tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        tc.border = thin_border
-
-        vc = ws_dashboard.cell(row=4, column=col, value=value)
-        vc.font = Font(bold=True, size=20, color=color)
-        vc.alignment = Alignment(horizontal="center", vertical="center")
-        vc.number_format = "#,##0"
-        vc.border = thin_border
-
-        dc = ws_dashboard.cell(row=5, column=col, value=desc)
-        dc.font = desc_font
-        dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        dc.border = thin_border
 
     row2_metrics = [
         ("Overstock 分類筆數", cat_overstock, "庫存過賸分類筆數", "F59E0B"),
@@ -804,29 +822,7 @@ def generate_excel_combined(
         ("Safety 調整總量", safety_change_total, "Safety Qty Change 總和", "8B5CF6"),
     ]
 
-    for i, (name, value, desc, color) in enumerate(row2_metrics):
-        col = i + 1
-        tc = ws_dashboard.cell(row=7, column=col, value=name)
-        tc.font = Font(bold=True, size=11, color="FFFFFF")
-        tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-        tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        tc.border = thin_border
-
-        vc = ws_dashboard.cell(row=8, column=col, value=value)
-        vc.font = Font(bold=True, size=20, color=color)
-        vc.alignment = Alignment(horizontal="center", vertical="center")
-        vc.number_format = "#,##0"
-        vc.border = thin_border
-
-        dc = ws_dashboard.cell(row=9, column=col, value=desc)
-        dc.font = desc_font
-        dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        dc.border = thin_border
-
-    if progress_callback:
-        progress_callback(0.95, "調整格式中...")
-
-    _auto_width(ws_dashboard)
+    _write_metric_cards(ws_dashboard, "綜合庫存數據分析摘要 (Combined Analysis Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
 
     buf = BytesIO()
     wb.save(buf)
@@ -853,31 +849,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
     if progress_callback:
         progress_callback(0.05, "\u9a57\u8b49\u901a\u904e")
 
-    df = df_input.dropna(subset=["Buyer"])
-
-    if progress_callback:
-        progress_callback(0.1, "\u6e05\u7406\u8cc7\u6599\u4e2d...")
-
-    _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
-    if "Item_Shop" in df.columns:
-        _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
-        _footer_mask = _footer_mask | _item_shop_mask
-    df = df[~_footer_mask]
-
-    df = df[df["Buyer"].astype(str).str.strip() != "117 - Marketing"]
-
-    if shop_natures is not None and "Shop Nature" in df.columns:
-        sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
-        mask = _safe_default_series(False, df.index)
-        if "Tourist" in shop_natures:
-            mask |= sn_col.str.contains("tourist", na=False)
-        if "Mix" in shop_natures:
-            mask |= sn_col.str.contains("mix", na=False)
-        if "Non Tourist" in shop_natures:
-            is_tourist_or_mix = sn_col.str.contains("tourist|mix", na=False, regex=True)
-            is_filled = sn_col.notna() & (sn_col.str.strip() != "")
-            mask |= is_filled & ~is_tourist_or_mix
-        df = df[mask]
+    df = _clean_dataframe(df_input, shop_natures=shop_natures, progress_callback=progress_callback)
 
     if df.empty:
         raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
@@ -969,53 +941,20 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     wb = Workbook()
 
     if progress_callback:
-        progress_callback(0.0, "\u5efa\u7acb Excel \u7d50\u69cb...")
+        progress_callback(0.0, "建立 Excel 結構...")
 
     ws_raw = wb.active
     ws_raw.title = "RAW"
 
-    raw_df = _compute_raw_extra_columns(raw_df)
-    raw_df = _reorder_raw_columns(raw_df)
+    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.3)
 
-    raw_cols = list(raw_df.columns)
-    _display_names = {"Adj. Safety Stock": "Safety Stock (現時)"}
-    header_row = [_display_names.get(c, c) for c in raw_cols]
-    ws_raw.append(header_row)
-
-    raw_array = raw_df.to_numpy(dtype=object, na_value=None)
-    total_raw = len(raw_array)
-    _batch = []
-    _batch_size = 500
-    for i, row_vals in enumerate(raw_array):
-        _batch.append([
-            round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
-            for v in row_vals
-        ])
-        if len(_batch) >= _batch_size or i == total_raw - 1:
-            for _r in _batch:
-                ws_raw.append(_r)
-            _batch.clear()
-        if progress_callback and (i % 1000 == 0 or i == total_raw - 1):
-            progress_callback(0.3 * ((i + 1) / total_raw), f"寫入 RAW ({i+1}/{total_raw})...")
-
-    header_fill_raw = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
     )
-    ncols = len(raw_cols)
-    for col_idx in range(1, ncols + 1):
-        cell = ws_raw.cell(row=1, column=col_idx)
-        cell.font = Font(bold=True)
-        cell.fill = header_fill_raw
-        cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center")
-
-    ws_raw.auto_filter.ref = ws_raw.dimensions
-    _auto_width(ws_raw)
 
     if progress_callback:
-        progress_callback(0.35, "\u5efa\u7acb\u6458\u8981\u5de5\u4f5c\u8868...")
+        progress_callback(0.35, "建立摘要工作表...")
 
     ws_summary = wb.create_sheet(title="Shop Stock Status")
 
@@ -1108,14 +1047,14 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     if progress_callback:
         progress_callback(0.92, "\u5efa\u7acb\u5206\u6790\u6458\u8981\u5de5\u4f5c\u8868...")
 
-    ws_dashboard = wb.create_sheet(title="\u7570\u5e38\u5eab\u5b58\u6578\u64da\u5206\u6790\u6458\u8981")
+    ws_dashboard = wb.create_sheet(title="異常庫存數據分析摘要")
 
-    _total_row = summary_df[summary_df["Buyer"] == "\u7e3d\u8a08"]
+    _total_row = summary_df[summary_df["Buyer"] == "總計"]
     if _total_row.empty:
-        raise ValueError("\u6458\u8981\u8cc7\u6599\u4e2d\u672a\u627e\u5230\u7e3d\u8a08\u5217\uff0c\u7121\u6cd5\u751f\u6210\u5206\u6790\u770a\u677f")
-    total_overstock = int(_total_row["\u7e3d\u8a08"].values[0])
-    total_buyers = len(summary_df[summary_df["Buyer"] != "\u7e3d\u8a08"]["Buyer"].dropna().unique())
-    total_brands = len(summary_df[summary_df["Buyer"] != "\u7e3d\u8a08"]["Brand"].dropna().unique())
+        raise ValueError("摘要資料中未找到總計列，無法生成分析看板")
+    total_overstock = int(_total_row["總計"].values[0])
+    total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
+    total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
     total_skus = raw_df["SKU"].dropna().nunique()
     cat1_val = int(_total_row[categories[0]].values[0])
     cat2_val = int(_total_row[categories[1]].values[0])
@@ -1125,68 +1064,20 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     if transfer_col:
         transfer_qty_total = int(pd.to_numeric(raw_df[transfer_col], errors="coerce").fillna(0).sum())
 
-    ws_dashboard.merge_cells("A1:D1")
-    title_cell = ws_dashboard.cell(row=1, column=1, value="\u7570\u5e38\u5eab\u5b58\u6578\u64da\u5206\u6790\u6458\u8981 (Analysis Dashboard)")
-    title_cell.font = Font(bold=True, size=14, color="1E40AF")
-    title_cell.alignment = Alignment(horizontal="center", vertical="center")
-
     row1_metrics = [
-        ("\u7e3d Overstock \u7b46\u6578", total_overstock, "\u6240\u6709\u5eab\u5b58\u7570\u5e38\u4e4b\u7e3d\u8a08\u7b46\u6578", "EF4444"),
-        ("\u5f71\u97ff\u63a1\u8cfc\u4eba\u54e1\u6578 (Buyers)", total_buyers, "\u4f4d\u63a1\u8cfc\u4eba\u54e1\u540d\u4e0b\u6709\u7570\u5e38\u54c1\u9805", "3B82F6"),
-        ("\u5f71\u97ff\u54c1\u724c\u7e3d\u6578 (Brands)", total_brands, "\u500b\u54c1\u724c\u5305\u542b\u7570\u5e38\u5eab\u5b58\u5546\u54c1", "8B5CF6"),
-        ("\u5f71\u97ffSKU\u7e3d\u6578", total_skus, "\u500b\u5305\u542b\u7570\u5e38\u5eab\u5b58\u5546\u54c1(SKUs)", "10B981"),
+        ("總 Overstock 筆數", total_overstock, "所有庫存異常之總計筆數", "EF4444"),
+        ("影響採購人員數 (Buyers)", total_buyers, "位採購人員名下有異常品項", "3B82F6"),
+        ("影響品牌總數 (Brands)", total_brands, "個品牌包含異常庫存商品", "8B5CF6"),
+        ("影響SKU總數", total_skus, "個包含異常庫存商品(SKUs)", "10B981"),
     ]
-
-    desc_font = Font(size=9, color="6B7280", italic=True)
-
-    for i, (name, value, desc, color) in enumerate(row1_metrics):
-        col = i + 1
-        tc = ws_dashboard.cell(row=3, column=col, value=name)
-        tc.font = Font(bold=True, size=11, color="FFFFFF")
-        tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-        tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        tc.border = thin_border
-
-        vc = ws_dashboard.cell(row=4, column=col, value=value)
-        vc.font = Font(bold=True, size=20, color=color)
-        vc.alignment = Alignment(horizontal="center", vertical="center")
-        vc.number_format = "#,##0"
-        vc.border = thin_border
-
-        dc = ws_dashboard.cell(row=5, column=col, value=desc)
-        dc.font = desc_font
-        dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        dc.border = thin_border
 
     row2_metrics = [
-        ("Overstock (P90D 0 Sales)", cat1_val, "\u300c\u904e\u53bb 90 \u5929\u5167\u96f6\u92b7\u552e\u300d\u4e4b\u7570\u5e38\u7b46\u6578", "F59E0B"),
-        ("Overstock (>2*Monthly Sold Qty & >2pcs)", cat2_val, "\u300c\u5927\u65bc\u6708\u5747\u92b7\u552e\u91cf\u5169\u500d\u4e14\u5eab\u5b58\u5927\u65bc 2 \u4ef6\u300d\u4e4b\u7570\u5e38\u7b46\u6578", "EC4899"),
-        ("New Safety Qty / ND \u8abf\u6574\u5f8c\u7684\u9810\u8a08\u7e3d\u6578", transfer_qty_total, "After new Safety Qty / ND can transfer out of TOTAL QTY", "06B6D4"),
+        ("Overstock (P90D 0 Sales)", cat1_val, "「過去 90 天內零銷售」之異常筆數", "F59E0B"),
+        ("Overstock (>2*Monthly Sold Qty & >2pcs)", cat2_val, "「大於月均銷售量兩倍且庫存大於 2 件」之異常筆數", "EC4899"),
+        ("New Safety Qty / ND 調整後的預計總數", transfer_qty_total, "After new Safety Qty / ND can transfer out of TOTAL QTY", "06B6D4"),
     ]
 
-    for i, (name, value, desc, color) in enumerate(row2_metrics):
-        col = i + 1
-        tc = ws_dashboard.cell(row=7, column=col, value=name)
-        tc.font = Font(bold=True, size=11, color="FFFFFF")
-        tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-        tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        tc.border = thin_border
-
-        vc = ws_dashboard.cell(row=8, column=col, value=value)
-        vc.font = Font(bold=True, size=20, color=color)
-        vc.alignment = Alignment(horizontal="center", vertical="center")
-        vc.number_format = "#,##0"
-        vc.border = thin_border
-
-        dc = ws_dashboard.cell(row=9, column=col, value=desc)
-        dc.font = desc_font
-        dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        dc.border = thin_border
-
-    if progress_callback:
-        progress_callback(0.95, "\u8abf\u6574\u683c\u5f0f\u4e2d...")
-
-    _auto_width(ws_dashboard)
+    _write_metric_cards(ws_dashboard, "異常庫存數據分析摘要 (Analysis Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
 
     buf = BytesIO()
     wb.save(buf)
@@ -1349,7 +1240,7 @@ def _build_oos_by_shop_summary(raw):
     return by_shop
 
 
-def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_total_days=None, safety_mode="allow_both"):
+def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=None, mtd_days=None, month_total_days=None, safety_mode="allow_both"):
     missing = validate_input(df_input)
     if missing:
         raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
@@ -1361,28 +1252,10 @@ def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_
         if _col not in df_input.columns:
             warnings.append(f"缺少可選欄位「{_col}」，建議值與轉移數量將全為 0")
 
-    df = df_input.dropna(subset=["Buyer"])
+    if progress_callback:
+        progress_callback(0.05, "驗證通過")
 
-    _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
-    if "Item_Shop" in df.columns:
-        _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
-        _footer_mask = _footer_mask | _item_shop_mask
-    df = df[~_footer_mask]
-
-    df = df[df["Buyer"].astype(str).str.strip() != "117 - Marketing"]
-
-    if shop_natures is not None and "Shop Nature" in df.columns:
-        sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
-        mask = _safe_default_series(False, df.index)
-        if "Tourist" in shop_natures:
-            mask |= sn_col.str.contains("tourist", na=False)
-        if "Mix" in shop_natures:
-            mask |= sn_col.str.contains("mix", na=False)
-        if "Non Tourist" in shop_natures:
-            is_tourist_or_mix = sn_col.str.contains("tourist|mix", na=False, regex=True)
-            is_filled = sn_col.notna() & (sn_col.str.strip() != "")
-            mask |= is_filled & ~is_tourist_or_mix
-        df = df[mask]
+    df = _clean_dataframe(df_input, shop_natures=shop_natures, progress_callback=progress_callback)
 
     if df.empty:
         raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
@@ -1394,8 +1267,14 @@ def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_
     if df.empty:
         raise ValueError("過濾 OOS / No Stock / Overstock 後無有效資料列")
 
+    if progress_callback:
+        progress_callback(0.2, "計算庫存建議中...")
+
     df["SKU"] = df["SKU"].apply(_safe_sku)
     raw = _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safety_mode=safety_mode)
+
+    if progress_callback:
+        progress_callback(0.4, "分類統計中...")
 
     categories = OOS_CATEGORIES + [SECONDARY_CATEGORY]
 
@@ -1454,6 +1333,9 @@ def transform_oos(df_input, shop_natures=None, rates=None, mtd_days=None, month_
     if total_oos == 0:
         warnings.append("未偵測到任何符合條件的 OOS 資料。請確認來源檔案中的「Shop Stock Status」欄位值是否包含以下分類: " + ", ".join(categories))
 
+    if progress_callback:
+        progress_callback(0.7, "轉換完成")
+
     return summary, raw, categories, warnings
 
 
@@ -1466,54 +1348,22 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
     ws_raw = wb.active
     ws_raw.title = "RAW"
 
-    raw_df = _compute_raw_extra_columns(raw_df)
-    raw_df = _reorder_raw_columns(raw_df)
+    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.3)
 
-    raw_cols = list(raw_df.columns)
-    _display_names = {"Adj. Safety Stock": "Safety Stock (現時)"}
-    header_row = [_display_names.get(c, c) for c in raw_cols]
-    ws_raw.append(header_row)
-
-    raw_array = raw_df.to_numpy(dtype=object, na_value=None)
-    total_raw = len(raw_array)
-    _batch = []
-    _batch_size = 500
-    for i, row_vals in enumerate(raw_array):
-        _batch.append([
-            round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
-            for v in row_vals
-        ])
-        if len(_batch) >= _batch_size or i == total_raw - 1:
-            for _r in _batch:
-                ws_raw.append(_r)
-            _batch.clear()
-        if progress_callback and (i % 1000 == 0 or i == total_raw - 1):
-            progress_callback(0.3 * ((i + 1) / total_raw), f"寫入 RAW ({i+1}/{total_raw})...")
-
-    header_fill_raw = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
     )
-    ncols = len(raw_cols)
-    for col_idx in range(1, ncols + 1):
-        cell = ws_raw.cell(row=1, column=col_idx)
-        cell.font = Font(bold=True)
-        cell.fill = header_fill_raw
-        cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center")
-
-    ws_raw.auto_filter.ref = ws_raw.dimensions
-    _auto_width(ws_raw)
 
     if progress_callback:
-        progress_callback(0.35, "\u5efa\u7acb\u6458\u8981\u5de5\u4f5c\u8868...")
+        progress_callback(0.35, "建立摘要工作表...")
 
     ws_summary = wb.create_sheet(title="Shop Stock Status")
 
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     bold_font = Font(bold=True, size=11)
+    desc_font = Font(size=9, color="6B7280", italic=True)
 
     ws_summary["A3"] = "行數 - Site Code"
     ws_summary["D3"] = "Shop Stock Status"
@@ -1615,10 +1465,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
 
     safety_increase_total = int(pd.to_numeric(raw_df.get("Safety Qty Increase", _safe_default_series(0, raw_df.index)), errors="coerce").fillna(0).sum())
 
-    ws_dashboard.merge_cells("A1:D1")
-    title_cell = ws_dashboard.cell(row=1, column=1, value="OOS庫存數據分析摘要 (OOS Analysis Dashboard)")
-    title_cell.font = Font(bold=True, size=14, color="1E40AF")
-    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    desc_font = Font(size=9, color="6B7280", italic=True)
 
     row1_metrics = [
         ("總 OOS 筆數", total_oos, "所有 OOS 異常之總計筆數", "EF4444"),
@@ -1627,27 +1474,6 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
         ("影響SKU總數", total_skus, "個包含 OOS 商品(SKUs)", "10B981"),
     ]
 
-    desc_font = Font(size=9, color="6B7280", italic=True)
-
-    for i, (name, value, desc, color) in enumerate(row1_metrics):
-        col = i + 1
-        tc = ws_dashboard.cell(row=3, column=col, value=name)
-        tc.font = Font(bold=True, size=11, color="FFFFFF")
-        tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-        tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        tc.border = thin_border
-
-        vc = ws_dashboard.cell(row=4, column=col, value=value)
-        vc.font = Font(bold=True, size=20, color=color)
-        vc.alignment = Alignment(horizontal="center", vertical="center")
-        vc.number_format = "#,##0"
-        vc.border = thin_border
-
-        dc = ws_dashboard.cell(row=5, column=col, value=desc)
-        dc.font = desc_font
-        dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        dc.border = thin_border
-
     row2_metrics = [
         ("OOS (0 Stock)", cat1_val, "現有庫存為 0 之 OOS 筆數", "F59E0B"),
         ("Potential OOS (<7 Turnday)", cat2_val, "Turnday 不足 7 之潛在 OOS 筆數", "EC4899"),
@@ -1655,29 +1481,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
         ("建議 Safety Qty 修改", safety_increase_total, "建議 Safety Qty 修改 之總量", "8B5CF6"),
     ]
 
-    for i, (name, value, desc, color) in enumerate(row2_metrics):
-        col = i + 1
-        tc = ws_dashboard.cell(row=7, column=col, value=name)
-        tc.font = Font(bold=True, size=11, color="FFFFFF")
-        tc.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-        tc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        tc.border = thin_border
-
-        vc = ws_dashboard.cell(row=8, column=col, value=value)
-        vc.font = Font(bold=True, size=20, color=color)
-        vc.alignment = Alignment(horizontal="center", vertical="center")
-        vc.number_format = "#,##0"
-        vc.border = thin_border
-
-        dc = ws_dashboard.cell(row=9, column=col, value=desc)
-        dc.font = desc_font
-        dc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        dc.border = thin_border
-
-    if progress_callback:
-        progress_callback(0.95, "調整格式中...")
-
-    _auto_width(ws_dashboard)
+    _write_metric_cards(ws_dashboard, "OOS庫存數據分析摘要 (OOS Analysis Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
 
     buf = BytesIO()
     wb.save(buf)
@@ -1899,31 +1703,7 @@ def transform_carry(
     if progress_callback:
         progress_callback(0.05, "驗證通過")
 
-    df = df_input.dropna(subset=["Buyer"])
-
-    if progress_callback:
-        progress_callback(0.1, "清理資料中...")
-
-    _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
-    if "Item_Shop" in df.columns:
-        _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
-        _footer_mask = _footer_mask | _item_shop_mask
-    df = df[~_footer_mask]
-
-    df = df[df["Buyer"].astype(str).str.strip() != "117 - Marketing"]
-
-    if shop_natures is not None and "Shop Nature" in df.columns:
-        sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
-        mask = _safe_default_series(False, df.index)
-        if "Tourist" in shop_natures:
-            mask |= sn_col.str.contains("tourist", na=False)
-        if "Mix" in shop_natures:
-            mask |= sn_col.str.contains("mix", na=False)
-        if "Non Tourist" in shop_natures:
-            is_tourist_or_mix = sn_col.str.contains("tourist|mix", na=False, regex=True)
-            is_filled = sn_col.notna() & (sn_col.str.strip() != "")
-            mask |= is_filled & ~is_tourist_or_mix
-        df = df[mask]
+    df = _clean_dataframe(df_input, shop_natures=shop_natures, progress_callback=progress_callback)
 
     if df.empty:
         raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
@@ -2002,40 +1782,7 @@ def generate_excel_carry(
     ws_raw = wb.active
     ws_raw.title = "RAW"
 
-    raw_df_display = _compute_raw_extra_columns(raw_df)
-    raw_df_display = _reorder_raw_columns(raw_df_display)
-    raw_cols = list(raw_df_display.columns)
-    _display_names = {"Adj. Safety Stock": "Safety Stock (現時)"}
-    header_row = [_display_names.get(c, c) for c in raw_cols]
-    ws_raw.append(header_row)
-
-    raw_array = raw_df_display.to_numpy(dtype=object, na_value=None)
-    total_raw = len(raw_array)
-    _batch = []
-    _batch_size = 500
-    for i, row_vals in enumerate(raw_array):
-        _batch.append([
-            round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
-            for v in row_vals
-        ])
-        if len(_batch) >= _batch_size or i == total_raw - 1:
-            for _r in _batch:
-                ws_raw.append(_r)
-            _batch.clear()
-        if progress_callback and (i % 1000 == 0 or i == total_raw - 1):
-            progress_callback(0.1 * ((i + 1) / total_raw), f"寫入 RAW ({i+1}/{total_raw})...")
-
-    header_fill_raw = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
-    ncols = len(raw_cols)
-    for col_idx in range(1, ncols + 1):
-        cell = ws_raw.cell(row=1, column=col_idx)
-        cell.font = Font(bold=True)
-        cell.fill = header_fill_raw
-        cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center")
-
-    ws_raw.auto_filter.ref = ws_raw.dimensions
-    _auto_width(ws_raw)
+    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.1)
 
     if progress_callback:
         progress_callback(0.15, "建立 Summary 工作表...")

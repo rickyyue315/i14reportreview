@@ -3,7 +3,12 @@ import pandas as pd
 import calendar
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from transformer import transform, generate_excel, validate_input, _resolve_column_name, transform_oos, generate_excel_oos, transform_carry, generate_excel_carry, transform_combined, generate_excel_combined
+from transformer import (
+    transform, generate_excel, validate_input, _resolve_column_name,
+    transform_oos, generate_excel_oos,
+    transform_carry, generate_excel_carry,
+    transform_combined, generate_excel_combined,
+)
 import time
 import traceback
 from openpyxl import load_workbook
@@ -268,68 +273,33 @@ mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "Combined 
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0)
 
 # 6. 初始化 Session State (確保下載與重整時狀態持久化)
-if "processed" not in st.session_state:
-    st.session_state.processed = False
-    st.session_state.summary_df = None
-    st.session_state.raw_df = None
-    st.session_state.categories = None
-    st.session_state.excel_data = None
+MODE_KEYS = {
+    "Overstock Review": {"prefix": "", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
+    "OOS Review": {"prefix": "oos_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
+    "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
+    "Combined Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
+}
+
+for cfg in MODE_KEYS.values():
+    for attr, default in cfg.items():
+        if attr == "prefix":
+            continue
+        key = f"{cfg['prefix']}{attr}"
+        if key not in st.session_state:
+            st.session_state[key] = [] if isinstance(default, list) else default
+
+if "last_uploaded_key" not in st.session_state:
     st.session_state.last_uploaded_key = None
-    st.session_state.warnings = []
-
-if "oos_processed" not in st.session_state:
-    st.session_state.oos_processed = False
-    st.session_state.oos_summary_df = None
-    st.session_state.oos_raw_df = None
-    st.session_state.oos_categories = None
-    st.session_state.oos_excel_data = None
-    st.session_state.oos_warnings = []
-
-if "carry_processed" not in st.session_state:
-    st.session_state.carry_processed = False
-    st.session_state.carry_summary_left = None
-    st.session_state.carry_summary_right = None
-    st.session_state.carry_dashboard_df = None
-    st.session_state.carry_raw_df = None
-    st.session_state.carry_excel_data = None
-    st.session_state.carry_warnings = []
-
-if "combined_processed" not in st.session_state:
-    st.session_state.combined_processed = False
-    st.session_state.combined_summary_df = None
-    st.session_state.combined_raw_df = None
-    st.session_state.combined_categories = None
-    st.session_state.combined_excel_data = None
-    st.session_state.combined_warnings = []
 
 # 7. 模式切換狀態清理
 prev_mode = st.session_state.get("mode")
 if prev_mode is not None and prev_mode != current_mode:
-    st.session_state.processed = False
-    st.session_state.summary_df = None
-    st.session_state.raw_df = None
-    st.session_state.categories = None
-    st.session_state.excel_data = None
-    st.session_state.warnings = []
-    st.session_state.oos_processed = False
-    st.session_state.oos_summary_df = None
-    st.session_state.oos_raw_df = None
-    st.session_state.oos_categories = None
-    st.session_state.oos_excel_data = None
-    st.session_state.oos_warnings = []
-    st.session_state.carry_processed = False
-    st.session_state.carry_summary_left = None
-    st.session_state.carry_summary_right = None
-    st.session_state.carry_dashboard_df = None
-    st.session_state.carry_raw_df = None
-    st.session_state.carry_excel_data = None
-    st.session_state.carry_warnings = []
-    st.session_state.combined_processed = False
-    st.session_state.combined_summary_df = None
-    st.session_state.combined_raw_df = None
-    st.session_state.combined_categories = None
-    st.session_state.combined_excel_data = None
-    st.session_state.combined_warnings = []
+    for cfg in MODE_KEYS.values():
+        for attr, default in cfg.items():
+            if attr == "prefix":
+                continue
+            key = f"{cfg['prefix']}{attr}"
+            st.session_state[key] = [] if isinstance(default, list) else default
     st.session_state.pop("last_uploaded_key", None)
 st.session_state.mode = current_mode
 mode = current_mode
@@ -347,31 +317,12 @@ if uploaded_file is not None:
     _file_key = f"{uploaded_file.name}_{uploaded_file.size}"
     if st.session_state.get("last_uploaded_key") != _file_key:
         st.session_state.last_uploaded_key = _file_key
-        st.session_state.processed = False
-        st.session_state.summary_df = None
-        st.session_state.raw_df = None
-        st.session_state.categories = None
-        st.session_state.excel_data = None
-        st.session_state.warnings = []
-        st.session_state.oos_processed = False
-        st.session_state.oos_summary_df = None
-        st.session_state.oos_raw_df = None
-        st.session_state.oos_categories = None
-        st.session_state.oos_excel_data = None
-        st.session_state.oos_warnings = []
-        st.session_state.carry_processed = False
-        st.session_state.carry_summary_left = None
-        st.session_state.carry_summary_right = None
-        st.session_state.carry_dashboard_df = None
-        st.session_state.carry_raw_df = None
-        st.session_state.carry_excel_data = None
-        st.session_state.carry_warnings = []
-        st.session_state.combined_processed = False
-        st.session_state.combined_summary_df = None
-        st.session_state.combined_raw_df = None
-        st.session_state.combined_categories = None
-        st.session_state.combined_excel_data = None
-        st.session_state.combined_warnings = []
+        for cfg in MODE_KEYS.values():
+            for attr, default in cfg.items():
+                if attr == "prefix":
+                    continue
+                key = f"{cfg['prefix']}{attr}"
+                st.session_state[key] = [] if isinstance(default, list) else default
         st.session_state.pop("df_input", None)
 
     # 若尚未載入資料，則執行讀取
@@ -836,6 +787,7 @@ if uploaded_file is not None:
                 else:  # OOS Review
                     summary_df, raw_df, categories, _warnings = transform_oos(
                         df_input,
+                        progress_callback=_cb_transform,
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                         rates=rates,
                         mtd_days=mtd_days,
