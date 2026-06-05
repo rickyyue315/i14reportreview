@@ -1844,14 +1844,18 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
 
     agg = agg.sort_values("Site Code")
 
-    cols = list(agg.columns)
-    target = "P90D 0 Sales的店舖貨量"
-    after = "P90D 0 Sales SKU 總數"
-    if target in cols and after in cols:
-        cols.remove(target)
-        idx = cols.index(after) + 1
-        cols.insert(idx, target)
-        agg = agg[cols]
+    desired_order = [
+        "Site Code", "Shop Name",
+        "SKU 總數", "SKU Stock Value (CM)",
+        "RF SKU 總數", "ND SKU 總數",
+        "P90D 0 Sales SKU 總數", "P90D 0 Sales的店舖貨量",
+        "P90D 0 Sales Stock Value (CM)",
+        "建議ND SKU 總數", "建議ND Stock Value (CM)", "建議ND Shop Stock Qty (CM)",
+    ]
+    existing = list(agg.columns)
+    ordered = [c for c in desired_order if c in existing]
+    ordered += [c for c in existing if c not in ordered]
+    agg = agg[ordered]
 
     total = {}
     for col in agg.columns:
@@ -1860,14 +1864,16 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
         elif col == "Shop Name":
             total[col] = ""
         elif agg[col].dtype in ("int64", "float64"):
-            if col in ("SKU Stock Value (CM)", "P90D 0 Sales Stock Value (CM)", "建議ND Stock Value (CM)", "建議ND Shop Stock Qty (CM)"):
-                total[col] = round(float(agg[col].sum()), 2)
-            else:
-                total[col] = int(agg[col].sum())
+            total[col] = int(round(float(agg[col].sum())))
         else:
             total[col] = None
     total_row = pd.DataFrame([total])
     agg = pd.concat([agg, total_row], ignore_index=True)
+
+    for col in agg.columns:
+        if agg[col].dtype == "float64":
+            agg[col] = agg[col].astype(int)
+
     return agg
 
 
@@ -2089,7 +2095,7 @@ def generate_excel_carry(
             if pd.isna(val):
                 val = None
             if isinstance(val, float) and not isinstance(val, bool):
-                val = round(val, 2)
+                val = int(round(val))
             cell = ws_dashboard.cell(row=excel_row, column=col_idx, value=val)
             cell.border = thin_border
             cell.alignment = Alignment(horizontal="center", vertical="center")
