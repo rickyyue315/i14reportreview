@@ -344,7 +344,7 @@ def _clean_dataframe(df_input: pd.DataFrame, shop_natures: list[str] | None = No
     return df
 
 
-# ─── Combined Review Functions ──────────────────────────────────────────────────
+# ─── Safety Stock Review Functions ─────────────────────────────────────────────
 
 
 def _add_combined_recommendation_columns(
@@ -603,7 +603,7 @@ def transform_combined(
     summary = pd.concat([summary, total_row], ignore_index=True)
 
     if total_cat == 0:
-        warnings.append("未偵測到任何符合條件的 Combined Review 資料。")
+        warnings.append("未偵測到任何符合條件的 Safety Stock Review 資料。")
 
     if progress_callback:
         progress_callback(0.7, "轉換完成")
@@ -791,8 +791,8 @@ def generate_excel_combined(
     if progress_callback:
         progress_callback(0.88, "建立分析摘要工作表...")
 
-    # ── Sheet 4: 綜合庫存數據分析摘要 ──
-    ws_dashboard = wb.create_sheet(title="綜合庫存數據分析摘要")
+    # ── Sheet 4: Safety Stock 數據分析摘要 ──
+    ws_dashboard = wb.create_sheet(title="Safety Stock 數據分析摘要")
 
     _total_row = summary_df[summary_df["Buyer"] == "總計"]
     if _total_row.empty:
@@ -809,7 +809,7 @@ def generate_excel_combined(
     safety_change_total = int(pd.to_numeric(raw_df.get("Safety Qty Change", _safe_default_series(0, raw_df.index)), errors="coerce").fillna(0).sum())
 
     row1_metrics = [
-        ("總 Combined 筆數", total_combined, "所有 Combined 審查之總計筆數", "EF4444"),
+        ("總 Safety Stock 審查筆數", total_combined, "所有 Safety Stock 審查之總計筆數", "EF4444"),
         ("影響採購人員數 (Buyers)", total_buyers, "位採購人員名下有需審查品項", "3B82F6"),
         ("影響品牌總數 (Brands)", total_brands, "個品牌包含需審查商品", "8B5CF6"),
         ("影響SKU總數", total_skus, "個包含需審查商品(SKUs)", "10B981"),
@@ -822,7 +822,7 @@ def generate_excel_combined(
         ("Safety 調整總量", safety_change_total, "Safety Qty Change 總和", "8B5CF6"),
     ]
 
-    _write_metric_cards(ws_dashboard, "綜合庫存數據分析摘要 (Combined Analysis Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
+    _write_metric_cards(ws_dashboard, "Safety Stock 數據分析摘要 (Safety Stock Analysis Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
 
     buf = BytesIO()
     wb.save(buf)

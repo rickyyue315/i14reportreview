@@ -194,10 +194,10 @@ with st.sidebar:
     - 按 RP Type（ND / RF）與 P90D 0 Sales 交叉統計
     - 輸出：RAW、Summary（雙區塊樞紐：Adj. MCH1 × Adj. SST）、Carry SKU 分析摘要
 
-    **🔄 Combined Review**
-    - 同時整合 Overstock 與 OOS 分析結果
-    - 自動計算建議 Safety Stock，平衡庫存過賸與缺貨風險
-    - 支援逐 Site 檢視與調整
+    **🔒 Safety Stock Review**
+    - 全面審查各 SKU×Shop 的安全庫存設定是否合理
+    - 結合 Overstock Cap（庫存上限）與 OOS Floor（缺貨底線），雙向平衡調整 Safety Stock
+    - 支援逐 Site 檢視、Overstock / OOS Rate 自訂、Safety 只增或加減模式
     """)
     
     st.divider()
@@ -246,6 +246,13 @@ with st.sidebar:
     2. 依 RP Type (ND / RF) 與 P90D 0 Sales 狀態做雙維度交叉統計
     3. 雙區塊樞紐：左 (Adj. MCH1) + 右 (Adj. SST)
 
+    **🔒 Safety Stock Review** — 全面審查 Safety Stock 設定，計算平衡建議值：
+    1. **Overstock Cap (X)** = floor(月均銷售 × Overstock Rate)，上限不超過現有 Adj. Safety Stock
+    2. **OOS Floor (Y)** = ceil(MTD 預估月銷售 × OOS Rate)，最低 3
+    3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Adj. Safety Stock
+    4. **Safety Qty Change** = 建議 Safety Stock − Z（正數=增加、負數=減少、零=不變）
+    5. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
+
     所有模式均自動生成採購與品牌的交叉匯總樞紐分析表。
     """)
     
@@ -269,7 +276,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 5. 模式選擇器
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "Combined Review"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "Safety Stock Review"]
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0)
 
 # 6. 初始化 Session State (確保下載與重整時狀態持久化)
@@ -277,7 +284,7 @@ MODE_KEYS = {
     "Overstock Review": {"prefix": "", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "OOS Review": {"prefix": "oos_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
-    "Combined Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
+    "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -411,7 +418,7 @@ if uploaded_file is not None:
         st.caption(f"目前顯示第 1 至第 20 筆明細（總共 {len(df_input):,} 筆原始資料）")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    if mode == "Combined Review":
+    if mode == "Safety Stock Review":
         mtd_date = st.date_input(
             "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
             value=datetime.now().date() - timedelta(days=1),
@@ -519,12 +526,12 @@ if uploaded_file is not None:
             except Exception as e:
                 _prog2.empty()
                 _tb = traceback.format_exc()
-                print(f"❌ Combined Review 處理失敗: {e}\n{_tb}")
-                st.error(f"❌ Combined Review 處理失敗: {e}\n\n詳細錯誤: {_tb}")
+                print(f"❌ Safety Stock Review 處理失敗: {e}\n{_tb}")
+                st.error(f"❌ Safety Stock Review 處理失敗: {e}\n\n詳細錯誤: {_tb}")
                 st.stop()
 
             _prog2.empty()
-            st.success("🎉 Combined Review 報表產生成功！數據彙總已完成。")
+            st.success("🎉 Safety Stock Review 報表產生成功！數據彙總已完成。")
             if _warnings:
                 for _w in _warnings:
                     st.warning(f"⚠️ {_w}")
@@ -536,7 +543,7 @@ if uploaded_file is not None:
             excel_data = st.session_state.combined_excel_data
 
             st.markdown('<div class="custom-card" style="border-top: 4px solid #6366f1;">', unsafe_allow_html=True)
-            st.markdown("### 📈 綜合庫存數據分析摘要 (Combined Analysis Dashboard)")
+            st.markdown("### 📈 Safety Stock 數據分析摘要 (Safety Stock Analysis Dashboard)")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
             if _total_row.empty:
@@ -557,9 +564,9 @@ if uploaded_file is not None:
             with r1_col1:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #ff5555;">
-                    <div class="metric-title">總 Combined 筆數</div>
+                    <div class="metric-title">總 Safety Stock 審查筆數</div>
                     <div class="metric-value" style="color: #ff5555;">{total_combined:,}</div>
-                    <div class="metric-desc">所有 Combined 審查之總計筆數</div>
+                    <div class="metric-desc">所有 Safety Stock 審查之總計筆數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
@@ -637,7 +644,7 @@ if uploaded_file is not None:
             tab1, tab2, tab3 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "🏪 By Shop 明細", "📄 RAW 原始明細"])
 
             with tab1:
-                st.markdown("#### 採購人員與品牌之 Combined 交叉統計表")
+                st.markdown("#### 採購人員與品牌之 Safety Stock 交叉統計表")
                 st.markdown("本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
                 st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
@@ -667,10 +674,10 @@ if uploaded_file is not None:
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
-            download_name = f"I14 Combined Review_{hk_time}.xlsx"
+            download_name = f"I14 Safety Stock Review_{hk_time}.xlsx"
 
             st.download_button(
-                label="📥 下載 Combined Review 分析報表 (.xlsx)",
+                label="📥 下載 Safety Stock Review 分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

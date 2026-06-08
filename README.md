@@ -1,13 +1,13 @@
 # I14 報表轉換與分析系統
 
-自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）與 **OOS Review**（缺貨審查）兩種模式。
+自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）與 **Safety Stock Review**（安全庫存審查）四種模式。
 
 ## 功能概述
 
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / Combined Review |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / Safety Stock Review |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式 |
@@ -85,15 +85,17 @@ OOS Review 建議額外包含：
 
 支援 MTD 日期選擇，自動推算月度預估銷售量（Projected Monthly Sold Qty）。
 
-### Combined Review
+### Safety Stock Review
 
-整合 Overstock 與 OOS 分析結果，為每個 Site 計算建議 Safety Stock：
+全面審查各 SKU×Shop 的安全庫存設定，結合 Overstock Cap 與 OOS Floor 計算平衡建議值：
 
 1. **Overstock Cap (X)** — 基於月均銷售與 Overstock Rate 計算庫存上限，上限不超過現有 Adj. Safety Stock
 2. **OOS Floor (Y)** — 基於 MTD 預估銷售與 OOS Rate 計算缺貨底線，最低 3
-3. **Combined Safety Stock** = max(Y, Z if Z ≤ X else X)，平衡庫存過賸與缺貨風險
+3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Adj. Safety Stock
+4. **Safety Qty Change** = 建議值 − Z（正數=增加、負數=減少、零=不變）
 
-輸出包含 RAW、Shop Stock Status、By Shop、綜合庫存數據分析摘要共 4 個工作表。
+品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因。
+輸出包含 RAW、Shop Stock Status、By Shop、Safety Stock 數據分析摘要共 4 個工作表。
 
 ## Excel 輸出結構
 

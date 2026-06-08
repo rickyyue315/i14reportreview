@@ -1,8 +1,10 @@
 # 版本記錄
 
-## v1.4.7 (2026-06-05)
+## v1.4.7 (2026-06-08)
 
-- 
+- Rename: "Combined Review" mode renamed to "Safety Stock Review" across UI and docs
+- Update: Sidebar「分析模式說明」與「核心計算規則」補充 Safety Stock Review 功能描述
+- Update: README.md 同步更新模式名稱與說明 
 
 ## v1.4.6 (2026-06-04)
 
