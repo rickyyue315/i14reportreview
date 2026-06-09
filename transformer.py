@@ -1077,6 +1077,7 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
         ("New Safety Qty / ND 調整後的預計總數", transfer_qty_total, "After new Safety Qty / ND can transfer out of TOTAL QTY", "06B6D4"),
     ]
 
+    desc_font = Font(size=9, color="6B7280", italic=True)
     _write_metric_cards(ws_dashboard, "異常庫存數據分析摘要 (Analysis Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
 
     buf = BytesIO()
