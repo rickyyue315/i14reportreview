@@ -854,6 +854,11 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
     if df.empty:
         raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
 
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+
+    if "SKU Desc" not in df.columns:
+        df = _compute_raw_extra_columns(df)
+
     status_col = df["Shop Stock Status"].fillna("")
 
     categories = [
@@ -861,7 +866,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
         "Overstock (>2*Monthly Sold Qty & >2pcs)",
     ]
 
-    group_cols = ["Buyer", "Brand", "SKU"]
+    group_cols = ["Buyer", "Brand", "SKU", "SKU Desc"]
 
     if progress_callback:
         progress_callback(0.2, "\u5206\u985e\u7d71\u8a08\u4e2d...")
@@ -881,7 +886,6 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
     if progress_callback:
         progress_callback(0.5, "\u8a08\u7b97\u5eab\u5b58\u5efa\u8b70\u4e2d...")
 
-    df["SKU"] = df["SKU"].apply(_safe_sku)
     raw = _add_recommendation_columns(df, rates=rates)
 
     transfer_col = "After new Safety Qty / ND can transfer out of QTY"
@@ -904,14 +908,14 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
     summary = summary.merge(transfer_summary, on=group_cols, how="left")
     summary[transfer_col] = summary[transfer_col].fillna(0).astype(int)
 
-    buyer_order = summary.groupby("Buyer")["\u7e3d\u8a08"].sum().sort_values(ascending=False).index.tolist()
+    buyer_order = summary.groupby("Buyer")["總計"].sum().sort_values(ascending=False).index.tolist()
     summary["_buyer_key"] = summary["Buyer"].map({b: i for i, b in enumerate(buyer_order)})
-    summary = summary.sort_values(["_buyer_key", "Brand", "SKU"], ascending=[True, True, True]).drop(columns=["_buyer_key"]).reset_index(drop=True)
+    summary = summary.sort_values(["_buyer_key", "Brand", "SKU", "SKU Desc"], ascending=[True, True, True, True]).drop(columns=["_buyer_key"]).reset_index(drop=True)
 
     transfer_total = int(raw["_transfer_num"].sum())
     del raw["_transfer_num"]
 
-    total_overstock = int(summary["\u7e3d\u8a08"].sum())
+    total_overstock = int(summary["總計"].sum())
     total_row = pd.DataFrame(
         {
             "Buyer": ["總計"],
@@ -966,7 +970,7 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     ws_summary["D3"] = "Shop Stock Status"
 
     transfer_col = "After new Safety Qty / ND can transfer out of QTY"
-    headers = ["Buyer", "Brand", "SKU"] + categories + ["\u7e3d\u8a08"] + [transfer_col]
+    headers = ["Buyer", "Brand", "SKU", "SKU Desc"] + categories + ["總計"] + [transfer_col]
     for col_idx, h in enumerate(headers, 1):
         cell = ws_summary.cell(row=4, column=col_idx, value=h)
         cell.font = header_font
