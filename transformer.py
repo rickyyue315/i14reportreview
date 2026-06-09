@@ -272,7 +272,7 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
         rate = np.full(len(df), _default_rate)
         rate[shop_nature.str.contains("tourist", na=False)] = _tourist_rate
         rate[shop_nature.str.contains("mix", na=False)] = _mix_rate
-        rec_2x = np.floor(monthly_sold[cond_overstock_2x] * rate[cond_overstock_2x]).clip(lower=3).astype(int)
+        rec_2x = np.floor(monthly_sold[cond_overstock_2x] * rate[cond_overstock_2x]).clip(min=3).astype(int)
         # If new safety qty > Adj. Safety Stock, cap at Adj. Safety Stock
         adj_ss_2x = adj_ss[cond_overstock_2x].values
         over_adj = rec_2x > adj_ss_2x
@@ -362,7 +362,7 @@ def _add_combined_recommendation_columns(
 
     # Overstock cap X
     def _compute_x(monthly_sold_arr, rate_arr, adj_ss_arr):
-        x = np.floor(monthly_sold_arr * rate_arr).clip(lower=3).astype(int)
+        x = np.floor(monthly_sold_arr * rate_arr).clip(min=3).astype(int)
         over_adj = x > adj_ss_arr
         x[over_adj] = adj_ss_arr[over_adj].astype(int)
         return x
@@ -395,7 +395,7 @@ def _add_combined_recommendation_columns(
     oos_rate_arr[shop_nature.str.contains("tourist", na=False)] = _oos_tourist
     oos_rate_arr[shop_nature.str.contains("mix", na=False)] = _oos_mix
 
-    y_values = np.ceil(projected.values * oos_rate_arr).clip(lower=3).astype(int)
+    y_values = np.ceil(projected.values * oos_rate_arr).clip(min=3).astype(int)
 
     # Z = current Adj. Safety Stock
     z_values = adj_ss.values.astype(int)
@@ -409,7 +409,7 @@ def _add_combined_recommendation_columns(
 
     delta = combined - z_values
     if safety_mode == "increase_only":
-        delta = delta.clip(lower=0)
+        delta = delta.clip(min=0)
     df["Safety Qty Change"] = delta
 
     df["Buyer reply"] = ""
@@ -1154,11 +1154,11 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
     recommended = np.zeros(len(df), dtype=int)
 
     if is_rf.any():
-        rec_rf = np.ceil(projected.values[is_rf] * rate_arr[is_rf]).clip(lower=3).astype(int)
+        rec_rf = np.ceil(projected.values[is_rf] * rate_arr[is_rf]).clip(min=3).astype(int)
         recommended[is_rf] = rec_rf
 
     if is_other.any():
-        rec_other = np.ceil(projected.values[is_other] * rate_arr[is_other]).clip(lower=3).astype(int)
+        rec_other = np.ceil(projected.values[is_other] * rate_arr[is_other]).clip(min=3).astype(int)
         ad_other = adj_ss_arr[is_other]
         over_adj = rec_other > ad_other
         rec_other[over_adj] = ad_other[over_adj]
@@ -1169,10 +1169,10 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
     increase = recommended - adj_ss_arr
     increase[is_nd] = 0
     if safety_mode == "increase_only":
-        increase[is_rf] = increase[is_rf].clip(lower=0)
-        increase[is_other] = increase[is_other].clip(lower=0)
+        increase[is_rf] = increase[is_rf].clip(min=0)
+        increase[is_other] = increase[is_other].clip(min=0)
     else:
-        increase[is_other] = increase[is_other].clip(lower=0)
+        increase[is_other] = increase[is_other].clip(min=0)
     df["Safety Qty Increase"] = increase
 
     if safety_mode == "increase_only":
