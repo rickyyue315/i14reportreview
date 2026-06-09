@@ -1,5 +1,9 @@
 # 版本記錄
 
+## v1.4.8 (2026-06-09)
+
+- 
+
 ## v1.4.7 (2026-06-08)
 
 - Rename: "Combined Review" mode renamed to "Safety Stock Review" across UI and docs
