@@ -1129,18 +1129,19 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
     shop_nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.lower()
     rp_type = df.get("RP Type", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.upper()
 
+    sold_qty = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0.0, df.index)))
+    if mtd_days and mtd_days > 0:
+        projected_mtd = (sold_qty / mtd_days) * month_total_days
+    else:
+        projected_mtd = _safe_default_series(0.0, df.index)
+    df["Projected Monthly Sold Qty"] = np.ceil(projected_mtd).astype(int)
+    projected_mtd_arr = projected_mtd.values
+
     if oos_calc_mode == "p90d":
         p90d_monthly = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0.0, df.index)))
         projected = p90d_monthly.values
-        df["Projected Monthly Sold Qty"] = np.ceil(projected).astype(int)
     else:
-        sold_qty = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0.0, df.index)))
-        if mtd_days > 0:
-            projected = (sold_qty / mtd_days) * month_total_days
-        else:
-            projected = _safe_default_series(0.0, df.index)
-        df["Projected Monthly Sold Qty"] = np.ceil(projected).astype(int)
-        projected = projected.values
+        projected = projected_mtd_arr
 
     _default_rate = rates.get("default", 0.50)
     _tourist_rate = rates.get("tourist", 0.30)
