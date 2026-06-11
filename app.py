@@ -686,14 +686,27 @@ if uploaded_file is not None:
             )
     else:
         if mode == "OOS Review":
-            mtd_date = st.date_input(
-                "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
-                value=datetime.now().date() - timedelta(days=1),
-                help="選擇 MTD (Month-To-Date) 截止日期，系統將據此推算月度預估銷售量。"
+            oos_calc_mode = st.radio(
+                "📊 Safety Qty 計算基準",
+                options=["MTD (Sold Qty CM-MTD)", "P90D (Shop Monthly Sold Qty)"],
+                index=0,
+                horizontal=True,
+                help="MTD：使用本月至今銷售（CM-MTD）推算全月；P90D：使用過去90天月均銷售（P90D）"
             )
-            mtd_days = mtd_date.day
-            month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
-            st.caption(f"MTD: {mtd_days}日，當月共 {month_total_days} 日")
+            oos_calc_mode_value = "mtd" if oos_calc_mode.startswith("MTD") else "p90d"
+
+            if oos_calc_mode_value == "mtd":
+                mtd_date = st.date_input(
+                    "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
+                    value=datetime.now().date() - timedelta(days=1),
+                    help="選擇 MTD (Month-To-Date) 截止日期，系統將據此推算月度預估銷售量。"
+                )
+                mtd_days = mtd_date.day
+                month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
+                st.caption(f"MTD: {mtd_days}日，當月共 {month_total_days} 日")
+            else:
+                mtd_days = None
+                month_total_days = None
 
         st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
@@ -800,6 +813,7 @@ if uploaded_file is not None:
                         mtd_days=mtd_days,
                         month_total_days=month_total_days,
                         safety_mode=safety_mode_value,
+                        oos_calc_mode=oos_calc_mode_value,
                     )
                     buf = generate_excel_oos(summary_df, raw_df, categories, progress_callback=_cb_excel)
                     st.session_state.oos_processed = True

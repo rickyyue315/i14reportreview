@@ -1122,20 +1122,25 @@ SECONDARY_CATEGORY = "Normal (Safety Qty Insufficient)"
 EXCLUDED_STATUSES = ["No Stock (non-Active SKU / ND Shop)"]
 
 
-def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safety_mode="allow_both"):
+def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safety_mode="allow_both", oos_calc_mode="mtd"):
     df = df.copy()
 
-    sold_qty = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0.0, df.index)))
     adj_ss = _safe_numeric(df.get("Adj. Safety Stock", _safe_default_series(0.0, df.index)))
     shop_nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.lower()
     rp_type = df.get("RP Type", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.upper()
 
-    if mtd_days > 0:
-        projected = (sold_qty / mtd_days) * month_total_days
+    if oos_calc_mode == "p90d":
+        p90d_monthly = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0.0, df.index)))
+        projected = p90d_monthly.values
+        df["Projected Monthly Sold Qty"] = np.ceil(projected).astype(int)
     else:
-        projected = _safe_default_series(0.0, df.index)
-
-    df["Projected Monthly Sold Qty"] = np.ceil(projected).astype(int)
+        sold_qty = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0.0, df.index)))
+        if mtd_days > 0:
+            projected = (sold_qty / mtd_days) * month_total_days
+        else:
+            projected = _safe_default_series(0.0, df.index)
+        df["Projected Monthly Sold Qty"] = np.ceil(projected).astype(int)
+        projected = projected.values
 
     _default_rate = rates.get("default", 0.50)
     _tourist_rate = rates.get("tourist", 0.30)
@@ -1154,11 +1159,11 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
     recommended = np.zeros(len(df), dtype=int)
 
     if is_rf.any():
-        rec_rf = np.ceil(projected.values[is_rf] * rate_arr[is_rf]).clip(min=3).astype(int)
+        rec_rf = np.ceil(projected[is_rf] * rate_arr[is_rf]).clip(min=3).astype(int)
         recommended[is_rf] = rec_rf
 
     if is_other.any():
-        rec_other = np.ceil(projected.values[is_other] * rate_arr[is_other]).clip(min=3).astype(int)
+        rec_other = np.ceil(projected[is_other] * rate_arr[is_other]).clip(min=3).astype(int)
         ad_other = adj_ss_arr[is_other]
         over_adj = rec_other > ad_other
         rec_other[over_adj] = ad_other[over_adj]
@@ -1245,7 +1250,7 @@ def _build_oos_by_shop_summary(raw):
     return by_shop
 
 
-def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=None, mtd_days=None, month_total_days=None, safety_mode="allow_both"):
+def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=None, mtd_days=None, month_total_days=None, safety_mode="allow_both", oos_calc_mode="mtd"):
     missing = validate_input(df_input)
     if missing:
         raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
@@ -1253,6 +1258,8 @@ def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=Non
     warnings = []
 
     _optional_cols = ["Adj. Safety Stock", "Shop Stock Qty (CM)", "Sold Qty (CM - MTD)", "Shop Stock Status"]
+    if oos_calc_mode == "p90d":
+        _optional_cols.append("Shop Monthly Sold Qty (P90D)")
     for _col in _optional_cols:
         if _col not in df_input.columns:
             warnings.append(f"缺少可選欄位「{_col}」，建議值與轉移數量將全為 0")
@@ -1276,7 +1283,7 @@ def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=Non
         progress_callback(0.2, "計算庫存建議中...")
 
     df["SKU"] = df["SKU"].apply(_safe_sku)
-    raw = _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safety_mode=safety_mode)
+    raw = _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safety_mode=safety_mode, oos_calc_mode=oos_calc_mode)
 
     if progress_callback:
         progress_callback(0.4, "分類統計中...")
