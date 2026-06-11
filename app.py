@@ -414,7 +414,7 @@ if uploaded_file is not None:
     
     # 預覽原始資料摺疊區塊
     with st.expander("🔍 預覽前 20 筆原始資料", expanded=False):
-        st.dataframe(df_input.head(20), use_container_width=True)
+        st.dataframe(df_input.head(20), width='stretch')
         st.caption(f"目前顯示第 1 至第 20 筆明細（總共 {len(df_input):,} 筆原始資料）")
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -490,7 +490,7 @@ if uploaded_file is not None:
 
         _all_site_codes = sorted(df_input["Site Code"].dropna().unique()) if "Site Code" in df_input.columns else []
 
-        if st.button("⚙️ 執行報表轉換與分析", type="primary", use_container_width=True):
+        if st.button("⚙️ 執行報表轉換與分析", type="primary", width='stretch'):
             _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
             _t0_2 = time.time()
 
@@ -646,7 +646,7 @@ if uploaded_file is not None:
             with tab1:
                 st.markdown("#### 採購人員與品牌之 Safety Stock 交叉統計表")
                 st.markdown("本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
-                st.dataframe(summary_df, use_container_width=True, hide_index=True)
+                st.dataframe(summary_df, width='stretch', hide_index=True)
 
             with tab2:
                 by_shop_df = summary_df  # placeholder, real by_shop is built in excel gen
@@ -659,7 +659,7 @@ if uploaded_file is not None:
                 except Exception:
                     pass
                 if _by_shop_display is not None:
-                    st.dataframe(_by_shop_display, use_container_width=True, hide_index=True)
+                    st.dataframe(_by_shop_display, width='stretch', hide_index=True)
                 else:
                     st.info("By Shop 明細無法產生，請檢查資料。")
 
@@ -668,7 +668,7 @@ if uploaded_file is not None:
                 _filtered_raw = raw_df.copy()
                 if selected_site_code != "全部" and "Site Code" in _filtered_raw.columns:
                     _filtered_raw = _filtered_raw[_filtered_raw["Site Code"].astype(str).str.strip() == selected_site_code]
-                st.dataframe(_filtered_raw.head(50), use_container_width=True)
+                st.dataframe(_filtered_raw.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
@@ -682,7 +682,7 @@ if uploaded_file is not None:
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
-                use_container_width=True,
+                width='stretch',
             )
     else:
         if mode == "OOS Review":
@@ -763,7 +763,7 @@ if uploaded_file is not None:
             )
             safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
 
-        if st.button("⚙️ 執行報表轉換與分析", type="primary", use_container_width=True):
+        if st.button("⚙️ 執行報表轉換與分析", type="primary", width='stretch'):
             _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
             _t0_2 = time.time()
 
@@ -939,12 +939,12 @@ if uploaded_file is not None:
             with tab1:
                 st.markdown("#### 採購人員與品牌之庫存異常交叉統計表")
                 st.markdown("本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
-                st.dataframe(summary_df, use_container_width=True, hide_index=True)
+                st.dataframe(summary_df, width='stretch', hide_index=True)
 
             with tab2:
                 st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
                 st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽：")
-                st.dataframe(raw_df.head(50), use_container_width=True)
+                st.dataframe(raw_df.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
@@ -958,7 +958,7 @@ if uploaded_file is not None:
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
-                use_container_width=True,
+                width='stretch',
             )
 
         if mode == "OOS Review" and st.session_state.oos_processed:
@@ -1059,12 +1059,12 @@ if uploaded_file is not None:
             with tab1:
                 st.markdown("#### 採購人員與品牌之 OOS 交叉統計表")
                 st.markdown("本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
-                st.dataframe(summary_df, use_container_width=True, hide_index=True)
+                st.dataframe(summary_df, width='stretch', hide_index=True)
 
             with tab2:
                 st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
                 st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽：")
-                st.dataframe(raw_df.head(50), use_container_width=True)
+                st.dataframe(raw_df.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
@@ -1078,7 +1078,7 @@ if uploaded_file is not None:
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
-                use_container_width=True,
+                width='stretch',
             )
 
         if mode == "Carry SKU Review" and st.session_state.carry_processed:
@@ -1203,17 +1203,17 @@ if uploaded_file is not None:
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
             st.markdown("#### 各店舖 Carry SKU 指標總覽")
-            st.dataframe(dashboard_df, use_container_width=True, hide_index=True)
+            st.dataframe(dashboard_df, width='stretch', hide_index=True)
 
             tab1, tab2 = st.tabs(["📋 Summary 樞紐表預覽", "📄 RAW 明細（前 50 筆）"])
             with tab1:
                 st.markdown("#### 左區塊 (Site Code × Adj. MCH1)")
-                st.dataframe(summary_left, use_container_width=True, hide_index=True)
+                st.dataframe(summary_left, width='stretch', hide_index=True)
                 st.markdown("#### 右區塊 (Site Code × Adj. SST)")
-                st.dataframe(summary_right, use_container_width=True, hide_index=True)
+                st.dataframe(summary_right, width='stretch', hide_index=True)
             with tab2:
                 st.markdown("#### RAW 原始資料明細（前 50 筆）")
-                st.dataframe(raw_df.head(50), use_container_width=True)
+                st.dataframe(raw_df.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
@@ -1227,7 +1227,7 @@ if uploaded_file is not None:
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
-                use_container_width=True,
+                width='stretch',
             )
 
 # 9. 底部頁尾資訊
