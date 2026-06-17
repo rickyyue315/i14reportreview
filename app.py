@@ -4,7 +4,7 @@ import calendar
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from transformer import (
-    transform, generate_excel, validate_input, _resolve_column_name,
+    validate_input, _resolve_column_name,
     transform_oos, generate_excel_oos,
     transform_carry, generate_excel_carry,
     transform_combined, generate_excel_combined,
@@ -782,13 +782,13 @@ if uploaded_file is not None:
                     _cb(0.6 + 0.4 * pct, msg)
 
                 if mode == "Overstock Review":
-                    summary_df, raw_df, categories, _warnings = transform(
+                    summary_df, raw_df, categories, _warnings = transform_combined(
                         df_input,
                         progress_callback=_cb_transform,
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
-                        rates=rates,
+                        rates_overstock=rates,
                     )
-                    buf = generate_excel(summary_df, raw_df, categories, progress_callback=_cb_excel)
+                    buf = generate_excel_combined(summary_df, raw_df, categories, progress_callback=_cb_excel)
                     st.session_state.processed = True
                     st.session_state.summary_df = summary_df
                     st.session_state.raw_df = raw_df
