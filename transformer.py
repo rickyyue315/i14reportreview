@@ -380,7 +380,7 @@ def _add_combined_recommendation_columns(
         x_values = _compute_x(monthly_sold.values, os_rate_arr, adj_ss.values)
 
     # OOS floor Y
-    if mtd_days > 0:
+    if mtd_days is not None and mtd_days > 0:
         projected = (sold_qty / mtd_days) * month_total_days
     else:
         projected = _safe_default_series(0.0, df.index)
