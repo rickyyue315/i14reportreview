@@ -604,7 +604,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #ff9944;">
                     <div class="metric-title">Overstock 分類行數</div>
                     <div class="metric-value" style="color: #ff9944;">{int(cat_counts.get(categories[0], 0)):,}</div>
-                    <div class="metric-desc">庫存過賸分類行數</div>
+                    <div class="metric-desc">庫存過剩分類行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:

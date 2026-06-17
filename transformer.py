@@ -816,7 +816,7 @@ def generate_excel_combined(
     ]
 
     row2_metrics = [
-        ("Overstock 分類行數", cat_overstock, "庫存過賸分類行數", "F59E0B"),
+        ("Overstock 分類行數", cat_overstock, "庫存過剩分類行數", "F59E0B"),
         ("OOS 分類行數", cat_oos, "缺貨分類行數", "EC4899"),
         ("Safety 調整行數", cat_balanced, "Balanced (Safety Adjusted) 行數", "06B6D4"),
         ("Safety 調整總量", safety_change_total, "Safety Qty Change 總和", "8B5CF6"),
