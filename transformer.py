@@ -40,7 +40,7 @@ RAW_COLUMN_ORDER_NAMES = [
     "After new Safety Qty / ND can transfer out of QTY",
     "Overstock Cap (X)",
     "OOS Floor (Y)",
-    "Combined Safety Stock",
+    "Recommend Safety Stock",
     "Safety Qty Change",
     "Buyer reply",
     "D001 Net Stock Qty (CM)",
@@ -405,7 +405,7 @@ def _add_combined_recommendation_columns(
 
     df["Overstock Cap (X)"] = x_values
     df["OOS Floor (Y)"] = y_values
-    df["Combined Safety Stock"] = combined
+    df["Recommend Safety Stock"] = combined
 
     delta = combined - z_values
     if safety_mode == "increase_only":
