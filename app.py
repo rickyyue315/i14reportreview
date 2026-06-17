@@ -110,7 +110,7 @@ html, body, [class*="css"] {
     line-height: 1.2;
 }
 .metric-desc {
-    font-size: 0.80rem;
+    font-size: 0.72rem;
     color: #6a6a7a;
     margin-top: 4px;
 }
