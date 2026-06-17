@@ -202,7 +202,7 @@ def _build_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
     transfer_num = pd.to_numeric(df.get(transfer_col, _safe_default_series(0, df.index)), errors="coerce").fillna(0)
 
     group_cols = ["Site Code", "Shop Name", "OM"]
-    df["_is_0_sales"] = status_col == "Overstock (P90D 0 Sales)"
+    df["_is_0_sales"] = status_col == "P90D 0 Sales"
     df["_is_2x"] = status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)"
     df["_is_nd_change"] = df["_is_0_sales"] & (rec_col == "ND")
     df["_is_safety_change"] = df["_is_2x"] & rec_num.notna()
@@ -257,7 +257,7 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
     cond_overstock_2x = (status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)")
 
     cond_overstock_0 = (
-        (status_col == "Overstock (P90D 0 Sales)")
+        (status_col == "P90D 0 Sales")
         & (df.get("RP Type", _safe_default_series("", df.index)).isin(["ND", "RF"]))
     )
 
@@ -809,16 +809,16 @@ def generate_excel_combined(
     safety_change_total = int(pd.to_numeric(raw_df.get("Safety Qty Change", _safe_default_series(0, raw_df.index)), errors="coerce").fillna(0).sum())
 
     row1_metrics = [
-        ("總 Safety Stock 審查筆數", total_combined, "所有 Safety Stock 審查之總計筆數", "EF4444"),
+        ("總 Safety Stock 審查行數", total_combined, "所有 Safety Stock 審查之總計行數", "EF4444"),
         ("影響採購人員數 (Buyers)", total_buyers, "位採購人員名下有需審查品項", "3B82F6"),
         ("影響品牌總數 (Brands)", total_brands, "個品牌包含需審查商品", "8B5CF6"),
         ("影響SKU總數", total_skus, "個包含需審查商品(SKUs)", "10B981"),
     ]
 
     row2_metrics = [
-        ("Overstock 分類筆數", cat_overstock, "庫存過賸分類筆數", "F59E0B"),
-        ("OOS 分類筆數", cat_oos, "缺貨分類筆數", "EC4899"),
-        ("Safety 調整筆數", cat_balanced, "Balanced (Safety Adjusted) 筆數", "06B6D4"),
+        ("Overstock 分類行數", cat_overstock, "庫存過賸分類行數", "F59E0B"),
+        ("OOS 分類行數", cat_oos, "缺貨分類行數", "EC4899"),
+        ("Safety 調整行數", cat_balanced, "Balanced (Safety Adjusted) 行數", "06B6D4"),
         ("Safety 調整總量", safety_change_total, "Safety Qty Change 總和", "8B5CF6"),
     ]
 
@@ -862,7 +862,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
     status_col = df["Shop Stock Status"].fillna("")
 
     categories = [
-        "Overstock (P90D 0 Sales)",
+        "P90D 0 Sales",
         "Overstock (>2*Monthly Sold Qty & >2pcs)",
     ]
 
@@ -1069,16 +1069,16 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
         transfer_qty_total = int(pd.to_numeric(raw_df[transfer_col], errors="coerce").fillna(0).sum())
 
     row1_metrics = [
-        ("總 Overstock 筆數", total_overstock, "所有庫存異常之總計筆數", "EF4444"),
+        ("總 Overstock 行數", total_overstock, "所有庫存異常之總計行數", "EF4444"),
         ("影響採購人員數 (Buyers)", total_buyers, "位採購人員名下有異常品項", "3B82F6"),
         ("影響品牌總數 (Brands)", total_brands, "個品牌包含異常庫存商品", "8B5CF6"),
         ("影響SKU總數", total_skus, "個包含異常庫存商品(SKUs)", "10B981"),
     ]
 
     row2_metrics = [
-        ("Overstock (P90D 0 Sales)", cat1_val, "「過去 90 天內零銷售」之異常筆數", "F59E0B"),
-        ("Overstock (>2*Monthly Sold Qty & >2pcs)", cat2_val, "「大於月均銷售量兩倍且庫存大於 2 件」之異常筆數", "EC4899"),
-        ("New Safety Qty / ND 調整後的預計總數", transfer_qty_total, "After new Safety Qty / ND can transfer out of TOTAL QTY", "06B6D4"),
+        ("P90D 0 Sales", cat1_val, "「過去 90 天內零銷售」之異常行數", "F59E0B"),
+        ("Overstock (>2*Monthly Sold Qty & >2pcs)", cat2_val, "「大於月均銷售量兩倍且庫存大於 2 件」之異常行數", "EC4899"),
+        ("調整後的預計可退倉總數", transfer_qty_total, "After new Safety Qty / ND can transfer out of TOTAL QTY", "06B6D4"),
     ]
 
     desc_font = Font(size=9, color="6B7280", italic=True)
@@ -1222,7 +1222,7 @@ def _build_oos_by_shop_summary(raw):
         .agg(
             OOS_SKU数量=("_sku_oos", "nunique"),
             Potential_OOS_SKU数量=("_sku_potential_oos", "nunique"),
-            建議SafetyQty增加筆數=("_is_normal_insufficient", "sum"),
+            建議SafetyQty增加行數=("_is_normal_insufficient", "sum"),
             其他需調整SKU數量=("_sku_normal_insufficient", "nunique"),
             建議SafetyQty增加總量=("_safety_increase", "sum"),
         )
@@ -1241,7 +1241,7 @@ def _build_oos_by_shop_summary(raw):
                 "OM": [""],
                 "OOS_SKU数量": [int(by_shop["OOS_SKU数量"].sum())],
                 "Potential_OOS_SKU数量": [int(by_shop["Potential_OOS_SKU数量"].sum())],
-                "建議SafetyQty增加筆數": [int(by_shop["建議SafetyQty增加筆數"].sum())],
+                "建議SafetyQty增加行數": [int(by_shop["建議SafetyQty增加行數"].sum())],
                 "其他需調整SKU數量": [int(by_shop["其他需調整SKU數量"].sum())],
                 "建議SafetyQty增加總量": [int(by_shop["建議SafetyQty增加總量"].sum())],
             }
@@ -1427,7 +1427,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
         "OM",
         "OOS_SKU数量",
         "Potential_OOS_SKU数量",
-        "建議SafetyQty增加筆數",
+        "建議SafetyQty增加行數",
         "其他需調整SKU數量",
         "建議SafetyQty增加總量",
     ]
@@ -1481,16 +1481,16 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
     desc_font = Font(size=9, color="6B7280", italic=True)
 
     row1_metrics = [
-        ("總 OOS 筆數", total_oos, "所有 OOS 異常之總計筆數", "EF4444"),
+        ("總 OOS 行數", total_oos, "所有 OOS 異常之總計行數", "EF4444"),
         ("影響採購人員數 (Buyers)", total_buyers, "位採購人員名下有 OOS 品項", "3B82F6"),
         ("影響品牌總數 (Brands)", total_brands, "個品牌包含 OOS 商品", "8B5CF6"),
         ("影響SKU總數", total_skus, "個包含 OOS 商品(SKUs)", "10B981"),
     ]
 
     row2_metrics = [
-        ("OOS (0 Stock)", cat1_val, "現有庫存為 0 之 OOS 筆數", "F59E0B"),
-        ("Potential OOS (<7 Turnday)", cat2_val, "Turnday 不足 7 之潛在 OOS 筆數", "EC4899"),
-        ("Normal (Safety Qty Insufficient)", cat3_val, "正常庫存但安全庫存不足筆數", "06B6D4"),
+        ("OOS (0 Stock)", cat1_val, "現有庫存為 0 之 OOS 行數", "F59E0B"),
+        ("Potential OOS (<7 Turnday)", cat2_val, "Turnday 不足 7 之潛在 OOS 行數", "EC4899"),
+        ("Normal (Safety Qty Insufficient)", cat3_val, "正常庫存但安全庫存不足行數", "06B6D4"),
         ("建議 Safety Qty 修改", safety_increase_total, "建議 Safety Qty 修改 之總量", "8B5CF6"),
     ]
 
@@ -1508,7 +1508,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
 
 # ─── Carry SKU Review Functions ─────────────────────────────────────────────────
 
-CARRY_P90D0_STATUS = "Overstock (P90D 0 Sales)"
+CARRY_P90D0_STATUS = "P90D 0 Sales"
 
 
 def _build_carry_pivot(df: pd.DataFrame, category_col: str) -> pd.DataFrame:
@@ -1529,7 +1529,7 @@ def _build_carry_pivot(df: pd.DataFrame, category_col: str) -> pd.DataFrame:
                 site_to_name[sc] = ""
 
     status = df["Shop Stock Status"].fillna("")
-    df["_status2"] = np.where(status == CARRY_P90D0_STATUS, "Overstock (P90D 0 Sales)", "Other Status")
+    df["_status2"] = np.where(status == CARRY_P90D0_STATUS, "P90D 0 Sales", "Other Status")
 
     rp = df.get("RP Type", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.upper()
     df["_rp"] = rp
@@ -1552,15 +1552,15 @@ def _build_carry_pivot(df: pd.DataFrame, category_col: str) -> pd.DataFrame:
     pivot_wide = pivot_wide.reset_index()
 
     for r in ["ND", "RF"]:
-        for s in ["Overstock (P90D 0 Sales)", "Other Status"]:
+        for s in ["P90D 0 Sales", "Other Status"]:
             col = f"{r}_{s}"
             if col not in pivot_wide.columns:
                 pivot_wide[col] = 0
 
     pivot_wide = pivot_wide.rename(columns={
-        "ND_Overstock (P90D 0 Sales)": "ND_P90D0",
+        "ND_P90D 0 Sales": "ND_P90D0",
         "ND_Other Status": "ND_Other",
-        "RF_Overstock (P90D 0 Sales)": "RF_P90D0",
+        "RF_P90D 0 Sales": "RF_P90D0",
         "RF_Other Status": "RF_Other",
     })
 
@@ -1924,11 +1924,11 @@ def _write_summary_headers(ws, header_font, header_fill, thin_border):
 
     # Row 6 — identifier labels and detail bands.
     row6_left = {1: "Site Code", 2: "Shop Name", 3: "Adj. MCH1",
-                 4: "Overstock (P90D 0 Sales)", 5: "Other Status", 6: "ND 合計",
-                 7: "Overstock (P90D 0 Sales)", 8: "Other Status", 9: "RF 合計", 10: "總計SKU"}
+                 4: "P90D 0 Sales", 5: "Other Status", 6: "ND 合計",
+                 7: "P90D 0 Sales", 8: "Other Status", 9: "RF 合計", 10: "總計SKU"}
     row6_right = {12: "Site Code", 13: "Shop Name", 14: "Adj. SST",
-                  15: "Overstock (P90D 0 Sales)", 16: "Other Status", 17: "ND 合計",
-                  18: "Overstock (P90D 0 Sales)", 19: "Other Status", 20: "RF 合計", 21: "總計SKU"}
+                  15: "P90D 0 Sales", 16: "Other Status", 17: "ND 合計",
+                  18: "P90D 0 Sales", 19: "Other Status", 20: "RF 合計", 21: "總計SKU"}
     for col_map in [row6_left, row6_right]:
         for col, val in col_map.items():
             c = ws.cell(row=6, column=col, value=val)

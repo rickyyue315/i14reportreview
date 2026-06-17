@@ -235,7 +235,7 @@ with st.sidebar:
     st.markdown("### ⚙️ 核心計算規則")
     st.markdown("""
     **Overstock Review** — 針對 `Shop Stock Status` 過濾以下庫存過賸條件：
-    1. **Overstock (P90D 0 Sales)** — 過去 90 天內零銷售
+    1. **P90D 0 Sales** — 過去 90 天內零銷售
     2. **Overstock (>2*Monthly Qty & >2pcs)** — 庫存超過月均銷售兩倍且大於 2 件
 
     **OOS Review** — 針對 `Shop Stock Status` 過濾以下缺貨條件：
@@ -398,7 +398,7 @@ if uploaded_file is not None:
     with col2:
         st.markdown(f"""
         <div class="metric-card" style="border-left-color: #3B82F6;">
-            <div class="metric-title">總資料筆數</div>
+            <div class="metric-title">總資料行數</div>
             <div class="metric-value">{len(df_input):,}</div>
             <div class="metric-desc">原始資料列數 (Rows)</div>
         </div>
@@ -566,9 +566,9 @@ if uploaded_file is not None:
             with r1_col1:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #ff5555;">
-                    <div class="metric-title">總 Safety Stock 審查筆數</div>
+                    <div class="metric-title">總 Safety Stock 審查行數</div>
                     <div class="metric-value" style="color: #ff5555;">{total_combined:,}</div>
-                    <div class="metric-desc">所有 Safety Stock 審查之總計筆數</div>
+                    <div class="metric-desc">所有 Safety Stock 審查之總計行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
@@ -602,25 +602,25 @@ if uploaded_file is not None:
             with r2_col1:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #ff9944;">
-                    <div class="metric-title">Overstock 分類筆數</div>
+                    <div class="metric-title">Overstock 分類行數</div>
                     <div class="metric-value" style="color: #ff9944;">{int(cat_counts.get(categories[0], 0)):,}</div>
-                    <div class="metric-desc">庫存過賸分類筆數</div>
+                    <div class="metric-desc">庫存過賸分類行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #ff44ff;">
-                    <div class="metric-title">OOS 分類筆數</div>
+                    <div class="metric-title">OOS 分類行數</div>
                     <div class="metric-value" style="color: #ff44ff;">{int(cat_counts.get(categories[1], 0)):,}</div>
-                    <div class="metric-desc">缺貨分類筆數</div>
+                    <div class="metric-desc">缺貨分類行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col3:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #06b6d4;">
-                    <div class="metric-title">Safety 調整筆數</div>
+                    <div class="metric-title">Safety 調整行數</div>
                     <div class="metric-value" style="color: #06b6d4;">{int(cat_counts.get(categories[2], 0)):,}</div>
-                    <div class="metric-desc">Balanced (Safety Adjusted) 筆數</div>
+                    <div class="metric-desc">Balanced (Safety Adjusted) 行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col4:
@@ -867,9 +867,9 @@ if uploaded_file is not None:
             with r1_col1:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #ff5555;">
-                    <div class="metric-title">總 Overstock 筆數</div>
+                    <div class="metric-title">總 Overstock 行數</div>
                     <div class="metric-value" style="color: #ff5555;">{int(total_overstock):,}</div>
-                    <div class="metric-desc">所有庫存異常之總計筆數</div>
+                    <div class="metric-desc">所有庫存異常之總計行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
@@ -912,9 +912,9 @@ if uploaded_file is not None:
             with r2_col1:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #ff9944;">
-                    <div class="metric-title">Overstock (P90D 0 Sales)</div>
+                    <div class="metric-title">P90D 0 Sales</div>
                     <div class="metric-value" style="color: #ff9944;">{int(cat_counts.get(categories[0], 0)):,}</div>
-                    <div class="metric-desc">「過去 90 天內零銷售」之異常筆數</div>
+                    <div class="metric-desc">「過去 90 天內零銷售」之異常行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:
@@ -922,13 +922,13 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #ff44ff;">
                     <div class="metric-title">Overstock (>2*Monthly Sold Qty & >2pcs)</div>
                     <div class="metric-value" style="color: #ff44ff;">{int(cat_counts.get(categories[1], 0)):,}</div>
-                    <div class="metric-desc">「大於月均銷售量兩倍且庫存大於 2 件」之異常筆數</div>
+                    <div class="metric-desc">「大於月均銷售量兩倍且庫存大於 2 件」之異常行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col3:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #00d4ff;">
-                    <div class="metric-title">New Safety Qty / ND 調整後的預計總數</div>
+                    <div class="metric-title">調整後的預計可退倉總數</div>
                     <div class="metric-value" style="color: #00d4ff;">{transfer_qty_total:,}</div>
                     <div class="metric-desc">After new Safety Qty / ND can transfer out of TOTAL QTY</div>
                 </div>
@@ -990,9 +990,9 @@ if uploaded_file is not None:
             with r1_col1:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #ff5555;">
-                    <div class="metric-title">總 OOS 筆數</div>
+                    <div class="metric-title">總 OOS 行數</div>
                     <div class="metric-value" style="color: #ff5555;">{total_oos:,}</div>
-                    <div class="metric-desc">所有 OOS 異常之總計筆數</div>
+                    <div class="metric-desc">所有 OOS 異常之總計行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
@@ -1028,7 +1028,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #ff9944;">
                     <div class="metric-title">OOS (0 Stock)</div>
                     <div class="metric-value" style="color: #ff9944;">{int(cat_counts.get(categories[0], 0)):,}</div>
-                    <div class="metric-desc">現有庫存為 0 之 OOS 筆數</div>
+                    <div class="metric-desc">現有庫存為 0 之 OOS 行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:
@@ -1036,7 +1036,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #ff44ff;">
                     <div class="metric-title">Potential OOS (<7 Turnday)</div>
                     <div class="metric-value" style="color: #ff44ff;">{int(cat_counts.get(categories[1], 0)):,}</div>
-                    <div class="metric-desc">Turnday 不足 7 之潛在 OOS 筆數</div>
+                    <div class="metric-desc">Turnday 不足 7 之潛在 OOS 行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col3:
@@ -1044,7 +1044,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #06b6d4;">
                     <div class="metric-title">Normal (Safety Qty Insufficient)</div>
                     <div class="metric-value" style="color: #06b6d4;">{int(cat_counts.get(categories[2], 0)):,}</div>
-                    <div class="metric-desc">正常庫存但安全庫存不足筆數</div>
+                    <div class="metric-desc">正常庫存但安全庫存不足行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col4:
@@ -1152,7 +1152,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #ff9944;">
                     <div class="metric-title">P90D 0 Sales SKU 總數</div>
                     <div class="metric-value" style="color: #ff9944;">{total_p90d0:,}</div>
-                    <div class="metric-desc">「過去 90 天內零銷售」之 SKU 筆數</div>
+                    <div class="metric-desc">「過去 90 天內零銷售」之 SKU 行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:
@@ -1180,7 +1180,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #10b981;">
                     <div class="metric-title">建議ND SKU 總數</div>
                     <div class="metric-value" style="color: #10b981;">{total_suggested_nd:,}</div>
-                    <div class="metric-desc">建議轉 ND 的 SKU 筆數 (RF + P90D 0 Sales)</div>
+                    <div class="metric-desc">建議轉 ND 的 SKU 行數 (RF + P90D 0 Sales)</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r3_col2:

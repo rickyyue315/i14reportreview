@@ -70,7 +70,7 @@ OOS Review 建議額外包含：
 
 針對 `Shop Stock Status` 欄位篩選以下庫存過賸條件：
 
-1. **Overstock (P90D 0 Sales)** — 過去 90 天內零銷售
+1. **P90D 0 Sales** — 過去 90 天內零銷售
 2. **Overstock (>2\*Monthly Sold Qty & >2pcs)** — 庫存超過月均銷售兩倍且大於 2 件
 
 系統自動計算新的 Safety Qty 建議，並產出可轉出貨量。
