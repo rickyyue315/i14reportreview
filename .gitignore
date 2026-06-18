@@ -9,3 +9,7 @@ build/
 .streamlit/secrets.toml
 *.xlsx
 .kilo/
+.pytest_cache/
+
+# Stray Windows reserved-name file (cannot be deleted on Windows)
+nul

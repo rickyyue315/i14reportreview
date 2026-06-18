@@ -254,11 +254,20 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
     adj_ss = _safe_numeric(df.get("Adj. Safety Stock", _safe_default_series(0, df.index)))
     monthly_sold = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, df.index)))
 
+    # Normalize RP Type (strip + upper) so values like " rf " or "nd" are recognized,
+    # consistent with the OOS / Carry review paths.
+    rp_type = (
+        df.get("RP Type", _safe_default_series("", df.index))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
     cond_overstock_2x = (status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)")
 
     cond_overstock_0 = (
-        (status_col == "P90D 0 Sales")
-        & (df.get("RP Type", _safe_default_series("", df.index)).isin(["ND", "RF"]))
+        (status_col == "P90D 0 Sales") & rp_type.isin(["ND", "RF"])
     )
 
     rec_values = np.full(len(df), "", dtype=object)
@@ -280,9 +289,8 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
         rec_values[cond_overstock_2x.values] = rec_2x.astype(str)
 
     if cond_overstock_0.any():
-        rp = df.get("RP Type", _safe_default_series("", df.index))
-        is_rf = cond_overstock_0 & (rp == "RF")
-        is_nd = cond_overstock_0 & (rp == "ND")
+        is_rf = cond_overstock_0 & (rp_type == "RF")
+        is_nd = cond_overstock_0 & (rp_type == "ND")
         rec_values[is_rf.values] = "ND"
         rec_values[is_nd.values] = "0"
     df["Recommendation of new Safety Qty / ND"] = rec_values
@@ -375,12 +383,13 @@ def _add_combined_recommendation_columns(
     os_rate_arr[shop_nature.str.contains("tourist", na=False)] = _os_tourist
     os_rate_arr[shop_nature.str.contains("mix", na=False)] = _os_mix
 
-    x_values = np.full(len(df), 0, dtype=int)
-    if cond_2x.any():
-        x_values = _compute_x(monthly_sold.values, os_rate_arr, adj_ss.values)
+    # X is the upper bound for "how much safety stock is reasonable"; it applies to
+    # every row (so the combined recommendation = max(Y, Z if Z <= X else X) is well
+    # defined per row), independent of whether any row currently has Overstock status.
+    x_values = _compute_x(monthly_sold.values, os_rate_arr, adj_ss.values)
 
     # OOS floor Y
-    if mtd_days > 0:
+    if mtd_days and mtd_days > 0:
         projected = (sold_qty / mtd_days) * month_total_days
     else:
         projected = _safe_default_series(0.0, df.index)
@@ -405,11 +414,17 @@ def _add_combined_recommendation_columns(
 
     df["Overstock Cap (X)"] = x_values
     df["OOS Floor (Y)"] = y_values
-    df["Recommend Safety Stock"] = combined
 
     delta = combined - z_values
     if safety_mode == "increase_only":
+        # Only allow increases: clamp negative deltas to 0 and keep the recommended
+        # value consistent with that (no decrease applied), so Recommend == adj_ss
+        # whenever a row would otherwise be lowered.
         delta = delta.clip(min=0)
+        recommend_safety = z_values + delta
+    else:
+        recommend_safety = combined
+    df["Recommend Safety Stock"] = recommend_safety
     df["Safety Qty Change"] = delta
 
     df["Buyer reply"] = ""
@@ -1181,9 +1196,13 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
         increase[is_other] = increase[is_other].clip(min=0)
     df["Safety Qty Increase"] = increase
 
-    if safety_mode == "increase_only":
-        rec_sync = (adj_ss_arr + increase).astype(int)
-        df["Recommendation of new Safety Qty"] = rec_sync
+    # Keep Recommendation consistent with the (possibly clipped) increase so the two
+    # columns never disagree. increase = recommended - adj_ss by construction, so for
+    # rows whose increase was not clipped this is a no-op (rec_sync == recommended);
+    # for rows that were frozen (increase clipped to 0, e.g. 'other' rows), this
+    # surfaces adj_ss instead of the lowered raw recommendation.
+    rec_sync = (adj_ss_arr + increase).astype(int)
+    df["Recommendation of new Safety Qty"] = rec_sync
 
     df["Buyer reply"] = ""
 
@@ -1618,6 +1637,18 @@ def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
     stock_value = _safe_numeric(df.get("Shop Stock Value (CM)", _safe_default_series(0, df.index)))
     shop_stock_qty = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
     suggested_rp = df.get("建議新RP Type", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.upper()
+
+    # Keep the dashboard scope identical to _build_carry_pivot (ND + RF only); rows with
+    # any other RP Type are not Carry SKUs and would otherwise inflate the SKU total so it
+    # no longer matches the pivot Grand_Total.
+    carry_mask = rp.isin(["ND", "RF"])
+    site_code = site_code[carry_mask]
+    rp = rp[carry_mask]
+    status = status[carry_mask]
+    stock_value = stock_value[carry_mask]
+    shop_stock_qty = shop_stock_qty[carry_mask]
+    suggested_rp = suggested_rp[carry_mask]
+    df = df[carry_mask].copy()
 
     df["_site"] = site_code
     df["_is_rf"] = (rp == "RF").astype(int)
