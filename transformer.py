@@ -202,7 +202,7 @@ def _build_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
     transfer_num = pd.to_numeric(df.get(transfer_col, _safe_default_series(0, df.index)), errors="coerce").fillna(0)
 
     group_cols = ["Site Code", "Shop Name", "OM"]
-    df["_is_0_sales"] = status_col == "P90D 0 Sales"
+    df["_is_0_sales"] = status_col == "Overstock (P90D 0 Sales)"
     df["_is_2x"] = status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)"
     df["_is_nd_change"] = df["_is_0_sales"] & (rec_col == "ND")
     df["_is_safety_change"] = df["_is_2x"] & rec_num.notna()
@@ -267,7 +267,7 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
     cond_overstock_2x = (status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)")
 
     cond_overstock_0 = (
-        (status_col == "P90D 0 Sales") & rp_type.isin(["ND", "RF"])
+        (status_col == "Overstock (P90D 0 Sales)") & rp_type.isin(["ND", "RF"])
     )
 
     rec_values = np.full(len(df), "", dtype=object)
@@ -881,6 +881,11 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
         "Overstock (>2*Monthly Sold Qty & >2pcs)",
     ]
 
+    _STATUS_VALUE = {
+        "P90D 0 Sales": "Overstock (P90D 0 Sales)",
+        "Overstock (>2*Monthly Sold Qty & >2pcs)": "Overstock (>2*Monthly Sold Qty & >2pcs)",
+    }
+
     group_cols = ["Buyer", "Brand", "SKU", "SKU Desc"]
 
     if progress_callback:
@@ -888,7 +893,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
 
     counts = {}
     for i, cat in enumerate(categories):
-        mask = (status_col == cat)
+        mask = (status_col == _STATUS_VALUE.get(cat, cat))
         counts[cat] = (
             df[mask]
             .groupby(group_cols, observed=True)
@@ -1527,7 +1532,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
 
 # ─── Carry SKU Review Functions ─────────────────────────────────────────────────
 
-CARRY_P90D0_STATUS = "P90D 0 Sales"
+CARRY_P90D0_STATUS = "Overstock (P90D 0 Sales)"
 
 
 def _build_carry_pivot(df: pd.DataFrame, category_col: str) -> pd.DataFrame:

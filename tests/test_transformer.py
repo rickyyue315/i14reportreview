@@ -116,8 +116,8 @@ def test_fix2_combined_increase_only_recommend_synced_with_change():
 def test_fix3_overstock_rp_type_normalized():
     """RP Type with whitespace/case must still be recognized for P90D 0 Sales rows."""
     df = _df([
-        {"SKU": "1", "Shop Stock Status": "P90D 0 Sales", "RP Type": " rf "},
-        {"SKU": "2", "Shop Stock Status": "P90D 0 Sales", "RP Type": "nd"},
+        {"SKU": "1", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": " rf "},
+        {"SKU": "2", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "nd"},
     ])
     out = _add_recommendation_columns(df, rates=_RATES_O)
     assert out["Recommendation of new Safety Qty / ND"].tolist() == ["ND", "0"]

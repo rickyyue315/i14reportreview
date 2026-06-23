@@ -40,8 +40,8 @@ def _df(rows):
 def main():
     # Diverse rows exercising every status / RP type path
     df = _df([
-        {"SKU": "1", "Shop Stock Status": "P90D 0 Sales", "RP Type": " rf "},   # dirty RF
-        {"SKU": "2", "Shop Stock Status": "P90D 0 Sales", "RP Type": "nd"},      # dirty ND
+        {"SKU": "1", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": " rf "},   # dirty RF
+        {"SKU": "2", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "nd"},      # dirty ND
         {"SKU": "3", "Shop Stock Status": "Overstock (>2*Monthly Sold Qty & >2pcs)",
          "Shop Monthly Sold Qty (P90D)": 50, "Adj. Safety Stock": 12},
         {"SKU": "4", "Shop Stock Status": "OOS (0 Stock)", "Shop Stock Qty (CM)": 0},
