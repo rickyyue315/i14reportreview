@@ -1,15 +1,16 @@
 # I14 報表轉換與分析系統
 
-自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）與 **Safety Stock Review**（安全庫存審查）四種模式。
+自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）與 **Safety Stock Review**（安全庫存審查）五種模式。
 
 ## 功能概述
 
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / Safety Stock Review |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / Safety Stock Review |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
+| SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議全數退倉，依 Shop Stock Status 動態分類 |
 | 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式 |
 | 視覺化看板 | 即時顯示統計指標與交叉分析表 |
 | Excel 導出 | 一鍵下載含 RAW、Shop Stock Status、By Shop、分析摘要之美化報表 |
@@ -84,6 +85,16 @@ OOS Review 建議額外包含：
 3. **Normal (Safety Qty Insufficient)** — 庫存正常但 Safety Qty 不足以覆蓋預估銷售
 
 支援 MTD 日期選擇，自動推算月度預估銷售量（Projected Monthly Sold Qty）。
+
+### SKU 精簡 Review
+
+針對 RP Type 為 **ND** 的 SKU 建議全數退倉（不再限定 Overstock 狀態）：
+
+1. 篩選 `RP Type = ND` 的所有 SKU（不分 Shop Stock Status）
+2. 建議全數退倉：`transfer = Shop Stock Qty (CM)`（庫存為 0 則退倉量為 0，仍保留該列）
+3. ND SKU 依實際 `Shop Stock Status` 動態分類（如 ND - Overstock、ND - Normal、ND - OOS）
+
+輸出包含 RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要共 4 個工作表。
 
 ### Safety Stock Review
 

@@ -16,6 +16,8 @@ from transformer import (
     _add_combined_recommendation_columns,
     _add_recommendation_columns,
     _add_oos_recommendation_columns,
+    _add_nd_recommendation_columns,
+    transform_nd,
     transform_carry,
     _build_carry_dashboard,
 )
@@ -185,3 +187,68 @@ def test_fix6_combined_mtd_days_none_no_crash():
         df, _RATES_O, _RATES_P, mtd_days=None, month_total_days=None, safety_mode="increase_only"
     )
     assert out["Projected Monthly Sold Qty"].tolist()[0] == 0
+
+
+# ── SKU 精簡 Review (ND SKU) ───────────────────────────────────────────────────
+
+def test_nd_all_nd_rows_recommend_full_transfer():
+    """Every RP Type=ND row must recommend transferring all Shop Stock Qty out."""
+    df = _df([
+        {"SKU": "1", "RP Type": "ND", "Shop Stock Qty (CM)": 7, "Shop Stock Status": "Normal"},
+        {"SKU": "2", "RP Type": "ND", "Shop Stock Qty (CM)": 12, "Shop Stock Status": "Overstock (P90D 0 Sales)"},
+    ])
+    out = _add_nd_recommendation_columns(df)
+    assert out["Recommendation of new Safety Qty / ND"].tolist() == ["ND", "ND"]
+    assert out["After new Safety Qty / ND can transfer out of QTY"].tolist() == [7, 12]
+
+
+def test_nd_rp_type_normalized():
+    """RP Type with whitespace/case must still be recognized as ND."""
+    df = _df([
+        {"SKU": "1", "RP Type": " nd ", "Shop Stock Qty (CM)": 5, "Shop Stock Status": "Normal"},
+        {"SKU": "2", "RP Type": "Nd", "Shop Stock Qty (CM)": 3, "Shop Stock Status": "Normal"},
+    ])
+    out = _add_nd_recommendation_columns(df)
+    assert out["Recommendation of new Safety Qty / ND"].tolist() == ["ND", "ND"]
+    assert out["After new Safety Qty / ND can transfer out of QTY"].tolist() == [5, 3]
+
+
+def test_nd_zero_stock_transfer_zero():
+    """ND with Shop Stock Qty=0 must yield transfer=0 (row kept, transparent)."""
+    df = _df([
+        {"SKU": "1", "RP Type": "ND", "Shop Stock Qty (CM)": 0, "Shop Stock Status": "Normal"},
+    ])
+    out = _add_nd_recommendation_columns(df)
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "ND"
+    assert out["After new Safety Qty / ND can transfer out of QTY"].tolist()[0] == 0
+
+
+def test_nd_non_nd_left_blank():
+    """Non-ND rows must keep recommendation/transfer columns blank."""
+    df = _df([
+        {"SKU": "1", "RP Type": "RF", "Shop Stock Qty (CM)": 9, "Shop Stock Status": "Normal"},
+        {"SKU": "2", "RP Type": "ST", "Shop Stock Qty (CM)": 4, "Shop Stock Status": "Normal"},
+    ])
+    out = _add_nd_recommendation_columns(df)
+    assert out["Recommendation of new Safety Qty / ND"].tolist() == ["", ""]
+    assert out["After new Safety Qty / ND can transfer out of QTY"].tolist() == ["", ""]
+
+
+def test_nd_categories_by_status():
+    """Summary must break ND SKUs down by their actual Shop Stock Status."""
+    df = _df([
+        {"SKU": "1", "RP Type": "ND", "Shop Stock Qty (CM)": 5, "Shop Stock Status": "Overstock (P90D 0 Sales)"},
+        {"SKU": "2", "RP Type": "ND", "Shop Stock Qty (CM)": 3, "Shop Stock Status": "Normal"},
+        {"SKU": "3", "RP Type": "ND", "Shop Stock Qty (CM)": 2, "Shop Stock Status": "Normal"},
+        {"SKU": "4", "RP Type": "RF", "Shop Stock Qty (CM)": 8, "Shop Stock Status": "Normal"},
+    ])
+    summary, raw, categories, warnings = transform_nd(df)
+    # Only the two distinct ND statuses appear as category columns.
+    assert set(categories) == {"Overstock (P90D 0 Sales)", "Normal"}
+    total_row = summary[summary["Buyer"] == "總計"].iloc[0]
+    assert int(total_row["總計"]) == 3  # 3 ND rows
+    # Normal has 2 ND rows, Overstock has 1.
+    assert int(total_row["Normal"]) == 2
+    assert int(total_row["Overstock (P90D 0 Sales)"]) == 1
+    # Transfer total = 5 + 3 + 2 (RF row excluded).
+    assert int(total_row["After new Safety Qty / ND can transfer out of QTY"]) == 10

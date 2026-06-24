@@ -8,6 +8,7 @@ from transformer import (
     transform_oos, generate_excel_oos,
     transform_carry, generate_excel_carry,
     transform_combined, generate_excel_combined,
+    transform_nd, generate_excel_nd,
 )
 import time
 import traceback
@@ -196,6 +197,11 @@ with st.sidebar:
     - 按 RP Type（ND / RF）與 P90D 0 Sales 交叉統計
     - 輸出：RAW、Summary（雙區塊樞紐：Adj. MCH1 × Adj. SST）、Carry SKU 分析摘要
 
+    **✂️ SKU 精簡 Review**
+    - 針對 RP Type 為 ND 的 SKU，建議全數退倉（不再限定 Overstock 狀態）
+    - ND SKU 依實際 Shop Stock Status 動態分類，掌握各狀態退倉分佈
+    - 輸出：RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要
+
     **🔒 Safety Stock Review**
     - 全面審查各 SKU×Shop 的安全庫存設定是否合理
     - 結合 Overstock Cap（庫存上限）與 OOS Floor（缺貨底線），雙向平衡調整 Safety Stock
@@ -248,6 +254,11 @@ with st.sidebar:
     2. 依 RP Type (ND / RF) 與 P90D 0 Sales 狀態做雙維度交叉統計
     3. 雙區塊樞紐：左 (Adj. MCH1) + 右 (Adj. SST)
 
+    **SKU 精簡 Review** — 針對 ND SKU 建議退倉：
+    1. 篩選 RP Type = ND 的所有 SKU（不分 Shop Stock Status）
+    2. 建議全數退倉：`transfer = Shop Stock Qty (CM)`（庫存為 0 則退倉量為 0，仍保留該列）
+    3. ND SKU 依實際 Shop Stock Status 動態分類（如 ND - Overstock、ND - Normal、ND - OOS）
+
     **🔒 Safety Stock Review** — 全面審查 Safety Stock 設定，計算平衡建議值：
     1. **Overstock Cap (X)** = floor(月均銷售 × Overstock Rate)，上限不超過現有 Adj. Safety Stock
     2. **OOS Floor (Y)** = ceil(MTD 預估月銷售 × OOS Rate)，最低 3
@@ -278,7 +289,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 5. 模式選擇器
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "Safety Stock Review"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "Safety Stock Review"]
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0)
 
 # 6. 初始化 Session State (確保下載與重整時狀態持久化)
@@ -286,6 +297,7 @@ MODE_KEYS = {
     "Overstock Review": {"prefix": "", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "OOS Review": {"prefix": "oos_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
+    "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
 }
 
@@ -725,8 +737,11 @@ if uploaded_file is not None:
 
         _is_overstock_mode = (mode == "Overstock Review")
         _is_carry_mode = (mode == "Carry SKU Review")
+        # Modes that don't use the Shop Nature Rate sliders (no Safety Qty calculation):
+        # Carry SKU Review (pivot only) and SKU 精簡 Review (full 退倉, no rate needed).
+        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review")
 
-        if not _is_carry_mode:
+        if not _skip_rates_mode:
             _tourist_default = 30 if _is_overstock_mode else 50
             _mix_default = 40 if _is_overstock_mode else 50
             _non_tourist_default = 50
@@ -809,6 +824,19 @@ if uploaded_file is not None:
                     st.session_state.carry_raw_df = raw_df
                     st.session_state.carry_excel_data = buf
                     st.session_state.carry_warnings = _warnings
+                elif mode == "SKU 精簡 Review":
+                    summary_df, raw_df, categories, _warnings = transform_nd(
+                        df_input,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                    )
+                    buf = generate_excel_nd(summary_df, raw_df, categories, progress_callback=_cb_excel)
+                    st.session_state.nd_processed = True
+                    st.session_state.nd_summary_df = summary_df
+                    st.session_state.nd_raw_df = raw_df
+                    st.session_state.nd_categories = categories
+                    st.session_state.nd_excel_data = buf
+                    st.session_state.nd_warnings = _warnings
                 else:  # OOS Review
                     summary_df, raw_df, categories, _warnings = transform_oos(
                         df_input,
@@ -1076,6 +1104,119 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載 OOS 分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+            )
+
+        if mode == "SKU 精簡 Review" and st.session_state.nd_processed:
+            summary_df = st.session_state.nd_summary_df
+            raw_df = st.session_state.nd_raw_df
+            categories = st.session_state.nd_categories
+            excel_data = st.session_state.nd_excel_data
+
+            st.markdown('<div class="custom-card" style="border-top: 4px solid #6366f1;">', unsafe_allow_html=True)
+            st.markdown("### 📈 ND SKU 數據分析摘要 (ND SKU Analysis Dashboard)")
+
+            _total_row = summary_df[summary_df["Buyer"] == "總計"]
+            if _total_row.empty:
+                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看板。")
+                st.stop()
+            total_nd = int(_total_row["總計"].values[0])
+            total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
+            total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
+            total_skus = raw_df["SKU"].dropna().nunique()
+
+            _transfer_col_name = "After new Safety Qty / ND can transfer out of QTY"
+            transfer_col_resolved = _resolve_column_name(_transfer_col_name, set(summary_df.columns))
+            if transfer_col_resolved is not None and transfer_col_resolved in _total_row.columns:
+                transfer_qty_total = int(_total_row[transfer_col_resolved].values[0])
+            elif transfer_col_resolved is not None and transfer_col_resolved in raw_df.columns:
+                transfer_qty_total = int(pd.to_numeric(raw_df[transfer_col_resolved], errors="coerce").fillna(0).sum())
+            else:
+                transfer_qty_total = 0
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff5555;">
+                    <div class="metric-title">總 ND SKU 行數</div>
+                    <div class="metric-value" style="color: #ff5555;">{total_nd:,}</div>
+                    <div class="metric-desc">所有建議退倉之 ND SKU 總計行數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #5599ff;">
+                    <div class="metric-title">影響採購人員數 (Buyers)</div>
+                    <div class="metric-value" style="color: #5599ff;">{total_buyers:,}</div>
+                    <div class="metric-desc">位採購人員名下有 ND SKU</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #9944ff;">
+                    <div class="metric-title">影響品牌總數 (Brands)</div>
+                    <div class="metric-value" style="color: #9944ff;">{total_brands:,}</div>
+                    <div class="metric-desc">個品牌包含 ND SKU</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #00ff88;">
+                    <div class="metric-title">影響SKU總數</div>
+                    <div class="metric-value" style="color: #00ff88;">{total_skus:,}</div>
+                    <div class="metric-desc">個包含 ND SKU (SKUs)</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+            r2_col1 = st.columns(1)[0]
+            with r2_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #00d4ff;">
+                    <div class="metric-title">預計可退倉總數量</div>
+                    <div class="metric-value" style="color: #00d4ff;">{transfer_qty_total:,}</div>
+                    <div class="metric-desc">After new Safety Qty / ND can transfer out of TOTAL QTY</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            _all_site_codes = sorted(df_input["Site Code"].dropna().unique()) if "Site Code" in df_input.columns else []
+            selected_site_code = st.selectbox(
+                "🏪 選擇 Site Code 檢視明細",
+                options=["全部"] + _all_site_codes,
+                index=0,
+                help="選擇特定 Site Code 過濾下方 RAW 明細。僅影響 RAW 明細預覽。"
+            )
+
+            tab1, tab2 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "📄 原始明細資料預覽 (RAW)"])
+
+            with tab1:
+                st.markdown("#### 採購人員與品牌之 ND SKU 交叉統計表")
+                st.markdown("ND SKU 依 Shop Stock Status 動態分類。本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
+                st.dataframe(summary_df, width='stretch', hide_index=True)
+
+            with tab2:
+                st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
+                st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽（僅 RP Type=ND 列套用退倉建議）：")
+                _filtered_raw = raw_df.copy()
+                if selected_site_code != "全部" and "Site Code" in _filtered_raw.columns:
+                    _filtered_raw = _filtered_raw[_filtered_raw["Site Code"].astype(str).str.strip() == selected_site_code]
+                st.dataframe(_filtered_raw.head(50), width='stretch')
+                st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 SKU 精簡 Review_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載 SKU 精簡 Review 分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

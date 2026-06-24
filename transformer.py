@@ -1114,6 +1114,379 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     return buf
 
 
+# ─── ND SKU Review (SKU 精簡 Review) Functions ─────────────────────────────────
+
+
+def _add_nd_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
+    # Any RP Type == ND is recommended to transfer all stock out (full 退倉),
+    # regardless of Shop Stock Status (relaxes Overstock Review which only
+    # 退倉 for Overstock remarks). Normalize RP Type (strip + upper) so values
+    # like " nd " or "Nd" are recognized, consistent with the Overstock path.
+    rp_type = (
+        df.get("RP Type", _safe_default_series("", df.index))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+    shop_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
+
+    is_nd = rp_type == "ND"
+
+    rec_values = np.full(len(df), "", dtype=object)
+    rec_values[is_nd.values] = "ND"
+
+    transfer_values = np.full(len(df), "", dtype=object)
+    # ND with stock > 0: transfer all shop stock; ND with stock == 0: transfer 0
+    transfer_values[is_nd.values] = shop_stock[is_nd.values].astype(int).values
+
+    df = df.copy()
+    df["Recommendation of new Safety Qty / ND"] = rec_values
+    df["After new Safety Qty / ND can transfer out of QTY"] = transfer_values
+    df["Buyer reply"] = ""
+
+    return df
+
+
+def _build_nd_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
+    df = raw.copy()
+
+    site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
+    shop_name = [
+        _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
+        for i in range(len(df))
+    ]
+
+    df["Site Code"] = site_code
+    df["Shop Name"] = shop_name
+    df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+
+    rp_type = (
+        df.get("RP Type", _safe_default_series("", df.index))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+    transfer_col = "After new Safety Qty / ND can transfer out of QTY"
+    transfer_num = pd.to_numeric(df.get(transfer_col, _safe_default_series(0, df.index)), errors="coerce").fillna(0)
+
+    group_cols = ["Site Code", "Shop Name", "OM"]
+    df["_is_nd"] = rp_type == "ND"
+    df["_sku_nd"] = df["SKU"].where(df["_is_nd"])
+    df["_transfer_num"] = transfer_num
+
+    by_shop = (
+        df.groupby(group_cols, dropna=False, observed=True)
+        .agg(
+            ND行數=("_is_nd", "sum"),
+            預計總退倉量=("_transfer_num", "sum"),
+            **{
+                "ND SKU數量": ("_sku_nd", "nunique"),
+            },
+        )
+        .reset_index()
+    )
+
+    by_shop["ND行數"] = by_shop["ND行數"].fillna(0).astype(int)
+    by_shop["預計總退倉量"] = by_shop["預計總退倉量"].fillna(0).astype(int)
+    by_shop["ND SKU數量"] = by_shop["ND SKU數量"].fillna(0).astype(int)
+
+    if not by_shop.empty:
+        total_row = pd.DataFrame(
+            {
+                "Site Code": ["總計"],
+                "Shop Name": [""],
+                "OM": [""],
+                "ND行數": [int(by_shop["ND行數"].sum())],
+                "預計總退倉量": [int(by_shop["預計總退倉量"].sum())],
+                "ND SKU數量": [int(by_shop["ND SKU數量"].sum())],
+            }
+        )
+        by_shop = pd.concat([by_shop.sort_values(["Site Code", "Shop Name", "OM"], kind="stable"), total_row], ignore_index=True)
+
+    return by_shop
+
+
+def transform_nd(
+    df_input: pd.DataFrame,
+    progress_callback=None,
+    shop_natures: list[str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str], list[str]]:
+    missing = validate_input(df_input)
+    if missing:
+        raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
+
+    warnings = []
+
+    _optional_cols = ["RP Type", "Shop Stock Qty (CM)", "Shop Stock Status"]
+    for _col in _optional_cols:
+        if _col not in df_input.columns:
+            warnings.append(f"缺少可選欄位「{_col}」，退倉建議將可能為 0")
+
+    if progress_callback:
+        progress_callback(0.05, "驗證通過")
+
+    df = _clean_dataframe(df_input, shop_natures=shop_natures, progress_callback=progress_callback)
+
+    if df.empty:
+        raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
+
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+
+    if "SKU Desc" not in df.columns:
+        df = _compute_raw_extra_columns(df)
+
+    if "RP Type" not in df.columns:
+        raise ValueError("來源檔案缺少「RP Type」欄位，SKU 精簡 Review 必須依賴此欄位辨識 ND SKU")
+
+    if progress_callback:
+        progress_callback(0.2, "計算退倉建議中...")
+
+    raw = _add_nd_recommendation_columns(df)
+
+    # Dynamic categories: every ND row is classified by its actual Shop Stock Status,
+    # so the summary breaks down ND SKUs by their real status rather than a single bucket.
+    rp_type = (
+        raw.get("RP Type", _safe_default_series("", raw.index))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+    status_col = raw["Shop Stock Status"].fillna("")
+
+    nd_mask = rp_type == "ND"
+    nd_statuses = status_col[nd_mask].unique().tolist()
+
+    if nd_statuses:
+        # Stable, readable ordering of the dynamic category columns.
+        categories = sorted(nd_statuses, key=lambda x: (x == "", x))
+    else:
+        categories = []
+
+    if progress_callback:
+        progress_callback(0.4, "分類統計中...")
+
+    group_cols = ["Buyer", "Brand", "SKU", "SKU Desc"]
+
+    counts = {}
+    for cat in categories:
+        mask = nd_mask & (status_col == cat)
+        counts[cat] = (
+            raw[mask]
+            .groupby(group_cols, observed=True)
+            .size()
+            .rename(cat)
+        )
+
+    transfer_col = "After new Safety Qty / ND can transfer out of QTY"
+    raw["_transfer_num"] = pd.to_numeric(raw[transfer_col], errors="coerce").fillna(0)
+    transfer_summary = (
+        raw.groupby(group_cols, observed=True)["_transfer_num"]
+        .sum()
+        .astype(int)
+        .rename(transfer_col)
+    )
+
+    if progress_callback:
+        progress_callback(0.55, "彙總排序中...")
+
+    if counts:
+        summary = pd.concat(list(counts.values()), axis=1).fillna(0).astype(int).reset_index()
+    else:
+        summary = pd.DataFrame(columns=group_cols)
+
+    summary["SKU"] = summary["SKU"].apply(_safe_sku)
+    summary["總計"] = summary[categories].sum(axis=1) if categories else 0
+
+    summary = summary.merge(transfer_summary, on=group_cols, how="left")
+    summary[transfer_col] = summary[transfer_col].fillna(0).astype(int)
+
+    buyer_order = summary.groupby("Buyer")["總計"].sum().sort_values(ascending=False).index.tolist()
+    summary["_buyer_key"] = summary["Buyer"].map({b: i for i, b in enumerate(buyer_order)})
+    summary = summary.sort_values(["_buyer_key", "Brand", "SKU", "SKU Desc"], ascending=[True, True, True, True]).drop(columns=["_buyer_key"]).reset_index(drop=True)
+
+    transfer_total = int(raw["_transfer_num"].sum())
+    del raw["_transfer_num"]
+
+    total_nd = int(summary["總計"].sum())
+    total_row = pd.DataFrame(
+        {
+            "Buyer": ["總計"],
+            "Brand": [None],
+            "SKU": [None],
+            "SKU Desc": [None],
+            **{cat: [int(summary[cat].sum())] for cat in categories},
+            "總計": [total_nd],
+            transfer_col: [transfer_total],
+        }
+    )
+    summary = pd.concat([summary, total_row], ignore_index=True)
+
+    if total_nd == 0:
+        warnings.append("未偵測到任何 RP Type 為 ND 的 SKU。請確認來源檔案中的「RP Type」欄位是否包含 ND 值。")
+
+    if progress_callback:
+        progress_callback(0.7, "轉換完成")
+
+    return summary, raw, categories, warnings
+
+
+def generate_excel_nd(
+    summary_df: pd.DataFrame,
+    raw_df: pd.DataFrame,
+    categories: list[str],
+    progress_callback=None,
+) -> BytesIO:
+    wb = Workbook()
+
+    if progress_callback:
+        progress_callback(0.0, "建立 Excel 結構...")
+
+    ws_raw = wb.active
+    ws_raw.title = "RAW"
+
+    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.3)
+
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+
+    if progress_callback:
+        progress_callback(0.35, "建立摘要工作表...")
+
+    ws_summary = wb.create_sheet(title="Shop Stock Status")
+
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    bold_font = Font(bold=True, size=11)
+
+    ws_summary["A3"] = "行數 - Site Code"
+    ws_summary["D3"] = "ND SKU (by Shop Stock Status)"
+
+    transfer_col = "After new Safety Qty / ND can transfer out of QTY"
+    headers = ["Buyer", "Brand", "SKU", "SKU Desc"] + categories + ["總計"] + [transfer_col]
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws_summary.cell(row=4, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    data_start = 5
+    total_summary = len(summary_df)
+
+    for row_idx, row_data in summary_df.iterrows():
+        excel_row = data_start + row_idx
+        is_total = row_data["Buyer"] == "總計"
+
+        for col_idx, h in enumerate(headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws_summary.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            if is_total:
+                cell.font = bold_font
+
+            if isinstance(val, (int, float)) and col_idx >= 4 and h != "SKU":
+                cell.number_format = "#,##0"
+
+        if progress_callback and (row_idx % 500 == 0 or row_idx == total_summary - 1):
+            progress_callback(0.6 + 0.3 * ((row_idx + 1) / total_summary), f"寫入摘要 ({row_idx+1}/{total_summary})...")
+
+    _auto_width(ws_summary)
+
+    if progress_callback:
+        progress_callback(0.72, "建立 By Shop 分析工作表...")
+
+    by_shop_df = _build_nd_by_shop_summary(raw_df)
+
+    ws_by_shop = wb.create_sheet(title="By Shop")
+    by_shop_headers = [
+        "Site Code",
+        "Shop Name",
+        "OM",
+        "ND行數",
+        "預計總退倉量",
+        "ND SKU數量",
+    ]
+
+    for col_idx, h in enumerate(by_shop_headers, 1):
+        cell = ws_by_shop.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    for row_idx, row_data in by_shop_df.iterrows():
+        excel_row = row_idx + 2
+        is_total = row_data.get("Site Code") == "總計"
+        for col_idx, h in enumerate(by_shop_headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws_by_shop.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_total:
+                cell.font = bold_font
+            if isinstance(val, (int, float)) and col_idx >= 4:
+                cell.number_format = "#,##0"
+
+        if progress_callback and (row_idx % 500 == 0 or row_idx == len(by_shop_df) - 1):
+            progress_callback(0.82 + 0.08 * ((row_idx + 1) / max(len(by_shop_df), 1)), f"寫入 By Shop ({row_idx+1}/{len(by_shop_df)})...")
+
+    _auto_width(ws_by_shop)
+
+    if progress_callback:
+        progress_callback(0.92, "建立分析摘要工作表...")
+
+    ws_dashboard = wb.create_sheet(title="ND SKU數據分析摘要")
+
+    _total_row = summary_df[summary_df["Buyer"] == "總計"]
+    if _total_row.empty:
+        raise ValueError("摘要資料中未找到總計列，無法生成分析看板")
+    total_nd = int(_total_row["總計"].values[0])
+    total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
+    total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
+    total_skus = raw_df["SKU"].dropna().nunique()
+
+    transfer_col_resolved = _resolve_column_name("After new Safety Qty / ND can transfer out of QTY", set(raw_df.columns))
+    transfer_qty_total = 0
+    if transfer_col_resolved:
+        transfer_qty_total = int(pd.to_numeric(raw_df[transfer_col_resolved], errors="coerce").fillna(0).sum())
+
+    row1_metrics = [
+        ("總 ND SKU 行數", total_nd, "所有建議退倉之 ND SKU 總計行數", "EF4444"),
+        ("影響採購人員數 (Buyers)", total_buyers, "位採購人員名下有 ND SKU", "3B82F6"),
+        ("影響品牌總數 (Brands)", total_brands, "個品牌包含 ND SKU", "8B5CF6"),
+        ("影響SKU總數", total_skus, "個包含 ND SKU(SKUs)", "10B981"),
+    ]
+
+    row2_metrics = [
+        ("預計可退倉總數量", transfer_qty_total, "After new Safety Qty / ND can transfer out of TOTAL QTY", "06B6D4"),
+    ]
+
+    desc_font = Font(size=9, color="6B7280", italic=True)
+    _write_metric_cards(ws_dashboard, "ND SKU 數據分析摘要 (ND SKU Analysis Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    if progress_callback:
+        progress_callback(1.0, "完成!")
+
+    return buf
+
+
 def _auto_width(ws, min_width=8, max_width=50, sample_rows=200):
     for col_idx in range(1, ws.max_column + 1):
         col_letter = get_column_letter(col_idx)

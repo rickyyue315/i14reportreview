@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.4.15 (2026-06-24)
+
+- New: SKU 精簡 Review 模式 — 針對 RP Type 為 ND 的 SKU 建議全數退倉（不再限定 Overstock 狀態）
+- New: `transform_nd()`、`_add_nd_recommendation_columns()`、`_build_nd_by_shop_summary()`、`generate_excel_nd()` in transformer.py
+- New: 彙總表依 ND SKU 的實際 Shop Stock Status 動態分類（如 ND - Overstock / ND - Normal / ND - OOS）
+- New: 輸出 RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要四張工作表
+- 保留 RP Type=ND 但 Shop Stock Qty=0 的列（退倉量為 0），資訊透明不漏列
+
 ## v1.4.14 (2026-06-23)
 
 - 
