@@ -1208,7 +1208,7 @@ def _build_nd_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
         .agg(
             ND行數=("_is_nd", "sum"),
             Warehouse退倉行數=("_is_nd_warehouse", "sum"),
-            Vendor留原鋪行數=("_is_nd_vendor", "sum"),
+            Vendor另有安排行數=("_is_nd_vendor", "sum"),
             預計總退倉量=("_transfer_num", "sum"),
             ND_SKU數量=("_sku_nd", "nunique"),
             Warehouse_SKU數量=("_sku_nd_warehouse", "nunique"),
@@ -1216,7 +1216,7 @@ def _build_nd_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
-    for c in ["ND行數", "Warehouse退倉行數", "Vendor留原鋪行數", "預計總退倉量", "ND_SKU數量", "Warehouse_SKU數量"]:
+    for c in ["ND行數", "Warehouse退倉行數", "Vendor另有安排行數", "預計總退倉量", "ND_SKU數量", "Warehouse_SKU數量"]:
         by_shop[c] = by_shop[c].fillna(0).astype(int)
 
     if not by_shop.empty:
@@ -1227,7 +1227,7 @@ def _build_nd_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
                 "OM": [""],
                 "ND行數": [int(by_shop["ND行數"].sum())],
                 "Warehouse退倉行數": [int(by_shop["Warehouse退倉行數"].sum())],
-                "Vendor留原鋪行數": [int(by_shop["Vendor留原鋪行數"].sum())],
+                "Vendor另有安排行數": [int(by_shop["Vendor另有安排行數"].sum())],
                 "預計總退倉量": [int(by_shop["預計總退倉量"].sum())],
                 "ND_SKU數量": [int(by_shop["ND_SKU數量"].sum())],
                 "Warehouse_SKU數量": [int(by_shop["Warehouse_SKU數量"].sum())],
@@ -1459,7 +1459,7 @@ def generate_excel_nd(
         "OM",
         "ND行數",
         "Warehouse退倉行數",
-        "Vendor留原鋪行數",
+        "Vendor另有安排行數",
         "預計總退倉量",
         "ND_SKU數量",
         "Warehouse_SKU數量",
@@ -1505,7 +1505,7 @@ def generate_excel_nd(
     total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
     total_skus = raw_df["SKU"].dropna().nunique()
 
-    # Warehouse (可退倉) vs Vendor (留原鋪) breakdown from the raw data.
+    # Warehouse (可退倉) vs Vendor (另有安排) breakdown from the raw data.
     _rp = raw_df.get("RP Type", _safe_default_series("", raw_df.index)).fillna("").astype(str).str.strip().str.upper()
     _ss = raw_df.get("Supply Source", _safe_default_series("", raw_df.index)).fillna("").astype(str).str.strip().str.lower()
     _nd_wh = int(((_rp == "ND") & (_ss == "warehouse")).sum())
@@ -1519,7 +1519,7 @@ def generate_excel_nd(
     row1_metrics = [
         ("總 ND SKU 行數", total_nd, "所有 ND SKU 總計行數", "EF4444"),
         ("Warehouse 可退倉行數", _nd_wh, "Supply Source=Warehouse 可退倉之 ND 行數", "10B981"),
-        ("Vendor 留原鋪行數", _nd_vendor, "Supply Source=Vendor 不可退倉、留原鋪之 ND 行數", "F59E0B"),
+        ("Vendor 另有安排行數", _nd_vendor, "Supply Source=Vendor 不可退倉、另有安排之 ND 行數", "F59E0B"),
         ("影響採購人員數 (Buyers)", total_buyers, "位採購人員名下有 ND SKU", "3B82F6"),
     ]
 

@@ -1131,7 +1131,7 @@ if uploaded_file is not None:
             total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
             total_skus = raw_df["SKU"].dropna().nunique()
 
-            # Warehouse (可退倉) vs Vendor (留原鋪) breakdown.
+            # Warehouse (可退倉) vs Vendor (另有安排) breakdown.
             _nd_rp = raw_df.get("RP Type", pd.Series("", index=raw_df.index)).fillna("").astype(str).str.strip().str.upper()
             _nd_ss = raw_df.get("Supply Source", pd.Series("", index=raw_df.index)).fillna("").astype(str).str.strip().str.lower()
             nd_warehouse_rows = int(((_nd_rp == "ND") & (_nd_ss == "warehouse")).sum())
@@ -1166,9 +1166,9 @@ if uploaded_file is not None:
             with r1_col3:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #ff9944;">
-                    <div class="metric-title">Vendor 留原鋪行數</div>
+                    <div class="metric-title">Vendor 另有安排行數</div>
                     <div class="metric-value" style="color: #ff9944;">{nd_vendor_rows:,}</div>
-                    <div class="metric-desc">Supply Source=Vendor 不可退倉、留原鋪之 ND 行數</div>
+                    <div class="metric-desc">Supply Source=Vendor 不可退倉、另有安排之 ND 行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col4:
@@ -1222,7 +1222,7 @@ if uploaded_file is not None:
 
             with tab1:
                 st.markdown("#### 採購人員與品牌之 ND SKU 交叉統計表")
-                st.markdown("ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（Warehouse 可退倉 / Vendor 留原鋪）。本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
+                st.markdown("ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（Warehouse 可退倉 / Vendor 另有安排）。本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
                 st.dataframe(summary_df, width='stretch', hide_index=True)
 
             with tab2:
