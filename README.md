@@ -10,7 +10,7 @@
 | 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / Safety Stock Review |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
-| SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議全數退倉，依 Shop Stock Status 動態分類 |
+| SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 留原鋪），依 Supply Source × Shop Stock Status 雙層分類 |
 | 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式 |
 | 視覺化看板 | 即時顯示統計指標與交叉分析表 |
 | Excel 導出 | 一鍵下載含 RAW、Shop Stock Status、By Shop、分析摘要之美化報表 |
@@ -88,11 +88,12 @@ OOS Review 建議額外包含：
 
 ### SKU 精簡 Review
 
-針對 RP Type 為 **ND** 的 SKU 建議全數退倉（不再限定 Overstock 狀態）：
+針對 RP Type 為 **ND** 的 SKU 建議退倉，區分 Supply Source（只有 Warehouse 貨可退倉）：
 
 1. 篩選 `RP Type = ND` 的所有 SKU（不分 Shop Stock Status）
-2. 建議全數退倉：`transfer = Shop Stock Qty (CM)`（庫存為 0 則退倉量為 0，仍保留該列）
-3. ND SKU 依實際 `Shop Stock Status` 動態分類（如 ND - Overstock、ND - Normal、ND - OOS）
+2. **Warehouse 貨**：建議全數退倉 `transfer = Shop Stock Qty (CM)`
+3. **Vendor 貨**：標記「留在原鋪」，不可退倉 `transfer = 0`
+4. ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（如 Warehouse - Overstock、Vendor - Normal）
 
 輸出包含 RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要共 4 個工作表。
 

@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.4.16 (2026-06-24)
+
+- Update: SKU 精簡 Review 區分 Supply Source — 只有 Warehouse 貨可退倉，Vendor 貨標記「留在原鋪」(transfer=0)
+- Update: 彙總表分類改為 Supply Source × Shop Stock Status 雙層（如 Warehouse - Overstock、Vendor - Normal）
+- Update: By Shop 新增 Warehouse 退倉行數 / Vendor 留原鋪行數 / Warehouse SKU 數量欄位
+- Update: Dashboard 與 UI metric cards 新增 Warehouse 可退倉 / Vendor 留原鋪行數指標
+
 ## v1.4.15 (2026-06-24)
 
 - New: SKU 精簡 Review 模式 — 針對 RP Type 為 ND 的 SKU 建議全數退倉（不再限定 Overstock 狀態）

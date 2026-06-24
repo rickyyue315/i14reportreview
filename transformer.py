@@ -1131,14 +1131,29 @@ def _add_nd_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
     )
     shop_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
 
+    # Only Warehouse stock can be returned to warehouse (退倉); Vendor stock must
+    # stay at the shop (留在原鋪) and contributes 0 to transfer quantity.
+    supply_source = (
+        df.get("Supply Source", _safe_default_series("", df.index))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
     is_nd = rp_type == "ND"
+    is_warehouse = is_nd & (supply_source == "warehouse")
+    is_vendor = is_nd & (supply_source == "vendor")
 
     rec_values = np.full(len(df), "", dtype=object)
-    rec_values[is_nd.values] = "ND"
+    rec_values[is_warehouse.values] = "ND"
+    # Vendor stock cannot be returned — mark it so buyers see why it is not 退倉.
+    rec_values[is_vendor.values] = "留在原鋪"
 
     transfer_values = np.full(len(df), "", dtype=object)
-    # ND with stock > 0: transfer all shop stock; ND with stock == 0: transfer 0
-    transfer_values[is_nd.values] = shop_stock[is_nd.values].astype(int).values
+    # Warehouse: transfer all shop stock; Vendor or zero stock: transfer 0.
+    transfer_values[is_warehouse.values] = shop_stock[is_warehouse.values].astype(int).values
+    transfer_values[is_vendor.values] = 0
 
     df = df.copy()
     df["Recommendation of new Safety Qty / ND"] = rec_values
@@ -1170,29 +1185,39 @@ def _build_nd_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
         .str.strip()
         .str.upper()
     )
+    supply_source = (
+        df.get("Supply Source", _safe_default_series("", df.index))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
     transfer_col = "After new Safety Qty / ND can transfer out of QTY"
     transfer_num = pd.to_numeric(df.get(transfer_col, _safe_default_series(0, df.index)), errors="coerce").fillna(0)
 
     group_cols = ["Site Code", "Shop Name", "OM"]
     df["_is_nd"] = rp_type == "ND"
+    df["_is_nd_warehouse"] = df["_is_nd"] & (supply_source == "warehouse")
+    df["_is_nd_vendor"] = df["_is_nd"] & (supply_source == "vendor")
     df["_sku_nd"] = df["SKU"].where(df["_is_nd"])
+    df["_sku_nd_warehouse"] = df["SKU"].where(df["_is_nd_warehouse"])
     df["_transfer_num"] = transfer_num
 
     by_shop = (
         df.groupby(group_cols, dropna=False, observed=True)
         .agg(
             ND行數=("_is_nd", "sum"),
+            Warehouse退倉行數=("_is_nd_warehouse", "sum"),
+            Vendor留原鋪行數=("_is_nd_vendor", "sum"),
             預計總退倉量=("_transfer_num", "sum"),
-            **{
-                "ND SKU數量": ("_sku_nd", "nunique"),
-            },
+            ND_SKU數量=("_sku_nd", "nunique"),
+            Warehouse_SKU數量=("_sku_nd_warehouse", "nunique"),
         )
         .reset_index()
     )
 
-    by_shop["ND行數"] = by_shop["ND行數"].fillna(0).astype(int)
-    by_shop["預計總退倉量"] = by_shop["預計總退倉量"].fillna(0).astype(int)
-    by_shop["ND SKU數量"] = by_shop["ND SKU數量"].fillna(0).astype(int)
+    for c in ["ND行數", "Warehouse退倉行數", "Vendor留原鋪行數", "預計總退倉量", "ND_SKU數量", "Warehouse_SKU數量"]:
+        by_shop[c] = by_shop[c].fillna(0).astype(int)
 
     if not by_shop.empty:
         total_row = pd.DataFrame(
@@ -1201,8 +1226,11 @@ def _build_nd_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
                 "Shop Name": [""],
                 "OM": [""],
                 "ND行數": [int(by_shop["ND行數"].sum())],
+                "Warehouse退倉行數": [int(by_shop["Warehouse退倉行數"].sum())],
+                "Vendor留原鋪行數": [int(by_shop["Vendor留原鋪行數"].sum())],
                 "預計總退倉量": [int(by_shop["預計總退倉量"].sum())],
-                "ND SKU數量": [int(by_shop["ND SKU數量"].sum())],
+                "ND_SKU數量": [int(by_shop["ND_SKU數量"].sum())],
+                "Warehouse_SKU數量": [int(by_shop["Warehouse_SKU數量"].sum())],
             }
         )
         by_shop = pd.concat([by_shop.sort_values(["Site Code", "Shop Name", "OM"], kind="stable"), total_row], ignore_index=True)
@@ -1221,7 +1249,7 @@ def transform_nd(
 
     warnings = []
 
-    _optional_cols = ["RP Type", "Shop Stock Qty (CM)", "Shop Stock Status"]
+    _optional_cols = ["RP Type", "Shop Stock Qty (CM)", "Shop Stock Status", "Supply Source"]
     for _col in _optional_cols:
         if _col not in df_input.columns:
             warnings.append(f"缺少可選欄位「{_col}」，退倉建議將可能為 0")
@@ -1247,8 +1275,9 @@ def transform_nd(
 
     raw = _add_nd_recommendation_columns(df)
 
-    # Dynamic categories: every ND row is classified by its actual Shop Stock Status,
-    # so the summary breaks down ND SKUs by their real status rather than a single bucket.
+    # Two-layer dynamic categories: every ND row is classified by its Supply Source
+    # (Warehouse / Vendor) crossed with its actual Shop Stock Status, so the summary
+    # breaks down ND SKUs by both where the stock comes from and its real status.
     rp_type = (
         raw.get("RP Type", _safe_default_series("", raw.index))
         .fillna("")
@@ -1256,16 +1285,30 @@ def transform_nd(
         .str.strip()
         .str.upper()
     )
+    supply_source = (
+        raw.get("Supply Source", _safe_default_series("", raw.index))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
     status_col = raw["Shop Stock Status"].fillna("")
 
     nd_mask = rp_type == "ND"
-    nd_statuses = status_col[nd_mask].unique().tolist()
-
-    if nd_statuses:
-        # Stable, readable ordering of the dynamic category columns.
-        categories = sorted(nd_statuses, key=lambda x: (x == "", x))
-    else:
-        categories = []
+    # Build composite category label "SupplySource - Status" (title-cased source).
+    _source_title = supply_source.where(supply_source == "", supply_source.str.title())
+    nd_source_status = np.where(
+        nd_mask,
+        np.where(
+            supply_source == "",
+            "Unknown - " + status_col.values,
+            _source_title + " - " + status_col.values,
+        ),
+        "",
+    )
+    # Unique non-empty categories among ND rows.
+    nd_cats = sorted({c for c in nd_source_status if c})
+    categories = nd_cats
 
     if progress_callback:
         progress_callback(0.4, "分類統計中...")
@@ -1273,8 +1316,9 @@ def transform_nd(
     group_cols = ["Buyer", "Brand", "SKU", "SKU Desc"]
 
     counts = {}
+    _nd_cat_series = pd.Series(nd_source_status, index=raw.index)
     for cat in categories:
-        mask = nd_mask & (status_col == cat)
+        mask = nd_mask & (_nd_cat_series == cat)
         counts[cat] = (
             raw[mask]
             .groupby(group_cols, observed=True)
@@ -1414,8 +1458,11 @@ def generate_excel_nd(
         "Shop Name",
         "OM",
         "ND行數",
+        "Warehouse退倉行數",
+        "Vendor留原鋪行數",
         "預計總退倉量",
-        "ND SKU數量",
+        "ND_SKU數量",
+        "Warehouse_SKU數量",
     ]
 
     for col_idx, h in enumerate(by_shop_headers, 1):
@@ -1458,20 +1505,28 @@ def generate_excel_nd(
     total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
     total_skus = raw_df["SKU"].dropna().nunique()
 
+    # Warehouse (可退倉) vs Vendor (留原鋪) breakdown from the raw data.
+    _rp = raw_df.get("RP Type", _safe_default_series("", raw_df.index)).fillna("").astype(str).str.strip().str.upper()
+    _ss = raw_df.get("Supply Source", _safe_default_series("", raw_df.index)).fillna("").astype(str).str.strip().str.lower()
+    _nd_wh = int(((_rp == "ND") & (_ss == "warehouse")).sum())
+    _nd_vendor = int(((_rp == "ND") & (_ss == "vendor")).sum())
+
     transfer_col_resolved = _resolve_column_name("After new Safety Qty / ND can transfer out of QTY", set(raw_df.columns))
     transfer_qty_total = 0
     if transfer_col_resolved:
         transfer_qty_total = int(pd.to_numeric(raw_df[transfer_col_resolved], errors="coerce").fillna(0).sum())
 
     row1_metrics = [
-        ("總 ND SKU 行數", total_nd, "所有建議退倉之 ND SKU 總計行數", "EF4444"),
+        ("總 ND SKU 行數", total_nd, "所有 ND SKU 總計行數", "EF4444"),
+        ("Warehouse 可退倉行數", _nd_wh, "Supply Source=Warehouse 可退倉之 ND 行數", "10B981"),
+        ("Vendor 留原鋪行數", _nd_vendor, "Supply Source=Vendor 不可退倉、留原鋪之 ND 行數", "F59E0B"),
         ("影響採購人員數 (Buyers)", total_buyers, "位採購人員名下有 ND SKU", "3B82F6"),
-        ("影響品牌總數 (Brands)", total_brands, "個品牌包含 ND SKU", "8B5CF6"),
-        ("影響SKU總數", total_skus, "個包含 ND SKU(SKUs)", "10B981"),
     ]
 
     row2_metrics = [
-        ("預計可退倉總數量", transfer_qty_total, "After new Safety Qty / ND can transfer out of TOTAL QTY", "06B6D4"),
+        ("影響品牌總數 (Brands)", total_brands, "個品牌包含 ND SKU", "8B5CF6"),
+        ("影響SKU總數", total_skus, "個包含 ND SKU(SKUs)", "10B981"),
+        ("預計可退倉總數量", transfer_qty_total, "Warehouse 可退倉數量總和", "06B6D4"),
     ]
 
     desc_font = Font(size=9, color="6B7280", italic=True)

@@ -198,8 +198,9 @@ with st.sidebar:
     - 輸出：RAW、Summary（雙區塊樞紐：Adj. MCH1 × Adj. SST）、Carry SKU 分析摘要
 
     **✂️ SKU 精簡 Review**
-    - 針對 RP Type 為 ND 的 SKU，建議全數退倉（不再限定 Overstock 狀態）
-    - ND SKU 依實際 Shop Stock Status 動態分類，掌握各狀態退倉分佈
+    - 針對 RP Type 為 ND 的 SKU 建議退倉，區分 Supply Source
+    - Warehouse 貨：建議全數退倉；Vendor 貨：標記「留在原鋪」不可退倉
+    - 依 Supply Source × Shop Stock Status 雙層動態分類
     - 輸出：RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要
 
     **🔒 Safety Stock Review**
@@ -254,10 +255,11 @@ with st.sidebar:
     2. 依 RP Type (ND / RF) 與 P90D 0 Sales 狀態做雙維度交叉統計
     3. 雙區塊樞紐：左 (Adj. MCH1) + 右 (Adj. SST)
 
-    **SKU 精簡 Review** — 針對 ND SKU 建議退倉：
+    **SKU 精簡 Review** — 針對 ND SKU 建議退倉（區分 Supply Source）：
     1. 篩選 RP Type = ND 的所有 SKU（不分 Shop Stock Status）
-    2. 建議全數退倉：`transfer = Shop Stock Qty (CM)`（庫存為 0 則退倉量為 0，仍保留該列）
-    3. ND SKU 依實際 Shop Stock Status 動態分類（如 ND - Overstock、ND - Normal、ND - OOS）
+    2. **Warehouse 貨**：建議全數退倉 `transfer = Shop Stock Qty (CM)`
+    3. **Vendor 貨**：標記「留在原鋪」，不可退倉 `transfer = 0`
+    4. ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（如 Warehouse - Overstock、vendor - Normal）
 
     **🔒 Safety Stock Review** — 全面審查 Safety Stock 設定，計算平衡建議值：
     1. **Overstock Cap (X)** = floor(月均銷售 × Overstock Rate)，上限不超過現有 Adj. Safety Stock
@@ -1129,6 +1131,12 @@ if uploaded_file is not None:
             total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
             total_skus = raw_df["SKU"].dropna().nunique()
 
+            # Warehouse (可退倉) vs Vendor (留原鋪) breakdown.
+            _nd_rp = raw_df.get("RP Type", pd.Series("", index=raw_df.index)).fillna("").astype(str).str.strip().str.upper()
+            _nd_ss = raw_df.get("Supply Source", pd.Series("", index=raw_df.index)).fillna("").astype(str).str.strip().str.lower()
+            nd_warehouse_rows = int(((_nd_rp == "ND") & (_nd_ss == "warehouse")).sum())
+            nd_vendor_rows = int(((_nd_rp == "ND") & (_nd_ss == "vendor")).sum())
+
             _transfer_col_name = "After new Safety Qty / ND can transfer out of QTY"
             transfer_col_resolved = _resolve_column_name(_transfer_col_name, set(summary_df.columns))
             if transfer_col_resolved is not None and transfer_col_resolved in _total_row.columns:
@@ -1144,10 +1152,26 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #ff5555;">
                     <div class="metric-title">總 ND SKU 行數</div>
                     <div class="metric-value" style="color: #ff5555;">{total_nd:,}</div>
-                    <div class="metric-desc">所有建議退倉之 ND SKU 總計行數</div>
+                    <div class="metric-desc">所有 ND SKU 總計行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #00ff88;">
+                    <div class="metric-title">Warehouse 可退倉行數</div>
+                    <div class="metric-value" style="color: #00ff88;">{nd_warehouse_rows:,}</div>
+                    <div class="metric-desc">Supply Source=Warehouse 可退倉之 ND 行數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ff9944;">
+                    <div class="metric-title">Vendor 留原鋪行數</div>
+                    <div class="metric-value" style="color: #ff9944;">{nd_vendor_rows:,}</div>
+                    <div class="metric-desc">Supply Source=Vendor 不可退倉、留原鋪之 ND 行數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #5599ff;">
                     <div class="metric-title">影響採購人員數 (Buyers)</div>
@@ -1155,7 +1179,11 @@ if uploaded_file is not None:
                     <div class="metric-desc">位採購人員名下有 ND SKU</div>
                 </div>
                 """, unsafe_allow_html=True)
-            with r1_col3:
+
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+            r2_col1, r2_col2, r2_col3 = st.columns(3)
+            with r2_col1:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #9944ff;">
                     <div class="metric-title">影響品牌總數 (Brands)</div>
@@ -1163,24 +1191,20 @@ if uploaded_file is not None:
                     <div class="metric-desc">個品牌包含 ND SKU</div>
                 </div>
                 """, unsafe_allow_html=True)
-            with r1_col4:
+            with r2_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #00ff88;">
+                <div class="metric-card" style="border-left-color: #10b981;">
                     <div class="metric-title">影響SKU總數</div>
-                    <div class="metric-value" style="color: #00ff88;">{total_skus:,}</div>
+                    <div class="metric-value" style="color: #10b981;">{total_skus:,}</div>
                     <div class="metric-desc">個包含 ND SKU (SKUs)</div>
                 </div>
                 """, unsafe_allow_html=True)
-
-            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-
-            r2_col1 = st.columns(1)[0]
-            with r2_col1:
+            with r2_col3:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #00d4ff;">
                     <div class="metric-title">預計可退倉總數量</div>
                     <div class="metric-value" style="color: #00d4ff;">{transfer_qty_total:,}</div>
-                    <div class="metric-desc">After new Safety Qty / ND can transfer out of TOTAL QTY</div>
+                    <div class="metric-desc">Warehouse 可退倉數量總和</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -1198,12 +1222,12 @@ if uploaded_file is not None:
 
             with tab1:
                 st.markdown("#### 採購人員與品牌之 ND SKU 交叉統計表")
-                st.markdown("ND SKU 依 Shop Stock Status 動態分類。本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
+                st.markdown("ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（Warehouse 可退倉 / Vendor 留原鋪）。本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
                 st.dataframe(summary_df, width='stretch', hide_index=True)
 
             with tab2:
                 st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
-                st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽（僅 RP Type=ND 列套用退倉建議）：")
+                st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽（RP Type=ND：Warehouse 建議退倉、Vendor 標記「留在原鋪」）：")
                 _filtered_raw = raw_df.copy()
                 if selected_site_code != "全部" and "Site Code" in _filtered_raw.columns:
                     _filtered_raw = _filtered_raw[_filtered_raw["Site Code"].astype(str).str.strip() == selected_site_code]

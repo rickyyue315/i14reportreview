@@ -37,6 +37,7 @@ def _base_row(**kw):
         "Shop Nature": "Local",
         "RP Type": "RF",
         "Shop Stock Qty (CM)": 0,
+        "Supply Source": "Warehouse",
         "OM": "OM1",
         "Adj. MCH1": "MchA",
         "Adj. SST": "SstA",
@@ -191,32 +192,53 @@ def test_fix6_combined_mtd_days_none_no_crash():
 
 # ── SKU 精簡 Review (ND SKU) ───────────────────────────────────────────────────
 
-def test_nd_all_nd_rows_recommend_full_transfer():
-    """Every RP Type=ND row must recommend transferring all Shop Stock Qty out."""
+def test_nd_warehouse_all_nd_rows_recommend_full_transfer():
+    """Every RP Type=ND + Warehouse row must recommend transferring all stock out."""
     df = _df([
-        {"SKU": "1", "RP Type": "ND", "Shop Stock Qty (CM)": 7, "Shop Stock Status": "Normal"},
-        {"SKU": "2", "RP Type": "ND", "Shop Stock Qty (CM)": 12, "Shop Stock Status": "Overstock (P90D 0 Sales)"},
+        {"SKU": "1", "RP Type": "ND", "Supply Source": "Warehouse", "Shop Stock Qty (CM)": 7, "Shop Stock Status": "Normal"},
+        {"SKU": "2", "RP Type": "ND", "Supply Source": "Warehouse", "Shop Stock Qty (CM)": 12, "Shop Stock Status": "Overstock (P90D 0 Sales)"},
     ])
     out = _add_nd_recommendation_columns(df)
     assert out["Recommendation of new Safety Qty / ND"].tolist() == ["ND", "ND"]
     assert out["After new Safety Qty / ND can transfer out of QTY"].tolist() == [7, 12]
 
 
+def test_nd_vendor_marked_stay_at_shop():
+    """ND + Vendor stock must be marked '留在原鋪' with transfer=0."""
+    df = _df([
+        {"SKU": "1", "RP Type": "ND", "Supply Source": "Vendor", "Shop Stock Qty (CM)": 9, "Shop Stock Status": "Normal"},
+    ])
+    out = _add_nd_recommendation_columns(df)
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "留在原鋪"
+    assert out["After new Safety Qty / ND can transfer out of QTY"].tolist()[0] == 0
+
+
 def test_nd_rp_type_normalized():
     """RP Type with whitespace/case must still be recognized as ND."""
     df = _df([
-        {"SKU": "1", "RP Type": " nd ", "Shop Stock Qty (CM)": 5, "Shop Stock Status": "Normal"},
-        {"SKU": "2", "RP Type": "Nd", "Shop Stock Qty (CM)": 3, "Shop Stock Status": "Normal"},
+        {"SKU": "1", "RP Type": " nd ", "Supply Source": "Warehouse", "Shop Stock Qty (CM)": 5, "Shop Stock Status": "Normal"},
+        {"SKU": "2", "RP Type": "Nd", "Supply Source": "Warehouse", "Shop Stock Qty (CM)": 3, "Shop Stock Status": "Normal"},
     ])
     out = _add_nd_recommendation_columns(df)
     assert out["Recommendation of new Safety Qty / ND"].tolist() == ["ND", "ND"]
     assert out["After new Safety Qty / ND can transfer out of QTY"].tolist() == [5, 3]
 
 
-def test_nd_zero_stock_transfer_zero():
-    """ND with Shop Stock Qty=0 must yield transfer=0 (row kept, transparent)."""
+def test_nd_supply_source_normalized():
+    """Supply Source with case/whitespace must still be recognized."""
     df = _df([
-        {"SKU": "1", "RP Type": "ND", "Shop Stock Qty (CM)": 0, "Shop Stock Status": "Normal"},
+        {"SKU": "1", "RP Type": "ND", "Supply Source": " warehouse ", "Shop Stock Qty (CM)": 6, "Shop Stock Status": "Normal"},
+        {"SKU": "2", "RP Type": "ND", "Supply Source": "VENDOR", "Shop Stock Qty (CM)": 4, "Shop Stock Status": "Normal"},
+    ])
+    out = _add_nd_recommendation_columns(df)
+    assert out["Recommendation of new Safety Qty / ND"].tolist() == ["ND", "留在原鋪"]
+    assert out["After new Safety Qty / ND can transfer out of QTY"].tolist() == [6, 0]
+
+
+def test_nd_zero_stock_transfer_zero():
+    """ND Warehouse with Shop Stock Qty=0 must yield transfer=0 (row kept)."""
+    df = _df([
+        {"SKU": "1", "RP Type": "ND", "Supply Source": "Warehouse", "Shop Stock Qty (CM)": 0, "Shop Stock Status": "Normal"},
     ])
     out = _add_nd_recommendation_columns(df)
     assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "ND"
@@ -226,29 +248,33 @@ def test_nd_zero_stock_transfer_zero():
 def test_nd_non_nd_left_blank():
     """Non-ND rows must keep recommendation/transfer columns blank."""
     df = _df([
-        {"SKU": "1", "RP Type": "RF", "Shop Stock Qty (CM)": 9, "Shop Stock Status": "Normal"},
-        {"SKU": "2", "RP Type": "ST", "Shop Stock Qty (CM)": 4, "Shop Stock Status": "Normal"},
+        {"SKU": "1", "RP Type": "RF", "Supply Source": "Warehouse", "Shop Stock Qty (CM)": 9, "Shop Stock Status": "Normal"},
+        {"SKU": "2", "RP Type": "ST", "Supply Source": "Warehouse", "Shop Stock Qty (CM)": 4, "Shop Stock Status": "Normal"},
     ])
     out = _add_nd_recommendation_columns(df)
     assert out["Recommendation of new Safety Qty / ND"].tolist() == ["", ""]
     assert out["After new Safety Qty / ND can transfer out of QTY"].tolist() == ["", ""]
 
 
-def test_nd_categories_by_status():
-    """Summary must break ND SKUs down by their actual Shop Stock Status."""
+def test_nd_categories_by_supply_source_x_status():
+    """Summary must break ND SKUs into Supply Source × Shop Stock Status categories."""
     df = _df([
-        {"SKU": "1", "RP Type": "ND", "Shop Stock Qty (CM)": 5, "Shop Stock Status": "Overstock (P90D 0 Sales)"},
-        {"SKU": "2", "RP Type": "ND", "Shop Stock Qty (CM)": 3, "Shop Stock Status": "Normal"},
-        {"SKU": "3", "RP Type": "ND", "Shop Stock Qty (CM)": 2, "Shop Stock Status": "Normal"},
-        {"SKU": "4", "RP Type": "RF", "Shop Stock Qty (CM)": 8, "Shop Stock Status": "Normal"},
+        {"SKU": "1", "RP Type": "ND", "Supply Source": "Warehouse", "Shop Stock Qty (CM)": 5, "Shop Stock Status": "Overstock (P90D 0 Sales)"},
+        {"SKU": "2", "RP Type": "ND", "Supply Source": "Warehouse", "Shop Stock Qty (CM)": 3, "Shop Stock Status": "Normal"},
+        {"SKU": "3", "RP Type": "ND", "Supply Source": "Vendor", "Shop Stock Qty (CM)": 2, "Shop Stock Status": "Normal"},
+        {"SKU": "4", "RP Type": "RF", "Supply Source": "Warehouse", "Shop Stock Qty (CM)": 8, "Shop Stock Status": "Normal"},
     ])
     summary, raw, categories, warnings = transform_nd(df)
-    # Only the two distinct ND statuses appear as category columns.
-    assert set(categories) == {"Overstock (P90D 0 Sales)", "Normal"}
+    # Two-layer labels: "Warehouse - Status" and "Vendor - Status".
+    assert set(categories) == {
+        "Warehouse - Overstock (P90D 0 Sales)",
+        "Warehouse - Normal",
+        "Vendor - Normal",
+    }
     total_row = summary[summary["Buyer"] == "總計"].iloc[0]
-    assert int(total_row["總計"]) == 3  # 3 ND rows
-    # Normal has 2 ND rows, Overstock has 1.
-    assert int(total_row["Normal"]) == 2
-    assert int(total_row["Overstock (P90D 0 Sales)"]) == 1
-    # Transfer total = 5 + 3 + 2 (RF row excluded).
-    assert int(total_row["After new Safety Qty / ND can transfer out of QTY"]) == 10
+    assert int(total_row["總計"]) == 3  # 3 ND rows (RF excluded)
+    assert int(total_row["Warehouse - Normal"]) == 1
+    assert int(total_row["Warehouse - Overstock (P90D 0 Sales)"]) == 1
+    assert int(total_row["Vendor - Normal"]) == 1
+    # Transfer total = 5 + 3 only (Vendor row contributes 0, RF excluded).
+    assert int(total_row["After new Safety Qty / ND can transfer out of QTY"]) == 8
