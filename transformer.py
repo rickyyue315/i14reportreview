@@ -1501,20 +1501,33 @@ def generate_excel_nd(
     if _total_row.empty:
         raise ValueError("摘要資料中未找到總計列，無法生成分析看板")
     total_nd = int(_total_row["總計"].values[0])
-    total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
-    total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
-    total_skus = raw_df["SKU"].dropna().nunique()
 
     # Warehouse (可退倉) vs Vendor (另有安排) breakdown from the raw data.
     _rp = raw_df.get("RP Type", _safe_default_series("", raw_df.index)).fillna("").astype(str).str.strip().str.upper()
     _ss = raw_df.get("Supply Source", _safe_default_series("", raw_df.index)).fillna("").astype(str).str.strip().str.lower()
-    _nd_wh = int(((_rp == "ND") & (_ss == "warehouse")).sum())
-    _nd_vendor = int(((_rp == "ND") & (_ss == "vendor")).sum())
+    _nd_mask = (_rp == "ND")
+    _nd_wh_mask = _nd_mask & (_ss == "warehouse")
+    _nd_vendor_mask = _nd_mask & (_ss == "vendor")
+    _nd_wh = int(_nd_wh_mask.sum())
+    _nd_vendor = int(_nd_vendor_mask.sum())
+
+    # Buyers / Brands / SKU totals must count ONLY affected ND rows (raw_df keeps all
+    # cleaned rows incl. non-ND, so counting over raw_df would over-count).
+    _nd_df = raw_df[_nd_mask]
+    total_buyers = _nd_df["Buyer"].dropna().nunique() if len(_nd_df) else 0
+    total_brands = _nd_df["Brand"].dropna().nunique() if len(_nd_df) else 0
+    total_skus = _nd_df["SKU"].dropna().nunique() if len(_nd_df) else 0
 
     transfer_col_resolved = _resolve_column_name("After new Safety Qty / ND can transfer out of QTY", set(raw_df.columns))
     transfer_qty_total = 0
     if transfer_col_resolved:
         transfer_qty_total = int(pd.to_numeric(raw_df[transfer_col_resolved], errors="coerce").fillna(0).sum())
+
+    # 另有安排 total qty = sum of Shop Stock Qty over ND+Vendor rows (cannot be returned).
+    _shop_stock_col = _resolve_column_name("Shop Stock Qty (CM)", set(raw_df.columns))
+    other_arranged_qty_total = 0
+    if _shop_stock_col:
+        other_arranged_qty_total = int(_safe_numeric(raw_df.loc[_nd_vendor_mask, _shop_stock_col]).sum())
 
     row1_metrics = [
         ("總 ND SKU 行數", total_nd, "所有 ND SKU 總計行數", "EF4444"),
@@ -1527,6 +1540,7 @@ def generate_excel_nd(
         ("影響品牌總數 (Brands)", total_brands, "個品牌包含 ND SKU", "8B5CF6"),
         ("影響SKU總數", total_skus, "個包含 ND SKU(SKUs)", "10B981"),
         ("預計可退倉總數量", transfer_qty_total, "Warehouse 可退倉數量總和", "06B6D4"),
+        ("預計另有安排總數量", other_arranged_qty_total, "Vendor 另有安排之庫存數量總和", "F97316"),
     ]
 
     desc_font = Font(size=9, color="6B7280", italic=True)

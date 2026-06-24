@@ -1127,15 +1127,22 @@ if uploaded_file is not None:
                 st.error("❌ 摘要資料中未找到總計列，無法顯示分析看板。")
                 st.stop()
             total_nd = int(_total_row["總計"].values[0])
-            total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
-            total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
-            total_skus = raw_df["SKU"].dropna().nunique()
 
             # Warehouse (可退倉) vs Vendor (另有安排) breakdown.
             _nd_rp = raw_df.get("RP Type", pd.Series("", index=raw_df.index)).fillna("").astype(str).str.strip().str.upper()
             _nd_ss = raw_df.get("Supply Source", pd.Series("", index=raw_df.index)).fillna("").astype(str).str.strip().str.lower()
-            nd_warehouse_rows = int(((_nd_rp == "ND") & (_nd_ss == "warehouse")).sum())
-            nd_vendor_rows = int(((_nd_rp == "ND") & (_nd_ss == "vendor")).sum())
+            _nd_mask = (_nd_rp == "ND")
+            _nd_wh_mask = _nd_mask & (_nd_ss == "warehouse")
+            _nd_vendor_mask = _nd_mask & (_nd_ss == "vendor")
+            nd_warehouse_rows = int(_nd_wh_mask.sum())
+            nd_vendor_rows = int(_nd_vendor_mask.sum())
+
+            # Buyers / Brands / SKU totals must count ONLY affected ND rows (raw_df keeps
+            # all cleaned rows incl. non-ND, so counting over raw_df would over-count).
+            _nd_df = raw_df[_nd_mask]
+            total_buyers = _nd_df["Buyer"].dropna().nunique() if len(_nd_df) else 0
+            total_brands = _nd_df["Brand"].dropna().nunique() if len(_nd_df) else 0
+            total_skus = _nd_df["SKU"].dropna().nunique() if len(_nd_df) else 0
 
             _transfer_col_name = "After new Safety Qty / ND can transfer out of QTY"
             transfer_col_resolved = _resolve_column_name(_transfer_col_name, set(summary_df.columns))
@@ -1145,6 +1152,12 @@ if uploaded_file is not None:
                 transfer_qty_total = int(pd.to_numeric(raw_df[transfer_col_resolved], errors="coerce").fillna(0).sum())
             else:
                 transfer_qty_total = 0
+
+            # 另有安排 total qty = sum of Shop Stock Qty over ND+Vendor rows (cannot be returned).
+            _shop_stock_col = _resolve_column_name("Shop Stock Qty (CM)", set(raw_df.columns))
+            other_arranged_qty_total = 0
+            if _shop_stock_col:
+                other_arranged_qty_total = int(pd.to_numeric(raw_df.loc[_nd_vendor_mask, _shop_stock_col], errors="coerce").fillna(0).sum())
 
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
@@ -1182,7 +1195,7 @@ if uploaded_file is not None:
 
             st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
 
-            r2_col1, r2_col2, r2_col3 = st.columns(3)
+            r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
             with r2_col1:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #9944ff;">
@@ -1205,6 +1218,14 @@ if uploaded_file is not None:
                     <div class="metric-title">預計可退倉總數量</div>
                     <div class="metric-value" style="color: #00d4ff;">{transfer_qty_total:,}</div>
                     <div class="metric-desc">Warehouse 可退倉數量總和</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #f97316;">
+                    <div class="metric-title">預計另有安排總數量</div>
+                    <div class="metric-value" style="color: #f97316;">{other_arranged_qty_total:,}</div>
+                    <div class="metric-desc">Vendor 另有安排之庫存數量總和</div>
                 </div>
                 """, unsafe_allow_html=True)
 

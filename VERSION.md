@@ -1,5 +1,10 @@
 # 版本記錄
 
+## v1.4.17 (2026-06-24)
+
+- Fix: ND SKU Dashboard 的影響採購人員數/品牌總數/SKU總數改為只計 ND 受影響列（不再計入非 ND 列，避免重複或虛增）
+- New: 新增「預計另有安排總數量」指標（Vendor 另有安排之庫存數量總和），與「預計可退倉總數量」並列
+
 ## v1.4.16 (2026-06-24)
 
 - Update: SKU 精簡 Review 區分 Supply Source — 只有 Warehouse 貨可退倉，Vendor 貨標記「另有安排」(transfer=0)
