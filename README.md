@@ -92,7 +92,7 @@ OOS Review 建議額外包含：
 
 1. 篩選 `RP Type = ND` 的所有 SKU（不分 Shop Stock Status）
 2. **Warehouse 貨**：建議全數退倉 `transfer = Shop Stock Qty (CM)`
-3. **Vendor 貨**：標記「留在原鋪」，不可退倉 `transfer = 0`
+3. **Vendor 貨**：標記「另有安排」，不可退倉 `transfer = 0`
 4. ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（如 Warehouse - Overstock、Vendor - Normal）
 
 輸出包含 RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要共 4 個工作表。

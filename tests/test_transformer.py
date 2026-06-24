@@ -204,12 +204,12 @@ def test_nd_warehouse_all_nd_rows_recommend_full_transfer():
 
 
 def test_nd_vendor_marked_stay_at_shop():
-    """ND + Vendor stock must be marked '留在原鋪' with transfer=0."""
+    """ND + Vendor stock must be marked '另有安排' with transfer=0."""
     df = _df([
         {"SKU": "1", "RP Type": "ND", "Supply Source": "Vendor", "Shop Stock Qty (CM)": 9, "Shop Stock Status": "Normal"},
     ])
     out = _add_nd_recommendation_columns(df)
-    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "留在原鋪"
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "另有安排"
     assert out["After new Safety Qty / ND can transfer out of QTY"].tolist()[0] == 0
 
 
@@ -231,7 +231,7 @@ def test_nd_supply_source_normalized():
         {"SKU": "2", "RP Type": "ND", "Supply Source": "VENDOR", "Shop Stock Qty (CM)": 4, "Shop Stock Status": "Normal"},
     ])
     out = _add_nd_recommendation_columns(df)
-    assert out["Recommendation of new Safety Qty / ND"].tolist() == ["ND", "留在原鋪"]
+    assert out["Recommendation of new Safety Qty / ND"].tolist() == ["ND", "另有安排"]
     assert out["After new Safety Qty / ND can transfer out of QTY"].tolist() == [6, 0]
 
 

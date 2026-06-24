@@ -199,7 +199,7 @@ with st.sidebar:
 
     **✂️ SKU 精簡 Review**
     - 針對 RP Type 為 ND 的 SKU 建議退倉，區分 Supply Source
-    - Warehouse 貨：建議全數退倉；Vendor 貨：標記「留在原鋪」不可退倉
+    - Warehouse 貨：建議全數退倉；Vendor 貨：標記「另有安排」不可退倉
     - 依 Supply Source × Shop Stock Status 雙層動態分類
     - 輸出：RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要
 
@@ -258,7 +258,7 @@ with st.sidebar:
     **SKU 精簡 Review** — 針對 ND SKU 建議退倉（區分 Supply Source）：
     1. 篩選 RP Type = ND 的所有 SKU（不分 Shop Stock Status）
     2. **Warehouse 貨**：建議全數退倉 `transfer = Shop Stock Qty (CM)`
-    3. **Vendor 貨**：標記「留在原鋪」，不可退倉 `transfer = 0`
+    3. **Vendor 貨**：標記「另有安排」，不可退倉 `transfer = 0`
     4. ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（如 Warehouse - Overstock、vendor - Normal）
 
     **🔒 Safety Stock Review** — 全面審查 Safety Stock 設定，計算平衡建議值：
@@ -1227,7 +1227,7 @@ if uploaded_file is not None:
 
             with tab2:
                 st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
-                st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽（RP Type=ND：Warehouse 建議退倉、Vendor 標記「留在原鋪」）：")
+                st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽（RP Type=ND：Warehouse 建議退倉、Vendor 標記「另有安排」）：")
                 _filtered_raw = raw_df.copy()
                 if selected_site_code != "全部" and "Site Code" in _filtered_raw.columns:
                     _filtered_raw = _filtered_raw[_filtered_raw["Site Code"].astype(str).str.strip() == selected_site_code]

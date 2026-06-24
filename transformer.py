@@ -1132,7 +1132,7 @@ def _add_nd_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
     shop_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
 
     # Only Warehouse stock can be returned to warehouse (退倉); Vendor stock must
-    # stay at the shop (留在原鋪) and contributes 0 to transfer quantity.
+    # stay at the shop (另有安排) and contributes 0 to transfer quantity.
     supply_source = (
         df.get("Supply Source", _safe_default_series("", df.index))
         .fillna("")
@@ -1148,7 +1148,7 @@ def _add_nd_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
     rec_values = np.full(len(df), "", dtype=object)
     rec_values[is_warehouse.values] = "ND"
     # Vendor stock cannot be returned — mark it so buyers see why it is not 退倉.
-    rec_values[is_vendor.values] = "留在原鋪"
+    rec_values[is_vendor.values] = "另有安排"
 
     transfer_values = np.full(len(df), "", dtype=object)
     # Warehouse: transfer all shop stock; Vendor or zero stock: transfer 0.
