@@ -57,6 +57,12 @@ RAW_COLUMN_ORDER_NAMES = [
     "Excess Stock Value",
     "Shop On Order PO Qty (CM)",
     "Shop Pending Receive",
+    "Projected MTD Sold Qty",
+    "Decline Rate (M-2→M-1)",
+    "Decline Rate (M-1→MTD)",
+    "Max Decline Rate",
+    "Is Declining",
+    "Decline Severity",
 ]
 
 
@@ -2473,4 +2479,439 @@ def _write_pivot_block(ws, pivot_df, start_row, excel_cols, detail_cols, data_co
         if progress_callback and (row_idx % 500 == 0 or row_idx == total_rows - 1):
             progress_callback(0.15 + 0.4 * ((row_idx + 1) / max(total_rows, 1)),
                             f"寫入 Summary {prefix} ({row_idx+1}/{total_rows})...")
+
+
+# ─── Sales Decline Detection Functions ──────────────────────────────────────────
+
+DECLINE_CATEGORIES = ["Mild", "Moderate", "Severe"]
+
+
+def _classify_severity(rate: float) -> str:
+    if rate < 10:
+        return "None"
+    elif rate < 20:
+        return "Mild"
+    elif rate < 50:
+        return "Moderate"
+    else:
+        return "Severe"
+
+
+def _add_decline_columns(df: pd.DataFrame, mtd_days: int, month_total_days: int) -> pd.DataFrame:
+    df = df.copy()
+
+    m2 = _safe_numeric(df.get("Sold Qty (M-2)", _safe_default_series(0.0, df.index)))
+    m1 = _safe_numeric(df.get("Sold Qty (M-1)", _safe_default_series(0.0, df.index)))
+    mtd = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0.0, df.index)))
+
+    if mtd_days > 0:
+        projected_mtd = np.ceil((mtd / mtd_days) * month_total_days)
+    else:
+        projected_mtd = mtd
+    df["Projected MTD Sold Qty"] = projected_mtd.astype(int)
+
+    decline_m2_m1 = np.where(
+        m2 > 0,
+        np.clip((m2 - m1) / m2 * 100, 0, None),
+        0.0
+    )
+    decline_m1_mtd = np.where(
+        m1 > 0,
+        np.clip((m1 - projected_mtd) / m1 * 100, 0, None),
+        0.0
+    )
+
+    df["Decline Rate (M-2→M-1)"] = np.round(decline_m2_m1, 1)
+    df["Decline Rate (M-1→MTD)"] = np.round(decline_m1_mtd, 1)
+
+    max_rate = np.maximum(decline_m2_m1, decline_m1_mtd)
+    df["Max Decline Rate"] = max_rate.astype(int)
+
+    has_enough_data = (m2 > 0) & (m1 > 0)
+    both_declining = has_enough_data & (decline_m2_m1 > 0) & (decline_m1_mtd > 0)
+    df["Is Declining"] = both_declining
+
+    severity = np.full(len(df), "None", dtype=object)
+    mild_mask = both_declining & (max_rate >= 10) & (max_rate < 20)
+    moderate_mask = both_declining & (max_rate >= 20) & (max_rate < 50)
+    severe_mask = both_declining & (max_rate >= 50)
+    severity[mild_mask] = "Mild"
+    severity[moderate_mask] = "Moderate"
+    severity[severe_mask] = "Severe"
+    insufficient = ~has_enough_data & (m2 + m1 + mtd > 0)
+    severity[insufficient] = "Insufficient Data"
+
+    df["Decline Severity"] = severity
+
+    return df
+
+
+def _build_decline_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
+    declining = raw[raw["Is Declining"] & raw["Decline Severity"].isin(DECLINE_CATEGORIES)].copy()
+    if declining.empty:
+        col_names = group_cols + ["衰退行數", "M-2 銷售總量", "M-1 銷售總量", "預估MTD銷售總量",
+                                   "平均衰退率(%)", "輕度衰退", "中度衰退", "重度衰退"]
+        return pd.DataFrame(columns=col_names)
+
+    declining["_m2"] = _safe_numeric(declining.get("Sold Qty (M-2)", _safe_default_series(0.0, declining.index)))
+    declining["_m1"] = _safe_numeric(declining.get("Sold Qty (M-1)", _safe_default_series(0.0, declining.index)))
+    declining["_proj"] = _safe_numeric(declining.get("Projected MTD Sold Qty", _safe_default_series(0.0, declining.index)))
+    declining["_max"] = _safe_numeric(declining.get("Max Decline Rate", _safe_default_series(0, declining.index)))
+    declining["_sev"] = declining["Decline Severity"]
+
+    agg = (
+        declining.groupby(group_cols, dropna=False, observed=True)
+        .agg(
+            衰退行數=("_m2", "count"),
+            **{
+                "M-2 銷售總量": ("_m2", "sum"),
+                "M-1 銷售總量": ("_m1", "sum"),
+                "預估MTD銷售總量": ("_proj", "sum"),
+                "平均衰退率(%)": ("_max", "mean"),
+                "輕度衰退": ("_sev", lambda x: (x == "Mild").sum()),
+                "中度衰退": ("_sev", lambda x: (x == "Moderate").sum()),
+                "重度衰退": ("_sev", lambda x: (x == "Severe").sum()),
+            },
+        )
+        .reset_index()
+    )
+
+    agg["平均衰退率(%)"] = agg["平均衰退率(%)"].round(1)
+    for c in ["衰退行數", "M-2 銷售總量", "M-1 銷售總量", "預估MTD銷售總量", "輕度衰退", "中度衰退", "重度衰退"]:
+        agg[c] = agg[c].fillna(0).astype(int)
+
+    agg = agg.sort_values(["重度衰退", "平均衰退率(%)"], ascending=[False, False]).reset_index(drop=True)
+
+    total_data = {col: "" for col in group_cols}
+    total_data[group_cols[0]] = "總計"
+    total_data["衰退行數"] = int(agg["衰退行數"].sum())
+    total_data["M-2 銷售總量"] = int(agg["M-2 銷售總量"].sum())
+    total_data["M-1 銷售總量"] = int(agg["M-1 銷售總量"].sum())
+    total_data["預估MTD銷售總量"] = int(agg["預估MTD銷售總量"].sum())
+    total_data["平均衰退率(%)"] = round(float(agg["平均衰退率(%)"].mean()), 1)
+    total_data["輕度衰退"] = int(agg["輕度衰退"].sum())
+    total_data["中度衰退"] = int(agg["中度衰退"].sum())
+    total_data["重度衰退"] = int(agg["重度衰退"].sum())
+
+    agg = pd.concat([agg, pd.DataFrame([total_data])], ignore_index=True)
+
+    for c in ["_m2", "_m1", "_proj", "_max", "_sev"]:
+        if c in agg.columns:
+            agg.drop(columns=[c], inplace=True)
+
+    return agg
+
+
+_DECLINE_WARNING_COLS = [
+    "Buyer", "Brand", "SKU", "SKU Desc", "Site Code", "Shop Name", "OM",
+    "Shop Nature", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
+    "Projected MTD Sold Qty", "Decline Rate (M-2→M-1)", "Decline Rate (M-1→MTD)",
+    "Max Decline Rate", "Decline Severity",
+]
+
+
+def transform_decline(
+    df_input: pd.DataFrame,
+    progress_callback=None,
+    shop_natures: list[str] | None = None,
+    mtd_days: int | None = None,
+    month_total_days: int | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str], list[str]]:
+    missing = validate_input(df_input)
+    if missing:
+        raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
+
+    warnings = []
+
+    _optional_cols = ["Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)", "Adj. MCH1"]
+    for _col in _optional_cols:
+        if _col not in df_input.columns:
+            warnings.append(f"缺少可選欄位「{_col}」，相關統計將受影響")
+
+    if mtd_days is None or mtd_days <= 0:
+        raise ValueError("MTD 天數必須大於 0")
+
+    if month_total_days is None or month_total_days <= 0:
+        raise ValueError("當月總天數必須大於 0")
+
+    if progress_callback:
+        progress_callback(0.05, "驗證通過")
+
+    df = _clean_dataframe(df_input, shop_natures=shop_natures, progress_callback=progress_callback)
+
+    if df.empty:
+        raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據")
+
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+
+    if "SKU Desc" not in df.columns:
+        df = _compute_raw_extra_columns(df)
+
+    if progress_callback:
+        progress_callback(0.2, "計算衰退指標中...")
+
+    raw = _add_decline_columns(df, mtd_days, month_total_days)
+
+    categories = DECLINE_CATEGORIES
+
+    if progress_callback:
+        progress_callback(0.4, "建構多維度彙總中...")
+
+    _site_cols = ["Site Code", "Shop Name", "OM"]
+    site_cols_avail = [c for c in _site_cols if c in raw.columns]
+    summary_site = _build_decline_summary(raw, site_cols_avail) if len(site_cols_avail) >= 1 else pd.DataFrame()
+
+    summary_brand = _build_decline_summary(raw, ["Brand"]) if "Brand" in raw.columns else pd.DataFrame()
+    summary_buyer = _build_decline_summary(raw, ["Buyer"]) if "Buyer" in raw.columns else pd.DataFrame()
+    summary_category = pd.DataFrame()
+    if "Adj. MCH1" in raw.columns:
+        summary_category = _build_decline_summary(raw, ["Adj. MCH1"])
+    else:
+        warnings.append("缺少「Adj. MCH1」欄位，無法產出 By Category 分析")
+
+    if progress_callback:
+        progress_callback(0.7, "轉換完成")
+
+    return summary_site, summary_brand, summary_buyer, summary_category, raw, categories, warnings
+
+
+def _write_decline_detail_sheet(ws, raw_df, header_font, header_fill, thin_border, progress_callback):
+    declining = raw_df[raw_df["Is Declining"] & raw_df["Decline Severity"].isin(DECLINE_CATEGORIES)].copy()
+    sev_order = {"Severe": 0, "Moderate": 1, "Mild": 2}
+    declining["_sev_order"] = declining["Decline Severity"].map(sev_order).fillna(3)
+    declining = declining.sort_values(["_sev_order", "Max Decline Rate"], ascending=[True, False])
+
+    avail_cols = [c for c in _DECLINE_WARNING_COLS if c in declining.columns]
+    detail = declining[avail_cols].copy()
+    detail = detail.reset_index(drop=True)
+
+    for col_idx, h in enumerate(avail_cols, 1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    total_rows = len(detail)
+    for row_idx in range(total_rows):
+        excel_row = row_idx + 2
+        for col_idx, h in enumerate(avail_cols, 1):
+            val = detail.iloc[row_idx].get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        if progress_callback and (row_idx % 500 == 0 or row_idx == total_rows - 1):
+            progress_callback(0.1 + 0.15 * ((row_idx + 1) / max(total_rows, 1)),
+                            f"寫入警告明細 ({row_idx+1}/{total_rows})...")
+
+    _auto_width(ws)
+
+
+def _write_decline_dashboard(ws, raw_df, summary_site, summary_brand, summary_buyer, thin_border, desc_font, progress_callback):
+    declining_mask = raw_df["Is Declining"] & raw_df["Decline Severity"].isin(DECLINE_CATEGORIES)
+    declining = raw_df[declining_mask].copy()
+
+    total_declining = len(declining)
+    mild_count = int((declining["Decline Severity"] == "Mild").sum()) if total_declining else 0
+    moderate_count = int((declining["Decline Severity"] == "Moderate").sum()) if total_declining else 0
+    severe_count = int((declining["Decline Severity"] == "Severe").sum()) if total_declining else 0
+
+    m2_total = int(_safe_numeric(declining.get("Sold Qty (M-2)", _safe_default_series(0, declining.index))).sum()) if total_declining else 0
+    m1_total = int(_safe_numeric(declining.get("Sold Qty (M-1)", _safe_default_series(0, declining.index))).sum()) if total_declining else 0
+    proj_total = int(_safe_numeric(declining.get("Projected MTD Sold Qty", _safe_default_series(0, declining.index))).sum()) if total_declining else 0
+    sales_at_risk = m2_total - proj_total
+
+    row1_metrics = [
+        ("總衰退行數", total_declining, "符合雙期衰退條件的總行數", "EF4444"),
+        ("輕度衰退 (10-20%)", mild_count, "衰退率 10%-20% 之間", "F59E0B"),
+        ("中度衰退 (20-50%)", moderate_count, "衰退率 20%-50% 之間", "F97316"),
+        ("重度衰退 (≥50%)", severe_count, "衰退率超過 50%", "DC2626"),
+    ]
+
+    row2_metrics = [
+        ("M-2 銷售總量", m2_total, "衰退品項在 M-2 期間的總銷售", "3B82F6"),
+        ("M-1 銷售總量", m1_total, "衰退品項在 M-1 期間的總銷售", "8B5CF6"),
+        ("預估 MTD 銷售總量", proj_total, "衰退品項在 MTD 期間的預估全月銷售", "06B6D4"),
+        ("銷售損失量 (M-2→MTD)", sales_at_risk, "M-2 到預估 MTD 的銷售下降量", "DC2626"),
+    ]
+
+    _write_metric_cards(ws, "銷售趨勢衰退分析摘要 (Sales Decline Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
+
+    # Write top 5 most declining brands/sites below metric cards
+    if progress_callback:
+        progress_callback(0.9, "寫入排行資訊...")
+
+    if not summary_brand.empty and len(summary_brand) > 1:
+        ws.cell(row=14, column=1, value="Top 5 衰退最嚴重的 Brand").font = Font(bold=True, size=12, color="1E40AF")
+        top_brands = summary_brand[summary_brand["Brand"] != "總計"].head(5)
+        for col_idx, h in enumerate(top_brands.columns, 1):
+            cell = ws.cell(row=15, column=col_idx, value=h)
+            cell.font = Font(bold=True, size=10, color="FFFFFF")
+            cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+        for row_idx, (_, row_data) in enumerate(top_brands.iterrows()):
+            excel_row = 16 + row_idx
+            for col_idx, h in enumerate(top_brands.columns, 1):
+                val = row_data.get(h)
+                if pd.isna(val):
+                    val = None
+                cell = ws.cell(row=excel_row, column=col_idx, value=val)
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                if isinstance(val, (int, float)):
+                    cell.number_format = "#,##0"
+
+    if not summary_site.empty and len(summary_site) > 1:
+        site_start_row = 22
+        site_cols_avail = [c for c in ["Site Code", "Shop Name", "OM"] if c in summary_site.columns]
+        ws.cell(row=site_start_row, column=1, value="Top 5 衰退最嚴重的 Site").font = Font(bold=True, size=12, color="1E40AF")
+        top_sites = summary_site[~summary_site[site_cols_avail[0]].isin(["總計", ""])].head(5) if site_cols_avail else pd.DataFrame()
+        if not top_sites.empty:
+            for col_idx, h in enumerate(top_sites.columns, 1):
+                cell = ws.cell(row=site_start_row + 1, column=col_idx, value=h)
+                cell.font = Font(bold=True, size=10, color="FFFFFF")
+                cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                cell.border = thin_border
+            for row_idx, (_, row_data) in enumerate(top_sites.iterrows()):
+                excel_row = site_start_row + 2 + row_idx
+                for col_idx, h in enumerate(top_sites.columns, 1):
+                    val = row_data.get(h)
+                    if pd.isna(val):
+                        val = None
+                    cell = ws.cell(row=excel_row, column=col_idx, value=val)
+                    cell.border = thin_border
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                    if isinstance(val, (int, float)):
+                        cell.number_format = "#,##0"
+
+    _auto_width(ws)
+
+
+def _write_decline_summary_sheet(ws, summary_df, sheet_title, header_font, header_fill, thin_border, progress_callback, progress_start, progress_end):
+    ws.cell(row=1, column=1, value=sheet_title).font = Font(bold=True, size=12, color="1E40AF")
+
+    headers = list(summary_df.columns)
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    total_rows = len(summary_df)
+    for row_idx, row_data in summary_df.iterrows():
+        excel_row = 4 + row_idx
+        is_total = any(str(v) == "總計" for v in row_data.values if isinstance(v, str))
+        for col_idx, h in enumerate(headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_total:
+                cell.font = Font(bold=True, size=11)
+            if isinstance(val, (int, float)):
+                cell.number_format = "#,##0"
+        if progress_callback and (row_idx % 500 == 0 or row_idx == total_rows - 1):
+            p = progress_start + (progress_end - progress_start) * ((row_idx + 1) / max(total_rows, 1))
+            progress_callback(p, f"寫入 {sheet_title} ({row_idx+1}/{total_rows})...")
+
+    _auto_width(ws)
+
+
+def generate_excel_decline(
+    summary_site: pd.DataFrame,
+    summary_brand: pd.DataFrame,
+    summary_buyer: pd.DataFrame,
+    summary_category: pd.DataFrame,
+    raw_df: pd.DataFrame,
+    categories: list[str],
+    progress_callback=None,
+) -> BytesIO:
+    wb = Workbook()
+
+    if progress_callback:
+        progress_callback(0.0, "建立 Excel 結構...")
+
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    bold_font = Font(bold=True, size=11)
+    desc_font = Font(size=9, color="6B7280", italic=True)
+
+    # Sheet 1: RAW
+    ws_raw = wb.active
+    ws_raw.title = "RAW"
+    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.08)
+
+    if progress_callback:
+        progress_callback(0.1, "建立衰退警告明細工作表...")
+
+    # Sheet 2: Decline Warning Detail
+    ws_detail = wb.create_sheet(title="Decline Warning Detail")
+    _write_decline_detail_sheet(ws_detail, raw_df, header_font, header_fill, thin_border, progress_callback)
+
+    # Sheet 3: By Site
+    if progress_callback:
+        progress_callback(0.3, "建立 By Site 分析工作表...")
+    ws_site = wb.create_sheet(title="By Site")
+    if not summary_site.empty:
+        _write_decline_summary_sheet(ws_site, summary_site, "By Site - 銷售衰退分析",
+                                    header_font, header_fill, thin_border, progress_callback, 0.3, 0.4)
+    else:
+        ws_site.cell(row=1, column=1, value="無 Site 層級衰退數據").font = Font(size=12)
+
+    # Sheet 4: By Brand
+    if progress_callback:
+        progress_callback(0.42, "建立 By Brand 分析工作表...")
+    ws_brand = wb.create_sheet(title="By Brand")
+    if not summary_brand.empty:
+        _write_decline_summary_sheet(ws_brand, summary_brand, "By Brand - 銷售衰退分析",
+                                    header_font, header_fill, thin_border, progress_callback, 0.42, 0.52)
+    else:
+        ws_brand.cell(row=1, column=1, value="無 Brand 層級衰退數據").font = Font(size=12)
+
+    # Sheet 5: By Buyer
+    if progress_callback:
+        progress_callback(0.54, "建立 By Buyer 分析工作表...")
+    ws_buyer = wb.create_sheet(title="By Buyer")
+    if not summary_buyer.empty:
+        _write_decline_summary_sheet(ws_buyer, summary_buyer, "By Buyer - 銷售衰退分析",
+                                    header_font, header_fill, thin_border, progress_callback, 0.54, 0.64)
+    else:
+        ws_buyer.cell(row=1, column=1, value="無 Buyer 層級衰退數據").font = Font(size=12)
+
+    # Sheet 6: By Category
+    if progress_callback:
+        progress_callback(0.66, "建立 By Category 分析工作表...")
+    ws_category = wb.create_sheet(title="By Category")
+    if not summary_category.empty:
+        _write_decline_summary_sheet(ws_category, summary_category, "By Category (Adj. MCH1) - 銷售衰退分析",
+                                    header_font, header_fill, thin_border, progress_callback, 0.66, 0.76)
+    else:
+        ws_category.cell(row=1, column=1, value="無 Category (Adj. MCH1) 層級衰退數據").font = Font(size=12)
+
+    # Sheet 7: Dashboard
+    if progress_callback:
+        progress_callback(0.8, "建立銷售衰退分析摘要工作表...")
+    ws_dashboard = wb.create_sheet(title="Sales Decline Dashboard")
+    _write_decline_dashboard(ws_dashboard, raw_df, summary_site, summary_brand, summary_buyer,
+                            thin_border, desc_font, progress_callback)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    if progress_callback:
+        progress_callback(1.0, "完成!")
+
+    return buf
 

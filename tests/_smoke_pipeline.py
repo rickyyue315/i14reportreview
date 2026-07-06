@@ -8,6 +8,7 @@ from transformer import (
     transform_oos, generate_excel_oos,
     transform_carry, generate_excel_carry,
     transform_combined, generate_excel_combined,
+    transform_decline, generate_excel_decline,
 )
 
 BASE = {
@@ -77,6 +78,14 @@ def main():
                                         mtd_days=15, month_total_days=30, safety_mode=mode)
         generate_excel_combined(s, r, c)
         print("OK Safety Stock (%s)  | rows=%d warnings=%d" % (mode, len(s), len(w)))
+
+    # ── Sales Decline Detection ──
+    dec_site, dec_brand, dec_buyer, dec_cat, dec_raw, dec_cats, dec_warns = transform_decline(
+        df, mtd_days=15, month_total_days=30
+    )
+    generate_excel_decline(dec_site, dec_brand, dec_buyer, dec_cat, dec_raw, dec_cats)
+    dec_count = int(dec_raw["Is Declining"].sum())
+    print("OK Sales Decline Detection | declining_rows=%d warnings=%d" % (dec_count, len(dec_warns)))
 
     print("\nALL PIPELINES COMPLETED")
 

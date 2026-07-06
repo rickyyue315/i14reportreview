@@ -9,6 +9,7 @@ from transformer import (
     transform_carry, generate_excel_carry,
     transform_combined, generate_excel_combined,
     transform_nd, generate_excel_nd,
+    transform_decline, generate_excel_decline,
 )
 import time
 import traceback
@@ -207,6 +208,11 @@ with st.sidebar:
     - 全面審查各 SKU×Shop 的安全庫存設定是否合理
     - 結合 Overstock Cap（庫存上限）與 OOS Floor（缺貨底線），雙向平衡調整 Safety Stock
     - 支援逐 Site 檢視、Overstock / OOS Rate 自訂、Safety 只增或加減模式
+
+    **📉 Sales Decline Detection**
+    - 比對 M-2 → M-1 → MTD 三期的銷售趨勢，標記連續衰退品項
+    - 提供輕度 (10-20%) / 中度 (20-50%) / 重度 (≥50%) 三級警告
+    - 支援 By Site / By Brand / By Buyer / By Category 多維度分析
     """)
     
     st.divider()
@@ -261,14 +267,23 @@ with st.sidebar:
     3. **Vendor 貨**：標記「另有安排」，不可退倉 `transfer = 0`
     4. ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（如 Warehouse - Overstock、vendor - Normal）
 
-    **🔒 Safety Stock Review** — 全面審查 Safety Stock 設定，計算平衡建議值：
-    1. **Overstock Cap (X)** = floor(月均銷售 × Overstock Rate)，上限不超過現有 Adj. Safety Stock
-    2. **OOS Floor (Y)** = ceil(MTD 預估月銷售 × OOS Rate)，最低 3
-    3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Adj. Safety Stock
-    4. **Safety Qty Change** = 建議 Safety Stock − Z（正數=增加、負數=減少、零=不變）
-    5. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
+     **🔒 Safety Stock Review** — 全面審查 Safety Stock 設定，計算平衡建議值：
+     1. **Overstock Cap (X)** = floor(月均銷售 × Overstock Rate)，上限不超過現有 Adj. Safety Stock
+     2. **OOS Floor (Y)** = ceil(MTD 預估月銷售 × OOS Rate)，最低 3
+     3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Adj. Safety Stock
+     4. **Safety Qty Change** = 建議 Safety Stock − Z（正數=增加、負數=減少、零=不變）
+     5. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
 
-    所有模式均自動生成採購與品牌的交叉匯總樞紐分析表。
+     **📉 Sales Decline Detection** — 銷售趨勢衰退分析判別：
+     1. **預估 MTD** = ceil(Sold Qty CM-MTD ÷ MTD 天數 × 當月總天數)，將部分月正規化為全月
+     2. **衰退率 (M-2→M-1)** = (M-2 − M-1) ÷ M-2，僅取正值（上升則為 0）
+     3. **衰退率 (M-1→MTD)** = (M-1 − 預估 MTD) ÷ M-1，僅取正值
+     4. **判定衰退** = 兩期衰退率均 > 0（即 M-2 > M-1 且 M-1 > 預估 MTD）
+     5. **嚴重等級** = 取兩期衰退率之最大值：
+        - 輕度 ≧ 10% / 中度 ≧ 20% / 重度 ≧ 50%
+     6. 支援多維度彙總：By Site / Brand / Buyer / Category (Adj. MCH1)
+
+     所有模式均自動生成採購與品牌的交叉匯總樞紐分析表。
     """)
     
     st.divider()
@@ -291,7 +306,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 5. 模式選擇器
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "Safety Stock Review"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "Safety Stock Review", "Sales Decline Detection"]
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0)
 
 # 6. 初始化 Session State (確保下載與重整時狀態持久化)
@@ -301,6 +316,7 @@ MODE_KEYS = {
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
+    "Sales Decline Detection": {"prefix": "decline_", "processed": False, "summary_site": None, "summary_brand": None, "summary_buyer": None, "summary_category": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -694,6 +710,216 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載 Safety Stock Review 分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+            )
+    elif mode == "Sales Decline Detection":
+        mtd_date = st.date_input(
+            "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
+            value=datetime.now().date() - timedelta(days=1),
+            help="選擇 MTD 截止日期，系統將用於推算全月預估銷售以比較 M-1 與 CM-MTD 的衰退幅度。"
+        )
+        mtd_days = mtd_date.day
+        month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
+        st.caption(f"MTD: {mtd_days}日，當月共 {month_total_days} 日")
+
+        st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+        if st.button("⚙️ 執行銷售趨勢衰退分析", type="primary", width='stretch'):
+            _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
+            _t0_2 = time.time()
+
+            def _cb(pct, msg):
+                _e = time.time() - _t0_2
+                _eta2 = (_e / pct) - _e if pct > 0 else 0
+                _prog2.progress(min(pct, 1.0), text=f"處理中... {pct*100:.0f}% | {msg} | 已用: {_e:.0f}s | 預計剩餘: {_eta2:.0f}s")
+
+            try:
+                def _cb_transform(pct, msg):
+                    _cb(0.6 * pct, msg)
+
+                def _cb_excel(pct, msg):
+                    _cb(0.6 + 0.4 * pct, msg)
+
+                summary_site, summary_brand, summary_buyer, summary_category, raw_df, categories, _warnings = transform_decline(
+                    df_input,
+                    progress_callback=_cb_transform,
+                    mtd_days=mtd_days,
+                    month_total_days=month_total_days,
+                )
+                buf = generate_excel_decline(summary_site, summary_brand, summary_buyer, summary_category, raw_df, categories, progress_callback=_cb_excel)
+
+                st.session_state.decline_processed = True
+                st.session_state.decline_summary_site = summary_site
+                st.session_state.decline_summary_brand = summary_brand
+                st.session_state.decline_summary_buyer = summary_buyer
+                st.session_state.decline_summary_category = summary_category
+                st.session_state.decline_raw_df = raw_df
+                st.session_state.decline_categories = categories
+                st.session_state.decline_excel_data = buf
+                st.session_state.decline_warnings = _warnings
+            except Exception as e:
+                _prog2.empty()
+                _tb = traceback.format_exc()
+                print(f"❌ Sales Decline Detection 處理失敗: {e}\n{_tb}")
+                st.error(f"❌ Sales Decline Detection 處理失敗: {e}\n\n詳細錯誤: {_tb}")
+                st.stop()
+
+            _prog2.empty()
+            st.success("🎉 銷售趨勢衰退分析完成！")
+            if _warnings:
+                for _w in _warnings:
+                    st.warning(f"⚠️ {_w}")
+
+        if st.session_state.decline_processed:
+            summary_site = st.session_state.decline_summary_site
+            summary_brand = st.session_state.decline_summary_brand
+            summary_buyer = st.session_state.decline_summary_buyer
+            summary_category = st.session_state.decline_summary_category
+            raw_df = st.session_state.decline_raw_df
+            categories = st.session_state.decline_categories
+            excel_data = st.session_state.decline_excel_data
+
+            declining_mask = raw_df["Is Declining"] & raw_df["Decline Severity"].isin(categories)
+            declining = raw_df[declining_mask].copy()
+            total_declining = len(declining)
+            mild_count = int((declining["Decline Severity"] == "Mild").sum()) if total_declining else 0
+            moderate_count = int((declining["Decline Severity"] == "Moderate").sum()) if total_declining else 0
+            severe_count = int((declining["Decline Severity"] == "Severe").sum()) if total_declining else 0
+
+            from transformer import _safe_numeric, _safe_default_series
+            m2_total = int(_safe_numeric(declining.get("Sold Qty (M-2)", _safe_default_series(0, declining.index))).sum()) if total_declining else 0
+            proj_total = int(_safe_numeric(declining.get("Projected MTD Sold Qty", _safe_default_series(0, declining.index))).sum()) if total_declining else 0
+            sales_at_risk = m2_total - proj_total
+
+            st.markdown('<div class="custom-card" style="border-top: 4px solid #dc2626;">', unsafe_allow_html=True)
+            st.markdown("### 📈 銷售趨勢衰退分析摘要 (Sales Decline Dashboard)")
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #EF4444;">
+                    <div class="metric-title">總衰退行數</div>
+                    <div class="metric-value" style="color: #EF4444;">{total_declining:,}</div>
+                    <div class="metric-desc">符合雙期衰退條件的總行數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #F59E0B;">
+                    <div class="metric-title">輕度衰退 (10-20%)</div>
+                    <div class="metric-value" style="color: #F59E0B;">{mild_count:,}</div>
+                    <div class="metric-desc">衰退率 10%-20% 之間</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #F97316;">
+                    <div class="metric-title">中度衰退 (20-50%)</div>
+                    <div class="metric-value" style="color: #F97316;">{moderate_count:,}</div>
+                    <div class="metric-desc">衰退率 20%-50% 之間</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #DC2626;">
+                    <div class="metric-title">重度衰退 (≥50%)</div>
+                    <div class="metric-value" style="color: #DC2626;">{severe_count:,}</div>
+                    <div class="metric-desc">衰退率超過 50%</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+            r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
+            with r2_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #3B82F6;">
+                    <div class="metric-title">M-2 銷售總量</div>
+                    <div class="metric-value" style="color: #3B82F6;">{m2_total:,}</div>
+                    <div class="metric-desc">衰退品項在 M-2 期間的總銷售</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #8B5CF6;">
+                    <div class="metric-title">預估 MTD 銷售總量</div>
+                    <div class="metric-value" style="color: #8B5CF6;">{proj_total:,}</div>
+                    <div class="metric-desc">衰退品項在 MTD 的預估全月銷售</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #DC2626;">
+                    <div class="metric-title">銷售損失量</div>
+                    <div class="metric-value" style="color: #DC2626;">{sales_at_risk:,}</div>
+                    <div class="metric-desc">M-2 到預估 MTD 的銷售下降量</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col4:
+                # Top declining buyer
+                top_buyer_name = ""
+                top_buyer_count = 0
+                if summary_buyer is not None and not summary_buyer.empty and "Buyer" in summary_buyer.columns:
+                    _buyer_data = summary_buyer[~summary_buyer["Buyer"].isin(["總計", ""])]
+                    if not _buyer_data.empty:
+                        _top = _buyer_data.sort_values("衰退行數", ascending=False).iloc[0]
+                        top_buyer_name = str(_top["Buyer"])
+                        top_buyer_count = int(_top["衰退行數"])
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #F97316;">
+                    <div class="metric-title">衰退最嚴重 Buyer</div>
+                    <div class="metric-value" style="color: #F97316; font-size: 1.1rem;">{top_buyer_name}</div>
+                    <div class="metric-desc">{top_buyer_count:,} 行衰退品項</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+            decline_tabs = st.tabs(["🏪 By Site", "🏷️ By Brand", "👤 By Buyer", "📦 By Category"])
+
+            with decline_tabs[0]:
+                st.markdown("#### Site 層級銷售衰退分析")
+                if summary_site is not None and not summary_site.empty:
+                    st.dataframe(summary_site, width='stretch', hide_index=True)
+                else:
+                    st.info("無 Site 層級衰退數據")
+
+            with decline_tabs[1]:
+                st.markdown("#### Brand 層級銷售衰退分析")
+                if summary_brand is not None and not summary_brand.empty:
+                    st.dataframe(summary_brand, width='stretch', hide_index=True)
+                else:
+                    st.info("無 Brand 層級衰退數據")
+
+            with decline_tabs[2]:
+                st.markdown("#### Buyer 層級銷售衰退分析")
+                if summary_buyer is not None and not summary_buyer.empty:
+                    st.dataframe(summary_buyer, width='stretch', hide_index=True)
+                else:
+                    st.info("無 Buyer 層級衰退數據")
+
+            with decline_tabs[3]:
+                st.markdown("#### Category (Adj. MCH1) 層級銷售衰退分析")
+                if summary_category is not None and not summary_category.empty:
+                    st.dataframe(summary_category, width='stretch', hide_index=True)
+                elif "Adj. MCH1" not in raw_df.columns:
+                    st.info("來源檔案缺少 Adj. MCH1 欄位，無法產出 By Category 分析")
+                else:
+                    st.info("無 Category 層級衰退數據")
+
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 Sales Decline Detection_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載銷售衰退分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

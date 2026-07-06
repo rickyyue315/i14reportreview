@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.5.1 (2026-07-06)
+
+- New: Sales Decline Detection 模式 — 銷售趨勢衰退分析
+- New: `transform_decline()`, `_add_decline_columns()`, `_build_decline_summary()`, `generate_excel_decline()`, `_write_decline_detail_sheet()`, `_write_decline_dashboard()` in transformer.py
+- New: 比對 Sold Qty (M-2) → (M-1) → 預估 MTD 三期的銷售趨勢，判定連續衰退
+- New: 分級警告 — 輕度 (10-20%) / 中度 (20-50%) / 重度 (≥50%)
+- New: 多維度分析 — By Site / By Brand / By Buyer / By Category (Adj. MCH1)，以 Tab 切換
+- New: Excel 輸出包含 RAW、Decline Warning Detail、By Site、By Brand、By Buyer、By Category、Sales Decline Dashboard 共 7 個工作表
+- New: MTD 日期選擇與自動正規化（Sold Qty CM-MTD → 預估全月銷售）
+- Update: RAW_COLUMN_ORDER_NAMES 新增 6 個衰退相關欄位
+
 ## v1.4.17 (2026-06-24)
 
 - Fix: ND SKU Dashboard 的影響採購人員數/品牌總數/SKU總數改為只計 ND 受影響列（不再計入非 ND 列，避免重複或虛增）
