@@ -3572,7 +3572,7 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
     B3: 存貨失衡 SKU 清單
     """
     ws.cell(row=1, column=1, value="Inventory Distribution — 存貨分佈分析").font = Font(bold=True, size=14, color="1E40AF")
-    ws.cell(row=2, column=1, value="重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積；Mix 只需保留 7-14 日 Turnday").font = Font(size=10, italic=True, color="6B7280")
+    ws.cell(row=2, column=1, value="重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積；Non Tourist/Mix 只需保留 7-14 日 Turnday").font = Font(size=10, italic=True, color="6B7280")
 
     current_row = 4
 
@@ -3651,8 +3651,8 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
     """重做為「存貨分佈分析」焦點 Dashboard（v1.6.1）。
 
     聚焦存貨錯配議題：
-    - Tourist 高銷售店缺貨 vs Non Tourist 大量囤積
-    - Mix 店舖可釋放存貨（>14 日標準）
+    - Tourist 高銷售店缺貨 vs Non Tourist/Mix 大量囤積
+    - Non Tourist/Mix 只需保留 7-14 日 Turnday
     """
     impacted = raw_df[raw_df["Is Stock Impacted"]].copy()
     nature = raw_df.get("Shop Nature", pd.Series(dtype=object)).fillna("").astype(str)

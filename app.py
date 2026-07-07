@@ -846,7 +846,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card" style="border-top: 4px solid #dc2626;">', unsafe_allow_html=True)
             st.markdown("### 📦 存貨分佈分析摘要 (Stock Impact Dashboard)")
-            st.caption("🎯 重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積｜Mix 只需保留 7-14 日 Turnday")
+            st.caption("🎯 重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積｜Non Tourist/Mix 只需保留 7-14 日 Turnday")
 
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
@@ -926,7 +926,7 @@ if uploaded_file is not None:
 
             with impact_tabs[0]:
                 st.markdown("#### 📊 存貨分佈分析")
-                st.caption("🎯 焦點：Tourist 高銷售店無貨 vs Non Tourist/Mix 大量囤積；Mix 只需保留 7-14 日 Turnday。")
+                st.caption("🎯 焦點：Tourist 高銷售店無貨 vs Non Tourist/Mix 大量囤積；Non Tourist/Mix 只需保留 7-14 日 Turnday。")
                 if inv_distribution:
                     mix_td = inv_distribution.get("mix_turnday")
                     nt_td = inv_distribution.get("nt_turnday")
