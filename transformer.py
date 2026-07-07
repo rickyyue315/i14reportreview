@@ -67,6 +67,9 @@ RAW_COLUMN_ORDER_NAMES = [
     "Total Sales Loss (M-2)",
     "Total Sales Loss (P90D)",
     "Is Stock Impacted",
+    "Turnday (Days)",
+    "Mix Turnday Band",
+    "Mix Excess Stock",
 ]
 
 
@@ -2573,6 +2576,52 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     any_oos = oos_count.values > 0
     df["Is Stock Impacted"] = any_oos & has_demand & is_rf.values
 
+    # ── Turnday 分級與 Mix 可釋放存貨（存貨分佈分析）──────────────────────────────
+    # Turnday (P90D Qty) 原值正規化：inf/NaN 代表 P90D=0（無周轉意義）
+    turnday_raw = df.get("Turnday (P90D Qty)", _safe_default_series(0, idx))
+    turnday = pd.to_numeric(turnday_raw, errors="coerce")
+    # 將 inf（P90D=0 但有存貨）與 NaN 設為 -1 旗標，方便後續分類
+    turnday_clean = turnday.replace([np.inf, -np.inf], np.nan).fillna(-1)
+    df["Turnday (Days)"] = turnday_clean.where(turnday_clean >= 0, np.nan)
+
+    # Mix 店舖 Turnday 分級（管理層要求 Mix 保留 7-14 日）
+    shop_nature = df.get("Shop Nature", _safe_default_series("", idx)).fillna("").astype(str)
+    is_mix = shop_nature == "Mix"
+    cm_stock_val = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, idx)))
+    has_cm_stock = cm_stock_val.values > 0
+
+    mix_band = np.full(len(df), "", dtype=object)
+    mix_mask = is_mix.values
+    # Mix 子集的 Turnday 值
+    td = turnday_clean.values
+    # 無存貨
+    no_stock = ~has_cm_stock
+    # 無銷售但有存貨（Turnday = -1 且有存貨）= 純囤積
+    no_sale_has_stock = (td < 0) & has_cm_stock
+    # 有銷售：依 Turnday 分級
+    band_under7 = (td >= 0) & (td < 7)
+    band_7_14 = (td >= 7) & (td < 14)
+    band_14_30 = (td >= 14) & (td < 30)
+    band_over30 = (td >= 30)
+
+    mix_band[mix_mask & no_stock] = "無存貨"
+    mix_band[mix_mask & no_sale_has_stock] = "無銷售有存貨"
+    mix_band[mix_mask & band_under7] = "<7日(過低)"
+    mix_band[mix_mask & band_7_14] = "7-14日(理想)"
+    mix_band[mix_mask & band_14_30] = "14-30日(偏高)"
+    mix_band[mix_mask & band_over30] = ">30日(過剩)"
+    df["Mix Turnday Band"] = mix_band
+
+    # Mix 可釋放存貨：超過 14 日標準的部分；無銷售但有存貨者全數可釋放
+    # 理想存貨 = P90D / 30 × 14；可釋放 = max(0, 實際存貨 − 理想存貨)
+    ideal_14d = p90d.values / 30.0 * 14
+    excess = np.where(
+        mix_mask,
+        np.where(no_sale_has_stock, cm_stock_val.values, np.maximum(0, cm_stock_val.values - ideal_14d)),
+        0,
+    )
+    df["Mix Excess Stock"] = excess.astype(int)
+
     return df
 
 
@@ -2894,6 +2943,158 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
     return merged
 
 
+# Mix Turnday 分級順序（用於排序）
+_MIX_BAND_ORDER = ["<7日(過低)", "7-14日(理想)", "14-30日(偏高)", ">30日(過剩)", "無銷售有存貨", "無存貨"]
+
+
+def _build_inventory_distribution_summary(raw: pd.DataFrame) -> dict:
+    """存貨分佈彙總（管理層視角）— 回傳 dict 含 3 個 DataFrame。
+
+    回傳:
+        {
+            "mix_turnday": Mix Turnday 分級表 (B1),
+            "nature_compare": Nature 存貨對比表 (B2),
+            "imbalance_sku": 存貨失衡 SKU 清單 (B3, Tourist缺貨+其他過剩),
+        }
+    """
+    result = {"mix_turnday": pd.DataFrame(), "nature_compare": pd.DataFrame(), "imbalance_sku": pd.DataFrame()}
+
+    if raw.empty or "Shop Nature" not in raw.columns:
+        return result
+
+    nature = raw["Shop Nature"].fillna("").astype(str)
+    cm_stock = _safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, raw.index)))
+    p90d = _safe_numeric(raw.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, raw.index)))
+    turnday = pd.to_numeric(raw.get("Turnday (Days)", _safe_default_series(0, raw.index)), errors="coerce")
+
+    # ── B1: Mix Turnday 分級彙總 ──────────────────────────────────────────────
+    mix_mask = nature == "Mix"
+    mix_data = raw[mix_mask].copy()
+    if not mix_data.empty and "Mix Turnday Band" in mix_data.columns:
+        mix_stock = _safe_numeric(mix_data.get("Shop Stock Qty (CM)", _safe_default_series(0, mix_data.index)))
+        mix_excess = _safe_numeric(mix_data.get("Mix Excess Stock", _safe_default_series(0, mix_data.index)))
+        mix_band_col = mix_data["Mix Turnday Band"].fillna("無存貨")
+        b1 = (
+            mix_data.assign(_stock=mix_stock, _excess=mix_excess, _band=mix_band_col)
+            .groupby("_band", dropna=False)
+            .agg(
+                行數=("_band", "count"),
+                存貨件數=("_stock", "sum"),
+                可釋放件數=("_excess", "sum"),
+            )
+            .reset_index()
+            .rename(columns={"_band": "Mix Turnday 區間"})
+        )
+        # 按預設順序排列
+        b1["__order"] = b1["Mix Turnday 區間"].map({b: i for i, b in enumerate(_MIX_BAND_ORDER)}).fillna(99)
+        b1 = b1.sort_values("__order").drop(columns=["__order"]).reset_index(drop=True)
+        for c in ["行數", "存貨件數", "可釋放件數"]:
+            b1[c] = b1[c].astype(int)
+        # 總計行
+        total = pd.DataFrame([{
+            "Mix Turnday 區間": "總計",
+            "行數": int(b1["行數"].sum()),
+            "存貨件數": int(b1["存貨件數"].sum()),
+            "可釋放件數": int(b1["可釋放件數"].sum()),
+        }])
+        b1 = pd.concat([b1, total], ignore_index=True)
+        result["mix_turnday"] = b1
+
+    # ── B2: Nature 存貨分佈對比 ───────────────────────────────────────────────
+    b2_rows = []
+    for nat in ["Tourist", "Mix", "Non Tourist"]:
+        sub_mask = nature == nat
+        if not sub_mask.any():
+            continue
+        sub_stock = cm_stock[sub_mask]
+        sub_td = turnday[sub_mask]
+        # 缺貨行數 (CM Stock=0)
+        oos_count = int((cm_stock[sub_mask] == 0).sum())
+        # 過剩行數 (>30日)
+        over30 = int((sub_td > 30).sum())
+        b2_rows.append({
+            "Shop Nature": nat,
+            "總行數": int(sub_mask.sum()),
+            "存貨總量(件)": int(sub_stock.sum()),
+            "缺貨行數(CM=0)": oos_count,
+            "平均Turnday(日)": round(float(sub_td.mean()), 1) if sub_td.notna().any() else 0,
+            "過剩行數(>30日)": over30,
+        })
+    if b2_rows:
+        result["nature_compare"] = pd.DataFrame(b2_rows)
+
+    # ── B3: 存貨失衡 SKU 清單 (Tourist缺貨 + 其他Nature過剩) ──────────────────
+    # Tourist 缺貨且有需求的 SKU（Is Stock Impacted 子集）
+    if "Is Stock Impacted" in raw.columns:
+        tourist_oos = raw[(nature == "Tourist") & raw["Is Stock Impacted"] & (cm_stock <= 0)]
+    else:
+        tourist_oos = raw[(nature == "Tourist") & (cm_stock <= 0) & (p90d > 0)]
+
+    # 其他 Nature 過剩存貨：Mix>14日（Mix Excess Stock>0）或 Non Tourist>30日
+    other_over = raw[
+        (nature != "Tourist")
+        & (
+            ((nature == "Mix") & (_safe_numeric(raw.get("Mix Excess Stock", _safe_default_series(0, raw.index))) > 0))
+            | ((nature == "Non Tourist") & (turnday > 30) & (cm_stock > 0))
+        )
+    ]
+
+    if tourist_oos.empty or other_over.empty or "SKU" not in raw.columns:
+        return result
+
+    # Tourist 缺貨損失（by SKU）
+    t_loss = _safe_numeric(tourist_oos.get("Max Sales Loss (P90D)", _safe_default_series(0, tourist_oos.index)))
+    tourist_oos = tourist_oos.assign(_loss=t_loss)
+    t_agg = (
+        tourist_oos.groupby(["SKU"] + (["Brand"] if "Brand" in tourist_oos.columns else []), dropna=False)
+        .agg(
+            Tourist缺貨店數=("SKU", "count"),
+            Tourist缺貨損失_P90D=("_loss", "sum"),
+        )
+        .reset_index()
+    )
+
+    # 其他 Nature 過剩可釋放存貨（by SKU × Nature）
+    other_over = other_over.assign(_stock=cm_stock[other_over.index])
+    o_agg = (
+        other_over.groupby(["SKU", "Shop Nature"], dropna=False)
+        .agg(
+            過剩存貨=("_stock", "sum"),
+            過剩店數=("SKU", "count"),
+        )
+        .reset_index()
+    )
+    o_pivot_stock = o_agg.pivot_table(index="SKU", columns="Shop Nature", values="過剩存貨", fill_value=0).reset_index()
+    o_pivot_shops = o_agg.pivot_table(index="SKU", columns="Shop Nature", values="過剩店數", fill_value=0).reset_index()
+
+    merged = t_agg.merge(o_pivot_stock, on="SKU", how="inner")
+    # 重新命名過剩存貨欄
+    rename_map = {c: f"{c}過剩存貨" for c in o_pivot_stock.columns if c != "SKU"}
+    merged = merged.rename(columns=rename_map)
+
+    # 確保 Mix/Non Tourist 過剩欄存在
+    for n in ["Mix", "Non Tourist"]:
+        col = f"{n}過剩存貨"
+        if col not in merged.columns:
+            merged[col] = 0
+        merged[col] = merged[col].fillna(0).astype(int)
+
+    merged["其他Nature過剩總存貨"] = (merged["Mix過剩存貨"] + merged["Non Tourist過剩存貨"]).astype(int)
+    merged = merged[merged["其他Nature過剩總存貨"] > 0]
+    # 可調貨建議量 = min(Tourist 缺貨損失, 其他過剩存貨)
+    merged["建議調貨量"] = np.minimum(merged["Tourist缺貨損失_P90D"], merged["其他Nature過剩總存貨"]).astype(int)
+
+    out_cols = ["SKU"]
+    if "Brand" in merged.columns:
+        out_cols.append("Brand")
+    out_cols += ["Tourist缺貨店數", "Tourist缺貨損失_P90D", "Mix過剩存貨", "Non Tourist過剩存貨", "其他Nature過剩總存貨", "建議調貨量"]
+    merged = merged[[c for c in out_cols if c in merged.columns]]
+    merged = merged.sort_values(["Tourist缺貨損失_P90D", "建議調貨量"], ascending=[False, False]).reset_index(drop=True)
+    result["imbalance_sku"] = merged
+
+    return result
+
+
 _OOS_DETAIL_COLS = [
     "Buyer", "Brand", "SKU", "SKU Desc", "Site Code", "Shop Name", "OM",
     "Shop Nature", "Supply Source", "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)",
@@ -2909,7 +3110,7 @@ def transform_stock_impact(
     progress_callback=None,
     shop_natures: list[str] | None = None,
     warehouse_only: bool = True,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict, list[str]]:
     """Stock Impact Analysis 主流程。
 
     Args:
@@ -2984,9 +3185,14 @@ def transform_stock_impact(
     sku_diagnosis = _build_sku_stock_diagnosis(raw)
 
     if progress_callback:
+        progress_callback(0.66, "建構存貨分佈分析中...")
+
+    inv_distribution = _build_inventory_distribution_summary(raw)
+
+    if progress_callback:
         progress_callback(0.7, "轉換完成")
 
-    return summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, raw, warnings
+    return summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, inv_distribution, raw, warnings
 
 
 def _write_oos_detail_sheet(ws, raw_df, header_font, header_fill, thin_border, progress_callback):
@@ -3150,18 +3356,94 @@ def _write_sku_stock_diagnosis_sheet(ws, diag_df, header_font, header_fill, thin
     _auto_width(ws)
 
 
-def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, thin_border, desc_font, progress_callback):
+def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, header_fill, thin_border, progress_callback):
+    """寫入存貨分佈分析 sheet（3 個表垂直排列）。
+
+    B1: Mix Turnday 分級彙總
+    B2: Nature 存貨對比
+    B3: 存貨失衡 SKU 清單
+    """
+    ws.cell(row=1, column=1, value="Inventory Distribution — 存貨分佈分析（管理層視角）").font = Font(bold=True, size=14, color="1E40AF")
+    ws.cell(row=2, column=1, value="焦點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積；Mix 只需保留 7-14 日 Turnday").font = Font(size=10, italic=True, color="6B7280")
+
+    current_row = 4
+
+    def _write_subtable(title, df, start_row):
+        ws.cell(row=start_row, column=1, value=title).font = Font(bold=True, size=12, color="1E40AF")
+        start_row += 1
+        if df is None or df.empty:
+            ws.cell(row=start_row, column=1, value="無資料").font = Font(size=11, italic=True, color="6B7280")
+            return start_row + 2
+        headers = list(df.columns)
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws.cell(row=start_row, column=col_idx, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+        for row_idx, row_data in enumerate(df.itertuples(index=False), start=start_row + 1):
+            is_total = any(str(v) == "總計" for v in row_data if isinstance(v, str))
+            for col_idx, val in enumerate(row_data, 1):
+                if pd.isna(val):
+                    val = None
+                cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                if is_total:
+                    cell.font = Font(bold=True, size=11)
+                if isinstance(val, (int, float)):
+                    cell.number_format = "#,##0"
+        return start_row + 1 + len(df) + 2  # header + data + spacing
+
+    # B1: Mix Turnday 分級
+    if progress_callback:
+        progress_callback(0.80, "寫入 Mix Turnday 分級...")
+    current_row = _write_subtable("📊 Mix 店舖 Turnday 分級（管理層要求保留 7-14 日）", inv_distribution.get("mix_turnday"), current_row)
+
+    # B2: Nature 對比
+    if progress_callback:
+        progress_callback(0.85, "寫入 Nature 存貨對比...")
+    current_row = _write_subtable("🏪 各 Shop Nature 存貨分佈對比", inv_distribution.get("nature_compare"), current_row)
+
+    # B3: 存貨失衡 SKU
+    if progress_callback:
+        progress_callback(0.90, "寫入存貨失衡 SKU...")
+    current_row = _write_subtable("🔄 存貨失衡 SKU（Tourist 缺貨 + Non Tourist/Mix 過剩 → 建議調貨）", inv_distribution.get("imbalance_sku"), current_row)
+
+    _auto_width(ws)
+
+
+def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, thin_border, desc_font, progress_callback):
+    """重做為「存貨分佈分析」焦點 Dashboard（v1.6.1）。
+
+    metric cards 聚焦管理層最關心的存貨錯配議題：
+    - Tourist 高銷售店缺貨 vs Non Tourist 大量囤積
+    - Mix 店舖可釋放存貨（>14 日標準）
+    """
     impacted = raw_df[raw_df["Is Stock Impacted"]].copy()
+    nature = raw_df.get("Shop Nature", pd.Series(dtype=object)).fillna("").astype(str)
+    cm_stock = _safe_numeric(raw_df.get("Shop Stock Qty (CM)", _safe_default_series(0, raw_df.index)))
+    turnday = pd.to_numeric(raw_df.get("Turnday (Days)", _safe_default_series(0, raw_df.index)), errors="coerce")
 
-    total_impacted = len(impacted)
-    nature_counts = {"Tourist": 0, "Mix": 0, "Non Tourist": 0}
-    if total_impacted and "Shop Nature" in impacted.columns:
-        for nat, cnt in impacted["Shop Nature"].value_counts(dropna=False).items():
-            if nat in nature_counts:
-                nature_counts[nat] = int(cnt)
+    # Tourist 缺貨行數（高銷售店無貨）
+    tourist_oos_rows = int(((nature == "Tourist") & (cm_stock <= 0) & raw_df["Is Stock Impacted"]).sum()) if "Is Stock Impacted" in raw_df else 0
 
-    loss_m2 = int(_safe_numeric(impacted.get("Total Sales Loss (M-2)", _safe_default_series(0, impacted.index))).sum()) if total_impacted else 0
-    loss_p90d = int(_safe_numeric(impacted.get("Total Sales Loss (P90D)", _safe_default_series(0, impacted.index))).sum()) if total_impacted else 0
+    # Non Tourist 過剩存貨件數（>30日 Turnday，管理層最怕的囤積）
+    nt_over_mask = (nature == "Non Tourist") & (turnday > 30) & (cm_stock > 0)
+    nt_over_stock = int(cm_stock[nt_over_mask].sum())
+
+    # Mix 可釋放存貨件數（>14日標準，來自 Mix Excess Stock）
+    mix_excess_total = int(_safe_numeric(raw_df.get("Mix Excess Stock", _safe_default_series(0, raw_df.index))).sum())
+
+    # 存貨失衡 SKU 數（Tourist 缺貨 + 其他 Nature 過剩）
+    imbalance_count = len(inv_distribution.get("imbalance_sku", pd.DataFrame())) if inv_distribution else 0
+
+    # Tourist 缺貨損失 (P90D)
+    loss_p90d = int(_safe_numeric(impacted.get("Total Sales Loss (P90D)", _safe_default_series(0, impacted.index))).sum()) if len(impacted) else 0
+
+    # Non Tourist 平均 Turnday
+    nt_td = turnday[nature == "Non Tourist"]
+    nt_avg_td = round(float(nt_td.mean()), 1) if nt_td.notna().any() and len(nt_td) else 0
 
     # 受影響最嚴重 Buyer
     top_buyer_name = "—"
@@ -3174,17 +3456,17 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, thin_border, desc_f
             top_buyer_loss = int(top.get("最大銷售損失(P90D)", 0))
 
     row1_metrics = [
-        ("總缺貨影響行數", total_impacted, "Shop Stock=0 且有需求（只計 RF）｜單位：行數", "EF4444"),
-        ("Tourist 缺貨", nature_counts["Tourist"], "公司最重視的店舖類型｜單位：行數", "DC2626"),
-        ("Mix 缺貨", nature_counts["Mix"], "次重視店舖類型｜單位：行數", "F97316"),
-        ("Non Tourist 缺貨", nature_counts["Non Tourist"], "一般店舖類型｜單位：行數", "F59E0B"),
+        ("⭐ Tourist 缺貨行數", tourist_oos_rows, "高銷售店無貨（只計 RF）｜單位：行數", "DC2626"),
+        ("Non Tourist 過剩存貨", nt_over_stock, "Turnday>30日囤積｜單位：件數", "F59E0B"),
+        ("Mix 可釋放存貨", mix_excess_total, "超過14日標準可釋放｜單位：件數", "F97316"),
+        ("存貨失衡 SKU 數", imbalance_count, "Tourist缺貨+其他過剩｜單位：SKU數", "EF4444"),
     ]
 
     row2_metrics = [
-        ("總銷售損失 (M-2基準)", loss_m2, "以 M-2 Sold 為需求基準｜單位：件數", "3B82F6"),
-        ("總銷售損失 (P90D基準)", loss_p90d, "以 90 天月均為需求基準｜單位：件數", "8B5CF6"),
-        ("受影響最嚴重 Buyer", top_buyer_name, f"最大損失(P90D): {top_buyer_loss:,} 件", "06B6D4"),
-        ("Tourist 占比", f"{(nature_counts['Tourist']/total_impacted*100):.1f}%" if total_impacted else "0%", "Tourist 缺貨行數 / 總缺貨行數", "1E40AF"),
+        ("Mix 可釋放總量", mix_excess_total, "Mix 過剩存貨可調出｜單位：件數", "8B5CF6"),
+        ("Tourist 缺貨損失(P90D)", loss_p90d, "Tourist 缺貨銷售損失｜單位：件數", "3B82F6"),
+        ("Non Tourist 平均Turnday", nt_avg_td, "Non Tourist 平均存貨天數｜單位：日", "06B6D4"),
+        ("受影響最嚴重 Buyer", top_buyer_name, f"最大損失(P90D): {top_buyer_loss:,} 件", "1E40AF"),
     ]
 
     _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
@@ -3221,6 +3503,7 @@ def generate_excel_stock_impact(
     summary_category: pd.DataFrame,
     sku_allocation: pd.DataFrame,
     sku_diagnosis: pd.DataFrame,
+    inv_distribution: dict,
     raw_df: pd.DataFrame,
     progress_callback=None,
 ) -> BytesIO:
@@ -3301,11 +3584,17 @@ def generate_excel_stock_impact(
     ws_diag = wb.create_sheet(title="SKU Stock Diagnosis")
     _write_sku_stock_diagnosis_sheet(ws_diag, sku_diagnosis, header_font, header_fill, thin_border, progress_callback)
 
-    # Sheet 9: Dashboard
+    # Sheet 9: Inventory Distribution (存貨分佈分析, 管理層視角)
+    if progress_callback:
+        progress_callback(0.79, "建立存貨分佈分析工作表...")
+    ws_inv = wb.create_sheet(title="Inventory Distribution")
+    _write_inventory_distribution_sheet(ws_inv, inv_distribution, header_font, header_fill, thin_border, progress_callback)
+
+    # Sheet 10: Dashboard
     if progress_callback:
         progress_callback(0.82, "建立缺貨影響分析摘要工作表...")
     ws_dashboard = wb.create_sheet(title="Stock Impact Dashboard")
-    _write_stock_impact_dashboard(ws_dashboard, raw_df, summary_buyer,
+    _write_stock_impact_dashboard(ws_dashboard, raw_df, summary_buyer, inv_distribution,
                                   thin_border, desc_font, progress_callback)
 
     buf = BytesIO()

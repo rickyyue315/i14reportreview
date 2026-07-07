@@ -80,12 +80,12 @@ def main():
         print("OK Safety Stock (%s)  | rows=%d warnings=%d" % (mode, len(s), len(w)))
 
     # ── Stock Impact Analysis ──
-    si_site, si_brand, si_buyer, si_cat, si_alloc, si_diag, si_raw, si_warns = transform_stock_impact(
+    si_site, si_brand, si_buyer, si_cat, si_alloc, si_diag, si_inv, si_raw, si_warns = transform_stock_impact(
         df, warehouse_only=False
     )
-    generate_excel_stock_impact(si_site, si_brand, si_buyer, si_cat, si_alloc, si_diag, si_raw)
+    generate_excel_stock_impact(si_site, si_brand, si_buyer, si_cat, si_alloc, si_diag, si_inv, si_raw)
     si_count = int(si_raw["Is Stock Impacted"].sum())
-    print("OK Stock Impact Analysis | impacted_rows=%d diagnosis_skus=%d warnings=%d" % (si_count, len(si_diag), len(si_warns)))
+    print("OK Stock Impact Analysis | impacted_rows=%d diagnosis_skus=%d imbalance_skus=%d warnings=%d" % (si_count, len(si_diag), len(si_inv.get("imbalance_sku", [])), len(si_warns)))
 
     print("\nALL PIPELINES COMPLETED")
 

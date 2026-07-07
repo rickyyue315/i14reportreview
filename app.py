@@ -320,7 +320,7 @@ MODE_KEYS = {
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
-    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_site": None, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_allocation": None, "sku_diagnosis": None, "raw_df": None, "excel_data": None, "warnings": []},
+    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_site": None, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_allocation": None, "sku_diagnosis": None, "inv_distribution": None, "raw_df": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -755,12 +755,12 @@ if uploaded_file is not None:
                 def _cb_excel(pct, msg):
                     _cb(0.6 + 0.4 * pct, msg)
 
-                summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, raw_df, _warnings = transform_stock_impact(
+                summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, inv_distribution, raw_df, _warnings = transform_stock_impact(
                     df_input,
                     progress_callback=_cb_transform,
                     warehouse_only=warehouse_only,
                 )
-                buf = generate_excel_stock_impact(summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, raw_df, progress_callback=_cb_excel)
+                buf = generate_excel_stock_impact(summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel)
 
                 st.session_state.stock_impact_processed = True
                 st.session_state.stock_impact_summary_site = summary_site
@@ -769,6 +769,7 @@ if uploaded_file is not None:
                 st.session_state.stock_impact_summary_category = summary_category
                 st.session_state.stock_impact_sku_allocation = sku_allocation
                 st.session_state.stock_impact_sku_diagnosis = sku_diagnosis
+                st.session_state.stock_impact_inv_distribution = inv_distribution
                 st.session_state.stock_impact_raw_df = raw_df
                 st.session_state.stock_impact_excel_data = buf
                 st.session_state.stock_impact_warnings = _warnings
@@ -792,23 +793,35 @@ if uploaded_file is not None:
             summary_category = st.session_state.stock_impact_summary_category
             sku_allocation = st.session_state.stock_impact_sku_allocation
             sku_diagnosis = st.session_state.stock_impact_sku_diagnosis
+            inv_distribution = st.session_state.stock_impact_inv_distribution
             raw_df = st.session_state.stock_impact_raw_df
             excel_data = st.session_state.stock_impact_excel_data
 
-            impacted = raw_df[raw_df["Is Stock Impacted"]].copy()
-            total_impacted = len(impacted)
-
             from transformer import _safe_numeric, _safe_default_series
-            nature_counts = {"Tourist": 0, "Mix": 0, "Non Tourist": 0}
-            if total_impacted and "Shop Nature" in impacted.columns:
-                for nat, cnt in impacted["Shop Nature"].value_counts(dropna=False).items():
-                    if nat in nature_counts:
-                        nature_counts[nat] = int(cnt)
+            import pandas as _pd
 
-            loss_m2 = int(_safe_numeric(impacted.get("Total Sales Loss (M-2)", _safe_default_series(0, impacted.index))).sum()) if total_impacted else 0
-            loss_p90d = int(_safe_numeric(impacted.get("Total Sales Loss (P90D)", _safe_default_series(0, impacted.index))).sum()) if total_impacted else 0
-            tourist_pct = (nature_counts["Tourist"] / total_impacted * 100) if total_impacted else 0
+            # 存貨分佈指標計算（管理層視角）
+            nature_s = raw_df["Shop Nature"].fillna("").astype(str) if "Shop Nature" in raw_df.columns else _pd.Series([""]*len(raw_df))
+            cm_stock_s = _safe_numeric(raw_df.get("Shop Stock Qty (CM)", _safe_default_series(0, raw_df.index)))
+            turnday_s = _pd.to_numeric(raw_df.get("Turnday (Days)", _safe_default_series(0, raw_df.index)), errors="coerce")
+            impacted_mask = raw_df["Is Stock Impacted"] if "Is Stock Impacted" in raw_df.columns else _pd.Series([False]*len(raw_df))
 
+            # Tourist 缺貨行數（高銷售店無貨）
+            tourist_oos_rows = int(((nature_s == "Tourist") & (cm_stock_s <= 0) & impacted_mask).sum())
+            # Non Tourist 過剩存貨件數（>30日）
+            nt_over_mask = (nature_s == "Non Tourist") & (turnday_s > 30) & (cm_stock_s > 0)
+            nt_over_stock = int(cm_stock_s[nt_over_mask].sum())
+            # Mix 可釋放存貨件數（>14日標準）
+            mix_excess_total = int(_safe_numeric(raw_df.get("Mix Excess Stock", _safe_default_series(0, raw_df.index))).sum())
+            # 存貨失衡 SKU 數
+            imbalance_sku = inv_distribution.get("imbalance_sku", _pd.DataFrame()) if inv_distribution else _pd.DataFrame()
+            imbalance_count = len(imbalance_sku)
+            # Tourist 缺貨損失 (P90D)
+            impacted_df = raw_df[impacted_mask]
+            loss_p90d = int(_safe_numeric(impacted_df.get("Total Sales Loss (P90D)", _safe_default_series(0, impacted_df.index))).sum()) if len(impacted_df) else 0
+            # Non Tourist 平均 Turnday
+            nt_td = turnday_s[nature_s == "Non Tourist"]
+            nt_avg_td = round(float(nt_td.mean()), 1) if nt_td.notna().any() and len(nt_td) else 0
             # 受影響最嚴重 Buyer
             top_buyer_name = "—"
             top_buyer_loss = 0
@@ -820,39 +833,40 @@ if uploaded_file is not None:
                     top_buyer_loss = int(_top.get("最大銷售損失(P90D)", 0))
 
             st.markdown('<div class="custom-card" style="border-top: 4px solid #dc2626;">', unsafe_allow_html=True)
-            st.markdown("### 📦 缺貨銷售影響分析摘要 (Stock Impact Dashboard)")
+            st.markdown("### 📦 存貨分佈分析摘要 (Stock Impact Dashboard)")
+            st.caption("🎯 管理層焦點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積｜Mix 只需保留 7-14 日 Turnday")
 
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #EF4444;">
-                    <div class="metric-title">總缺貨影響行數</div>
-                    <div class="metric-value" style="color: #EF4444;">{total_impacted:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
-                    <div class="metric-desc">Shop Stock=0 且有需求（只計 RF 店舖）｜單位：行數</div>
+                <div class="metric-card" style="border-left-color: #DC2626;">
+                    <div class="metric-title">⭐ Tourist 缺貨行數</div>
+                    <div class="metric-value" style="color: #DC2626;">{tourist_oos_rows:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
+                    <div class="metric-desc">高銷售店無貨（只計 RF）｜單位：行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #DC2626;">
-                    <div class="metric-title">⭐ Tourist 缺貨</div>
-                    <div class="metric-value" style="color: #DC2626;">{nature_counts['Tourist']:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
-                    <div class="metric-desc">公司最重視的店舖類型｜單位：行數</div>
+                <div class="metric-card" style="border-left-color: #F59E0B;">
+                    <div class="metric-title">Non Tourist 過剩存貨</div>
+                    <div class="metric-value" style="color: #F59E0B;">{nt_over_stock:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
+                    <div class="metric-desc">Turnday&gt;30日囤積｜單位：件數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col3:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #F97316;">
-                    <div class="metric-title">Mix 缺貨</div>
-                    <div class="metric-value" style="color: #F97316;">{nature_counts['Mix']:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
-                    <div class="metric-desc">次重視店舖類型｜單位：行數</div>
+                    <div class="metric-title">Mix 可釋放存貨</div>
+                    <div class="metric-value" style="color: #F97316;">{mix_excess_total:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
+                    <div class="metric-desc">超過14日標準可釋放｜單位：件數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col4:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #F59E0B;">
-                    <div class="metric-title">Non Tourist 缺貨</div>
-                    <div class="metric-value" style="color: #F59E0B;">{nature_counts['Non Tourist']:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
-                    <div class="metric-desc">一般店舖類型｜單位：行數</div>
+                <div class="metric-card" style="border-left-color: #EF4444;">
+                    <div class="metric-title">存貨失衡 SKU 數</div>
+                    <div class="metric-value" style="color: #EF4444;">{imbalance_count:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">個</span></div>
+                    <div class="metric-desc">Tourist缺貨+其他過剩｜單位：SKU數</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -861,34 +875,34 @@ if uploaded_file is not None:
             r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
             with r2_col1:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #3B82F6;">
-                    <div class="metric-title">總銷售損失 (M-2基準)</div>
-                    <div class="metric-value" style="color: #3B82F6;">{loss_m2:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
-                    <div class="metric-desc">以 M-2 Sold 為需求基準｜單位：件數</div>
+                <div class="metric-card" style="border-left-color: #8B5CF6;">
+                    <div class="metric-title">Mix 可釋放總量</div>
+                    <div class="metric-value" style="color: #8B5CF6;">{mix_excess_total:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
+                    <div class="metric-desc">Mix 過剩存貨可調出｜單位：件數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #8B5CF6;">
-                    <div class="metric-title">總銷售損失 (P90D基準)</div>
-                    <div class="metric-value" style="color: #8B5CF6;">{loss_p90d:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
-                    <div class="metric-desc">以 90 天月均為需求基準｜單位：件數</div>
+                <div class="metric-card" style="border-left-color: #3B82F6;">
+                    <div class="metric-title">Tourist 缺貨損失(P90D)</div>
+                    <div class="metric-value" style="color: #3B82F6;">{loss_p90d:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
+                    <div class="metric-desc">Tourist 缺貨銷售損失｜單位：件數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col3:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #06B6D4;">
-                    <div class="metric-title">受影響最嚴重 Buyer</div>
-                    <div class="metric-value" style="color: #06B6D4; font-size: 1.1rem;">{top_buyer_name}</div>
-                    <div class="metric-desc">最大損失(P90D): {top_buyer_loss:,} 件</div>
+                    <div class="metric-title">Non Tourist 平均Turnday</div>
+                    <div class="metric-value" style="color: #06B6D4;">{nt_avg_td:.1f}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">日</span></div>
+                    <div class="metric-desc">Non Tourist 平均存貨天數｜單位：日</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col4:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #1E40AF;">
-                    <div class="metric-title">Tourist 缺貨占比</div>
-                    <div class="metric-value" style="color: #1E40AF;">{tourist_pct:.1f}%</div>
-                    <div class="metric-desc">Tourist 缺貨行數 / 總缺貨行數</div>
+                    <div class="metric-title">受影響最嚴重 Buyer</div>
+                    <div class="metric-value" style="color: #1E40AF; font-size: 1.1rem;">{top_buyer_name}</div>
+                    <div class="metric-desc">最大損失(P90D): {top_buyer_loss:,} 件</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -896,30 +910,51 @@ if uploaded_file is not None:
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
-            impact_tabs = st.tabs(["🏪 By Site", "🏷️ By Brand", "👤 By Buyer", "📦 By Category", "🔄 SKU 調貨建議", "🔍 SKU 缺貨診斷"])
+            impact_tabs = st.tabs(["📊 存貨分佈", "🏪 By Site", "🏷️ By Brand", "👤 By Buyer", "📦 By Category", "🔄 SKU 調貨建議", "🔍 SKU 缺貨診斷"])
 
             with impact_tabs[0]:
+                st.markdown("#### 📊 存貨分佈分析（管理層視角）")
+                st.caption("🎯 焦點：Tourist 高銷售店無貨 vs Non Tourist/Mix 大量囤積；Mix 只需保留 7-14 日 Turnday。")
+                if inv_distribution:
+                    mix_td = inv_distribution.get("mix_turnday")
+                    nat_cmp = inv_distribution.get("nature_compare")
+                    imb = inv_distribution.get("imbalance_sku")
+                    if mix_td is not None and not mix_td.empty:
+                        st.markdown("**Mix 店舖 Turnday 分級**")
+                        st.dataframe(mix_td, width='stretch', hide_index=True)
+                    if nat_cmp is not None and not nat_cmp.empty:
+                        st.markdown("**各 Shop Nature 存貨分佈對比**")
+                        st.dataframe(nat_cmp, width='stretch', hide_index=True)
+                    if imb is not None and not imb.empty:
+                        st.markdown(f"**存貨失衡 SKU 清單**（{len(imb):,} 個 SKU，Tourist 缺貨 + Non Tourist/Mix 過剩）")
+                        st.dataframe(imb, width='stretch', hide_index=True)
+                    else:
+                        st.info("無存貨失衡 SKU")
+                else:
+                    st.info("無存貨分佈數據")
+
+            with impact_tabs[1]:
                 st.markdown("#### Site 層級缺貨影響分析")
                 if summary_site is not None and not summary_site.empty:
                     st.dataframe(summary_site, width='stretch', hide_index=True)
                 else:
                     st.info("無 Site 層級缺貨影響數據")
 
-            with impact_tabs[1]:
+            with impact_tabs[2]:
                 st.markdown("#### Brand 層級缺貨影響分析")
                 if summary_brand is not None and not summary_brand.empty:
                     st.dataframe(summary_brand, width='stretch', hide_index=True)
                 else:
                     st.info("無 Brand 層級缺貨影響數據")
 
-            with impact_tabs[2]:
+            with impact_tabs[3]:
                 st.markdown("#### Buyer 層級缺貨影響分析")
                 if summary_buyer is not None and not summary_buyer.empty:
                     st.dataframe(summary_buyer, width='stretch', hide_index=True)
                 else:
                     st.info("無 Buyer 層級缺貨影響數據")
 
-            with impact_tabs[3]:
+            with impact_tabs[4]:
                 st.markdown("#### Category (Adj. MCH1) 層級缺貨影響分析")
                 if summary_category is not None and not summary_category.empty:
                     st.dataframe(summary_category, width='stretch', hide_index=True)
@@ -928,7 +963,7 @@ if uploaded_file is not None:
                 else:
                     st.info("無 Category 層級缺貨影響數據")
 
-            with impact_tabs[4]:
+            with impact_tabs[5]:
                 st.markdown("#### 🔄 SKU 跨 Nature 調貨建議")
                 st.caption("Tourist 店舖缺貨但同 SKU 在 Non-Tourist / Mix 店舖仍有存貨 → 揪出存貨配置不當，建議調貨支援。")
                 if sku_allocation is not None and not sku_allocation.empty:
@@ -936,7 +971,7 @@ if uploaded_file is not None:
                 else:
                     st.info("無可調貨 SKU（無 Tourist 缺貨且同時其他 Nature 有存貨的情況）")
 
-            with impact_tabs[5]:
+            with impact_tabs[6]:
                 st.markdown("#### 🔍 by-SKU 缺貨診斷（Tourist + Mix）")
                 st.caption("每個缺貨 SKU 的 Tourist/Mix 缺貨店數、D001 倉庫三期貨量與店舖總存貨。🟧 **倉庫有貨但店舖缺貨** = 補貨流程問題；⬜ **源頭斷貨** = 倉庫也斷貨需上游補貨。")
                 if sku_diagnosis is not None and not sku_diagnosis.empty:

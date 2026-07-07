@@ -1,7 +1,7 @@
-"""Validation tests for Stock Impact Analysis functions (v1.6.0).
+"""Validation tests for Stock Impact Analysis functions (v1.6.1).
 
-取代 Sales Decline Detection (v1.5.1) 的測試。核心邏輯改為 Shop Stock = 0（缺貨）
-對 Sold Qty 的因果影響，損失計算雙基準（M-2 & P90D）並列。
+v1.6.0: Shop Stock = 0（缺貨）對 Sold Qty 的因果影響，損失計算雙基準（M-2 & P90D）並列。
+v1.6.1: 升級為存貨分佈分析 — Mix Turnday 分級（7-14日標準）、存貨失衡 SKU（Tourist缺貨+其他過剩）。
 """
 import warnings
 warnings.filterwarnings("ignore")
@@ -10,8 +10,8 @@ from io import BytesIO
 from transformer import (
     _add_stock_impact_columns, _build_stock_impact_summary,
     _build_sku_allocation_summary, _build_sku_stock_diagnosis,
-    _classify_d001_status, transform_stock_impact,
-    generate_excel_stock_impact,
+    _build_inventory_distribution_summary, _classify_d001_status,
+    transform_stock_impact, generate_excel_stock_impact,
 )
 
 # 基準列：Warehouse SKU、Tourist 店舖、RF 店舖、有 M-2 銷售紀錄
@@ -20,6 +20,7 @@ BASE = {
     "Item_Shop": "Prod-S01", "Shop Stock Status": "Normal",
     "Supply Source": "Warehouse", "Shop Nature": "Tourist", "RP Type": "RF",
     "Shop Monthly Sold Qty (P90D)": 10.0,
+    "Turnday (P90D Qty)": 15.0,
     "Shop Stock Qty (M-2)": 5, "Shop Stock Qty (M-1)": 5, "Shop Stock Qty (CM)": 5,
     "Sold Qty (M-2)": 10.0, "Sold Qty (M-1)": 8.0, "Sold Qty (CM - MTD)": 4.0,
     "OM": "OM1", "Adj. MCH1": "CatX",
@@ -213,7 +214,7 @@ def test_transform_stock_impact():
         {"SKU": "3", "Adj. MCH1": "CatA", "Shop Nature": "Non Tourist", "Shop Stock Qty (CM)": 5,
          "Sold Qty (M-2)": 30.0, "Sold Qty (CM - MTD)": 10.0},
     ])
-    site, brand, buyer, cat, alloc, diag, raw, warns = transform_stock_impact(df)
+    site, brand, buyer, cat, alloc, diag, inv, raw, warns = transform_stock_impact(df)
 
     assert len(site) > 0
     assert len(brand) > 0
@@ -235,15 +236,97 @@ def test_warehouse_filter():
          "Sold Qty (M-2)": 10.0, "Shop Monthly Sold Qty (P90D)": 10.0},
     ])
     # warehouse_only=True（預設）→ 只剩 1 行
-    _, _, _, _, _, _, raw_wh, _ = transform_stock_impact(df, warehouse_only=True)
+    _, _, _, _, _, _, _, raw_wh, _ = transform_stock_impact(df, warehouse_only=True)
     assert len(raw_wh) == 1
     assert str(raw_wh.iloc[0]["Supply Source"]) == "Warehouse"
     print("OK warehouse_only=True（過濾 Vendor）")
 
     # warehouse_only=False → 保留 2 行
-    _, _, _, _, _, _, raw_all, _ = transform_stock_impact(df, warehouse_only=False)
+    _, _, _, _, _, _, _, raw_all, _ = transform_stock_impact(df, warehouse_only=False)
     assert len(raw_all) == 2
     print("OK warehouse_only=False（保留 Vendor）")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test 6a: Mix Turnday 分級與可釋放存貨（v1.6.1 存貨分佈分析核心）
+# ──────────────────────────────────────────────────────────────────────────────
+def test_mix_turnday_banding():
+    df = _df([
+        # r0: Mix, Turnday 60日 → >30日(過剩), 存貨200, P90D=100
+        #   理想=100/30*14=46.7, 可釋放=200-46.7=153
+        {"SKU": "1", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 200,
+         "Shop Monthly Sold Qty (P90D)": 100.0, "Turnday (P90D Qty)": 60},
+        # r1: Mix, Turnday 10日 → 7-14日(理想), 可釋放=0
+        {"SKU": "2", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 40,
+         "Shop Monthly Sold Qty (P90D)": 120.0, "Turnday (P90D Qty)": 10},
+        # r2: Mix, P90D=0 有存貨 → 無銷售有存貨(純囤積), 全數50可釋放
+        {"SKU": "3", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 50,
+         "Shop Monthly Sold Qty (P90D)": 0.0, "Turnday (P90D Qty)": float("inf")},
+        # r3: Tourist, Turnday 60日 → 不標 Mix Band (空字串), Excess=0
+        {"SKU": "4", "Shop Nature": "Tourist", "Shop Stock Qty (CM)": 500,
+         "Shop Monthly Sold Qty (P90D)": 100.0, "Turnday (P90D Qty)": 150},
+    ])
+    raw = _add_stock_impact_columns(df)
+
+    assert raw.iloc[0]["Mix Turnday Band"] == ">30日(過剩)"
+    assert int(raw.iloc[0]["Mix Excess Stock"]) == 153, f"得 {raw.iloc[0]['Mix Excess Stock']}"
+    print("OK r0: Mix >30日過剩, 可釋放 153 件")
+
+    assert raw.iloc[1]["Mix Turnday Band"] == "7-14日(理想)"
+    assert int(raw.iloc[1]["Mix Excess Stock"]) == 0
+    print("OK r1: Mix 7-14日理想, 可釋放 0")
+
+    assert raw.iloc[2]["Mix Turnday Band"] == "無銷售有存貨"
+    assert int(raw.iloc[2]["Mix Excess Stock"]) == 50, "無銷售應全數可釋放"
+    print("OK r2: Mix 無銷售有存貨, 全數 50 件可釋放")
+
+    assert raw.iloc[3]["Mix Turnday Band"] == "", "Tourist 不應有 Mix Band"
+    assert int(raw.iloc[3]["Mix Excess Stock"]) == 0, "Tourist 不計 Mix Excess"
+    print("OK r3: Tourist 不套 Mix 標準")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test 6b: 存貨分佈彙總（Mix Turnday 分級表 + Nature 對比 + 失衡 SKU）
+# ──────────────────────────────────────────────────────────────────────────────
+def test_inventory_distribution_summary():
+    df = _df([
+        # SKU 1: Tourist 缺貨（CM=0, 有需求）
+        {"SKU": "1", "Brand": "A", "Shop Nature": "Tourist", "Site Code": "T01",
+         "Shop Stock Qty (CM)": 0, "Sold Qty (M-2)": 10.0, "Shop Monthly Sold Qty (P90D)": 10.0},
+        # SKU 1: 同 SKU 在 Non Tourist 過剩（Turnday>30）
+        {"SKU": "1", "Brand": "A", "Shop Nature": "Non Tourist", "Site Code": "N01",
+         "Shop Stock Qty (CM)": 80, "Shop Monthly Sold Qty (P90D)": 20.0, "Turnday (P90D Qty)": 120},
+        # SKU 2: Mix 過剩（Turnday>14）
+        {"SKU": "2", "Brand": "B", "Shop Nature": "Mix", "Site Code": "M01",
+         "Shop Stock Qty (CM)": 100, "Shop Monthly Sold Qty (P90D)": 30.0, "Turnday (P90D Qty)": 100},
+        # SKU 2: 同 SKU Tourist 缺貨
+        {"SKU": "2", "Brand": "B", "Shop Nature": "Tourist", "Site Code": "T02",
+         "Shop Stock Qty (CM)": 0, "Sold Qty (M-2)": 8.0, "Shop Monthly Sold Qty (P90D)": 8.0},
+    ])
+    raw = _add_stock_impact_columns(df)
+    inv = _build_inventory_distribution_summary(raw)
+
+    # B1: Mix Turnday 分級表應有資料
+    mix_td = inv["mix_turnday"]
+    assert not mix_td.empty, "Mix Turnday 分級表應有資料"
+    assert "可釋放件數" in mix_td.columns
+    assert "總計" in mix_td["Mix Turnday 區間"].values
+    print(f"OK B1: Mix Turnday 分級表（{len(mix_td)} 列含總計）")
+
+    # B2: Nature 對比表應有 3 個 Nature
+    nat_cmp = inv["nature_compare"]
+    assert not nat_cmp.empty
+    assert set(nat_cmp["Shop Nature"]) == {"Tourist", "Mix", "Non Tourist"}
+    print(f"OK B2: Nature 對比表（3 個 Nature）")
+
+    # B3: 存貨失衡 SKU（SKU 1 & 2 應出現：Tourist缺貨+其他過剩）
+    imb = inv["imbalance_sku"]
+    assert not imb.empty, "應有存貨失衡 SKU"
+    skus = set(imb["SKU"].astype(str))
+    assert "1" in skus and "2" in skus, "SKU 1 & 2 應為存貨失衡"
+    # 建議調貨量 = min(Tourist缺貨損失, 其他過剩存貨)
+    assert "建議調貨量" in imb.columns
+    print(f"OK B3: 存貨失衡 SKU（{len(imb)} 個，含建議調貨量）")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -254,7 +337,7 @@ def test_no_impacted_items():
         {"SKU": "1", "Shop Stock Qty (CM)": 5, "Sold Qty (M-2)": 10.0},
         {"SKU": "2", "Shop Stock Qty (CM)": 3, "Sold Qty (M-2)": 20.0},
     ])
-    site, brand, buyer, cat, alloc, diag, raw, warns = transform_stock_impact(df)
+    site, brand, buyer, cat, alloc, diag, inv, raw, warns = transform_stock_impact(df)
     assert int(raw["Is Stock Impacted"].sum()) == 0
     assert site.empty, "無缺貨影響 → Site 彙總應為空"
     print("OK 無缺貨影響：空彙總")
@@ -363,20 +446,21 @@ def test_generate_excel_stock_impact():
         {"SKU": "2", "Adj. MCH1": "CatB", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 20.0, "Sold Qty (CM - MTD)": 5.0, "Shop Monthly Sold Qty (P90D)": 15.0},
     ])
-    site, brand, buyer, cat, alloc, diag, raw, _ = transform_stock_impact(df)
-    buf = generate_excel_stock_impact(site, brand, buyer, cat, alloc, diag, raw)
+    site, brand, buyer, cat, alloc, diag, inv, raw, _ = transform_stock_impact(df)
+    buf = generate_excel_stock_impact(site, brand, buyer, cat, alloc, diag, inv, raw)
     assert isinstance(buf, BytesIO)
     data = buf.getvalue()
     assert len(data) > 100
     assert data[:2] == b"PK", "應為有效 xlsx（PK zip signature）"
 
-    # 驗證 9 個 sheet
+    # 驗證 10 個 sheet
     import openpyxl
     wb = openpyxl.load_workbook(BytesIO(data))
     expected = ["RAW", "OOS Impact Detail", "By Site", "By Brand", "By Buyer",
-                "By Category", "SKU Allocation", "SKU Stock Diagnosis", "Stock Impact Dashboard"]
+                "By Category", "SKU Allocation", "SKU Stock Diagnosis",
+                "Inventory Distribution", "Stock Impact Dashboard"]
     assert wb.sheetnames == expected, f"sheets mismatch: {wb.sheetnames}"
-    print("OK generate_excel_stock_impact（9 sheets valid xlsx）")
+    print("OK generate_excel_stock_impact（10 sheets valid xlsx）")
 
 
 if __name__ == "__main__":
@@ -391,5 +475,7 @@ if __name__ == "__main__":
     test_warehouse_filter()
     test_no_impacted_items()
     test_rf_only_filter()
+    test_mix_turnday_banding()
+    test_inventory_distribution_summary()
     test_generate_excel_stock_impact()
     print("\nALL STOCK IMPACT VALIDATION TESTS PASSED")
