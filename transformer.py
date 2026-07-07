@@ -2562,10 +2562,16 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["Total Sales Loss (M-2)"] = loss_m2_sum.astype(int)
     df["Total Sales Loss (P90D)"] = loss_p90d_sum.astype(int)
 
-    # ── 影響判定：任一期缺貨且有需求證據 ──────────────────────────────────────
+    # ── 影響判定：任一期缺貨且有需求證據，且只計算 RF 店舖 ──────────────────────
+    # RP Type 正規化（沿用既有模式：strip + upper），只認 "RF" 為有效店舖
+    rp_type = (
+        df.get("RP Type", _safe_default_series("", idx))
+        .fillna("").astype(str).str.strip().str.upper()
+    )
+    is_rf = rp_type == "RF"
     has_demand = (m2_sold.values > 0) | (p90d.values > 0)
     any_oos = oos_count.values > 0
-    df["Is Stock Impacted"] = any_oos & has_demand
+    df["Is Stock Impacted"] = any_oos & has_demand & is_rf.values
 
     return df
 
@@ -3168,7 +3174,7 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, thin_border, desc_f
             top_buyer_loss = int(top.get("最大銷售損失(P90D)", 0))
 
     row1_metrics = [
-        ("總缺貨影響行數", total_impacted, "Shop Stock=0 且有銷售需求", "EF4444"),
+        ("總缺貨影響行數", total_impacted, "Shop Stock=0 且有需求（只計 RF 店舖）", "EF4444"),
         ("Tourist 缺貨", nature_counts["Tourist"], "公司最重視的店舖類型", "DC2626"),
         ("Mix 缺貨", nature_counts["Mix"], "次重視店舖類型", "F97316"),
         ("Non Tourist 缺貨", nature_counts["Non Tourist"], "一般店舖類型", "F59E0B"),

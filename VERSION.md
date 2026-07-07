@@ -10,6 +10,7 @@
 - New: Shop Nature 優先級 — Tourist > Mix > Non Tourist，所有彙總按 Tourist 缺貨嚴重度排序
 - New: SKU 級跨 Nature 調貨建議 — Tourist 店舖缺貨但 Non-Tourist/Mix 仍有存貨的 SKU，揪出存貨配置不當
 - New: 預設只分析 Warehouse SKU（Vendor 無 D001 倉庫概念），提供 checkbox 可關閉篩選
+- New: 影響判定只計算 RP Type = RF 的店舖（排除 ND 店舖），符合「只計 RF 店舖」需求；RP Type 正規化（strip + upper）容錯髒資料
 - New: Excel 輸出包含 RAW、OOS Impact Detail、By Site、By Brand、By Buyer、By Category、SKU Allocation、SKU Stock Diagnosis、Stock Impact Dashboard 共 9 個工作表
 - New: SKU Stock Diagnosis 工作表 — by-SKU 缺貨診斷（Tourist + Mix 缺貨 SKU），含 D001 倉庫三期貨量 (M-2/M-1/CM)、店舖總存貨三期、D001 狀態分類（🟧 倉庫有貨但店舖缺貨 = 補貨問題｜⬜ 源頭斷貨 = 倉庫也斷貨）
 - Remove: `transform_decline()`, `_add_decline_columns()`, `_build_decline_summary()`, `generate_excel_decline()`, `_write_decline_*()`, `DECLINE_CATEGORIES`, `_classify_severity`, `_DECLINE_WARNING_COLS` 全數移除

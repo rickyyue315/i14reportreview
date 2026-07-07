@@ -14,11 +14,11 @@ from transformer import (
     generate_excel_stock_impact,
 )
 
-# 基準列：Warehouse SKU、Tourist 店舖、有 M-2 銷售紀錄
+# 基準列：Warehouse SKU、Tourist 店舖、RF 店舖、有 M-2 銷售紀錄
 BASE = {
     "Buyer": "B1", "Brand": "A", "SKU": "1", "Site Code": "S01",
     "Item_Shop": "Prod-S01", "Shop Stock Status": "Normal",
-    "Supply Source": "Warehouse", "Shop Nature": "Tourist",
+    "Supply Source": "Warehouse", "Shop Nature": "Tourist", "RP Type": "RF",
     "Shop Monthly Sold Qty (P90D)": 10.0,
     "Shop Stock Qty (M-2)": 5, "Shop Stock Qty (M-1)": 5, "Shop Stock Qty (CM)": 5,
     "Sold Qty (M-2)": 10.0, "Sold Qty (M-1)": 8.0, "Sold Qty (CM - MTD)": 4.0,
@@ -261,6 +261,35 @@ def test_no_impacted_items():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Test 6b: 只計算 RF 店舖（ND 店舖不納入影響計算）
+# ──────────────────────────────────────────────────────────────────────────────
+def test_rf_only_filter():
+    df = _df([
+        # r0: RF 店舖缺貨 → 應納入影響
+        {"SKU": "1", "RP Type": "RF", "Shop Stock Qty (CM)": 0,
+         "Sold Qty (M-2)": 10.0, "Shop Monthly Sold Qty (P90D)": 10.0},
+        # r1: ND 店舖缺貨（同樣有需求）→ 不應納入影響
+        {"SKU": "2", "RP Type": "ND", "Shop Stock Qty (CM)": 0,
+         "Sold Qty (M-2)": 20.0, "Shop Monthly Sold Qty (P90D)": 15.0},
+        # r2: 髒資料 RP Type " rf "（含空白）→ strip+upper 後應視為 RF
+        {"SKU": "3", "RP Type": " rf ", "Shop Stock Qty (CM)": 0,
+         "Sold Qty (M-2)": 8.0, "Shop Monthly Sold Qty (P90D)": 8.0},
+        # r3: 空白 RP Type → 非 RF，不應納入
+        {"SKU": "4", "RP Type": "", "Shop Stock Qty (CM)": 0,
+         "Sold Qty (M-2)": 30.0, "Shop Monthly Sold Qty (P90D)": 20.0},
+    ])
+    raw = _add_stock_impact_columns(df)
+
+    assert raw.iloc[0]["Is Stock Impacted"] == True, "RF 缺貨應納入"
+    assert raw.iloc[1]["Is Stock Impacted"] == False, "ND 缺貨不應納入"
+    assert raw.iloc[2]["Is Stock Impacted"] == True, "髒資料 ' rf ' 應正規化為 RF"
+    assert raw.iloc[3]["Is Stock Impacted"] == False, "空白 RP Type 不應納入"
+    impacted_count = int(raw["Is Stock Impacted"].sum())
+    assert impacted_count == 2, f"應只有 2 行影響（RF），得 {impacted_count}"
+    print(f"OK RF 篩選：{impacted_count} 行（排除 ND/空白，含髒資料正規化）")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Test 7: D001 狀態分類
 # ──────────────────────────────────────────────────────────────────────────────
 def test_classify_d001_status():
@@ -361,5 +390,6 @@ if __name__ == "__main__":
     test_transform_stock_impact()
     test_warehouse_filter()
     test_no_impacted_items()
+    test_rf_only_filter()
     test_generate_excel_stock_impact()
     print("\nALL STOCK IMPACT VALIDATION TESTS PASSED")

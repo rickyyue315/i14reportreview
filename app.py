@@ -282,7 +282,7 @@ with st.sidebar:
      2. **缺貨模式**：長期缺貨（≥2 期）/ 間歇缺貨（1 期）/ 恢復供貨（前期缺貨 → CM 有貨）/ 無缺貨
      3. **銷售損失（M-2 基準）** = max(0, Sold Qty M-2 − 缺貨當期 Sold)，以 M-2 銷售為需求基準
      4. **銷售損失（P90D 基準）** = max(0, Shop Monthly Sold Qty P90D − 缺貨當期 Sold)，以 90 天月均為基準
-     5. **影響判定** = 任一期缺貨且有需求證據（M-2 Sold 或 P90D > 0）
+     5. **影響判定** = 任一期缺貨且有需求證據（M-2 Sold 或 P90D > 0），且只計算 RP Type = RF 的店舖
      6. **Shop Nature 優先級**：Tourist > Mix > Non Tourist（彙總按 Tourist 缺貨嚴重度排序）
      7. **SKU 調貨建議**：Tourist 缺貨但同 SKU 在 Non-Tourist/Mix 仍有存貨 → 揪出存貨配置不當
      8. 預設只分析 Warehouse SKU；支援多維度彙總：By Site / Brand / Buyer / Category (Adj. MCH1)
@@ -828,7 +828,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #EF4444;">
                     <div class="metric-title">總缺貨影響行數</div>
                     <div class="metric-value" style="color: #EF4444;">{total_impacted:,}</div>
-                    <div class="metric-desc">Shop Stock=0 且有銷售需求</div>
+                    <div class="metric-desc">Shop Stock=0 且有需求（只計 RF 店舖）</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
