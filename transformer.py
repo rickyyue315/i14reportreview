@@ -2,6 +2,7 @@
 import numpy as np
 import unicodedata
 import re
+import gc
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
@@ -649,14 +650,14 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
     header_row = [_display_names.get(c, c) for c in raw_cols]
     ws.append(header_row)
 
-    raw_array = raw_df.to_numpy(dtype=object, na_value=None)
-    total_raw = len(raw_array)
+    total_raw = len(raw_df)
     _batch = []
     _batch_size = 500
-    for i, row_vals in enumerate(raw_array):
+    # 使用 itertuples 避免 to_numpy() 的記憶體峰值
+    for i, row in enumerate(raw_df.itertuples(index=False)):
         _batch.append([
-            round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
-            for v in row_vals
+            None if pd.isna(v) else (round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else v)
+            for v in row
         ])
         if len(_batch) >= _batch_size or i == total_raw - 1:
             for _r in _batch:
@@ -3778,6 +3779,7 @@ def generate_excel_stock_impact(
     if progress_callback:
         progress_callback(0.97, "正在儲存 Excel 檔案...")
 
+    gc.collect()
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
