@@ -818,6 +818,10 @@ if uploaded_file is not None:
 
             # Tourist 缺貨行數（高銷售店無貨）
             tourist_oos_rows = int(((nature_s == "Tourist") & (cm_stock_s <= 0) & impacted_mask).sum())
+            # Tourist 缺貨數量（缺失件數 = max(0, Adj. Safety Stock - Shop Stock Qty (CM))）
+            _adj_ss_s = _safe_numeric(raw_slim.get("Adj. Safety Stock", _safe_default_series(0, raw_slim.index)))
+            _oos_mask = (nature_s == "Tourist") & (cm_stock_s <= 0) & impacted_mask
+            tourist_oos_qty = int(_pd.np.maximum(0, (_adj_ss_s - cm_stock_s))[_oos_mask].sum())
             # Non Tourist 可釋存貨（>14日標準，與 Mix 一致）
             nt_excess_total = int(_safe_numeric(raw_slim.get("Non Tourist Excess Stock", _safe_default_series(0, raw_slim.index))).sum())
             # Mix 可釋放存貨件數（>14日標準）
@@ -944,6 +948,14 @@ if uploaded_file is not None:
                     <div class="metric-title">📦 可調貨SKU數</div>
                     <div class="metric-value" style="color: #0D9488;">{transferrable_sku_count:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">個</span></div>
                     <div class="metric-desc">涉及的不重複SKU｜單位：SKU數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r3_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #DC2626;">
+                    <div class="metric-title">📉 Tourist 缺貨數量</div>
+                    <div class="metric-value" style="color: #DC2626;">{tourist_oos_qty:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
+                    <div class="metric-desc">缺失件數 = Safety − Shop Net Stock｜單位：件數</div>
                 </div>
                 """, unsafe_allow_html=True)
 
