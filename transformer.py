@@ -2674,8 +2674,8 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 # 多維度彙總輸出欄位（中文表頭）
 _STOCK_IMPACT_SUMMARY_COLS = [
-    "缺貨行數", "Tourist 缺貨", "Mix 缺貨", "Non Tourist 缺貨",
-    "長期缺貨", "間歇缺貨", "恢復供貨",
+    "缺貨行數", "Tourist 缺貨行數", "Mix 缺貨行數", "Non Tourist 缺貨行數",
+    "長期缺貨行數", "間歇缺貨行數", "恢復供貨行數",
 ]
 
 
@@ -2697,12 +2697,12 @@ def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.
         .agg(
             缺貨行數=("_nature", "count"),
             **{
-                "Tourist 缺貨": ("_nature", lambda x: (x == "Tourist").sum()),
-                "Mix 缺貨": ("_nature", lambda x: (x == "Mix").sum()),
-                "Non Tourist 缺貨": ("_nature", lambda x: (x == "Non Tourist").sum()),
-                "長期缺貨": ("_pattern", lambda x: (x == "長期缺貨").sum()),
-                "間歇缺貨": ("_pattern", lambda x: (x == "間歇缺貨").sum()),
-                "恢復供貨": ("_pattern", lambda x: (x == "恢復供貨").sum()),
+                "Tourist 缺貨行數": ("_nature", lambda x: (x == "Tourist").sum()),
+                "Mix 缺貨行數": ("_nature", lambda x: (x == "Mix").sum()),
+                "Non Tourist 缺貨行數": ("_nature", lambda x: (x == "Non Tourist").sum()),
+                "長期缺貨行數": ("_pattern", lambda x: (x == "長期缺貨").sum()),
+                "間歇缺貨行數": ("_pattern", lambda x: (x == "間歇缺貨").sum()),
+                "恢復供貨行數": ("_pattern", lambda x: (x == "恢復供貨").sum()),
             },
         )
         .reset_index()
@@ -2712,7 +2712,7 @@ def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.
         agg[c] = agg[c].fillna(0).astype(int)
 
     agg = agg.sort_values(
-        ["Tourist 缺貨", "缺貨行數"],
+        ["Tourist 缺貨行數", "缺貨行數"],
         ascending=[False, False],
     ).reset_index(drop=True)
 
@@ -2778,7 +2778,7 @@ def _build_sku_allocation_summary(raw: pd.DataFrame) -> pd.DataFrame:
             Tourist缺貨店數=("SKU", "count"),
             Tourist損失_M2=("_loss_m2", "sum"),
             Tourist損失_P90D=("_loss_p90d", "sum"),
-            Tourist_M2銷售=("_m2_sold", "sum"),
+            Tourist_M2銷售件數=("_m2_sold", "sum"),
         )
         .reset_index()
     )
@@ -2787,7 +2787,7 @@ def _build_sku_allocation_summary(raw: pd.DataFrame) -> pd.DataFrame:
     o_agg = (
         other_stock.groupby(["SKU"] + (["Shop Nature"]), dropna=False)
         .agg(
-            可調貨存貨=("_cm_stock", "sum"),
+            可調貨存貨件數=("_cm_stock", "sum"),
             閒置店數=("SKU", "count"),
         )
         .reset_index()
@@ -2796,7 +2796,7 @@ def _build_sku_allocation_summary(raw: pd.DataFrame) -> pd.DataFrame:
     o_pivot = o_agg.pivot_table(
         index=["SKU"],
         columns="Shop Nature",
-        values=["可調貨存貨", "閒置店數"],
+        values=["可調貨存貨件數", "閒置店數"],
         fill_value=0,
         aggfunc="sum",
     ).reset_index()
@@ -2817,14 +2817,14 @@ def _build_sku_allocation_summary(raw: pd.DataFrame) -> pd.DataFrame:
 
     # 確保 Mix/Non Tourist 欄位存在
     for n in ["Mix", "Non Tourist"]:
-        for metric in ["可調貨存貨", "閒置店數"]:
+        for metric in ["可調貨存貨件數", "閒置店數"]:
             col = f"{n}{metric}"
             if col not in merged.columns:
                 merged[col] = 0
             merged[col] = merged[col].fillna(0).astype(int)
 
-    merged["可調貨總存貨"] = (merged.get("Mix可調貨存貨", 0) + merged.get("Non Tourist可調貨存貨", 0)).astype(int)
-    merged = merged[merged["可調貨總存貨"] > 0]
+    merged["可調貨總存貨件數"] = (merged.get("Mix可調貨存貨件數", 0) + merged.get("Non Tourist可調貨存貨件數", 0)).astype(int)
+    merged = merged[merged["可調貨總存貨件數"] > 0]
 
     if merged.empty:
         return pd.DataFrame()
@@ -2834,13 +2834,13 @@ def _build_sku_allocation_summary(raw: pd.DataFrame) -> pd.DataFrame:
     if "Brand" in merged.columns:
         out_cols.append("Brand")
     out_cols += [
-        "Tourist缺貨店數", "Tourist_M2銷售",
-        "Mix可調貨存貨", "Mix閒置店數", "Non Tourist可調貨存貨", "Non Tourist閒置店數",
-        "可調貨總存貨",
+        "Tourist缺貨店數", "Tourist_M2銷售件數",
+        "Mix可調貨存貨件數", "Mix閒置店數", "Non Tourist可調貨存貨件數", "Non Tourist閒置店數",
+        "可調貨總存貨件數",
     ]
     # 排序須在 subset 之前（因排序鍵 Tourist損失_P90D 不列入輸出）
     merged = merged.sort_values(
-        ["Tourist損失_P90D", "可調貨總存貨"], ascending=[False, False]
+        ["Tourist損失_P90D", "可調貨總存貨件數"], ascending=[False, False]
     ).reset_index(drop=True)
     merged = merged[out_cols]
 
@@ -2920,8 +2920,8 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
                     f"{nat}缺貨行數": ("SKU", "count"),
                     f"{nat}損失_M2": ("_loss_m2", "sum"),
                     f"{nat}損失_P90D": ("_loss_p90d", "sum"),
-                    f"{nat}_M2銷售": ("_m2_sold", "sum"),
-                    f"{nat}_CM銷售": ("_cm_sold", "sum"),
+                    f"{nat}_M2銷售件數": ("_m2_sold", "sum"),
+                    f"{nat}_CM銷售件數": ("_cm_sold", "sum"),
                     f"{nat}_P90D": ("_p90d", "sum"),
                 }
             )
@@ -2939,21 +2939,46 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
-    # 品牌資訊（first）
+    # 品牌資訊（first）+ SKU Desc
+    brand_agg_dict = {
+        "Brand": ("Brand", "first") if "Brand" in focus.columns else ("SKU", "first"),
+        "Buyer": ("Buyer", "first") if "Buyer" in focus.columns else ("SKU", "first"),
+    }
+    if "SKU Desc" in focus.columns:
+        brand_agg_dict["SKU Desc"] = ("SKU Desc", "first")
     brand_per_sku = (
         focus.groupby("SKU", dropna=False)
-        .agg(
-            Brand=("Brand", "first") if "Brand" in focus.columns else ("SKU", "first"),
-            Buyer=("Buyer", "first") if "Buyer" in focus.columns else ("SKU", "first"),
-        )
+        .agg(**brand_agg_dict)
         .reset_index()
     )
 
+    # 各 SKU 的 NDRF 行數統計（從完整 raw 資料計算，分 ND / RF）
+    rp_full = (
+        raw.get("RP Type", _safe_default_series("", raw.index))
+        .fillna("").astype(str).str.strip().str.upper()
+    )
+    raw_ndrf = raw.assign(_is_nd=(rp_full == "ND"), _is_rf=(rp_full == "RF"))
+    ndrf_per_sku = (
+        raw_ndrf.groupby("SKU", dropna=False)
+        .agg(
+            NDRF_ND行数=("_is_nd", "sum"),
+            NDRF_RF行数=("_is_rf", "sum"),
+        )
+        .reset_index()
+    )
+    for c in ["NDRF_ND行数", "NDRF_RF行数"]:
+        ndrf_per_sku[c] = ndrf_per_sku[c].fillna(0).astype(int)
+
     # 合併
     merged = brand_per_sku.merge(d001_per_sku, on="SKU", how="left")
+    merged = merged.merge(ndrf_per_sku, on="SKU", how="left")
     for nat in ["Tourist", "Mix"]:
         merged = merged.merge(nature_aggs[nat], on="SKU", how="left")
     merged = merged.merge(shop_stock_per_sku, on="SKU", how="left")
+
+    # 填補 NDRF NaN
+    for c in ["NDRF_ND行数", "NDRF_RF行数"]:
+        merged[c] = merged[c].fillna(0).astype(int)
 
     # 填補缺漏 Nature 的 NaN（某 SKU 可能只有 Tourist 缺貨而無 Mix）
     for nat in ["Tourist", "Mix"]:
@@ -2966,9 +2991,13 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
     merged["D001 狀態"] = merged["D001_Stock_CM"].apply(_classify_d001_status)
 
     # 欄位順序
-    out_cols = ["SKU", "Brand", "Buyer",
-                "Tourist缺貨店數", "Tourist缺貨行數", "Tourist_M2銷售", "Tourist_CM銷售", "Tourist_P90D",
-                "Mix缺貨店數", "Mix缺貨行數", "Mix_M2銷售", "Mix_CM銷售", "Mix_P90D",
+    out_cols = ["SKU"]
+    if "SKU Desc" in merged.columns:
+        out_cols.append("SKU Desc")
+    out_cols += ["Brand", "Buyer",
+                "NDRF_ND行数", "NDRF_RF行数",
+                "Tourist缺貨店數", "Tourist缺貨行數", "Tourist_M2銷售件數", "Tourist_CM銷售件數", "Tourist_P90D",
+                "Mix缺貨店數", "Mix缺貨行數", "Mix_M2銷售件數", "Mix_CM銷售件數", "Mix_P90D",
                 "D001 狀態", "D001_Stock_M2", "D001_Stock_M1", "D001_Stock_CM",
                 "店舖存貨總_M2", "店舖存貨總_M1", "店舖存貨總_CM"]
     # 排序須在 subset 之前（因排序鍵 Tourist損失_P90D 不列入輸出）
@@ -3258,11 +3287,11 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
 
 _OOS_DETAIL_COLS = [
     "Buyer", "Brand", "SKU", "SKU Desc", "Site Code", "Shop Name", "OM",
-    "Shop Nature", "Supply Source", "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)",
+    "Shop Nature", "Supply Source", "ND行数", "RF行数",
+    "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)",
     "Shop Stock Qty (CM)", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
     "Shop Monthly Sold Qty (P90D)", "Is OOS (M-2)", "Is OOS (M-1)", "Is OOS (CM)",
-    "OOS Periods Count", "OOS Pattern", "Max Sales Loss (M-2)", "Max Sales Loss (P90D)",
-    "Total Sales Loss (M-2)", "Total Sales Loss (P90D)",
+    "OOS Periods Count", "OOS Pattern",
 ]
 
 
@@ -3357,22 +3386,40 @@ def transform_stock_impact(
 
 
 def _write_oos_detail_sheet(ws, raw_df, header_font, header_fill, thin_border, progress_callback):
-    """寫入缺貨影響明細，按最大損失(P90D)降序。"""
-    impacted = raw_df[raw_df["Is Stock Impacted"]].copy()
-    if impacted.empty:
+    """寫入缺貨影響明細（含 ND/RF 行數統計），按缺貨期數降序。"""
+    idx = raw_df.index
+    # 擴展篩選：任一期缺貨且有需求證據（不限 RF）
+    oos_count = _safe_numeric(raw_df.get("OOS Periods Count", _safe_default_series(0, idx)))
+    m2_sold = _safe_numeric(raw_df.get("Sold Qty (M-2)", _safe_default_series(0, idx)))
+    p90d = _safe_numeric(raw_df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, idx)))
+    has_oos = oos_count.values > 0
+    has_demand = (m2_sold.values > 0) | (p90d.values > 0)
+
+    detail = raw_df[has_oos & has_demand].copy()
+    if detail.empty:
         ws.cell(row=1, column=1, value="無缺貨影響資料").font = Font(size=12)
         return
 
-    impacted["_loss"] = _safe_numeric(impacted.get("Max Sales Loss (P90D)", _safe_default_series(0, impacted.index)))
-    impacted = impacted.sort_values(["_loss", "Max Sales Loss (M-2)"], ascending=[False, False])
+    # ND行数 / RF行数（每列 0/1 標記）
+    rp_type = (
+        detail.get("RP Type", _safe_default_series("", detail.index))
+        .fillna("").astype(str).str.strip().str.upper()
+    )
+    detail["ND行数"] = (rp_type == "ND").astype(int)
+    detail["RF行数"] = (rp_type == "RF").astype(int)
 
-    avail_cols = [c for c in _OOS_DETAIL_COLS if c in impacted.columns]
-    impacted = impacted[avail_cols]
+    # 排序：缺貨期數降序 → M-2 銷售降序
+    detail["_oos"] = _safe_numeric(detail.get("OOS Periods Count", _safe_default_series(0, detail.index)))
+    detail["_m2"] = _safe_numeric(detail.get("Sold Qty (M-2)", _safe_default_series(0, detail.index)))
+    detail = detail.sort_values(["_oos", "_m2"], ascending=[False, False])
+
+    avail_cols = [c for c in _OOS_DETAIL_COLS if c in detail.columns]
+    detail = detail[avail_cols]
 
     # 標題
-    ws.cell(row=1, column=1, value="OOS Impact Detail — 缺貨銷售影響明細（按最大損失 P90D 降序）").font = Font(bold=True, size=12, color="1E40AF")
+    ws.cell(row=1, column=1, value="OOS Impact Detail — 缺貨銷售影響明細（按缺貨期數降序，含 ND/RF 行數）").font = Font(bold=True, size=12, color="1E40AF")
 
-    headers = list(impacted.columns)
+    headers = list(detail.columns)
     for col_idx, h in enumerate(headers, 1):
         cell = ws.cell(row=3, column=col_idx, value=h)
         cell.font = header_font
@@ -3380,8 +3427,8 @@ def _write_oos_detail_sheet(ws, raw_df, header_font, header_fill, thin_border, p
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = thin_border
 
-    total_rows = len(impacted)
-    for row_idx, row_data in enumerate(impacted.itertuples(index=False), start=4):
+    total_rows = len(detail)
+    for row_idx, row_data in enumerate(detail.itertuples(index=False), start=4):
         for col_idx, val in enumerate(row_data, 1):
             if pd.isna(val):
                 val = None
@@ -3640,10 +3687,10 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
     top_buyer_loss = 0
     if summary_buyer is not None and not summary_buyer.empty and "Buyer" in summary_buyer.columns:
         buyer_data = summary_buyer[~summary_buyer["Buyer"].isin(["總計", ""])]
-        if not buyer_data.empty and "Tourist 缺貨" in buyer_data.columns:
-            top = buyer_data.sort_values("Tourist 缺貨", ascending=False).iloc[0]
+        if not buyer_data.empty and "Tourist 缺貨行數" in buyer_data.columns:
+            top = buyer_data.sort_values("Tourist 缺貨行數", ascending=False).iloc[0]
             top_buyer_name = str(top["Buyer"])
-            top_buyer_loss = int(top.get("Tourist 缺貨", 0))
+            top_buyer_loss = int(top.get("Tourist 缺貨行數", 0))
 
     row1_metrics = [
         ("⭐ Tourist 缺貨行數", tourist_oos_rows, "高銷售店無貨（只計 RF）｜單位：行數", "DC2626"),
