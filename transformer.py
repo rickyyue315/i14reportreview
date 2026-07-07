@@ -641,9 +641,14 @@ def transform_combined(
     return summary, raw, categories, warnings
 
 
-def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, progress_end=0.3):
+def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, progress_end=0.3, columns=None):
     raw_df = _compute_raw_extra_columns(raw_df)
     raw_df = _reorder_raw_columns(raw_df)
+
+    # 選擇性只輸出指定欄位（節省記憶體）
+    if columns is not None:
+        avail = [c for c in columns if c in raw_df.columns]
+        raw_df = raw_df[avail]
 
     raw_cols = list(raw_df.columns)
     _display_names = {"Adj. Safety Stock": "Safety Stock (現時)"}
@@ -3756,10 +3761,10 @@ def generate_excel_stock_impact(
     header_font = Font(bold=True, color="FFFFFF", size=11)
     desc_font = Font(size=9, color="6B7280", italic=True)
 
-    # Sheet 1: RAW
+    # Sheet 1: RAW（只輸出分析相關欄位以節省記憶體）
     ws_raw = wb.active
     ws_raw.title = "RAW"
-    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.08)
+    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.08, columns=_OOS_DETAIL_COLS)
 
     if progress_callback:
         progress_callback(0.1, "建立缺貨影響明細工作表...")
