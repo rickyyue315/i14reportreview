@@ -782,7 +782,7 @@ if uploaded_file is not None:
                 st.session_state.stock_impact_inv_distribution = inv_distribution
                 # 只存 Dashboard 需要的 6 個欄位（節省 ~90% 記憶體）
                 _slim_cols = ["Is Stock Impacted", "Shop Nature", "Shop Stock Qty (CM)",
-                              "Turnday (Days)", "Mix Excess Stock", "Total Sales Loss (P90D)"]
+                              "Turnday (Days)", "Mix Excess Stock"]
                 _available = [c for c in _slim_cols if c in raw_df.columns]
                 st.session_state.stock_impact_raw_slim = raw_df[_available].copy() if _available else pd.DataFrame()
                 st.session_state.stock_impact_excel_data = buf
@@ -822,6 +822,8 @@ if uploaded_file is not None:
 
             # Tourist 缺貨行數（高銷售店無貨）
             tourist_oos_rows = int(((nature_s == "Tourist") & (cm_stock_s <= 0) & impacted_mask).sum())
+            # 總缺貨影響行數
+            total_impacted = int(impacted_mask.sum())
             # Non Tourist 過剩存貨件數（>30日）
             nt_over_mask = (nature_s == "Non Tourist") & (turnday_s > 30) & (cm_stock_s > 0)
             nt_over_stock = int(cm_stock_s[nt_over_mask].sum())
@@ -830,9 +832,6 @@ if uploaded_file is not None:
             # 存貨失衡 SKU 數
             imbalance_sku = inv_distribution.get("imbalance_sku", _pd.DataFrame()) if inv_distribution else _pd.DataFrame()
             imbalance_count = len(imbalance_sku)
-            # Tourist 缺貨損失 (P90D)
-            impacted_df = raw_slim[impacted_mask]
-            loss_p90d = int(_safe_numeric(impacted_df.get("Total Sales Loss (P90D)", _safe_default_series(0, impacted_df.index))).sum()) if len(impacted_df) else 0
             # Non Tourist 平均 Turnday
             nt_td = turnday_s[nature_s == "Non Tourist"]
             nt_avg_td = round(float(nt_td.mean()), 1) if nt_td.notna().any() and len(nt_td) else 0
@@ -841,10 +840,10 @@ if uploaded_file is not None:
             top_buyer_loss = 0
             if summary_buyer is not None and not summary_buyer.empty and "Buyer" in summary_buyer.columns:
                 _buyer_data = summary_buyer[~summary_buyer["Buyer"].isin(["總計", ""])]
-                if not _buyer_data.empty and "最大銷售損失(P90D)" in _buyer_data.columns:
-                    _top = _buyer_data.sort_values("最大銷售損失(P90D)", ascending=False).iloc[0]
+                if not _buyer_data.empty and "Tourist 缺貨" in _buyer_data.columns:
+                    _top = _buyer_data.sort_values("Tourist 缺貨", ascending=False).iloc[0]
                     top_buyer_name = str(_top["Buyer"])
-                    top_buyer_loss = int(_top.get("最大銷售損失(P90D)", 0))
+                    top_buyer_loss = int(_top.get("Tourist 缺貨", 0))
 
             st.markdown('<div class="custom-card" style="border-top: 4px solid #dc2626;">', unsafe_allow_html=True)
             st.markdown("### 📦 存貨分佈分析摘要 (Stock Impact Dashboard)")
@@ -898,9 +897,9 @@ if uploaded_file is not None:
             with r2_col2:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #3B82F6;">
-                    <div class="metric-title">Tourist 缺貨損失(P90D)</div>
-                    <div class="metric-value" style="color: #3B82F6;">{loss_p90d:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
-                    <div class="metric-desc">Tourist 缺貨銷售損失｜單位：件數</div>
+                    <div class="metric-title">總缺貨影響行數</div>
+                    <div class="metric-value" style="color: #3B82F6;">{total_impacted:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
+                    <div class="metric-desc">Shop Stock=0 且有需求（只計 RF）｜單位：行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col3:
@@ -916,7 +915,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #1E40AF;">
                     <div class="metric-title">受影響最嚴重 Buyer</div>
                     <div class="metric-value" style="color: #1E40AF; font-size: 1.1rem;">{top_buyer_name}</div>
-                    <div class="metric-desc">最大損失(P90D): {top_buyer_loss:,} 件</div>
+                    <div class="metric-desc">Tourist 缺貨: {top_buyer_loss:,} 行</div>
                 </div>
                 """, unsafe_allow_html=True)
 

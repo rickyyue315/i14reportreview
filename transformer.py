@@ -3173,19 +3173,17 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
             out_cols.append("Buyer")
         if "總可用存貨" in merged.columns:
             out_cols.append("總可用存貨")
-        out_cols += ["Tourist缺貨店數", "Tourist缺貨損失_P90D", "Mix過剩存貨", "Non Tourist過剩存貨", "其他Nature過剩總存貨", "建議調貨量"]
+        out_cols += ["Tourist缺貨店數", "Mix過剩存貨", "Non Tourist過剩存貨", "其他Nature過剩總存貨", "建議調貨量"]
         merged = merged[[c for c in out_cols if c in merged.columns]]
-        merged = merged.sort_values(["Tourist缺貨損失_P90D", "建議調貨量"], ascending=[False, False]).reset_index(drop=True)
+        merged = merged.sort_values(["Tourist缺貨店數", "建議調貨量"], ascending=[False, False]).reset_index(drop=True)
 
         # 附註解（計算方式說明）
         merged.attrs["annotation"] = (
             "【計算方式】\n"
-            "Tourist缺貨損失_P90D：Tourist 店舖 CM Shop Stock=0 且有需求 (P90D>0 或 M-2 Sold>0) 時，"
-            "以 P90D 月均為基準的缺貨損失總和。公式 = Sum(Max Sales Loss (P90D))。\n"
             "Mix過剩存貨：Mix 店舖 Shop Stock (CM) > 0 且 Turnday > 14 日的過剩部分 "
             "（超出 P90D/30×14 標準的存貨總和）。\n"
             "Non Tourist過剩存貨：Non Tourist 店舖 Shop Stock (CM) > 0 且 Turnday > 30 日的存貨總和。\n"
-            "建議調貨量 = min(Tourist缺貨損失_P90D, Mix過剩存貨 + Non Tourist過剩存貨)。"
+            "建議調貨量 = min(Tourist 缺貨店數對應的需求量, Mix過剩存貨 + Non Tourist過剩存貨)。"
         )
         result["imbalance_sku"] = merged
 
@@ -3620,8 +3618,8 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
     # 存貨失衡 SKU 數（Tourist 缺貨 + 其他 Nature 過剩）
     imbalance_count = len(inv_distribution.get("imbalance_sku", pd.DataFrame())) if inv_distribution else 0
 
-    # Tourist 缺貨損失 (P90D)
-    loss_p90d = int(_safe_numeric(impacted.get("Total Sales Loss (P90D)", _safe_default_series(0, impacted.index))).sum()) if len(impacted) else 0
+    # 總缺貨影響行數
+    total_impacted = len(impacted)
 
     # Non Tourist 平均 Turnday
     nt_td = turnday[nature == "Non Tourist"]
@@ -3632,10 +3630,10 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
     top_buyer_loss = 0
     if summary_buyer is not None and not summary_buyer.empty and "Buyer" in summary_buyer.columns:
         buyer_data = summary_buyer[~summary_buyer["Buyer"].isin(["總計", ""])]
-        if not buyer_data.empty and "最大銷售損失(P90D)" in buyer_data.columns:
-            top = buyer_data.sort_values("最大銷售損失(P90D)", ascending=False).iloc[0]
+        if not buyer_data.empty and "Tourist 缺貨" in buyer_data.columns:
+            top = buyer_data.sort_values("Tourist 缺貨", ascending=False).iloc[0]
             top_buyer_name = str(top["Buyer"])
-            top_buyer_loss = int(top.get("最大銷售損失(P90D)", 0))
+            top_buyer_loss = int(top.get("Tourist 缺貨", 0))
 
     row1_metrics = [
         ("⭐ Tourist 缺貨行數", tourist_oos_rows, "高銷售店無貨（只計 RF）｜單位：行數", "DC2626"),
@@ -3646,9 +3644,9 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
 
     row2_metrics = [
         ("Mix 可釋放總量", mix_excess_total, "Mix 過剩存貨可調出｜單位：件數", "8B5CF6"),
-        ("Tourist 缺貨損失(P90D)", loss_p90d, "Tourist 缺貨銷售損失｜單位：件數", "3B82F6"),
+        ("總缺貨影響行數", total_impacted, "Shop Stock=0 且有需求（只計 RF）｜單位：行數", "3B82F6"),
         ("Non Tourist 平均Turnday", nt_avg_td, "Non Tourist 平均存貨天數｜單位：日", "06B6D4"),
-        ("受影響最嚴重 Buyer", top_buyer_name, f"最大損失(P90D): {top_buyer_loss:,} 件", "1E40AF"),
+        ("受影響最嚴重 Buyer", top_buyer_name, f"Tourist 缺貨: {top_buyer_loss:,} 行", "1E40AF"),
     ]
 
     _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
