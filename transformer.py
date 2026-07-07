@@ -2644,7 +2644,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     )
     df["Mix Excess Stock"] = excess.astype(int)
 
-    # Non Tourist Turnday 分級（同樣標準，但不計可釋放量）
+    # Non Tourist Turnday 分級（同樣標準，>14日釋放）
     is_nt = shop_nature == "Non Tourist"
     nt_band = np.full(len(df), "", dtype=object)
     nt_mask = is_nt.values
@@ -2655,6 +2655,14 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     nt_band[nt_mask & band_14_30] = "14-30日(偏高)"
     nt_band[nt_mask & band_over30] = ">30日(過剩)"
     df["Non Tourist Turnday Band"] = nt_band
+
+    # Non Tourist 可釋放存貨（同樣標準：>14日即可釋放，參考 Mix）
+    nt_excess = np.where(
+        nt_mask,
+        np.where(no_sale_has_stock, cm_stock_val.values, np.maximum(0, cm_stock_val.values - ideal_14d)),
+        0,
+    )
+    df["Non Tourist Excess Stock"] = nt_excess.astype(int)
 
     # 為「無銷售有存貨」行附上 RP Type（供後續拆分 ND/RF）
     rp_for_band = rp_type.values
@@ -3085,7 +3093,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
     # B1b: Non Tourist
     nt_mask = nature == "Non Tourist"
     if nt_mask.any() and "Non Tourist Turnday Band" in raw.columns:
-        result["nt_turnday"] = _build_turnday_table(raw[nt_mask], "Non Tourist Turnday Band")
+        result["nt_turnday"] = _build_turnday_table(raw[nt_mask], "Non Tourist Turnday Band", excess_col="Non Tourist Excess Stock")
 
     # ── B2: Nature 存貨分佈對比 ───────────────────────────────────────────────
     b2_rows = []
@@ -3662,9 +3670,8 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
     # Tourist 缺貨行數（高銷售店無貨）
     tourist_oos_rows = int(((nature == "Tourist") & (cm_stock <= 0) & raw_df["Is Stock Impacted"]).sum()) if "Is Stock Impacted" in raw_df else 0
 
-    # Non Tourist 過剩存貨件數（>30日 Turnday，最需關注的囤積）
-    nt_over_mask = (nature == "Non Tourist") & (turnday > 30) & (cm_stock > 0)
-    nt_over_stock = int(cm_stock[nt_over_mask].sum())
+    # Non Tourist 可釋放存貨件數（>14日標準，與 Mix 一致）
+    nt_excess_total = int(_safe_numeric(raw_df.get("Non Tourist Excess Stock", _safe_default_series(0, raw_df.index))).sum())
 
     # Mix 可釋放存貨件數（>14日標準，來自 Mix Excess Stock）
     mix_excess_total = int(_safe_numeric(raw_df.get("Mix Excess Stock", _safe_default_series(0, raw_df.index))).sum())
@@ -3694,7 +3701,7 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
 
     row1_metrics = [
         ("⭐ Tourist 缺貨行數", tourist_oos_rows, "高銷售店無貨（只計 RF）｜單位：行數", "DC2626"),
-        ("Non Tourist 過剩存貨", nt_over_stock, "Turnday>30日囤積｜單位：件數", "F59E0B"),
+        ("Non Tourist 可釋放存貨", nt_excess_total, "超過14日標準可釋放｜單位：件數", "F59E0B"),
         ("Mix 可釋放存貨", mix_excess_total, "超過14日標準可釋放｜單位：件數", "F97316"),
         ("存貨失衡 SKU 數", imbalance_count, "Tourist缺貨+其他過剩｜單位：SKU數", "EF4444"),
     ]
