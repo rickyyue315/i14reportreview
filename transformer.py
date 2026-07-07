@@ -2916,9 +2916,8 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
                     f"{nat}缺貨店數": ("Site Code", "nunique") if "Site Code" in sub.columns else ("SKU", "count"),
                     f"{nat}損失_M2": ("_loss_m2", "sum"),
                     f"{nat}損失_P90D": ("_loss_p90d", "sum"),
-                    f"{nat}_M2銷售件數": ("_m2_sold", "sum"),
                     f"{nat}_CM銷售件數": ("_cm_sold", "sum"),
-                    f"{nat}_P90D": ("_p90d", "sum"),
+                    f"{nat}_P90D月均銷量": ("_p90d", "sum"),
                 }
             )
             .reset_index()
@@ -2992,9 +2991,9 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
         out_cols.append("SKU Desc")
     out_cols += ["Brand", "Buyer",
                 "NDRF_ND行数", "NDRF_RF行数",
-                "Tourist缺貨店數", "Tourist_M2銷售件數", "Tourist_CM銷售件數", "Tourist_P90D",
-                "Mix缺貨店數", "Mix_M2銷售件數", "Mix_CM銷售件數", "Mix_P90D",
-                "Non Tourist缺貨店數", "Non Tourist_M2銷售件數", "Non Tourist_CM銷售件數", "Non Tourist_P90D",
+                "Tourist缺貨店數", "Tourist_CM銷售件數", "Tourist_P90D月均銷量",
+                "Mix缺貨店數", "Mix_CM銷售件數", "Mix_P90D月均銷量",
+                "Non Tourist缺貨店數", "Non Tourist_CM銷售件數", "Non Tourist_P90D月均銷量",
                 "D001 狀態", "D001_Stock_M2", "D001_Stock_M1", "D001_Stock_CM",
                 "店舖存貨總_M2", "店舖存貨總_M1", "店舖存貨總_CM"]
     # 排序
