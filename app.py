@@ -839,10 +839,10 @@ if uploaded_file is not None:
             top_buyer_loss = 0
             if summary_buyer is not None and not summary_buyer.empty and "Buyer" in summary_buyer.columns:
                 _buyer_data = summary_buyer[~summary_buyer["Buyer"].isin(["總計", ""])]
-                if not _buyer_data.empty and "Tourist 缺貨" in _buyer_data.columns:
-                    _top = _buyer_data.sort_values("Tourist 缺貨", ascending=False).iloc[0]
+                if not _buyer_data.empty and "Tourist 缺貨行數" in _buyer_data.columns:
+                    _top = _buyer_data.sort_values("Tourist 缺貨行數", ascending=False).iloc[0]
                     top_buyer_name = str(_top["Buyer"])
-                    top_buyer_loss = int(_top.get("Tourist 缺貨", 0))
+                    top_buyer_loss = int(_top.get("Tourist 缺貨行數", 0))
 
             st.markdown('<div class="custom-card" style="border-top: 4px solid #dc2626;">', unsafe_allow_html=True)
             st.markdown("### 📦 存貨分佈分析摘要 (Stock Impact Dashboard)")
@@ -914,7 +914,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #1E40AF;">
                     <div class="metric-title">受影響最嚴重 Buyer</div>
                     <div class="metric-value" style="color: #1E40AF; font-size: 1.1rem;">{top_buyer_name}</div>
-                    <div class="metric-desc">Tourist 缺貨: {top_buyer_loss:,} 行</div>
+                    <div class="metric-desc">Tourist 缺貨行數: {top_buyer_loss:,} 行</div>
                 </div>
                 """, unsafe_allow_html=True)
 
