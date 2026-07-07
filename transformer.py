@@ -2679,7 +2679,8 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 # 多維度彙總輸出欄位（中文表頭）
 _STOCK_IMPACT_SUMMARY_COLS = [
-    "缺貨行數", "Tourist 缺貨行數", "Mix 缺貨行數", "Non Tourist 缺貨行數",
+    "缺貨行數", "涉及SKU數",
+    "Tourist 缺貨行數", "Mix 缺貨行數", "Non Tourist 缺貨行數",
     "長期缺貨行數", "間歇缺貨行數", "恢復供貨行數",
 ]
 
@@ -2701,6 +2702,7 @@ def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.
         impacted.groupby(group_cols, dropna=False, observed=True)
         .agg(
             缺貨行數=("_nature", "count"),
+            涉及SKU數=("SKU", "nunique"),
             **{
                 "Tourist 缺貨行數": ("_nature", lambda x: (x == "Tourist").sum()),
                 "Mix 缺貨行數": ("_nature", lambda x: (x == "Mix").sum()),
@@ -2721,11 +2723,14 @@ def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.
         ascending=[False, False],
     ).reset_index(drop=True)
 
-    # 總計列
+    # 總計列（涉及SKU數為整體不重複計數，非各組加總）
     total_data = {col: "" for col in group_cols}
     total_data[group_cols[0]] = "總計"
     for c in _STOCK_IMPACT_SUMMARY_COLS:
-        total_data[c] = int(agg[c].sum())
+        if c == "涉及SKU數":
+            total_data[c] = int(impacted["SKU"].nunique())
+        else:
+            total_data[c] = int(agg[c].sum())
     agg = pd.concat([agg, pd.DataFrame([total_data])], ignore_index=True)
 
     for c in ["_nature", "_pattern"]:
