@@ -3701,7 +3701,7 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
 
     row1_metrics = [
         ("⭐ Tourist 缺貨行數", tourist_oos_rows, "高銷售店無貨（只計 RF）｜單位：行數", "DC2626"),
-        ("Non Tourist 可釋放存貨", nt_excess_total, "超過14日標準可釋放｜單位：件數", "F59E0B"),
+        ("Non Tourist 可釋存貨", nt_excess_total, "超過14日標準可釋放｜單位：件數", "F59E0B"),
         ("Mix 可釋放存貨", mix_excess_total, "超過14日標準可釋放｜單位：件數", "F97316"),
         ("存貨失衡 SKU 數", imbalance_count, "Tourist缺貨+其他過剩｜單位：SKU數", "EF4444"),
     ]
