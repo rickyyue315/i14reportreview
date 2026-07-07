@@ -2868,10 +2868,10 @@ def _build_sku_allocation_summary(raw: pd.DataFrame) -> pd.DataFrame:
 def _classify_d001_status(d001_cm: float) -> str:
     """依 D001 倉庫 CM 存貨分類缺貨源頭。
 
-    - 「倉庫有貨但店舖缺貨」(D001 CM > 0): 補貨流程問題，貨在倉庫卻沒送到店
+    - 「倉庫有貨」(D001 CM > 0): 補貨流程問題，貨在倉庫卻沒送到店
     - 「源頭斷貨」(D001 CM = 0): 倉庫也斷貨，需上游補貨
     """
-    return "倉庫有貨但店舖缺貨" if d001_cm > 0 else "源頭斷貨"
+    return "倉庫有貨" if d001_cm > 0 else "源頭斷貨"
 
 
 def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
@@ -3521,7 +3521,7 @@ def _write_sku_allocation_sheet(ws, alloc_df, header_font, header_fill, thin_bor
 def _write_sku_stock_diagnosis_sheet(ws, diag_df, header_font, header_fill, thin_border, progress_callback):
     """寫入 by-SKU 缺貨診斷表（Tourist+Mix 缺貨 SKU，含 D001 貨量與店舖貨量）。
 
-    D001 狀態分類用顏色標示：「倉庫有貨但店舖缺貨」(補貨問題) 用橘色警示、「源頭斷貨」用灰色。
+    D001 狀態分類用顏色標示：「倉庫有貨」(補貨問題) 用橘色警示、「源頭斷貨」用灰色。
     """
     ws.cell(row=1, column=1, value="SKU Stock Diagnosis — by-SKU 缺貨診斷（Tourist + Mix + Non Tourist 缺貨 SKU｜含 D001 倉庫貨量與店舖貨量）").font = Font(bold=True, size=12, color="1E40AF")
 
@@ -3556,7 +3556,7 @@ def _write_sku_stock_diagnosis_sheet(ws, diag_df, header_font, header_fill, thin
                 cell.number_format = "#,##0"
             # D001 狀態欄著色
             if d001_status_col_idx and col_idx == d001_status_col_idx:
-                if val == "倉庫有貨但店舖缺貨":
+                if val == "倉庫有貨":
                     cell.fill = restock_fill
                     cell.font = Font(bold=True, size=10, color="92400E")
                 elif val == "源頭斷貨":

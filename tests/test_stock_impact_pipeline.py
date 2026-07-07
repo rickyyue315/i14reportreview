@@ -362,7 +362,7 @@ def test_rf_only_filter():
 # ──────────────────────────────────────────────────────────────────────────────
 def test_classify_d001_status():
     assert _classify_d001_status(0) == "源頭斷貨"
-    assert _classify_d001_status(300) == "倉庫有貨但店舖缺貨"
+    assert _classify_d001_status(300) == "倉庫有貨"
     print("OK _classify_d001_status（0=源頭斷貨, >0=補貨問題）")
 
 
@@ -423,8 +423,8 @@ def test_sku_stock_diagnosis():
     row2 = diag[diag["SKU"].astype(str) == "2"].iloc[0]
     assert int(row2["Mix缺貨店數"]) == 1
     assert int(row2["D001_Stock_CM"]) == 150
-    assert row2["D001 狀態"] == "倉庫有貨但店舖缺貨"
-    print("OK SKU 2: Mix 缺貨, 補貨問題（D001=150 但店舖缺貨）")
+    assert row2["D001 狀態"] == "倉庫有貨"
+    print("OK SKU 2: Mix 缺貨, 倉庫有貨（D001=150 但店舖缺貨）")
 
     # SKU 3: Non Tourist 缺貨（v1.7.1 新增）
     row3 = diag[diag["SKU"].astype(str) == "3"].iloc[0]

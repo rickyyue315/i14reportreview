@@ -986,10 +986,10 @@ if uploaded_file is not None:
 
             with impact_tabs[4]:
                 st.markdown("#### 🔍 by-SKU 缺貨診斷（Tourist + Mix + Non Tourist）")
-                st.caption("每個缺貨 SKU 的 Tourist/Mix/Non Tourist 缺貨店數、D001 倉庫三期貨量與店舖總存貨。🟧 **倉庫有貨但店舖缺貨** = 補貨流程問題；⬜ **源頭斷貨** = 倉庫也斷貨需上游補貨。")
+                st.caption("每個缺貨 SKU 的 Tourist/Mix/Non Tourist 缺貨店數、D001 倉庫三期貨量與店舖總存貨。🟧 **倉庫有貨** = 補貨流程問題；⬜ **源頭斷貨** = 倉庫也斷貨需上游補貨。")
                 if sku_diagnosis is not None and not sku_diagnosis.empty:
                     # 統計摘要
-                    d001_restock = int((sku_diagnosis["D001 狀態"] == "倉庫有貨但店舖缺貨").sum())
+                    d001_restock = int((sku_diagnosis["D001 狀態"] == "倉庫有貨").sum())
                     d001_source = int((sku_diagnosis["D001 狀態"] == "源頭斷貨").sum())
                     st.markdown(f"**共 {len(sku_diagnosis):,} 個缺貨 SKU** — 🟧 補貨問題: {d001_restock:,} 個｜⬜ 源頭斷貨: {d001_source:,} 個")
                     st.dataframe(sku_diagnosis, width='stretch', hide_index=True)
