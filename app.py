@@ -320,7 +320,7 @@ MODE_KEYS = {
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
-    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_allocation": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
+	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -764,19 +764,18 @@ if uploaded_file is not None:
                 def _cb_excel(pct, msg):
                     _cb(0.6 + 0.4 * pct, msg)
 
-                _, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, inv_distribution, raw_df, _warnings = transform_stock_impact(
+                _, summary_brand, summary_buyer, summary_category, _, sku_diagnosis, inv_distribution, raw_df, _warnings = transform_stock_impact(
                     df_input,
                     progress_callback=_cb_transform,
                     warehouse_only=warehouse_only,
                     stock_threshold=stock_threshold,
                 )
-                buf = generate_excel_stock_impact(summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel)
+                buf = generate_excel_stock_impact(summary_brand, summary_buyer, summary_category, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel)
 
                 st.session_state.stock_impact_processed = True
                 st.session_state.stock_impact_summary_brand = summary_brand
                 st.session_state.stock_impact_summary_buyer = summary_buyer
                 st.session_state.stock_impact_summary_category = summary_category
-                st.session_state.stock_impact_sku_allocation = sku_allocation
                 st.session_state.stock_impact_sku_diagnosis = sku_diagnosis
                 st.session_state.stock_impact_inv_distribution = inv_distribution
                 # 只存 Dashboard 需要的 6 個欄位（節省 ~90% 記憶體）
@@ -803,7 +802,6 @@ if uploaded_file is not None:
             summary_brand = st.session_state.stock_impact_summary_brand
             summary_buyer = st.session_state.stock_impact_summary_buyer
             summary_category = st.session_state.stock_impact_summary_category
-            sku_allocation = st.session_state.stock_impact_sku_allocation
             sku_diagnosis = st.session_state.stock_impact_sku_diagnosis
             inv_distribution = st.session_state.stock_impact_inv_distribution
             raw_slim = st.session_state.stock_impact_raw_slim
@@ -924,7 +922,7 @@ if uploaded_file is not None:
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
-            impact_tabs = st.tabs(["📊 存貨分佈", "🏷️ By Brand", "👤 By Buyer", "📦 By Category", "🔄 SKU 調貨建議", "🔍 SKU 缺貨診斷"])
+            impact_tabs = st.tabs(["📊 存貨分佈", "🏷️ By Brand", "👤 By Buyer", "📦 By Category", "🔍 SKU 缺貨診斷"])
 
             with impact_tabs[0]:
                 st.markdown("#### 📊 存貨分佈分析")
@@ -988,16 +986,8 @@ if uploaded_file is not None:
                     st.info("無 Category 層級缺貨影響數據（若缺少 Adj. MCH1 欄位則無法產出）")
 
             with impact_tabs[4]:
-                st.markdown("#### 🔄 SKU 跨 Nature 調貨建議")
-                st.caption("Tourist 店舖缺貨但同 SKU 在 Non-Tourist / Mix 店舖仍有存貨 → 揪出存貨配置不當，建議調貨支援。")
-                if sku_allocation is not None and not sku_allocation.empty:
-                    st.dataframe(sku_allocation, width='stretch', hide_index=True)
-                else:
-                    st.info("無可調貨 SKU（無 Tourist 缺貨且同時其他 Nature 有存貨的情況）")
-
-            with impact_tabs[5]:
-                st.markdown("#### 🔍 by-SKU 缺貨診斷（Tourist + Mix）")
-                st.caption("每個缺貨 SKU 的 Tourist/Mix 缺貨店數、D001 倉庫三期貨量與店舖總存貨。🟧 **倉庫有貨但店舖缺貨** = 補貨流程問題；⬜ **源頭斷貨** = 倉庫也斷貨需上游補貨。")
+                st.markdown("#### 🔍 by-SKU 缺貨診斷（Tourist + Mix + Non Tourist）")
+                st.caption("每個缺貨 SKU 的 Tourist/Mix/Non Tourist 缺貨店數、D001 倉庫三期貨量與店舖總存貨。🟧 **倉庫有貨但店舖缺貨** = 補貨流程問題；⬜ **源頭斷貨** = 倉庫也斷貨需上游補貨。")
                 if sku_diagnosis is not None and not sku_diagnosis.empty:
                     # 統計摘要
                     d001_restock = int((sku_diagnosis["D001 狀態"] == "倉庫有貨但店舖缺貨").sum())
@@ -1005,7 +995,7 @@ if uploaded_file is not None:
                     st.markdown(f"**共 {len(sku_diagnosis):,} 個缺貨 SKU** — 🟧 補貨問題: {d001_restock:,} 個｜⬜ 源頭斷貨: {d001_source:,} 個")
                     st.dataframe(sku_diagnosis, width='stretch', hide_index=True)
                 else:
-                    st.info("無 Tourist/Mix 缺貨 SKU")
+                    st.info("無 Tourist / Mix / Non Tourist 缺貨 SKU")
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 

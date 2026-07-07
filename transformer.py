@@ -2852,13 +2852,6 @@ def _build_sku_allocation_summary(raw: pd.DataFrame) -> pd.DataFrame:
     return merged
 
 
-# Shop Nature → 缺貨店數欄名映射（Tourist + Mix 兩欄）
-_DIAG_NATURE_COLS = {
-    "Tourist": "Tourist 缺貨店數",
-    "Mix": "Mix 缺貨店數",
-}
-
-
 def _classify_d001_status(d001_cm: float) -> str:
     """依 D001 倉庫 CM 存貨分類缺貨源頭。
 
@@ -2869,20 +2862,20 @@ def _classify_d001_status(d001_cm: float) -> str:
 
 
 def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
-    """by-SKU 缺貨診斷表（Tourist + Mix 缺貨 SKU）。
+    """by-SKU 缺貨診斷表（Tourist + Mix + Non Tourist 缺貨 SKU）。
 
     每列為一個缺貨 SKU，彙總：
-    - Tourist / Mix 各自缺貨店數與銷售損失
+    - Tourist / Mix / Non Tourist 各自缺貨店數與銷售
     - D001 倉庫三期貨量 (M-2/M-1/CM) + D001 狀態分類（源頭斷貨 vs 補貨問題）
     - 店舖三期總存貨 (M-2/M-1/CM)
-    排序：Tourist 缺貨店數 → Mix 缺貨店數 → Tourist 損失(P90D)（皆降序）。
+    排序：Tourist 缺貨店數 → Mix 缺貨店數 → Non Tourist 缺貨店數 → Tourist 損失(P90D)（皆降序）。
     """
     if "SKU" not in raw.columns or "Shop Nature" not in raw.columns:
         return pd.DataFrame()
 
-    # 只看 Tourist + Mix 的缺貨行（CM Shop Stock=0 且有需求）
+    # 只看 Tourist + Mix + Non Tourist 的缺貨行（CM Shop Stock=0 且有需求）
     focus = raw[
-        raw["Shop Nature"].isin(["Tourist", "Mix"])
+        raw["Shop Nature"].isin(["Tourist", "Mix", "Non Tourist"])
         & (raw["Is Stock Impacted"])
         & (_safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, raw.index))) <= 0)
     ].copy()
@@ -2900,8 +2893,6 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
     for label, col in [("M-2", "D001 Stock Qty (M-2)"), ("M-1", "D001 Stock Qty (M-1)"), ("CM", "D001 Stock Qty (CM)")]:
         focus[f"_d001_{label}"] = _safe_numeric(focus.get(col, _safe_default_series(0, focus.index)))
 
-    group_cols = ["SKU"] + (["Brand"] if "Brand" in focus.columns else []) + (["Buyer"] if "Buyer" in focus.columns else [])
-
     # 先取每個 SKU 的 D001 三期值（D001 是 SKU 級共享，first 即可）
     d001_per_sku = (
         focus.groupby("SKU", dropna=False)
@@ -2913,16 +2904,16 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
-    # 各 Nature 的缺貨店數 + 損失
+    # 各 Nature 的缺貨店數 + 銷售（只保留缺貨店數，取消缺貨行數）
     nature_aggs = {}
-    for nat in ["Tourist", "Mix"]:
+    _DIAG_NATURES = ["Tourist", "Mix", "Non Tourist"]
+    for nat in _DIAG_NATURES:
         sub = focus[focus["Shop Nature"] == nat]
         nature_aggs[nat] = (
             sub.groupby("SKU", dropna=False)
             .agg(
                 **{
                     f"{nat}缺貨店數": ("Site Code", "nunique") if "Site Code" in sub.columns else ("SKU", "count"),
-                    f"{nat}缺貨行數": ("SKU", "count"),
                     f"{nat}損失_M2": ("_loss_m2", "sum"),
                     f"{nat}損失_P90D": ("_loss_p90d", "sum"),
                     f"{nat}_M2銷售件數": ("_m2_sold", "sum"),
@@ -2933,7 +2924,7 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
             .reset_index()
         )
 
-    # 店舖總存貨（Tourist+Mix 缺貨店加總）
+    # 店舖總存貨（Tourist+Mix+Non Tourist 缺貨店加總）
     shop_stock_per_sku = (
         focus.groupby("SKU", dropna=False)
         .agg(
@@ -2977,7 +2968,7 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
     # 合併
     merged = brand_per_sku.merge(d001_per_sku, on="SKU", how="left")
     merged = merged.merge(ndrf_per_sku, on="SKU", how="left")
-    for nat in ["Tourist", "Mix"]:
+    for nat in _DIAG_NATURES:
         merged = merged.merge(nature_aggs[nat], on="SKU", how="left")
     merged = merged.merge(shop_stock_per_sku, on="SKU", how="left")
 
@@ -2985,8 +2976,8 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
     for c in ["NDRF_ND行数", "NDRF_RF行数"]:
         merged[c] = merged[c].fillna(0).astype(int)
 
-    # 填補缺漏 Nature 的 NaN（某 SKU 可能只有 Tourist 缺貨而無 Mix）
-    for nat in ["Tourist", "Mix"]:
+    # 填補缺漏 Nature 的 NaN
+    for nat in _DIAG_NATURES:
         for col in nature_aggs[nat].columns:
             if col == "SKU":
                 continue
@@ -3001,14 +2992,15 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
         out_cols.append("SKU Desc")
     out_cols += ["Brand", "Buyer",
                 "NDRF_ND行数", "NDRF_RF行数",
-                "Tourist缺貨店數", "Tourist缺貨行數", "Tourist_M2銷售件數", "Tourist_CM銷售件數", "Tourist_P90D",
-                "Mix缺貨店數", "Mix缺貨行數", "Mix_M2銷售件數", "Mix_CM銷售件數", "Mix_P90D",
+                "Tourist缺貨店數", "Tourist_M2銷售件數", "Tourist_CM銷售件數", "Tourist_P90D",
+                "Mix缺貨店數", "Mix_M2銷售件數", "Mix_CM銷售件數", "Mix_P90D",
+                "Non Tourist缺貨店數", "Non Tourist_M2銷售件數", "Non Tourist_CM銷售件數", "Non Tourist_P90D",
                 "D001 狀態", "D001_Stock_M2", "D001_Stock_M1", "D001_Stock_CM",
                 "店舖存貨總_M2", "店舖存貨總_M1", "店舖存貨總_CM"]
-    # 排序須在 subset 之前（因排序鍵 Tourist損失_P90D 不列入輸出）
+    # 排序
     merged = merged.sort_values(
-        ["Tourist缺貨店數", "Mix缺貨店數", "Tourist損失_P90D"],
-        ascending=[False, False, False],
+        ["Tourist缺貨店數", "Mix缺貨店數", "Non Tourist缺貨店數", "Tourist損失_P90D"],
+        ascending=[False, False, False, False],
     ).reset_index(drop=True)
     avail = [c for c in out_cols if c in merged.columns]
     merged = merged[avail]
@@ -3519,7 +3511,7 @@ def _write_sku_stock_diagnosis_sheet(ws, diag_df, header_font, header_fill, thin
 
     D001 狀態分類用顏色標示：「倉庫有貨但店舖缺貨」(補貨問題) 用橘色警示、「源頭斷貨」用灰色。
     """
-    ws.cell(row=1, column=1, value="SKU Stock Diagnosis — by-SKU 缺貨診斷（Tourist + Mix 缺貨 SKU｜含 D001 倉庫貨量與店舖貨量）").font = Font(bold=True, size=12, color="1E40AF")
+    ws.cell(row=1, column=1, value="SKU Stock Diagnosis — by-SKU 缺貨診斷（Tourist + Mix + Non Tourist 缺貨 SKU｜含 D001 倉庫貨量與店舖貨量）").font = Font(bold=True, size=12, color="1E40AF")
 
     if diag_df is None or diag_df.empty:
         ws.cell(row=3, column=1, value="無 Tourist/Mix 缺貨 SKU").font = Font(size=11, italic=True, color="6B7280")
@@ -3741,7 +3733,6 @@ def generate_excel_stock_impact(
     summary_brand: pd.DataFrame,
     summary_buyer: pd.DataFrame,
     summary_category: pd.DataFrame,
-    sku_allocation: pd.DataFrame,
     sku_diagnosis: pd.DataFrame,
     inv_distribution: dict,
     raw_df: pd.DataFrame,
@@ -3802,25 +3793,19 @@ def generate_excel_stock_impact(
     else:
         ws_category.cell(row=1, column=1, value="無 Category (Adj. MCH1) 層級缺貨影響數據").font = Font(size=12)
 
-    # Sheet 6: SKU Allocation
+    # Sheet 6: SKU Stock Diagnosis (by-SKU 缺貨診斷, 含 D001 + 店舖貨量)
     if progress_callback:
-        progress_callback(0.70, "建立 SKU 調貨建議工作表...")
-    ws_alloc = wb.create_sheet(title="SKU Allocation")
-    _write_sku_allocation_sheet(ws_alloc, sku_allocation, header_font, header_fill, thin_border, progress_callback)
-
-    # Sheet 7: SKU Stock Diagnosis (by-SKU 缺貨診斷, 含 D001 + 店舖貨量)
-    if progress_callback:
-        progress_callback(0.73, "建立 by-SKU 缺貨診斷工作表...")
+        progress_callback(0.70, "建立 by-SKU 缺貨診斷工作表...")
     ws_diag = wb.create_sheet(title="SKU Stock Diagnosis")
     _write_sku_stock_diagnosis_sheet(ws_diag, sku_diagnosis, header_font, header_fill, thin_border, progress_callback)
 
-    # Sheet 8: Inventory Distribution (存貨分佈分析)
+    # Sheet 7: Inventory Distribution (存貨分佈分析)
     if progress_callback:
         progress_callback(0.76, "建立存貨分佈分析工作表...")
     ws_inv = wb.create_sheet(title="Inventory Distribution")
     _write_inventory_distribution_sheet(ws_inv, inv_distribution, header_font, header_fill, thin_border, progress_callback)
 
-    # Sheet 9: Dashboard
+    # Sheet 8: Dashboard
     if progress_callback:
         progress_callback(0.80, "建立缺貨影響分析摘要工作表...")
     ws_dashboard = wb.create_sheet(title="Stock Impact Dashboard")
