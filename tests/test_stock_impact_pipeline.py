@@ -214,15 +214,14 @@ def test_transform_stock_impact():
         {"SKU": "3", "Adj. MCH1": "CatA", "Shop Nature": "Non Tourist", "Shop Stock Qty (CM)": 5,
          "Sold Qty (M-2)": 30.0, "Sold Qty (CM - MTD)": 10.0},
     ])
-    site, brand, buyer, cat, alloc, diag, inv, raw, warns = transform_stock_impact(df)
+    _, brand, buyer, cat, alloc, diag, inv, raw, warns = transform_stock_impact(df)
 
-    assert len(site) > 0
     assert len(brand) > 0
     assert len(buyer) > 0
     assert len(cat) > 0
     impacted_count = int(raw["Is Stock Impacted"].sum())
     assert impacted_count == 2, f"應有 2 行缺貨影響，得 {impacted_count}"
-    print(f"OK transform_stock_impact（4 維度彙總 + 缺貨影響 {impacted_count} 行）")
+    print(f"OK transform_stock_impact（3 維度彙總 + 缺貨影響 {impacted_count} 行）")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -354,9 +353,8 @@ def test_no_impacted_items():
         {"SKU": "1", "Shop Stock Qty (CM)": 5, "Sold Qty (M-2)": 10.0},
         {"SKU": "2", "Shop Stock Qty (CM)": 3, "Sold Qty (M-2)": 20.0},
     ])
-    site, brand, buyer, cat, alloc, diag, inv, raw, warns = transform_stock_impact(df)
+    _, brand, buyer, cat, alloc, diag, inv, raw, warns = transform_stock_impact(df)
     assert int(raw["Is Stock Impacted"].sum()) == 0
-    assert site.empty, "無缺貨影響 → Site 彙總應為空"
     print("OK 無缺貨影響：空彙總")
 
 
@@ -463,21 +461,21 @@ def test_generate_excel_stock_impact():
         {"SKU": "2", "Adj. MCH1": "CatB", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 20.0, "Sold Qty (CM - MTD)": 5.0, "Shop Monthly Sold Qty (P90D)": 15.0},
     ])
-    site, brand, buyer, cat, alloc, diag, inv, raw, _ = transform_stock_impact(df)
-    buf = generate_excel_stock_impact(site, brand, buyer, cat, alloc, diag, inv, raw)
+    _, brand, buyer, cat, alloc, diag, inv, raw, _ = transform_stock_impact(df)
+    buf = generate_excel_stock_impact(brand, buyer, cat, alloc, diag, inv, raw)
     assert isinstance(buf, BytesIO)
     data = buf.getvalue()
     assert len(data) > 100
     assert data[:2] == b"PK", "應為有效 xlsx（PK zip signature）"
 
-    # 驗證 10 個 sheet
+    # 驗證 9 個 sheet
     import openpyxl
     wb = openpyxl.load_workbook(BytesIO(data))
-    expected = ["RAW", "OOS Impact Detail", "By Site", "By Brand", "By Buyer",
+    expected = ["RAW", "OOS Impact Detail", "By Brand", "By Buyer",
                 "By Category", "SKU Allocation", "SKU Stock Diagnosis",
                 "Inventory Distribution", "Stock Impact Dashboard"]
     assert wb.sheetnames == expected, f"sheets mismatch: {wb.sheetnames}"
-    print("OK generate_excel_stock_impact（10 sheets valid xlsx）")
+    print("OK generate_excel_stock_impact（9 sheets valid xlsx）")
 
 
 if __name__ == "__main__":

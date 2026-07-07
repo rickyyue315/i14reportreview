@@ -683,7 +683,7 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
     _auto_width(ws)
 
 
-def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None):
+def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None, progress_pct=0.95):
     ws.merge_cells("A1:D1")
     title_cell = ws.cell(row=1, column=1, value=title)
     title_cell.font = Font(bold=True, size=14, color="1E40AF")
@@ -708,7 +708,7 @@ def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc
             dc.border = thin_border
 
     if progress_callback:
-        progress_callback(0.95, "調整格式中...")
+        progress_callback(progress_pct, "調整格式中...")
     _auto_width(ws)
 
 
@@ -852,6 +852,9 @@ def generate_excel_combined(
     ]
 
     _write_metric_cards(ws_dashboard, "Safety Stock 數據分析摘要 (Safety Stock Analysis Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
+
+    if progress_callback:
+        progress_callback(0.97, "正在儲存 Excel 檔案...")
 
     buf = BytesIO()
     wb.save(buf)
@@ -1117,6 +1120,9 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
 
     desc_font = Font(size=9, color="6B7280", italic=True)
     _write_metric_cards(ws_dashboard, "異常庫存數據分析摘要 (Analysis Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
+
+    if progress_callback:
+        progress_callback(0.97, "正在儲存 Excel 檔案...")
 
     buf = BytesIO()
     wb.save(buf)
@@ -1560,6 +1566,9 @@ def generate_excel_nd(
     desc_font = Font(size=9, color="6B7280", italic=True)
     _write_metric_cards(ws_dashboard, "ND SKU 數據分析摘要 (ND SKU Analysis Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
 
+    if progress_callback:
+        progress_callback(0.97, "正在儲存 Excel 檔案...")
+
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -1976,6 +1985,9 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
 
     _write_metric_cards(ws_dashboard, "OOS庫存數據分析摘要 (OOS Analysis Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
 
+    if progress_callback:
+        progress_callback(0.97, "正在儲存 Excel 檔案...")
+
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -2372,6 +2384,9 @@ def generate_excel_carry(
     if progress_callback:
         progress_callback(0.9, "調整格式中...")
 
+    if progress_callback:
+        progress_callback(0.95, "正在儲存 Excel 檔案...")
+
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -2659,7 +2674,6 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
 # 多維度彙總輸出欄位（中文表頭）
 _STOCK_IMPACT_SUMMARY_COLS = [
     "缺貨行數", "Tourist 缺貨", "Mix 缺貨", "Non Tourist 缺貨",
-    "最大銷售損失(M-2)", "最大銷售損失(P90D)", "總銷售損失(M-2)", "總銷售損失(P90D)",
     "長期缺貨", "間歇缺貨", "恢復供貨",
 ]
 
@@ -2667,7 +2681,7 @@ _STOCK_IMPACT_SUMMARY_COLS = [
 def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
     """依 group_cols 彙總缺貨影響。只統計 Is Stock Impacted = True 的列。
 
-    排序優先級：Tourist 缺貨 → 最大銷售損失(P90D) → 缺貨行數（皆降序）。
+    排序優先級：Tourist 缺貨 → 缺貨行數（皆降序）。
     """
     impacted = raw[raw["Is Stock Impacted"]].copy()
     if impacted.empty:
@@ -2675,10 +2689,6 @@ def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.
         return pd.DataFrame(columns=col_names)
 
     impacted["_nature"] = impacted.get("Shop Nature", pd.Series(dtype=object)).fillna("")
-    impacted["_loss_m2_max"] = _safe_numeric(impacted.get("Max Sales Loss (M-2)", _safe_default_series(0, impacted.index)))
-    impacted["_loss_p90d_max"] = _safe_numeric(impacted.get("Max Sales Loss (P90D)", _safe_default_series(0, impacted.index)))
-    impacted["_loss_m2_sum"] = _safe_numeric(impacted.get("Total Sales Loss (M-2)", _safe_default_series(0, impacted.index)))
-    impacted["_loss_p90d_sum"] = _safe_numeric(impacted.get("Total Sales Loss (P90D)", _safe_default_series(0, impacted.index)))
     impacted["_pattern"] = impacted.get("OOS Pattern", pd.Series(dtype=object)).fillna("")
 
     agg = (
@@ -2689,10 +2699,6 @@ def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.
                 "Tourist 缺貨": ("_nature", lambda x: (x == "Tourist").sum()),
                 "Mix 缺貨": ("_nature", lambda x: (x == "Mix").sum()),
                 "Non Tourist 缺貨": ("_nature", lambda x: (x == "Non Tourist").sum()),
-                "最大銷售損失(M-2)": ("_loss_m2_max", "sum"),
-                "最大銷售損失(P90D)": ("_loss_p90d_max", "sum"),
-                "總銷售損失(M-2)": ("_loss_m2_sum", "sum"),
-                "總銷售損失(P90D)": ("_loss_p90d_sum", "sum"),
                 "長期缺貨": ("_pattern", lambda x: (x == "長期缺貨").sum()),
                 "間歇缺貨": ("_pattern", lambda x: (x == "間歇缺貨").sum()),
                 "恢復供貨": ("_pattern", lambda x: (x == "恢復供貨").sum()),
@@ -2705,8 +2711,8 @@ def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.
         agg[c] = agg[c].fillna(0).astype(int)
 
     agg = agg.sort_values(
-        ["Tourist 缺貨", "最大銷售損失(P90D)", "缺貨行數"],
-        ascending=[False, False, False],
+        ["Tourist 缺貨", "缺貨行數"],
+        ascending=[False, False],
     ).reset_index(drop=True)
 
     # 總計列
@@ -2716,7 +2722,7 @@ def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.
         total_data[c] = int(agg[c].sum())
     agg = pd.concat([agg, pd.DataFrame([total_data])], ignore_index=True)
 
-    for c in ["_nature", "_loss_m2_max", "_loss_p90d_max", "_loss_m2_sum", "_loss_p90d_sum", "_pattern"]:
+    for c in ["_nature", "_pattern"]:
         if c in agg.columns:
             agg.drop(columns=[c], inplace=True)
 
@@ -2827,14 +2833,15 @@ def _build_sku_allocation_summary(raw: pd.DataFrame) -> pd.DataFrame:
     if "Brand" in merged.columns:
         out_cols.append("Brand")
     out_cols += [
-        "Tourist缺貨店數", "Tourist損失_M2", "Tourist損失_P90D", "Tourist_M2銷售",
+        "Tourist缺貨店數", "Tourist_M2銷售",
         "Mix可調貨存貨", "Mix閒置店數", "Non Tourist可調貨存貨", "Non Tourist閒置店數",
         "可調貨總存貨",
     ]
-    merged = merged[out_cols]
+    # 排序須在 subset 之前（因排序鍵 Tourist損失_P90D 不列入輸出）
     merged = merged.sort_values(
         ["Tourist損失_P90D", "可調貨總存貨"], ascending=[False, False]
     ).reset_index(drop=True)
+    merged = merged[out_cols]
 
     return merged
 
@@ -2959,17 +2966,17 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
 
     # 欄位順序
     out_cols = ["SKU", "Brand", "Buyer",
-                "Tourist缺貨店數", "Tourist缺貨行數", "Tourist損失_M2", "Tourist損失_P90D", "Tourist_M2銷售", "Tourist_CM銷售", "Tourist_P90D",
-                "Mix缺貨店數", "Mix缺貨行數", "Mix損失_M2", "Mix損失_P90D", "Mix_M2銷售", "Mix_CM銷售", "Mix_P90D",
+                "Tourist缺貨店數", "Tourist缺貨行數", "Tourist_M2銷售", "Tourist_CM銷售", "Tourist_P90D",
+                "Mix缺貨店數", "Mix缺貨行數", "Mix_M2銷售", "Mix_CM銷售", "Mix_P90D",
                 "D001 狀態", "D001_Stock_M2", "D001_Stock_M1", "D001_Stock_CM",
                 "店舖存貨總_M2", "店舖存貨總_M1", "店舖存貨總_CM"]
-    avail = [c for c in out_cols if c in merged.columns]
-    merged = merged[avail]
-
+    # 排序須在 subset 之前（因排序鍵 Tourist損失_P90D 不列入輸出）
     merged = merged.sort_values(
         ["Tourist缺貨店數", "Mix缺貨店數", "Tourist損失_P90D"],
         ascending=[False, False, False],
     ).reset_index(drop=True)
+    avail = [c for c in out_cols if c in merged.columns]
+    merged = merged[avail]
 
     return merged
 
@@ -3316,9 +3323,8 @@ def transform_stock_impact(
     if progress_callback:
         progress_callback(0.4, "建構多維度彙總中...")
 
-    _site_cols = ["Site Code", "Shop Name", "OM"]
-    site_cols_avail = [c for c in _site_cols if c in raw.columns]
-    summary_site = _build_stock_impact_summary(raw, site_cols_avail) if len(site_cols_avail) >= 1 else pd.DataFrame()
+    # Site 層級已取消（v1.6.2）
+    summary_site = pd.DataFrame()
 
     summary_brand = _build_stock_impact_summary(raw, ["Brand"]) if "Brand" in raw.columns else pd.DataFrame()
     summary_buyer = _build_stock_impact_summary(raw, ["Buyer"]) if "Buyer" in raw.columns else pd.DataFrame()
@@ -3451,7 +3457,7 @@ def _write_sku_allocation_sheet(ws, alloc_df, header_font, header_fill, thin_bor
                 cell.number_format = "#,##0"
 
     if progress_callback:
-        progress_callback(0.78, f"SKU 調貨表寫入完成（{len(alloc_df)} SKU）")
+        progress_callback(0.72, f"SKU 調貨表寫入完成（{len(alloc_df)} SKU）")
 
     _auto_width(ws)
 
@@ -3501,11 +3507,11 @@ def _write_sku_stock_diagnosis_sheet(ws, diag_df, header_font, header_fill, thin
                     cell.fill = source_fill
                     cell.font = Font(size=10, color="4B5563")
         if progress_callback and ((row_idx - 4) % 500 == 0 or row_idx - 3 == total_rows):
-            progress_callback(0.74 + 0.03 * ((row_idx - 3) / max(total_rows, 1)),
+            progress_callback(0.741 + 0.018 * ((row_idx - 3) / max(total_rows, 1)),
                               f"寫入 SKU 缺貨診斷 ({row_idx-3}/{total_rows})...")
 
     if progress_callback:
-        progress_callback(0.77, f"SKU 缺貨診斷表寫入完成（{len(diag_df)} SKU）")
+        progress_callback(0.759, f"SKU 缺貨診斷表寫入完成（{len(diag_df)} SKU）")
 
     _auto_width(ws)
 
@@ -3551,22 +3557,22 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
 
     # B1a: Mix Turnday 分級
     if progress_callback:
-        progress_callback(0.80, "寫入 Mix Turnday 分級...")
+        progress_callback(0.77, "寫入 Mix Turnday 分級...")
     current_row = _write_subtable("📊 Mix 店舖 Turnday 分級（標準：保留 7-14 日）", inv_distribution.get("mix_turnday"), current_row)
 
     # B1b: Non Tourist Turnday 分級
     if progress_callback:
-        progress_callback(0.82, "寫入 Non Tourist Turnday 分級...")
+        progress_callback(0.775, "寫入 Non Tourist Turnday 分級...")
     current_row = _write_subtable("📊 Non Tourist 店舖 Turnday 分級", inv_distribution.get("nt_turnday"), current_row)
 
     # B2: Nature 對比
     if progress_callback:
-        progress_callback(0.85, "寫入 Nature 存貨對比...")
+        progress_callback(0.785, "寫入 Nature 存貨對比...")
     current_row = _write_subtable("🏪 各 Shop Nature 存貨分佈對比", inv_distribution.get("nature_compare"), current_row)
 
     # B3: 存貨失衡 SKU
     if progress_callback:
-        progress_callback(0.90, "寫入存貨失衡 SKU...")
+        progress_callback(0.79, "寫入存貨失衡 SKU...")
     imb = inv_distribution.get("imbalance_sku")
     current_row = _write_subtable("🔄 存貨失衡 SKU（Tourist 缺貨 + Non Tourist/Mix 過剩 → 建議調貨）", imb, current_row)
 
@@ -3579,7 +3585,7 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
 
     # B4: 低存貨 SKU 配置決策
     if progress_callback:
-        progress_callback(0.93, "寫入低存貨 SKU 配置決策...")
+        progress_callback(0.799, "寫入低存貨 SKU 配置決策...")
     low_alloc = inv_distribution.get("low_stock_allocation")
     if low_alloc is not None and not low_alloc.empty:
         # 轉置為 2 欄（指標/數值）方便閱讀
@@ -3618,8 +3624,11 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
     # 存貨失衡 SKU 數（Tourist 缺貨 + 其他 Nature 過剩）
     imbalance_count = len(inv_distribution.get("imbalance_sku", pd.DataFrame())) if inv_distribution else 0
 
-    # 總缺貨影響行數
-    total_impacted = len(impacted)
+    # 各 Nature 平均 Turnday
+    tourist_td = turnday[nature == "Tourist"]
+    tourist_avg_td = round(float(tourist_td.mean()), 1) if tourist_td.notna().any() and len(tourist_td) else 0
+    mix_td = turnday[nature == "Mix"]
+    mix_avg_td = round(float(mix_td.mean()), 1) if mix_td.notna().any() and len(mix_td) else 0
 
     # Non Tourist 平均 Turnday
     nt_td = turnday[nature == "Non Tourist"]
@@ -3643,8 +3652,8 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
     ]
 
     row2_metrics = [
-        ("Mix 可釋放總量", mix_excess_total, "Mix 過剩存貨可調出｜單位：件數", "8B5CF6"),
-        ("總缺貨影響行數", total_impacted, "Shop Stock=0 且有需求（只計 RF）｜單位：行數", "3B82F6"),
+        ("Tourist 平均Turnday", tourist_avg_td, "Tourist 平均存貨天數｜單位：日", "8B5CF6"),
+        ("Mix 平均Turnday", mix_avg_td, "Mix 平均存貨天數｜單位：日", "3B82F6"),
         ("Non Tourist 平均Turnday", nt_avg_td, "Non Tourist 平均存貨天數｜單位：日", "06B6D4"),
         ("受影響最嚴重 Buyer", top_buyer_name, f"Tourist 缺貨: {top_buyer_loss:,} 行", "1E40AF"),
     ]
@@ -3677,7 +3686,6 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
 
 
 def generate_excel_stock_impact(
-    summary_site: pd.DataFrame,
     summary_brand: pd.DataFrame,
     summary_buyer: pd.DataFrame,
     summary_category: pd.DataFrame,
@@ -3712,70 +3720,63 @@ def generate_excel_stock_impact(
     ws_detail = wb.create_sheet(title="OOS Impact Detail")
     _write_oos_detail_sheet(ws_detail, raw_df, header_font, header_fill, thin_border, progress_callback)
 
-    # Sheet 3: By Site
+    # Sheet 3: By Brand
     if progress_callback:
-        progress_callback(0.28, "建立 By Site 分析工作表...")
-    ws_site = wb.create_sheet(title="By Site")
-    if not summary_site.empty:
-        _write_stock_impact_summary_sheet(ws_site, summary_site, "By Site — 缺貨影響分析",
-                                          header_font, header_fill, thin_border, progress_callback, 0.28, 0.38)
-    else:
-        ws_site.cell(row=1, column=1, value="無 Site 層級缺貨影響數據").font = Font(size=12)
-
-    # Sheet 4: By Brand
-    if progress_callback:
-        progress_callback(0.40, "建立 By Brand 分析工作表...")
+        progress_callback(0.3, "建立 By Brand 分析工作表...")
     ws_brand = wb.create_sheet(title="By Brand")
     if not summary_brand.empty:
         _write_stock_impact_summary_sheet(ws_brand, summary_brand, "By Brand — 缺貨影響分析",
-                                          header_font, header_fill, thin_border, progress_callback, 0.40, 0.50)
+                                          header_font, header_fill, thin_border, progress_callback, 0.30, 0.42)
     else:
         ws_brand.cell(row=1, column=1, value="無 Brand 層級缺貨影響數據").font = Font(size=12)
 
-    # Sheet 5: By Buyer
+    # Sheet 4: By Buyer
     if progress_callback:
-        progress_callback(0.52, "建立 By Buyer 分析工作表...")
+        progress_callback(0.44, "建立 By Buyer 分析工作表...")
     ws_buyer = wb.create_sheet(title="By Buyer")
     if not summary_buyer.empty:
         _write_stock_impact_summary_sheet(ws_buyer, summary_buyer, "By Buyer — 缺貨影響分析",
-                                          header_font, header_fill, thin_border, progress_callback, 0.52, 0.62)
+                                          header_font, header_fill, thin_border, progress_callback, 0.44, 0.56)
     else:
         ws_buyer.cell(row=1, column=1, value="無 Buyer 層級缺貨影響數據").font = Font(size=12)
 
-    # Sheet 6: By Category
+    # Sheet 5: By Category
     if progress_callback:
-        progress_callback(0.64, "建立 By Category 分析工作表...")
+        progress_callback(0.58, "建立 By Category 分析工作表...")
     ws_category = wb.create_sheet(title="By Category")
     if not summary_category.empty:
         _write_stock_impact_summary_sheet(ws_category, summary_category, "By Category (Adj. MCH1) — 缺貨影響分析",
-                                          header_font, header_fill, thin_border, progress_callback, 0.64, 0.72)
+                                          header_font, header_fill, thin_border, progress_callback, 0.58, 0.68)
     else:
         ws_category.cell(row=1, column=1, value="無 Category (Adj. MCH1) 層級缺貨影響數據").font = Font(size=12)
 
-    # Sheet 7: SKU Allocation
+    # Sheet 6: SKU Allocation
     if progress_callback:
-        progress_callback(0.74, "建立 SKU 調貨建議工作表...")
+        progress_callback(0.70, "建立 SKU 調貨建議工作表...")
     ws_alloc = wb.create_sheet(title="SKU Allocation")
     _write_sku_allocation_sheet(ws_alloc, sku_allocation, header_font, header_fill, thin_border, progress_callback)
 
-    # Sheet 8: SKU Stock Diagnosis (by-SKU 缺貨診斷, 含 D001 + 店舖貨量)
+    # Sheet 7: SKU Stock Diagnosis (by-SKU 缺貨診斷, 含 D001 + 店舖貨量)
     if progress_callback:
-        progress_callback(0.77, "建立 by-SKU 缺貨診斷工作表...")
+        progress_callback(0.73, "建立 by-SKU 缺貨診斷工作表...")
     ws_diag = wb.create_sheet(title="SKU Stock Diagnosis")
     _write_sku_stock_diagnosis_sheet(ws_diag, sku_diagnosis, header_font, header_fill, thin_border, progress_callback)
 
-    # Sheet 9: Inventory Distribution (存貨分佈分析)
+    # Sheet 8: Inventory Distribution (存貨分佈分析)
     if progress_callback:
-        progress_callback(0.79, "建立存貨分佈分析工作表...")
+        progress_callback(0.76, "建立存貨分佈分析工作表...")
     ws_inv = wb.create_sheet(title="Inventory Distribution")
     _write_inventory_distribution_sheet(ws_inv, inv_distribution, header_font, header_fill, thin_border, progress_callback)
 
-    # Sheet 10: Dashboard
+    # Sheet 9: Dashboard
     if progress_callback:
-        progress_callback(0.82, "建立缺貨影響分析摘要工作表...")
+        progress_callback(0.80, "建立缺貨影響分析摘要工作表...")
     ws_dashboard = wb.create_sheet(title="Stock Impact Dashboard")
     _write_stock_impact_dashboard(ws_dashboard, raw_df, summary_buyer, inv_distribution,
                                   thin_border, desc_font, progress_callback)
+
+    if progress_callback:
+        progress_callback(0.97, "正在儲存 Excel 檔案...")
 
     buf = BytesIO()
     wb.save(buf)

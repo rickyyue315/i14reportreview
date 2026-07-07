@@ -1,5 +1,26 @@
 # 版本記錄
 
+## v1.7.0 (2026-07-07)
+
+- Breaking: 取消 Site 層級缺貨影響分析 — Excel 及 UI 移除 By Site
+- Simplify: Brand/Buyer/Category 彙總移除 4 個損失欄位（最大銷售損失(M-2)、最大銷售損失(P90D)、總銷售損失(M-2)、總銷售損失(P90D)）
+- Simplify: SKU 跨 Nature 調貨建議移除 Tourist損失_M2、Tourist損失_P90D
+- Simplify: by-SKU 缺貨診斷移除 Tourist損失_M2、Tourist損失_P90D、Mix損失_M2、Mix損失_P90D
+- Fix: Dashboard 「Mix 可釋放總量」重複 → 改為「Tourist 平均Turnday」; 「總缺貨影響行數」→「Mix 平均Turnday」
+- Update: Excel sheets 10→9; Streamlit tabs 7→6
+- Update: `version.py` 1.6.2 → 1.7.0
+
+## v1.6.2 (2026-07-07)
+
+- Fix: Stock Impact Analysis 在 98%「調整格式中...」crash — 修復 progress bar 倒退問題
+- Root cause: `_write_inventory_distribution_sheet` 內部 progress 推進到 0.93，但外層下一個步驟設為 0.82，導致進度倒退（97.2% → 92.8%），可能觸發 Streamlit 內部例外
+- Fix: 將 `_write_inventory_distribution_sheet` 內部 progress 限制在 [0.79, 0.819] 範圍
+- Fix: 將 `_write_sku_allocation_sheet` progress 從 0.78 修正為 0.76（不得超越外層 0.77）
+- Fix: 將 `_write_sku_stock_diagnosis_sheet` 內部 progress 從 [0.74, 0.77] 移位至 [0.771, 0.789]
+- Fix: 所有 `generate_excel_*` 函式在 `wb.save()` 前新增「正在儲存 Excel 檔案...」進度提示
+- Fix: `_write_metric_cards` 的 progress 值改為可配置參數 `progress_pct`（預設 0.95）
+- Update: `version.py` 1.6.1 → 1.6.2
+
 ## v1.6.1 (2026-07-07)
 
 - Upgrade: Stock Impact Dashboard 從「缺貨焦點」升級為「存貨分佈分析」
