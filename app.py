@@ -778,9 +778,9 @@ if uploaded_file is not None:
                 st.session_state.stock_impact_summary_category = summary_category
                 st.session_state.stock_impact_sku_diagnosis = sku_diagnosis
                 st.session_state.stock_impact_inv_distribution = inv_distribution
-                # 只存 Dashboard 需要的 6 個欄位（節省 ~90% 記憶體）
+                # 只存 Dashboard 需要的欄位（節省 ~90% 記憶體）
                 _slim_cols = ["Is Stock Impacted", "Shop Nature", "Shop Stock Qty (CM)",
-                              "Turnday (Days)", "Mix Excess Stock"]
+                              "Turnday (Days)", "Mix Excess Stock", "Non Tourist Excess Stock"]
                 _available = [c for c in _slim_cols if c in raw_df.columns]
                 st.session_state.stock_impact_raw_slim = raw_df[_available].copy() if _available else pd.DataFrame()
                 st.session_state.stock_impact_excel_data = buf
@@ -818,9 +818,8 @@ if uploaded_file is not None:
 
             # Tourist 缺貨行數（高銷售店無貨）
             tourist_oos_rows = int(((nature_s == "Tourist") & (cm_stock_s <= 0) & impacted_mask).sum())
-            # Non Tourist 過剩存貨件數（>30日）
-            nt_over_mask = (nature_s == "Non Tourist") & (turnday_s > 30) & (cm_stock_s > 0)
-            nt_over_stock = int(cm_stock_s[nt_over_mask].sum())
+            # Non Tourist 可釋存貨（>14日標準，與 Mix 一致）
+            nt_excess_total = int(_safe_numeric(raw_slim.get("Non Tourist Excess Stock", _safe_default_series(0, raw_slim.index))).sum())
             # Mix 可釋放存貨件數（>14日標準）
             mix_excess_total = int(_safe_numeric(raw_slim.get("Mix Excess Stock", _safe_default_series(0, raw_slim.index))).sum())
             # 存貨失衡 SKU 數
@@ -860,9 +859,9 @@ if uploaded_file is not None:
             with r1_col2:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #F59E0B;">
-                    <div class="metric-title">Non Tourist 過剩存貨</div>
-                    <div class="metric-value" style="color: #F59E0B;">{nt_over_stock:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
-                    <div class="metric-desc">Turnday&gt;30日囤積｜單位：件數</div>
+                    <div class="metric-title">Non Tourist 可釋存貨</div>
+                    <div class="metric-value" style="color: #F59E0B;">{nt_excess_total:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
+                    <div class="metric-desc">超過14日標準可釋放｜單位：件數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col3:
