@@ -57,12 +57,16 @@ RAW_COLUMN_ORDER_NAMES = [
     "Excess Stock Value",
     "Shop On Order PO Qty (CM)",
     "Shop Pending Receive",
-    "Projected MTD Sold Qty",
-    "Decline Rate (M-2→M-1)",
-    "Decline Rate (M-1→MTD)",
-    "Max Decline Rate",
-    "Is Declining",
-    "Decline Severity",
+    "Is OOS (M-2)",
+    "Is OOS (M-1)",
+    "Is OOS (CM)",
+    "OOS Periods Count",
+    "OOS Pattern",
+    "Max Sales Loss (M-2)",
+    "Max Sales Loss (P90D)",
+    "Total Sales Loss (M-2)",
+    "Total Sales Loss (P90D)",
+    "Is Stock Impacted",
 ]
 
 
@@ -2481,158 +2485,446 @@ def _write_pivot_block(ws, pivot_df, start_row, excel_cols, detail_cols, data_co
                             f"寫入 Summary {prefix} ({row_idx+1}/{total_rows})...")
 
 
-# ─── Sales Decline Detection Functions ──────────────────────────────────────────
+# ─── Stock Impact Analysis Functions ────────────────────────────────────────────
+#
+# 取代 Sales Decline Detection (v1.5.1)。改以 Shop Stock = 0（缺貨）對 Sold Qty 的
+# 因果影響為核心，回答「無貨就無銷售」。Shop Nature 優先級 Tourist > Mix > Non Tourist。
 
-DECLINE_CATEGORIES = ["Mild", "Moderate", "Severe"]
+# 三期 Stock→Sold 對應（同期）。每個 tuple: (期別標籤, Stock 欄位, Sold 欄位)
+_STOCK_SOLD_PERIODS = [
+    ("M-2", "Shop Stock Qty (M-2)", "Sold Qty (M-2)"),
+    ("M-1", "Shop Stock Qty (M-1)", "Sold Qty (M-1)"),
+    ("CM", "Shop Stock Qty (CM)", "Sold Qty (CM - MTD)"),
+]
+
+# Shop Nature 排序權重（越小越優先）
+_NATURE_PRIORITY = {"Tourist": 0, "Mix": 1, "Non Tourist": 2}
+_NATURE_ORDER = ["Tourist", "Mix", "Non Tourist"]
 
 
-def _classify_severity(rate: float) -> str:
-    if rate < 10:
-        return "None"
-    elif rate < 20:
-        return "Mild"
-    elif rate < 50:
-        return "Moderate"
-    else:
-        return "Severe"
+def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """計算每列的缺貨狀態、缺貨模式與銷售損失（雙基準並列）。
 
-
-def _add_decline_columns(df: pd.DataFrame, mtd_days: int, month_total_days: int) -> pd.DataFrame:
+    缺貨定義採嚴格標準：Shop Stock Qty = 0。
+    損失基準並列：(1) Sold Qty (M-2) 需求基準；(2) Shop Monthly Sold Qty (P90D) 月均基準。
+    """
     df = df.copy()
+    idx = df.index
 
-    m2 = _safe_numeric(df.get("Sold Qty (M-2)", _safe_default_series(0.0, df.index)))
-    m1 = _safe_numeric(df.get("Sold Qty (M-1)", _safe_default_series(0.0, df.index)))
-    mtd = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0.0, df.index)))
+    # ── 缺貨判定（Shop Stock = 0）──────────────────────────────────────────────
+    oos_flags = {}
+    for label, stock_col, _sold_col in _STOCK_SOLD_PERIODS:
+        stock = _safe_numeric(df.get(stock_col, _safe_default_series(0, idx)))
+        is_oos = stock <= 0
+        df[f"Is OOS ({label})"] = is_oos
+        oos_flags[label] = is_oos
 
-    if mtd_days > 0:
-        projected_mtd = np.ceil((mtd / mtd_days) * month_total_days)
-    else:
-        projected_mtd = mtd
-    df["Projected MTD Sold Qty"] = projected_mtd.astype(int)
+    oos_count = sum(oos_flags.values())
+    df["OOS Periods Count"] = oos_count.astype(int)
 
-    decline_m2_m1 = np.where(
-        m2 > 0,
-        np.clip((m2 - m1) / m2 * 100, 0, None),
-        0.0
-    )
-    decline_m1_mtd = np.where(
-        m1 > 0,
-        np.clip((m1 - projected_mtd) / m1 * 100, 0, None),
-        0.0
-    )
+    # ── 缺貨模式分類 ────────────────────────────────────────────────────────────
+    pattern = np.full(len(df), "無缺貨", dtype=object)
+    # 恢復供貨：M-2 缺貨（或 M-2、M-1 都缺貨）但 CM 有貨 → 後期補回
+    recovered = (~oos_flags["CM"]) & (oos_flags["M-2"] | oos_flags["M-2"])
+    # 間歇：僅 1 期缺貨（且非恢復供貨的 M-2/M-1 缺貨 → CM 有貨已涵蓋）
+    intermittent = (oos_count == 1) & ~recovered
+    # 長期：≥2 期缺貨
+    long_term = oos_count >= 2
+    pattern[recovered.values] = "恢復供貨"
+    pattern[intermittent.values] = "間歇缺貨"
+    pattern[long_term.values] = "長期缺貨"
+    df["OOS Pattern"] = pattern
 
-    df["Decline Rate (M-2→M-1)"] = np.round(decline_m2_m1, 1)
-    df["Decline Rate (M-1→MTD)"] = np.round(decline_m1_mtd, 1)
+    # ── 銷售損失（雙基準並列）─────────────────────────────────────────────────
+    # 需求基準 1：Sold Qty (M-2)
+    m2_sold = _safe_numeric(df.get("Sold Qty (M-2)", _safe_default_series(0, idx)))
+    # 需求基準 2：Shop Monthly Sold Qty (P90D)
+    p90d = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, idx)))
 
-    max_rate = np.maximum(decline_m2_m1, decline_m1_mtd)
-    df["Max Decline Rate"] = max_rate.astype(int)
+    loss_m2_max = np.zeros(len(df))
+    loss_p90d_max = np.zeros(len(df))
+    loss_m2_sum = np.zeros(len(df))
+    loss_p90d_sum = np.zeros(len(df))
 
-    has_enough_data = (m2 > 0) & (m1 > 0)
-    both_declining = has_enough_data & (decline_m2_m1 > 0) & (decline_m1_mtd > 0)
-    df["Is Declining"] = both_declining
+    for label, _stock_col, sold_col in _STOCK_SOLD_PERIODS:
+        sold = _safe_numeric(df.get(sold_col, _safe_default_series(0, idx)))
+        is_oos = oos_flags[label].values
+        # 缺貨當期才算損失；損失 = max(0, 需求基準 − 當期實際銷售)
+        loss_m2 = np.where(is_oos & (m2_sold.values > 0), np.maximum(0, m2_sold.values - sold.values), 0)
+        loss_p90d = np.where(is_oos & (p90d.values > 0), np.maximum(0, p90d.values - sold.values), 0)
+        loss_m2_max = np.maximum(loss_m2_max, loss_m2)
+        loss_p90d_max = np.maximum(loss_p90d_max, loss_p90d)
+        loss_m2_sum = loss_m2_sum + loss_m2
+        loss_p90d_sum = loss_p90d_sum + loss_p90d
 
-    severity = np.full(len(df), "None", dtype=object)
-    mild_mask = both_declining & (max_rate >= 10) & (max_rate < 20)
-    moderate_mask = both_declining & (max_rate >= 20) & (max_rate < 50)
-    severe_mask = both_declining & (max_rate >= 50)
-    severity[mild_mask] = "Mild"
-    severity[moderate_mask] = "Moderate"
-    severity[severe_mask] = "Severe"
-    insufficient = ~has_enough_data & (m2 + m1 + mtd > 0)
-    severity[insufficient] = "Insufficient Data"
+    df["Max Sales Loss (M-2)"] = loss_m2_max.astype(int)
+    df["Max Sales Loss (P90D)"] = loss_p90d_max.astype(int)
+    df["Total Sales Loss (M-2)"] = loss_m2_sum.astype(int)
+    df["Total Sales Loss (P90D)"] = loss_p90d_sum.astype(int)
 
-    df["Decline Severity"] = severity
+    # ── 影響判定：任一期缺貨且有需求證據 ──────────────────────────────────────
+    has_demand = (m2_sold.values > 0) | (p90d.values > 0)
+    any_oos = oos_count.values > 0
+    df["Is Stock Impacted"] = any_oos & has_demand
 
     return df
 
 
-def _build_decline_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
-    declining = raw[raw["Is Declining"] & raw["Decline Severity"].isin(DECLINE_CATEGORIES)].copy()
-    if declining.empty:
-        col_names = group_cols + ["衰退行數", "M-2 銷售總量", "M-1 銷售總量", "預估MTD銷售總量",
-                                   "平均衰退率(%)", "輕度衰退", "中度衰退", "重度衰退"]
+# 多維度彙總輸出欄位（中文表頭）
+_STOCK_IMPACT_SUMMARY_COLS = [
+    "缺貨行數", "Tourist 缺貨", "Mix 缺貨", "Non Tourist 缺貨",
+    "最大銷售損失(M-2)", "最大銷售損失(P90D)", "總銷售損失(M-2)", "總銷售損失(P90D)",
+    "長期缺貨", "間歇缺貨", "恢復供貨",
+]
+
+
+def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
+    """依 group_cols 彙總缺貨影響。只統計 Is Stock Impacted = True 的列。
+
+    排序優先級：Tourist 缺貨 → 最大銷售損失(P90D) → 缺貨行數（皆降序）。
+    """
+    impacted = raw[raw["Is Stock Impacted"]].copy()
+    if impacted.empty:
+        col_names = group_cols + _STOCK_IMPACT_SUMMARY_COLS
         return pd.DataFrame(columns=col_names)
 
-    declining["_m2"] = _safe_numeric(declining.get("Sold Qty (M-2)", _safe_default_series(0.0, declining.index)))
-    declining["_m1"] = _safe_numeric(declining.get("Sold Qty (M-1)", _safe_default_series(0.0, declining.index)))
-    declining["_proj"] = _safe_numeric(declining.get("Projected MTD Sold Qty", _safe_default_series(0.0, declining.index)))
-    declining["_max"] = _safe_numeric(declining.get("Max Decline Rate", _safe_default_series(0, declining.index)))
-    declining["_sev"] = declining["Decline Severity"]
+    impacted["_nature"] = impacted.get("Shop Nature", pd.Series(dtype=object)).fillna("")
+    impacted["_loss_m2_max"] = _safe_numeric(impacted.get("Max Sales Loss (M-2)", _safe_default_series(0, impacted.index)))
+    impacted["_loss_p90d_max"] = _safe_numeric(impacted.get("Max Sales Loss (P90D)", _safe_default_series(0, impacted.index)))
+    impacted["_loss_m2_sum"] = _safe_numeric(impacted.get("Total Sales Loss (M-2)", _safe_default_series(0, impacted.index)))
+    impacted["_loss_p90d_sum"] = _safe_numeric(impacted.get("Total Sales Loss (P90D)", _safe_default_series(0, impacted.index)))
+    impacted["_pattern"] = impacted.get("OOS Pattern", pd.Series(dtype=object)).fillna("")
 
     agg = (
-        declining.groupby(group_cols, dropna=False, observed=True)
+        impacted.groupby(group_cols, dropna=False, observed=True)
         .agg(
-            衰退行數=("_m2", "count"),
+            缺貨行數=("_nature", "count"),
             **{
-                "M-2 銷售總量": ("_m2", "sum"),
-                "M-1 銷售總量": ("_m1", "sum"),
-                "預估MTD銷售總量": ("_proj", "sum"),
-                "平均衰退率(%)": ("_max", "mean"),
-                "輕度衰退": ("_sev", lambda x: (x == "Mild").sum()),
-                "中度衰退": ("_sev", lambda x: (x == "Moderate").sum()),
-                "重度衰退": ("_sev", lambda x: (x == "Severe").sum()),
+                "Tourist 缺貨": ("_nature", lambda x: (x == "Tourist").sum()),
+                "Mix 缺貨": ("_nature", lambda x: (x == "Mix").sum()),
+                "Non Tourist 缺貨": ("_nature", lambda x: (x == "Non Tourist").sum()),
+                "最大銷售損失(M-2)": ("_loss_m2_max", "sum"),
+                "最大銷售損失(P90D)": ("_loss_p90d_max", "sum"),
+                "總銷售損失(M-2)": ("_loss_m2_sum", "sum"),
+                "總銷售損失(P90D)": ("_loss_p90d_sum", "sum"),
+                "長期缺貨": ("_pattern", lambda x: (x == "長期缺貨").sum()),
+                "間歇缺貨": ("_pattern", lambda x: (x == "間歇缺貨").sum()),
+                "恢復供貨": ("_pattern", lambda x: (x == "恢復供貨").sum()),
             },
         )
         .reset_index()
     )
 
-    agg["平均衰退率(%)"] = agg["平均衰退率(%)"].round(1)
-    for c in ["衰退行數", "M-2 銷售總量", "M-1 銷售總量", "預估MTD銷售總量", "輕度衰退", "中度衰退", "重度衰退"]:
+    for c in _STOCK_IMPACT_SUMMARY_COLS:
         agg[c] = agg[c].fillna(0).astype(int)
 
-    agg = agg.sort_values(["重度衰退", "平均衰退率(%)"], ascending=[False, False]).reset_index(drop=True)
+    agg = agg.sort_values(
+        ["Tourist 缺貨", "最大銷售損失(P90D)", "缺貨行數"],
+        ascending=[False, False, False],
+    ).reset_index(drop=True)
 
+    # 總計列
     total_data = {col: "" for col in group_cols}
     total_data[group_cols[0]] = "總計"
-    total_data["衰退行數"] = int(agg["衰退行數"].sum())
-    total_data["M-2 銷售總量"] = int(agg["M-2 銷售總量"].sum())
-    total_data["M-1 銷售總量"] = int(agg["M-1 銷售總量"].sum())
-    total_data["預估MTD銷售總量"] = int(agg["預估MTD銷售總量"].sum())
-    total_data["平均衰退率(%)"] = round(float(agg["平均衰退率(%)"].mean()), 1)
-    total_data["輕度衰退"] = int(agg["輕度衰退"].sum())
-    total_data["中度衰退"] = int(agg["中度衰退"].sum())
-    total_data["重度衰退"] = int(agg["重度衰退"].sum())
-
+    for c in _STOCK_IMPACT_SUMMARY_COLS:
+        total_data[c] = int(agg[c].sum())
     agg = pd.concat([agg, pd.DataFrame([total_data])], ignore_index=True)
 
-    for c in ["_m2", "_m1", "_proj", "_max", "_sev"]:
+    for c in ["_nature", "_loss_m2_max", "_loss_p90d_max", "_loss_m2_sum", "_loss_p90d_sum", "_pattern"]:
         if c in agg.columns:
             agg.drop(columns=[c], inplace=True)
 
     return agg
 
 
-_DECLINE_WARNING_COLS = [
+def _build_sku_allocation_summary(raw: pd.DataFrame) -> pd.DataFrame:
+    """SKU 級跨 Nature 調貨建議。
+
+    針對同時存在於多種 Shop Nature 的 SKU：當 Tourist 店舖缺貨（CM Shop Stock=0）
+    但同 SKU 在 Non-Tourist / Mix 店舖仍有存貨時，列出可調貨支援機會。
+    排序：Tourist 缺貨損失 → 可調貨存貨量（降序）。
+    """
+    if "SKU" not in raw.columns or "Shop Nature" not in raw.columns:
+        return pd.DataFrame()
+
+    # 先找出同時出現在 Tourist 與其他 Nature 的 SKU
+    sku_natures = raw.groupby("SKU")["Shop Nature"].apply(lambda x: set(x.dropna()))
+    shared_skus = sku_natures[sku_natures.apply(lambda s: "Tourist" in s and len(s) >= 2)].index
+    if len(shared_skus) == 0:
+        return pd.DataFrame()
+
+    sub = raw[raw["SKU"].isin(shared_skus)].copy()
+    if sub.empty:
+        return pd.DataFrame()
+
+    cm_stock = _safe_numeric(sub.get("Shop Stock Qty (CM)", _safe_default_series(0, sub.index)))
+    cm_sold = _safe_numeric(sub.get("Sold Qty (CM - MTD)", _safe_default_series(0, sub.index)))
+    m2_sold = _safe_numeric(sub.get("Sold Qty (M-2)", _safe_default_series(0, sub.index)))
+    p90d = _safe_numeric(sub.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, sub.index)))
+    loss_m2 = _safe_numeric(sub.get("Max Sales Loss (M-2)", _safe_default_series(0, sub.index)))
+    loss_p90d = _safe_numeric(sub.get("Max Sales Loss (P90D)", _safe_default_series(0, sub.index)))
+    sub["_cm_stock"] = cm_stock
+    sub["_cm_sold"] = cm_sold
+    sub["_m2_sold"] = m2_sold
+    sub["_p90d"] = p90d
+    sub["_loss_m2"] = loss_m2
+    sub["_loss_p90d"] = loss_p90d
+
+    # Tourist 缺貨行（CM Shop Stock = 0 且有需求）
+    tourist_oos = sub[(sub["Shop Nature"] == "Tourist") & (cm_stock <= 0) & ((m2_sold > 0) | (p90d > 0))]
+    # 其他 Nature 有存貨的行
+    other_stock = sub[(sub["Shop Nature"] != "Tourist") & (cm_stock > 0)]
+
+    if tourist_oos.empty or other_stock.empty:
+        return pd.DataFrame()
+
+    # 以 SKU + Brand 聚合 Tourist 缺貨損失
+    t_agg = (
+        tourist_oos.groupby(["SKU"] + (["Brand"] if "Brand" in tourist_oos.columns else []), dropna=False)
+        .agg(
+            Tourist缺貨店數=("SKU", "count"),
+            Tourist損失_M2=("_loss_m2", "sum"),
+            Tourist損失_P90D=("_loss_p90d", "sum"),
+            Tourist_M2銷售=("_m2_sold", "sum"),
+        )
+        .reset_index()
+    )
+
+    # 其他 Nature 可調貨存貨
+    o_agg = (
+        other_stock.groupby(["SKU"] + (["Shop Nature"]), dropna=False)
+        .agg(
+            可調貨存貨=("_cm_stock", "sum"),
+            閒置店數=("SKU", "count"),
+        )
+        .reset_index()
+    )
+    # 把其他 Nature 的存貨攤平成欄（Mix / Non Tourist）
+    o_pivot = o_agg.pivot_table(
+        index=["SKU"],
+        columns="Shop Nature",
+        values=["可調貨存貨", "閒置店數"],
+        fill_value=0,
+        aggfunc="sum",
+    ).reset_index()
+    # 扁平化多層欄名
+    flat_cols = []
+    for c in o_pivot.columns:
+        if isinstance(c, tuple):
+            metric, nature = c
+            if metric:
+                flat_cols.append(f"{nature}{metric}")
+            else:
+                flat_cols.append(nature)
+        else:
+            flat_cols.append(c)
+    o_pivot.columns = flat_cols
+
+    merged = t_agg.merge(o_pivot, on="SKU", how="left")
+
+    # 確保 Mix/Non Tourist 欄位存在
+    for n in ["Mix", "Non Tourist"]:
+        for metric in ["可調貨存貨", "閒置店數"]:
+            col = f"{n}{metric}"
+            if col not in merged.columns:
+                merged[col] = 0
+            merged[col] = merged[col].fillna(0).astype(int)
+
+    merged["可調貨總存貨"] = (merged.get("Mix可調貨存貨", 0) + merged.get("Non Tourist可調貨存貨", 0)).astype(int)
+    merged = merged[merged["可調貨總存貨"] > 0]
+
+    if merged.empty:
+        return pd.DataFrame()
+
+    # 欄位排序
+    out_cols = ["SKU"]
+    if "Brand" in merged.columns:
+        out_cols.append("Brand")
+    out_cols += [
+        "Tourist缺貨店數", "Tourist損失_M2", "Tourist損失_P90D", "Tourist_M2銷售",
+        "Mix可調貨存貨", "Mix閒置店數", "Non Tourist可調貨存貨", "Non Tourist閒置店數",
+        "可調貨總存貨",
+    ]
+    merged = merged[out_cols]
+    merged = merged.sort_values(
+        ["Tourist損失_P90D", "可調貨總存貨"], ascending=[False, False]
+    ).reset_index(drop=True)
+
+    return merged
+
+
+# Shop Nature → 缺貨店數欄名映射（Tourist + Mix 兩欄）
+_DIAG_NATURE_COLS = {
+    "Tourist": "Tourist 缺貨店數",
+    "Mix": "Mix 缺貨店數",
+}
+
+
+def _classify_d001_status(d001_cm: float) -> str:
+    """依 D001 倉庫 CM 存貨分類缺貨源頭。
+
+    - 「倉庫有貨但店舖缺貨」(D001 CM > 0): 補貨流程問題，貨在倉庫卻沒送到店
+    - 「源頭斷貨」(D001 CM = 0): 倉庫也斷貨，需上游補貨
+    """
+    return "倉庫有貨但店舖缺貨" if d001_cm > 0 else "源頭斷貨"
+
+
+def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
+    """by-SKU 缺貨診斷表（Tourist + Mix 缺貨 SKU）。
+
+    每列為一個缺貨 SKU，彙總：
+    - Tourist / Mix 各自缺貨店數與銷售損失
+    - D001 倉庫三期貨量 (M-2/M-1/CM) + D001 狀態分類（源頭斷貨 vs 補貨問題）
+    - 店舖三期總存貨 (M-2/M-1/CM)
+    排序：Tourist 缺貨店數 → Mix 缺貨店數 → Tourist 損失(P90D)（皆降序）。
+    """
+    if "SKU" not in raw.columns or "Shop Nature" not in raw.columns:
+        return pd.DataFrame()
+
+    # 只看 Tourist + Mix 的缺貨行（CM Shop Stock=0 且有需求）
+    focus = raw[
+        raw["Shop Nature"].isin(["Tourist", "Mix"])
+        & (raw["Is Stock Impacted"])
+        & (_safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, raw.index))) <= 0)
+    ].copy()
+    if focus.empty:
+        return pd.DataFrame()
+
+    # 補上需要的數值欄位
+    focus["_loss_p90d"] = _safe_numeric(focus.get("Max Sales Loss (P90D)", _safe_default_series(0, focus.index)))
+    focus["_loss_m2"] = _safe_numeric(focus.get("Max Sales Loss (M-2)", _safe_default_series(0, focus.index)))
+    focus["_m2_sold"] = _safe_numeric(focus.get("Sold Qty (M-2)", _safe_default_series(0, focus.index)))
+    focus["_cm_sold"] = _safe_numeric(focus.get("Sold Qty (CM - MTD)", _safe_default_series(0, focus.index)))
+    focus["_p90d"] = _safe_numeric(focus.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, focus.index)))
+    for label, col in [("M-2", "Shop Stock Qty (M-2)"), ("M-1", "Shop Stock Qty (M-1)"), ("CM", "Shop Stock Qty (CM)")]:
+        focus[f"_shop_stock_{label}"] = _safe_numeric(focus.get(col, _safe_default_series(0, focus.index)))
+    for label, col in [("M-2", "D001 Stock Qty (M-2)"), ("M-1", "D001 Stock Qty (M-1)"), ("CM", "D001 Stock Qty (CM)")]:
+        focus[f"_d001_{label}"] = _safe_numeric(focus.get(col, _safe_default_series(0, focus.index)))
+
+    group_cols = ["SKU"] + (["Brand"] if "Brand" in focus.columns else []) + (["Buyer"] if "Buyer" in focus.columns else [])
+
+    # 先取每個 SKU 的 D001 三期值（D001 是 SKU 級共享，first 即可）
+    d001_per_sku = (
+        focus.groupby("SKU", dropna=False)
+        .agg(
+            D001_Stock_M2=("_d001_M-2", "first"),
+            D001_Stock_M1=("_d001_M-1", "first"),
+            D001_Stock_CM=("_d001_CM", "first"),
+        )
+        .reset_index()
+    )
+
+    # 各 Nature 的缺貨店數 + 損失
+    nature_aggs = {}
+    for nat in ["Tourist", "Mix"]:
+        sub = focus[focus["Shop Nature"] == nat]
+        nature_aggs[nat] = (
+            sub.groupby("SKU", dropna=False)
+            .agg(
+                **{
+                    f"{nat}缺貨店數": ("Site Code", "nunique") if "Site Code" in sub.columns else ("SKU", "count"),
+                    f"{nat}缺貨行數": ("SKU", "count"),
+                    f"{nat}損失_M2": ("_loss_m2", "sum"),
+                    f"{nat}損失_P90D": ("_loss_p90d", "sum"),
+                    f"{nat}_M2銷售": ("_m2_sold", "sum"),
+                    f"{nat}_CM銷售": ("_cm_sold", "sum"),
+                    f"{nat}_P90D": ("_p90d", "sum"),
+                }
+            )
+            .reset_index()
+        )
+
+    # 店舖總存貨（Tourist+Mix 缺貨店加總）
+    shop_stock_per_sku = (
+        focus.groupby("SKU", dropna=False)
+        .agg(
+            店舖存貨總_M2=("_shop_stock_M-2", "sum"),
+            店舖存貨總_M1=("_shop_stock_M-1", "sum"),
+            店舖存貨總_CM=("_shop_stock_CM", "sum"),
+        )
+        .reset_index()
+    )
+
+    # 品牌資訊（first）
+    brand_per_sku = (
+        focus.groupby("SKU", dropna=False)
+        .agg(
+            Brand=("Brand", "first") if "Brand" in focus.columns else ("SKU", "first"),
+            Buyer=("Buyer", "first") if "Buyer" in focus.columns else ("SKU", "first"),
+        )
+        .reset_index()
+    )
+
+    # 合併
+    merged = brand_per_sku.merge(d001_per_sku, on="SKU", how="left")
+    for nat in ["Tourist", "Mix"]:
+        merged = merged.merge(nature_aggs[nat], on="SKU", how="left")
+    merged = merged.merge(shop_stock_per_sku, on="SKU", how="left")
+
+    # 填補缺漏 Nature 的 NaN（某 SKU 可能只有 Tourist 缺貨而無 Mix）
+    for nat in ["Tourist", "Mix"]:
+        for col in nature_aggs[nat].columns:
+            if col == "SKU":
+                continue
+            merged[col] = merged[col].fillna(0).astype(int)
+
+    # D001 狀態分類
+    merged["D001 狀態"] = merged["D001_Stock_CM"].apply(_classify_d001_status)
+
+    # 欄位順序
+    out_cols = ["SKU", "Brand", "Buyer",
+                "Tourist缺貨店數", "Tourist缺貨行數", "Tourist損失_M2", "Tourist損失_P90D", "Tourist_M2銷售", "Tourist_CM銷售", "Tourist_P90D",
+                "Mix缺貨店數", "Mix缺貨行數", "Mix損失_M2", "Mix損失_P90D", "Mix_M2銷售", "Mix_CM銷售", "Mix_P90D",
+                "D001 狀態", "D001_Stock_M2", "D001_Stock_M1", "D001_Stock_CM",
+                "店舖存貨總_M2", "店舖存貨總_M1", "店舖存貨總_CM"]
+    avail = [c for c in out_cols if c in merged.columns]
+    merged = merged[avail]
+
+    merged = merged.sort_values(
+        ["Tourist缺貨店數", "Mix缺貨店數", "Tourist損失_P90D"],
+        ascending=[False, False, False],
+    ).reset_index(drop=True)
+
+    return merged
+
+
+_OOS_DETAIL_COLS = [
     "Buyer", "Brand", "SKU", "SKU Desc", "Site Code", "Shop Name", "OM",
-    "Shop Nature", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
-    "Projected MTD Sold Qty", "Decline Rate (M-2→M-1)", "Decline Rate (M-1→MTD)",
-    "Max Decline Rate", "Decline Severity",
+    "Shop Nature", "Supply Source", "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)",
+    "Shop Stock Qty (CM)", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
+    "Shop Monthly Sold Qty (P90D)", "Is OOS (M-2)", "Is OOS (M-1)", "Is OOS (CM)",
+    "OOS Periods Count", "OOS Pattern", "Max Sales Loss (M-2)", "Max Sales Loss (P90D)",
+    "Total Sales Loss (M-2)", "Total Sales Loss (P90D)",
 ]
 
 
-def transform_decline(
+def transform_stock_impact(
     df_input: pd.DataFrame,
     progress_callback=None,
     shop_natures: list[str] | None = None,
-    mtd_days: int | None = None,
-    month_total_days: int | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str], list[str]]:
+    warehouse_only: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
+    """Stock Impact Analysis 主流程。
+
+    Args:
+        warehouse_only: 若 True（預設），只分析 Supply Source = Warehouse 的列。
+    Returns:
+        (summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, raw_df, warnings)
+    """
     missing = validate_input(df_input)
     if missing:
         raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
 
     warnings = []
 
-    _optional_cols = ["Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)", "Adj. MCH1"]
+    _optional_cols = [
+        "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)", "Shop Stock Qty (CM)",
+        "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
+        "Shop Monthly Sold Qty (P90D)", "Supply Source", "Shop Nature", "Adj. MCH1",
+    ]
     for _col in _optional_cols:
         if _col not in df_input.columns:
             warnings.append(f"缺少可選欄位「{_col}」，相關統計將受影響")
-
-    if mtd_days is None or mtd_days <= 0:
-        raise ValueError("MTD 天數必須大於 0")
-
-    if month_total_days is None or month_total_days <= 0:
-        raise ValueError("當月總天數必須大於 0")
 
     if progress_callback:
         progress_callback(0.05, "驗證通過")
@@ -2642,156 +2934,99 @@ def transform_decline(
     if df.empty:
         raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據")
 
+    # 預設只分析 Warehouse SKU
+    if warehouse_only and "Supply Source" in df.columns:
+        before = len(df)
+        df = df[df["Supply Source"].astype(str).str.strip() == "Warehouse"].copy()
+        if before > 0 and len(df) == 0:
+            warnings.append("勾選「只分析 Warehouse SKU」但來源檔案無 Warehouse 列，已自動取消篩選")
+            df = _clean_dataframe(df_input, shop_natures=shop_natures)
+
     df["SKU"] = df["SKU"].apply(_safe_sku)
 
     if "SKU Desc" not in df.columns:
         df = _compute_raw_extra_columns(df)
 
     if progress_callback:
-        progress_callback(0.2, "計算衰退指標中...")
+        progress_callback(0.2, "計算缺貨影響指標中...")
 
-    raw = _add_decline_columns(df, mtd_days, month_total_days)
-
-    categories = DECLINE_CATEGORIES
+    raw = _add_stock_impact_columns(df)
 
     if progress_callback:
         progress_callback(0.4, "建構多維度彙總中...")
 
     _site_cols = ["Site Code", "Shop Name", "OM"]
     site_cols_avail = [c for c in _site_cols if c in raw.columns]
-    summary_site = _build_decline_summary(raw, site_cols_avail) if len(site_cols_avail) >= 1 else pd.DataFrame()
+    summary_site = _build_stock_impact_summary(raw, site_cols_avail) if len(site_cols_avail) >= 1 else pd.DataFrame()
 
-    summary_brand = _build_decline_summary(raw, ["Brand"]) if "Brand" in raw.columns else pd.DataFrame()
-    summary_buyer = _build_decline_summary(raw, ["Buyer"]) if "Buyer" in raw.columns else pd.DataFrame()
+    summary_brand = _build_stock_impact_summary(raw, ["Brand"]) if "Brand" in raw.columns else pd.DataFrame()
+    summary_buyer = _build_stock_impact_summary(raw, ["Buyer"]) if "Buyer" in raw.columns else pd.DataFrame()
     summary_category = pd.DataFrame()
     if "Adj. MCH1" in raw.columns:
-        summary_category = _build_decline_summary(raw, ["Adj. MCH1"])
+        summary_category = _build_stock_impact_summary(raw, ["Adj. MCH1"])
     else:
         warnings.append("缺少「Adj. MCH1」欄位，無法產出 By Category 分析")
 
     if progress_callback:
+        progress_callback(0.55, "建構 SKU 跨 Nature 調貨分析中...")
+
+    sku_allocation = _build_sku_allocation_summary(raw)
+
+    if progress_callback:
+        progress_callback(0.62, "建構 by-SKU 缺貨診斷表中...")
+
+    sku_diagnosis = _build_sku_stock_diagnosis(raw)
+
+    if progress_callback:
         progress_callback(0.7, "轉換完成")
 
-    return summary_site, summary_brand, summary_buyer, summary_category, raw, categories, warnings
+    return summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, raw, warnings
 
 
-def _write_decline_detail_sheet(ws, raw_df, header_font, header_fill, thin_border, progress_callback):
-    declining = raw_df[raw_df["Is Declining"] & raw_df["Decline Severity"].isin(DECLINE_CATEGORIES)].copy()
-    sev_order = {"Severe": 0, "Moderate": 1, "Mild": 2}
-    declining["_sev_order"] = declining["Decline Severity"].map(sev_order).fillna(3)
-    declining = declining.sort_values(["_sev_order", "Max Decline Rate"], ascending=[True, False])
+def _write_oos_detail_sheet(ws, raw_df, header_font, header_fill, thin_border, progress_callback):
+    """寫入缺貨影響明細，按最大損失(P90D)降序。"""
+    impacted = raw_df[raw_df["Is Stock Impacted"]].copy()
+    if impacted.empty:
+        ws.cell(row=1, column=1, value="無缺貨影響資料").font = Font(size=12)
+        return
 
-    avail_cols = [c for c in _DECLINE_WARNING_COLS if c in declining.columns]
-    detail = declining[avail_cols].copy()
-    detail = detail.reset_index(drop=True)
+    impacted["_loss"] = _safe_numeric(impacted.get("Max Sales Loss (P90D)", _safe_default_series(0, impacted.index)))
+    impacted = impacted.sort_values(["_loss", "Max Sales Loss (M-2)"], ascending=[False, False])
 
-    for col_idx, h in enumerate(avail_cols, 1):
-        cell = ws.cell(row=1, column=col_idx, value=h)
+    avail_cols = [c for c in _OOS_DETAIL_COLS if c in impacted.columns]
+    impacted = impacted[avail_cols]
+
+    # 標題
+    ws.cell(row=1, column=1, value="OOS Impact Detail — 缺貨銷售影響明細（按最大損失 P90D 降序）").font = Font(bold=True, size=12, color="1E40AF")
+
+    headers = list(impacted.columns)
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = thin_border
 
-    total_rows = len(detail)
-    for row_idx in range(total_rows):
-        excel_row = row_idx + 2
-        for col_idx, h in enumerate(avail_cols, 1):
-            val = detail.iloc[row_idx].get(h)
+    total_rows = len(impacted)
+    for row_idx, row_data in enumerate(impacted.itertuples(index=False), start=4):
+        for col_idx, val in enumerate(row_data, 1):
             if pd.isna(val):
                 val = None
-            cell = ws.cell(row=excel_row, column=col_idx, value=val)
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
             cell.border = thin_border
             cell.alignment = Alignment(horizontal="center", vertical="center")
-        if progress_callback and (row_idx % 500 == 0 or row_idx == total_rows - 1):
-            progress_callback(0.1 + 0.15 * ((row_idx + 1) / max(total_rows, 1)),
-                            f"寫入警告明細 ({row_idx+1}/{total_rows})...")
+            if isinstance(val, bool):
+                cell.value = "✓" if val else ""
+            elif isinstance(val, (int, float)):
+                cell.number_format = "#,##0"
+        if progress_callback and ((row_idx - 4) % 2000 == 0 or row_idx - 3 == total_rows):
+            progress_callback(0.1 + 0.15 * ((row_idx - 3) / max(total_rows, 1)),
+                              f"寫入缺貨明細 ({row_idx-3}/{total_rows})...")
 
     _auto_width(ws)
 
 
-def _write_decline_dashboard(ws, raw_df, summary_site, summary_brand, summary_buyer, thin_border, desc_font, progress_callback):
-    declining_mask = raw_df["Is Declining"] & raw_df["Decline Severity"].isin(DECLINE_CATEGORIES)
-    declining = raw_df[declining_mask].copy()
-
-    total_declining = len(declining)
-    mild_count = int((declining["Decline Severity"] == "Mild").sum()) if total_declining else 0
-    moderate_count = int((declining["Decline Severity"] == "Moderate").sum()) if total_declining else 0
-    severe_count = int((declining["Decline Severity"] == "Severe").sum()) if total_declining else 0
-
-    m2_total = int(_safe_numeric(declining.get("Sold Qty (M-2)", _safe_default_series(0, declining.index))).sum()) if total_declining else 0
-    m1_total = int(_safe_numeric(declining.get("Sold Qty (M-1)", _safe_default_series(0, declining.index))).sum()) if total_declining else 0
-    proj_total = int(_safe_numeric(declining.get("Projected MTD Sold Qty", _safe_default_series(0, declining.index))).sum()) if total_declining else 0
-    sales_at_risk = m2_total - proj_total
-
-    row1_metrics = [
-        ("總衰退行數", total_declining, "符合雙期衰退條件的總行數", "EF4444"),
-        ("輕度衰退 (10-20%)", mild_count, "衰退率 10%-20% 之間", "F59E0B"),
-        ("中度衰退 (20-50%)", moderate_count, "衰退率 20%-50% 之間", "F97316"),
-        ("重度衰退 (≥50%)", severe_count, "衰退率超過 50%", "DC2626"),
-    ]
-
-    row2_metrics = [
-        ("M-2 銷售總量", m2_total, "衰退品項在 M-2 期間的總銷售", "3B82F6"),
-        ("M-1 銷售總量", m1_total, "衰退品項在 M-1 期間的總銷售", "8B5CF6"),
-        ("預估 MTD 銷售總量", proj_total, "衰退品項在 MTD 期間的預估全月銷售", "06B6D4"),
-        ("銷售損失量 (M-2→MTD)", sales_at_risk, "M-2 到預估 MTD 的銷售下降量", "DC2626"),
-    ]
-
-    _write_metric_cards(ws, "銷售趨勢衰退分析摘要 (Sales Decline Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
-
-    # Write top 5 most declining brands/sites below metric cards
-    if progress_callback:
-        progress_callback(0.9, "寫入排行資訊...")
-
-    if not summary_brand.empty and len(summary_brand) > 1:
-        ws.cell(row=14, column=1, value="Top 5 衰退最嚴重的 Brand").font = Font(bold=True, size=12, color="1E40AF")
-        top_brands = summary_brand[summary_brand["Brand"] != "總計"].head(5)
-        for col_idx, h in enumerate(top_brands.columns, 1):
-            cell = ws.cell(row=15, column=col_idx, value=h)
-            cell.font = Font(bold=True, size=10, color="FFFFFF")
-            cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            cell.border = thin_border
-        for row_idx, (_, row_data) in enumerate(top_brands.iterrows()):
-            excel_row = 16 + row_idx
-            for col_idx, h in enumerate(top_brands.columns, 1):
-                val = row_data.get(h)
-                if pd.isna(val):
-                    val = None
-                cell = ws.cell(row=excel_row, column=col_idx, value=val)
-                cell.border = thin_border
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-                if isinstance(val, (int, float)):
-                    cell.number_format = "#,##0"
-
-    if not summary_site.empty and len(summary_site) > 1:
-        site_start_row = 22
-        site_cols_avail = [c for c in ["Site Code", "Shop Name", "OM"] if c in summary_site.columns]
-        ws.cell(row=site_start_row, column=1, value="Top 5 衰退最嚴重的 Site").font = Font(bold=True, size=12, color="1E40AF")
-        top_sites = summary_site[~summary_site[site_cols_avail[0]].isin(["總計", ""])].head(5) if site_cols_avail else pd.DataFrame()
-        if not top_sites.empty:
-            for col_idx, h in enumerate(top_sites.columns, 1):
-                cell = ws.cell(row=site_start_row + 1, column=col_idx, value=h)
-                cell.font = Font(bold=True, size=10, color="FFFFFF")
-                cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                cell.border = thin_border
-            for row_idx, (_, row_data) in enumerate(top_sites.iterrows()):
-                excel_row = site_start_row + 2 + row_idx
-                for col_idx, h in enumerate(top_sites.columns, 1):
-                    val = row_data.get(h)
-                    if pd.isna(val):
-                        val = None
-                    cell = ws.cell(row=excel_row, column=col_idx, value=val)
-                    cell.border = thin_border
-                    cell.alignment = Alignment(horizontal="center", vertical="center")
-                    if isinstance(val, (int, float)):
-                        cell.number_format = "#,##0"
-
-    _auto_width(ws)
-
-
-def _write_decline_summary_sheet(ws, summary_df, sheet_title, header_font, header_fill, thin_border, progress_callback, progress_start, progress_end):
+def _write_stock_impact_summary_sheet(ws, summary_df, sheet_title, header_font, header_fill, thin_border, progress_callback, progress_start, progress_end):
     ws.cell(row=1, column=1, value=sheet_title).font = Font(bold=True, size=12, color="1E40AF")
 
     headers = list(summary_df.columns)
@@ -2824,13 +3059,163 @@ def _write_decline_summary_sheet(ws, summary_df, sheet_title, header_font, heade
     _auto_width(ws)
 
 
-def generate_excel_decline(
+def _write_sku_allocation_sheet(ws, alloc_df, header_font, header_fill, thin_border, progress_callback):
+    ws.cell(row=1, column=1, value="SKU Allocation — 跨 Nature 調貨建議（Tourist 缺貨 vs Non-Tourist/Mix 可支援存貨）").font = Font(bold=True, size=12, color="1E40AF")
+
+    if alloc_df is None or alloc_df.empty:
+        ws.cell(row=3, column=1, value="無可調貨 SKU（無 Tourist 缺貨且同時其他 Nature 有存貨的情況）").font = Font(size=11, italic=True, color="6B7280")
+        return
+
+    headers = list(alloc_df.columns)
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    for row_idx, row_data in enumerate(alloc_df.itertuples(index=False), start=4):
+        for col_idx, val in enumerate(row_data, 1):
+            if pd.isna(val):
+                val = None
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if isinstance(val, (int, float)):
+                cell.number_format = "#,##0"
+
+    if progress_callback:
+        progress_callback(0.78, f"SKU 調貨表寫入完成（{len(alloc_df)} SKU）")
+
+    _auto_width(ws)
+
+
+def _write_sku_stock_diagnosis_sheet(ws, diag_df, header_font, header_fill, thin_border, progress_callback):
+    """寫入 by-SKU 缺貨診斷表（Tourist+Mix 缺貨 SKU，含 D001 貨量與店舖貨量）。
+
+    D001 狀態分類用顏色標示：「倉庫有貨但店舖缺貨」(補貨問題) 用橘色警示、「源頭斷貨」用灰色。
+    """
+    ws.cell(row=1, column=1, value="SKU Stock Diagnosis — by-SKU 缺貨診斷（Tourist + Mix 缺貨 SKU｜含 D001 倉庫貨量與店舖貨量）").font = Font(bold=True, size=12, color="1E40AF")
+
+    if diag_df is None or diag_df.empty:
+        ws.cell(row=3, column=1, value="無 Tourist/Mix 缺貨 SKU").font = Font(size=11, italic=True, color="6B7280")
+        return
+
+    headers = list(diag_df.columns)
+    # 找出 D001 狀態欄的索引（用於著色）
+    d001_status_col_idx = headers.index("D001 狀態") + 1 if "D001 狀態" in headers else None
+
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    restock_fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")  # 淡橘: 補貨問題
+    source_fill = PatternFill(start_color="E5E7EB", end_color="E5E7EB", fill_type="solid")    # 淡灰: 源頭斷貨
+
+    total_rows = len(diag_df)
+    for row_idx, row_data in enumerate(diag_df.itertuples(index=False), start=4):
+        d001_status = getattr(row_data, "_asdict")().get("D001 狀態") if d001_status_col_idx else None
+        for col_idx, val in enumerate(row_data, 1):
+            if pd.isna(val):
+                val = None
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if isinstance(val, (int, float)):
+                cell.number_format = "#,##0"
+            # D001 狀態欄著色
+            if d001_status_col_idx and col_idx == d001_status_col_idx:
+                if val == "倉庫有貨但店舖缺貨":
+                    cell.fill = restock_fill
+                    cell.font = Font(bold=True, size=10, color="92400E")
+                elif val == "源頭斷貨":
+                    cell.fill = source_fill
+                    cell.font = Font(size=10, color="4B5563")
+        if progress_callback and ((row_idx - 4) % 500 == 0 or row_idx - 3 == total_rows):
+            progress_callback(0.74 + 0.03 * ((row_idx - 3) / max(total_rows, 1)),
+                              f"寫入 SKU 缺貨診斷 ({row_idx-3}/{total_rows})...")
+
+    if progress_callback:
+        progress_callback(0.77, f"SKU 缺貨診斷表寫入完成（{len(diag_df)} SKU）")
+
+    _auto_width(ws)
+
+
+def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, thin_border, desc_font, progress_callback):
+    impacted = raw_df[raw_df["Is Stock Impacted"]].copy()
+
+    total_impacted = len(impacted)
+    nature_counts = {"Tourist": 0, "Mix": 0, "Non Tourist": 0}
+    if total_impacted and "Shop Nature" in impacted.columns:
+        for nat, cnt in impacted["Shop Nature"].value_counts(dropna=False).items():
+            if nat in nature_counts:
+                nature_counts[nat] = int(cnt)
+
+    loss_m2 = int(_safe_numeric(impacted.get("Total Sales Loss (M-2)", _safe_default_series(0, impacted.index))).sum()) if total_impacted else 0
+    loss_p90d = int(_safe_numeric(impacted.get("Total Sales Loss (P90D)", _safe_default_series(0, impacted.index))).sum()) if total_impacted else 0
+
+    # 受影響最嚴重 Buyer
+    top_buyer_name = "—"
+    top_buyer_loss = 0
+    if summary_buyer is not None and not summary_buyer.empty and "Buyer" in summary_buyer.columns:
+        buyer_data = summary_buyer[~summary_buyer["Buyer"].isin(["總計", ""])]
+        if not buyer_data.empty and "最大銷售損失(P90D)" in buyer_data.columns:
+            top = buyer_data.sort_values("最大銷售損失(P90D)", ascending=False).iloc[0]
+            top_buyer_name = str(top["Buyer"])
+            top_buyer_loss = int(top.get("最大銷售損失(P90D)", 0))
+
+    row1_metrics = [
+        ("總缺貨影響行數", total_impacted, "Shop Stock=0 且有銷售需求", "EF4444"),
+        ("Tourist 缺貨", nature_counts["Tourist"], "公司最重視的店舖類型", "DC2626"),
+        ("Mix 缺貨", nature_counts["Mix"], "次重視店舖類型", "F97316"),
+        ("Non Tourist 缺貨", nature_counts["Non Tourist"], "一般店舖類型", "F59E0B"),
+    ]
+
+    row2_metrics = [
+        ("總銷售損失 (M-2基準)", loss_m2, "以 M-2 Sold 為需求基準", "3B82F6"),
+        ("總銷售損失 (P90D基準)", loss_p90d, "以 90 天月均為需求基準", "8B5CF6"),
+        ("受影響最嚴重 Buyer", top_buyer_name, f"最大損失(P90D): {top_buyer_loss:,}", "06B6D4"),
+        ("Tourist 占比", f"{(nature_counts['Tourist']/total_impacted*100):.1f}%" if total_impacted else "0%", "Tourist 缺貨 / 總缺貨", "1E40AF"),
+    ]
+
+    _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
+
+    # Top 5 受影響 Brand（按 Tourist 缺貨）
+    if summary_buyer is not None and not summary_buyer.empty and len(summary_buyer) > 1:
+        ws.cell(row=14, column=1, value="Top 5 受缺貨影響最嚴重的 Buyer（按 Tourist 缺貨排序）").font = Font(bold=True, size=12, color="1E40AF")
+        top_buyers = summary_buyer[summary_buyer["Buyer"] != "總計"].head(5)
+        for col_idx, h in enumerate(top_buyers.columns, 1):
+            cell = ws.cell(row=15, column=col_idx, value=h)
+            cell.font = Font(bold=True, size=10, color="FFFFFF")
+            cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+        for row_idx, (_, row_data) in enumerate(top_buyers.iterrows()):
+            excel_row = 16 + row_idx
+            for col_idx, h in enumerate(top_buyers.columns, 1):
+                val = row_data.get(h)
+                if pd.isna(val):
+                    val = None
+                cell = ws.cell(row=excel_row, column=col_idx, value=val)
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                if isinstance(val, (int, float)):
+                    cell.number_format = "#,##0"
+
+    _auto_width(ws)
+
+
+def generate_excel_stock_impact(
     summary_site: pd.DataFrame,
     summary_brand: pd.DataFrame,
     summary_buyer: pd.DataFrame,
     summary_category: pd.DataFrame,
+    sku_allocation: pd.DataFrame,
+    sku_diagnosis: pd.DataFrame,
     raw_df: pd.DataFrame,
-    categories: list[str],
     progress_callback=None,
 ) -> BytesIO:
     wb = Workbook()
@@ -2844,7 +3229,6 @@ def generate_excel_decline(
     )
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
-    bold_font = Font(bold=True, size=11)
     desc_font = Font(size=9, color="6B7280", italic=True)
 
     # Sheet 1: RAW
@@ -2853,58 +3237,70 @@ def generate_excel_decline(
     _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.08)
 
     if progress_callback:
-        progress_callback(0.1, "建立衰退警告明細工作表...")
+        progress_callback(0.1, "建立缺貨影響明細工作表...")
 
-    # Sheet 2: Decline Warning Detail
-    ws_detail = wb.create_sheet(title="Decline Warning Detail")
-    _write_decline_detail_sheet(ws_detail, raw_df, header_font, header_fill, thin_border, progress_callback)
+    # Sheet 2: OOS Impact Detail
+    ws_detail = wb.create_sheet(title="OOS Impact Detail")
+    _write_oos_detail_sheet(ws_detail, raw_df, header_font, header_fill, thin_border, progress_callback)
 
     # Sheet 3: By Site
     if progress_callback:
-        progress_callback(0.3, "建立 By Site 分析工作表...")
+        progress_callback(0.28, "建立 By Site 分析工作表...")
     ws_site = wb.create_sheet(title="By Site")
     if not summary_site.empty:
-        _write_decline_summary_sheet(ws_site, summary_site, "By Site - 銷售衰退分析",
-                                    header_font, header_fill, thin_border, progress_callback, 0.3, 0.4)
+        _write_stock_impact_summary_sheet(ws_site, summary_site, "By Site — 缺貨影響分析",
+                                          header_font, header_fill, thin_border, progress_callback, 0.28, 0.38)
     else:
-        ws_site.cell(row=1, column=1, value="無 Site 層級衰退數據").font = Font(size=12)
+        ws_site.cell(row=1, column=1, value="無 Site 層級缺貨影響數據").font = Font(size=12)
 
     # Sheet 4: By Brand
     if progress_callback:
-        progress_callback(0.42, "建立 By Brand 分析工作表...")
+        progress_callback(0.40, "建立 By Brand 分析工作表...")
     ws_brand = wb.create_sheet(title="By Brand")
     if not summary_brand.empty:
-        _write_decline_summary_sheet(ws_brand, summary_brand, "By Brand - 銷售衰退分析",
-                                    header_font, header_fill, thin_border, progress_callback, 0.42, 0.52)
+        _write_stock_impact_summary_sheet(ws_brand, summary_brand, "By Brand — 缺貨影響分析",
+                                          header_font, header_fill, thin_border, progress_callback, 0.40, 0.50)
     else:
-        ws_brand.cell(row=1, column=1, value="無 Brand 層級衰退數據").font = Font(size=12)
+        ws_brand.cell(row=1, column=1, value="無 Brand 層級缺貨影響數據").font = Font(size=12)
 
     # Sheet 5: By Buyer
     if progress_callback:
-        progress_callback(0.54, "建立 By Buyer 分析工作表...")
+        progress_callback(0.52, "建立 By Buyer 分析工作表...")
     ws_buyer = wb.create_sheet(title="By Buyer")
     if not summary_buyer.empty:
-        _write_decline_summary_sheet(ws_buyer, summary_buyer, "By Buyer - 銷售衰退分析",
-                                    header_font, header_fill, thin_border, progress_callback, 0.54, 0.64)
+        _write_stock_impact_summary_sheet(ws_buyer, summary_buyer, "By Buyer — 缺貨影響分析",
+                                          header_font, header_fill, thin_border, progress_callback, 0.52, 0.62)
     else:
-        ws_buyer.cell(row=1, column=1, value="無 Buyer 層級衰退數據").font = Font(size=12)
+        ws_buyer.cell(row=1, column=1, value="無 Buyer 層級缺貨影響數據").font = Font(size=12)
 
     # Sheet 6: By Category
     if progress_callback:
-        progress_callback(0.66, "建立 By Category 分析工作表...")
+        progress_callback(0.64, "建立 By Category 分析工作表...")
     ws_category = wb.create_sheet(title="By Category")
     if not summary_category.empty:
-        _write_decline_summary_sheet(ws_category, summary_category, "By Category (Adj. MCH1) - 銷售衰退分析",
-                                    header_font, header_fill, thin_border, progress_callback, 0.66, 0.76)
+        _write_stock_impact_summary_sheet(ws_category, summary_category, "By Category (Adj. MCH1) — 缺貨影響分析",
+                                          header_font, header_fill, thin_border, progress_callback, 0.64, 0.72)
     else:
-        ws_category.cell(row=1, column=1, value="無 Category (Adj. MCH1) 層級衰退數據").font = Font(size=12)
+        ws_category.cell(row=1, column=1, value="無 Category (Adj. MCH1) 層級缺貨影響數據").font = Font(size=12)
 
-    # Sheet 7: Dashboard
+    # Sheet 7: SKU Allocation
     if progress_callback:
-        progress_callback(0.8, "建立銷售衰退分析摘要工作表...")
-    ws_dashboard = wb.create_sheet(title="Sales Decline Dashboard")
-    _write_decline_dashboard(ws_dashboard, raw_df, summary_site, summary_brand, summary_buyer,
-                            thin_border, desc_font, progress_callback)
+        progress_callback(0.74, "建立 SKU 調貨建議工作表...")
+    ws_alloc = wb.create_sheet(title="SKU Allocation")
+    _write_sku_allocation_sheet(ws_alloc, sku_allocation, header_font, header_fill, thin_border, progress_callback)
+
+    # Sheet 8: SKU Stock Diagnosis (by-SKU 缺貨診斷, 含 D001 + 店舖貨量)
+    if progress_callback:
+        progress_callback(0.77, "建立 by-SKU 缺貨診斷工作表...")
+    ws_diag = wb.create_sheet(title="SKU Stock Diagnosis")
+    _write_sku_stock_diagnosis_sheet(ws_diag, sku_diagnosis, header_font, header_fill, thin_border, progress_callback)
+
+    # Sheet 9: Dashboard
+    if progress_callback:
+        progress_callback(0.82, "建立缺貨影響分析摘要工作表...")
+    ws_dashboard = wb.create_sheet(title="Stock Impact Dashboard")
+    _write_stock_impact_dashboard(ws_dashboard, raw_df, summary_buyer,
+                                  thin_border, desc_font, progress_callback)
 
     buf = BytesIO()
     wb.save(buf)
@@ -2914,4 +3310,6 @@ def generate_excel_decline(
         progress_callback(1.0, "完成!")
 
     return buf
+
+
 

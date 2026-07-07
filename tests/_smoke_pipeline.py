@@ -8,7 +8,7 @@ from transformer import (
     transform_oos, generate_excel_oos,
     transform_carry, generate_excel_carry,
     transform_combined, generate_excel_combined,
-    transform_decline, generate_excel_decline,
+    transform_stock_impact, generate_excel_stock_impact,
 )
 
 BASE = {
@@ -79,13 +79,13 @@ def main():
         generate_excel_combined(s, r, c)
         print("OK Safety Stock (%s)  | rows=%d warnings=%d" % (mode, len(s), len(w)))
 
-    # ── Sales Decline Detection ──
-    dec_site, dec_brand, dec_buyer, dec_cat, dec_raw, dec_cats, dec_warns = transform_decline(
-        df, mtd_days=15, month_total_days=30
+    # ── Stock Impact Analysis ──
+    si_site, si_brand, si_buyer, si_cat, si_alloc, si_diag, si_raw, si_warns = transform_stock_impact(
+        df, warehouse_only=False
     )
-    generate_excel_decline(dec_site, dec_brand, dec_buyer, dec_cat, dec_raw, dec_cats)
-    dec_count = int(dec_raw["Is Declining"].sum())
-    print("OK Sales Decline Detection | declining_rows=%d warnings=%d" % (dec_count, len(dec_warns)))
+    generate_excel_stock_impact(si_site, si_brand, si_buyer, si_cat, si_alloc, si_diag, si_raw)
+    si_count = int(si_raw["Is Stock Impacted"].sum())
+    print("OK Stock Impact Analysis | impacted_rows=%d diagnosis_skus=%d warnings=%d" % (si_count, len(si_diag), len(si_warns)))
 
     print("\nALL PIPELINES COMPLETED")
 

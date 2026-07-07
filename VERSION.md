@@ -1,5 +1,20 @@
 # 版本記錄
 
+## v1.6.0 (2026-07-07)
+
+- Breaking: **Sales Decline Detection 模式完全移除**，改為全新「Stock Impact Analysis」模式 — 缺貨銷售影響分析
+- Why: 舊模式只比對 Sold Qty 三期時間序列，完全未使用任何 Stock 欄位，無法回答「為何衰退」。資料驗證證實 Tourist 店舖 Shop Stock (CM)=0 時，平均 Sold 從 5.58 降至 0.31（無貨就無銷售）
+- New: `transform_stock_impact()`, `_add_stock_impact_columns()`, `_build_stock_impact_summary()`, `_build_sku_allocation_summary()`, `generate_excel_stock_impact()`, `_write_oos_detail_sheet()`, `_write_sku_allocation_sheet()`, `_write_stock_impact_dashboard()` in transformer.py
+- New: 分析 Shop Stock Qty (M-2/M-1/CM) = 0 對 Sold Qty 的影響，判定缺貨模式（長期缺貨/間歇缺貨/恢復供貨/無缺貨）
+- New: 缺貨銷售損失雙基準並列 — 以 Sold Qty (M-2) 為需求基準 vs 以 Shop Monthly Sold Qty (P90D) 90 天月均為基準
+- New: Shop Nature 優先級 — Tourist > Mix > Non Tourist，所有彙總按 Tourist 缺貨嚴重度排序
+- New: SKU 級跨 Nature 調貨建議 — Tourist 店舖缺貨但 Non-Tourist/Mix 仍有存貨的 SKU，揪出存貨配置不當
+- New: 預設只分析 Warehouse SKU（Vendor 無 D001 倉庫概念），提供 checkbox 可關閉篩選
+- New: Excel 輸出包含 RAW、OOS Impact Detail、By Site、By Brand、By Buyer、By Category、SKU Allocation、SKU Stock Diagnosis、Stock Impact Dashboard 共 9 個工作表
+- New: SKU Stock Diagnosis 工作表 — by-SKU 缺貨診斷（Tourist + Mix 缺貨 SKU），含 D001 倉庫三期貨量 (M-2/M-1/CM)、店舖總存貨三期、D001 狀態分類（🟧 倉庫有貨但店舖缺貨 = 補貨問題｜⬜ 源頭斷貨 = 倉庫也斷貨）
+- Remove: `transform_decline()`, `_add_decline_columns()`, `_build_decline_summary()`, `generate_excel_decline()`, `_write_decline_*()`, `DECLINE_CATEGORIES`, `_classify_severity`, `_DECLINE_WARNING_COLS` 全數移除
+- Update: `version.py` 1.4.17 → 1.6.0
+
 ## v1.5.1 (2026-07-06)
 
 - New: Sales Decline Detection 模式 — 銷售趨勢衰退分析

@@ -9,7 +9,7 @@ from transformer import (
     transform_carry, generate_excel_carry,
     transform_combined, generate_excel_combined,
     transform_nd, generate_excel_nd,
-    transform_decline, generate_excel_decline,
+    transform_stock_impact, generate_excel_stock_impact,
 )
 import time
 import traceback
@@ -209,10 +209,13 @@ with st.sidebar:
     - 結合 Overstock Cap（庫存上限）與 OOS Floor（缺貨底線），雙向平衡調整 Safety Stock
     - 支援逐 Site 檢視、Overstock / OOS Rate 自訂、Safety 只增或加減模式
 
-    **📉 Sales Decline Detection**
-    - 比對 M-2 → M-1 → MTD 三期的銷售趨勢，標記連續衰退品項
-    - 提供輕度 (10-20%) / 中度 (20-50%) / 重度 (≥50%) 三級警告
-    - 支援 By Site / By Brand / By Buyer / By Category 多維度分析
+    **📦 Stock Impact Analysis（缺貨銷售影響分析）**
+    - 以 Shop Stock Qty = 0（缺貨）為核心，分析存貨對 Sold Qty 的因果影響（無貨就無銷售）
+    - 比對 M-2 / M-1 / CM 三期的 Shop Stock 與 Sold Qty 對應關係
+    - 缺貨銷售損失雙基準並列：M-2 Sold 為需求基準 vs P90D 90 天月均為基準
+    - Shop Nature 優先級：Tourist > Mix > Non Tourist
+    - SKU 級跨 Nature 調貨建議：Tourist 缺貨但 Non-Tourist/Mix 仍有存貨 → 揪出存貨配置不當
+    - 預設只分析 Warehouse SKU，提供切換可納入 Vendor
     """)
     
     st.divider()
@@ -274,14 +277,15 @@ with st.sidebar:
      4. **Safety Qty Change** = 建議 Safety Stock − Z（正數=增加、負數=減少、零=不變）
      5. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
 
-     **📉 Sales Decline Detection** — 銷售趨勢衰退分析判別：
-     1. **預估 MTD** = ceil(Sold Qty CM-MTD ÷ MTD 天數 × 當月總天數)，將部分月正規化為全月
-     2. **衰退率 (M-2→M-1)** = (M-2 − M-1) ÷ M-2，僅取正值（上升則為 0）
-     3. **衰退率 (M-1→MTD)** = (M-1 − 預估 MTD) ÷ M-1，僅取正值
-     4. **判定衰退** = 兩期衰退率均 > 0（即 M-2 > M-1 且 M-1 > 預估 MTD）
-     5. **嚴重等級** = 取兩期衰退率之最大值：
-        - 輕度 ≧ 10% / 中度 ≧ 20% / 重度 ≧ 50%
-     6. 支援多維度彙總：By Site / Brand / Buyer / Category (Adj. MCH1)
+     **📦 Stock Impact Analysis** — 缺貨銷售影響分析判別：
+     1. **缺貨判定** = Shop Stock Qty = 0（嚴格標準，三期 M-2 / M-1 / CM 各自判定）
+     2. **缺貨模式**：長期缺貨（≥2 期）/ 間歇缺貨（1 期）/ 恢復供貨（前期缺貨 → CM 有貨）/ 無缺貨
+     3. **銷售損失（M-2 基準）** = max(0, Sold Qty M-2 − 缺貨當期 Sold)，以 M-2 銷售為需求基準
+     4. **銷售損失（P90D 基準）** = max(0, Shop Monthly Sold Qty P90D − 缺貨當期 Sold)，以 90 天月均為基準
+     5. **影響判定** = 任一期缺貨且有需求證據（M-2 Sold 或 P90D > 0）
+     6. **Shop Nature 優先級**：Tourist > Mix > Non Tourist（彙總按 Tourist 缺貨嚴重度排序）
+     7. **SKU 調貨建議**：Tourist 缺貨但同 SKU 在 Non-Tourist/Mix 仍有存貨 → 揪出存貨配置不當
+     8. 預設只分析 Warehouse SKU；支援多維度彙總：By Site / Brand / Buyer / Category (Adj. MCH1)
 
      所有模式均自動生成採購與品牌的交叉匯總樞紐分析表。
     """)
@@ -306,7 +310,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 5. 模式選擇器
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "Safety Stock Review", "Sales Decline Detection"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "Safety Stock Review", "Stock Impact Analysis"]
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0)
 
 # 6. 初始化 Session State (確保下載與重整時狀態持久化)
@@ -316,7 +320,7 @@ MODE_KEYS = {
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
-    "Sales Decline Detection": {"prefix": "decline_", "processed": False, "summary_site": None, "summary_brand": None, "summary_buyer": None, "summary_category": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
+    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_site": None, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_allocation": None, "sku_diagnosis": None, "raw_df": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -716,19 +720,26 @@ if uploaded_file is not None:
                 type="primary",
                 width='stretch',
             )
-    elif mode == "Sales Decline Detection":
-        mtd_date = st.date_input(
-            "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
-            value=datetime.now().date() - timedelta(days=1),
-            help="選擇 MTD 截止日期，系統將用於推算全月預估銷售以比較 M-1 與 CM-MTD 的衰退幅度。"
+    elif mode == "Stock Impact Analysis":
+        st.caption("📦 以 **Shop Stock Qty = 0（缺貨）** 為核心，分析存貨對 Sold Qty 的因果影響（無貨就無銷售）。重點關注 Tourist 店舖。")
+
+        warehouse_only = st.checkbox(
+            "🏗️ 只分析 Warehouse SKU（建議）",
+            value=True,
+            help="Warehouse SKU 受 D001 倉庫補貨影響，缺貨分析最具意義。取消勾選可納入 Vendor SKU。"
         )
-        mtd_days = mtd_date.day
-        month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
-        st.caption(f"MTD: {mtd_days}日，當月共 {month_total_days} 日")
+        st.caption("💡 Vendor SKU 無 D001 倉庫概念，缺貨多為供應商因素而非存貨配置問題。")
+
+        mtd_date = st.date_input(
+            "📅 參考日期 (Sold Qty CM-MTD 的截止日期)",
+            value=datetime.now().date() - timedelta(days=1),
+            help="僅作 Sold Qty (CM-MTD) 語意參考。本模式直接使用原始 CM-MTD 數值，不做全月預估投射。"
+        )
+        st.caption(f"參考日期: {mtd_date.strftime('%Y-%m-%d')}（CM = 當月至今 {mtd_date.day} 日）")
 
         st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
-        if st.button("⚙️ 執行銷售趨勢衰退分析", type="primary", width='stretch'):
+        if st.button("⚙️ 執行缺貨銷售影響分析", type="primary", width='stretch'):
             _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
             _t0_2 = time.time()
 
@@ -744,91 +755,104 @@ if uploaded_file is not None:
                 def _cb_excel(pct, msg):
                     _cb(0.6 + 0.4 * pct, msg)
 
-                summary_site, summary_brand, summary_buyer, summary_category, raw_df, categories, _warnings = transform_decline(
+                summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, raw_df, _warnings = transform_stock_impact(
                     df_input,
                     progress_callback=_cb_transform,
-                    mtd_days=mtd_days,
-                    month_total_days=month_total_days,
+                    warehouse_only=warehouse_only,
                 )
-                buf = generate_excel_decline(summary_site, summary_brand, summary_buyer, summary_category, raw_df, categories, progress_callback=_cb_excel)
+                buf = generate_excel_stock_impact(summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, raw_df, progress_callback=_cb_excel)
 
-                st.session_state.decline_processed = True
-                st.session_state.decline_summary_site = summary_site
-                st.session_state.decline_summary_brand = summary_brand
-                st.session_state.decline_summary_buyer = summary_buyer
-                st.session_state.decline_summary_category = summary_category
-                st.session_state.decline_raw_df = raw_df
-                st.session_state.decline_categories = categories
-                st.session_state.decline_excel_data = buf
-                st.session_state.decline_warnings = _warnings
+                st.session_state.stock_impact_processed = True
+                st.session_state.stock_impact_summary_site = summary_site
+                st.session_state.stock_impact_summary_brand = summary_brand
+                st.session_state.stock_impact_summary_buyer = summary_buyer
+                st.session_state.stock_impact_summary_category = summary_category
+                st.session_state.stock_impact_sku_allocation = sku_allocation
+                st.session_state.stock_impact_sku_diagnosis = sku_diagnosis
+                st.session_state.stock_impact_raw_df = raw_df
+                st.session_state.stock_impact_excel_data = buf
+                st.session_state.stock_impact_warnings = _warnings
             except Exception as e:
                 _prog2.empty()
                 _tb = traceback.format_exc()
-                print(f"❌ Sales Decline Detection 處理失敗: {e}\n{_tb}")
-                st.error(f"❌ Sales Decline Detection 處理失敗: {e}\n\n詳細錯誤: {_tb}")
+                print(f"❌ Stock Impact Analysis 處理失敗: {e}\n{_tb}")
+                st.error(f"❌ Stock Impact Analysis 處理失敗: {e}\n\n詳細錯誤: {_tb}")
                 st.stop()
 
             _prog2.empty()
-            st.success("🎉 銷售趨勢衰退分析完成！")
+            st.success("🎉 缺貨銷售影響分析完成！")
             if _warnings:
                 for _w in _warnings:
                     st.warning(f"⚠️ {_w}")
 
-        if st.session_state.decline_processed:
-            summary_site = st.session_state.decline_summary_site
-            summary_brand = st.session_state.decline_summary_brand
-            summary_buyer = st.session_state.decline_summary_buyer
-            summary_category = st.session_state.decline_summary_category
-            raw_df = st.session_state.decline_raw_df
-            categories = st.session_state.decline_categories
-            excel_data = st.session_state.decline_excel_data
+        if st.session_state.stock_impact_processed:
+            summary_site = st.session_state.stock_impact_summary_site
+            summary_brand = st.session_state.stock_impact_summary_brand
+            summary_buyer = st.session_state.stock_impact_summary_buyer
+            summary_category = st.session_state.stock_impact_summary_category
+            sku_allocation = st.session_state.stock_impact_sku_allocation
+            sku_diagnosis = st.session_state.stock_impact_sku_diagnosis
+            raw_df = st.session_state.stock_impact_raw_df
+            excel_data = st.session_state.stock_impact_excel_data
 
-            declining_mask = raw_df["Is Declining"] & raw_df["Decline Severity"].isin(categories)
-            declining = raw_df[declining_mask].copy()
-            total_declining = len(declining)
-            mild_count = int((declining["Decline Severity"] == "Mild").sum()) if total_declining else 0
-            moderate_count = int((declining["Decline Severity"] == "Moderate").sum()) if total_declining else 0
-            severe_count = int((declining["Decline Severity"] == "Severe").sum()) if total_declining else 0
+            impacted = raw_df[raw_df["Is Stock Impacted"]].copy()
+            total_impacted = len(impacted)
 
             from transformer import _safe_numeric, _safe_default_series
-            m2_total = int(_safe_numeric(declining.get("Sold Qty (M-2)", _safe_default_series(0, declining.index))).sum()) if total_declining else 0
-            proj_total = int(_safe_numeric(declining.get("Projected MTD Sold Qty", _safe_default_series(0, declining.index))).sum()) if total_declining else 0
-            sales_at_risk = m2_total - proj_total
+            nature_counts = {"Tourist": 0, "Mix": 0, "Non Tourist": 0}
+            if total_impacted and "Shop Nature" in impacted.columns:
+                for nat, cnt in impacted["Shop Nature"].value_counts(dropna=False).items():
+                    if nat in nature_counts:
+                        nature_counts[nat] = int(cnt)
+
+            loss_m2 = int(_safe_numeric(impacted.get("Total Sales Loss (M-2)", _safe_default_series(0, impacted.index))).sum()) if total_impacted else 0
+            loss_p90d = int(_safe_numeric(impacted.get("Total Sales Loss (P90D)", _safe_default_series(0, impacted.index))).sum()) if total_impacted else 0
+            tourist_pct = (nature_counts["Tourist"] / total_impacted * 100) if total_impacted else 0
+
+            # 受影響最嚴重 Buyer
+            top_buyer_name = "—"
+            top_buyer_loss = 0
+            if summary_buyer is not None and not summary_buyer.empty and "Buyer" in summary_buyer.columns:
+                _buyer_data = summary_buyer[~summary_buyer["Buyer"].isin(["總計", ""])]
+                if not _buyer_data.empty and "最大銷售損失(P90D)" in _buyer_data.columns:
+                    _top = _buyer_data.sort_values("最大銷售損失(P90D)", ascending=False).iloc[0]
+                    top_buyer_name = str(_top["Buyer"])
+                    top_buyer_loss = int(_top.get("最大銷售損失(P90D)", 0))
 
             st.markdown('<div class="custom-card" style="border-top: 4px solid #dc2626;">', unsafe_allow_html=True)
-            st.markdown("### 📈 銷售趨勢衰退分析摘要 (Sales Decline Dashboard)")
+            st.markdown("### 📦 缺貨銷售影響分析摘要 (Stock Impact Dashboard)")
 
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #EF4444;">
-                    <div class="metric-title">總衰退行數</div>
-                    <div class="metric-value" style="color: #EF4444;">{total_declining:,}</div>
-                    <div class="metric-desc">符合雙期衰退條件的總行數</div>
+                    <div class="metric-title">總缺貨影響行數</div>
+                    <div class="metric-value" style="color: #EF4444;">{total_impacted:,}</div>
+                    <div class="metric-desc">Shop Stock=0 且有銷售需求</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #F59E0B;">
-                    <div class="metric-title">輕度衰退 (10-20%)</div>
-                    <div class="metric-value" style="color: #F59E0B;">{mild_count:,}</div>
-                    <div class="metric-desc">衰退率 10%-20% 之間</div>
+                <div class="metric-card" style="border-left-color: #DC2626;">
+                    <div class="metric-title">⭐ Tourist 缺貨</div>
+                    <div class="metric-value" style="color: #DC2626;">{nature_counts['Tourist']:,}</div>
+                    <div class="metric-desc">公司最重視的店舖類型</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col3:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #F97316;">
-                    <div class="metric-title">中度衰退 (20-50%)</div>
-                    <div class="metric-value" style="color: #F97316;">{moderate_count:,}</div>
-                    <div class="metric-desc">衰退率 20%-50% 之間</div>
+                    <div class="metric-title">Mix 缺貨</div>
+                    <div class="metric-value" style="color: #F97316;">{nature_counts['Mix']:,}</div>
+                    <div class="metric-desc">次重視店舖類型</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col4:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #DC2626;">
-                    <div class="metric-title">重度衰退 (≥50%)</div>
-                    <div class="metric-value" style="color: #DC2626;">{severe_count:,}</div>
-                    <div class="metric-desc">衰退率超過 50%</div>
+                <div class="metric-card" style="border-left-color: #F59E0B;">
+                    <div class="metric-title">Non Tourist 缺貨</div>
+                    <div class="metric-value" style="color: #F59E0B;">{nature_counts['Non Tourist']:,}</div>
+                    <div class="metric-desc">一般店舖類型</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -838,42 +862,33 @@ if uploaded_file is not None:
             with r2_col1:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #3B82F6;">
-                    <div class="metric-title">M-2 銷售總量</div>
-                    <div class="metric-value" style="color: #3B82F6;">{m2_total:,}</div>
-                    <div class="metric-desc">衰退品項在 M-2 期間的總銷售</div>
+                    <div class="metric-title">總銷售損失 (M-2基準)</div>
+                    <div class="metric-value" style="color: #3B82F6;">{loss_m2:,}</div>
+                    <div class="metric-desc">以 M-2 Sold 為需求基準</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #8B5CF6;">
-                    <div class="metric-title">預估 MTD 銷售總量</div>
-                    <div class="metric-value" style="color: #8B5CF6;">{proj_total:,}</div>
-                    <div class="metric-desc">衰退品項在 MTD 的預估全月銷售</div>
+                    <div class="metric-title">總銷售損失 (P90D基準)</div>
+                    <div class="metric-value" style="color: #8B5CF6;">{loss_p90d:,}</div>
+                    <div class="metric-desc">以 90 天月均為需求基準</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col3:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #DC2626;">
-                    <div class="metric-title">銷售損失量</div>
-                    <div class="metric-value" style="color: #DC2626;">{sales_at_risk:,}</div>
-                    <div class="metric-desc">M-2 到預估 MTD 的銷售下降量</div>
+                <div class="metric-card" style="border-left-color: #06B6D4;">
+                    <div class="metric-title">受影響最嚴重 Buyer</div>
+                    <div class="metric-value" style="color: #06B6D4; font-size: 1.1rem;">{top_buyer_name}</div>
+                    <div class="metric-desc">最大損失(P90D): {top_buyer_loss:,}</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col4:
-                # Top declining buyer
-                top_buyer_name = ""
-                top_buyer_count = 0
-                if summary_buyer is not None and not summary_buyer.empty and "Buyer" in summary_buyer.columns:
-                    _buyer_data = summary_buyer[~summary_buyer["Buyer"].isin(["總計", ""])]
-                    if not _buyer_data.empty:
-                        _top = _buyer_data.sort_values("衰退行數", ascending=False).iloc[0]
-                        top_buyer_name = str(_top["Buyer"])
-                        top_buyer_count = int(_top["衰退行數"])
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #F97316;">
-                    <div class="metric-title">衰退最嚴重 Buyer</div>
-                    <div class="metric-value" style="color: #F97316; font-size: 1.1rem;">{top_buyer_name}</div>
-                    <div class="metric-desc">{top_buyer_count:,} 行衰退品項</div>
+                <div class="metric-card" style="border-left-color: #1E40AF;">
+                    <div class="metric-title">Tourist 缺貨占比</div>
+                    <div class="metric-value" style="color: #1E40AF;">{tourist_pct:.1f}%</div>
+                    <div class="metric-desc">Tourist 缺貨 / 總缺貨</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -881,45 +896,65 @@ if uploaded_file is not None:
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
-            decline_tabs = st.tabs(["🏪 By Site", "🏷️ By Brand", "👤 By Buyer", "📦 By Category"])
+            impact_tabs = st.tabs(["🏪 By Site", "🏷️ By Brand", "👤 By Buyer", "📦 By Category", "🔄 SKU 調貨建議", "🔍 SKU 缺貨診斷"])
 
-            with decline_tabs[0]:
-                st.markdown("#### Site 層級銷售衰退分析")
+            with impact_tabs[0]:
+                st.markdown("#### Site 層級缺貨影響分析")
                 if summary_site is not None and not summary_site.empty:
                     st.dataframe(summary_site, width='stretch', hide_index=True)
                 else:
-                    st.info("無 Site 層級衰退數據")
+                    st.info("無 Site 層級缺貨影響數據")
 
-            with decline_tabs[1]:
-                st.markdown("#### Brand 層級銷售衰退分析")
+            with impact_tabs[1]:
+                st.markdown("#### Brand 層級缺貨影響分析")
                 if summary_brand is not None and not summary_brand.empty:
                     st.dataframe(summary_brand, width='stretch', hide_index=True)
                 else:
-                    st.info("無 Brand 層級衰退數據")
+                    st.info("無 Brand 層級缺貨影響數據")
 
-            with decline_tabs[2]:
-                st.markdown("#### Buyer 層級銷售衰退分析")
+            with impact_tabs[2]:
+                st.markdown("#### Buyer 層級缺貨影響分析")
                 if summary_buyer is not None and not summary_buyer.empty:
                     st.dataframe(summary_buyer, width='stretch', hide_index=True)
                 else:
-                    st.info("無 Buyer 層級衰退數據")
+                    st.info("無 Buyer 層級缺貨影響數據")
 
-            with decline_tabs[3]:
-                st.markdown("#### Category (Adj. MCH1) 層級銷售衰退分析")
+            with impact_tabs[3]:
+                st.markdown("#### Category (Adj. MCH1) 層級缺貨影響分析")
                 if summary_category is not None and not summary_category.empty:
                     st.dataframe(summary_category, width='stretch', hide_index=True)
                 elif "Adj. MCH1" not in raw_df.columns:
                     st.info("來源檔案缺少 Adj. MCH1 欄位，無法產出 By Category 分析")
                 else:
-                    st.info("無 Category 層級衰退數據")
+                    st.info("無 Category 層級缺貨影響數據")
+
+            with impact_tabs[4]:
+                st.markdown("#### 🔄 SKU 跨 Nature 調貨建議")
+                st.caption("Tourist 店舖缺貨但同 SKU 在 Non-Tourist / Mix 店舖仍有存貨 → 揪出存貨配置不當，建議調貨支援。")
+                if sku_allocation is not None and not sku_allocation.empty:
+                    st.dataframe(sku_allocation, width='stretch', hide_index=True)
+                else:
+                    st.info("無可調貨 SKU（無 Tourist 缺貨且同時其他 Nature 有存貨的情況）")
+
+            with impact_tabs[5]:
+                st.markdown("#### 🔍 by-SKU 缺貨診斷（Tourist + Mix）")
+                st.caption("每個缺貨 SKU 的 Tourist/Mix 缺貨店數、D001 倉庫三期貨量與店舖總存貨。🟧 **倉庫有貨但店舖缺貨** = 補貨流程問題；⬜ **源頭斷貨** = 倉庫也斷貨需上游補貨。")
+                if sku_diagnosis is not None and not sku_diagnosis.empty:
+                    # 統計摘要
+                    d001_restock = int((sku_diagnosis["D001 狀態"] == "倉庫有貨但店舖缺貨").sum())
+                    d001_source = int((sku_diagnosis["D001 狀態"] == "源頭斷貨").sum())
+                    st.markdown(f"**共 {len(sku_diagnosis):,} 個缺貨 SKU** — 🟧 補貨問題: {d001_restock:,} 個｜⬜ 源頭斷貨: {d001_source:,} 個")
+                    st.dataframe(sku_diagnosis, width='stretch', hide_index=True)
+                else:
+                    st.info("無 Tourist/Mix 缺貨 SKU")
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
-            download_name = f"I14 Sales Decline Detection_{hk_time}.xlsx"
+            download_name = f"I14 Stock Impact Analysis_{hk_time}.xlsx"
 
             st.download_button(
-                label="📥 下載銷售衰退分析報表 (.xlsx)",
+                label="📥 下載缺貨銷售影響分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
