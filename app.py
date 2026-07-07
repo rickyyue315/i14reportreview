@@ -737,6 +737,15 @@ if uploaded_file is not None:
         )
         st.caption(f"參考日期: {mtd_date.strftime('%Y-%m-%d')}（CM = 當月至今 {mtd_date.day} 日）")
 
+        stock_threshold = st.number_input(
+            "📦 低存貨門檻 (D001 + Shop Stock < N 件視為低存貨 SKU)",
+            value=300,
+            min_value=0,
+            step=10,
+            help="當 SKU 的總可用存貨（D001 倉庫 + 全部店舖存貨）低於此門檻，系統將分析 Non Tourist RF 店舖的浪費存貨以及 ND 店的囤積情況，供管理層決定是否減少 Non Tourist 鋪點。"
+        )
+        st.caption(f"當前門檻: {stock_threshold} 件 — 低於此值的 SKU 將觸發配置決策分析")
+
         st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
         if st.button("⚙️ 執行缺貨銷售影響分析", type="primary", width='stretch'):
@@ -759,6 +768,7 @@ if uploaded_file is not None:
                     df_input,
                     progress_callback=_cb_transform,
                     warehouse_only=warehouse_only,
+                    stock_threshold=stock_threshold,
                 )
                 buf = generate_excel_stock_impact(summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel)
 
@@ -930,6 +940,17 @@ if uploaded_file is not None:
                         st.dataframe(imb, width='stretch', hide_index=True)
                     else:
                         st.info("無存貨失衡 SKU")
+                    # B4: 低存貨 SKU 配置決策
+                    low_alloc = inv_distribution.get("low_stock_allocation")
+                    if low_alloc is not None and not low_alloc.empty:
+                        st.markdown(f"**⚖️ 低存貨 SKU 配置決策**（D001 + Shop Stock < {int(low_alloc.iloc[0]['低存貨門檻(件)'])} 件 → 是否減少 Non Tourist RF 店舖）")
+                        st.caption("NT_RF 無銷售有存貨 = 浪費應減店；ND 囤積 = 計畫淘汰佔用存貨")
+                        # 轉置為 2 欄（指標/數值）方便閱讀
+                        la_display = low_alloc.T.reset_index()
+                        la_display.columns = ["指標", "數值"]
+                        st.dataframe(la_display, width='stretch', hide_index=True)
+                    else:
+                        st.info("無低存貨 SKU 配置決策數據")
                 else:
                     st.info("無存貨分佈數據")
 

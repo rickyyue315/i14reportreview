@@ -81,7 +81,7 @@ def main():
 
     # ── Stock Impact Analysis ──
     si_site, si_brand, si_buyer, si_cat, si_alloc, si_diag, si_inv, si_raw, si_warns = transform_stock_impact(
-        df, warehouse_only=False
+        df, warehouse_only=False, stock_threshold=300
     )
     generate_excel_stock_impact(si_site, si_brand, si_buyer, si_cat, si_alloc, si_diag, si_inv, si_raw)
     si_count = int(si_raw["Is Stock Impacted"].sum())

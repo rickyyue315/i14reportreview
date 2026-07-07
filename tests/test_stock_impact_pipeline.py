@@ -329,6 +329,14 @@ def test_inventory_distribution_summary():
     print(f"OK B3: 存貨失衡 SKU（{len(imb)} 個，含建議調貨量）")
 
 
+    # B4: 低存貨 SKU 配置決策應存在
+    la = inv.get("low_stock_allocation")
+    assert la is not None and not la.empty, "應有低存貨 SKU 配置決策表"
+    assert "NT_RF無銷售有存貨行數" in la.columns
+    assert "ND無銷售浪費存貨(件)" in la.columns
+    print(f"OK B4: 低存貨配置決策表（欄位 {list(la.columns)}）")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Test 8: 空資料 / 無缺貨處理
 # ──────────────────────────────────────────────────────────────────────────────

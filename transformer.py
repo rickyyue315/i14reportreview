@@ -2947,17 +2947,26 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
 _MIX_BAND_ORDER = ["<7日(過低)", "7-14日(理想)", "14-30日(偏高)", ">30日(過剩)", "無銷售有存貨", "無存貨"]
 
 
-def _build_inventory_distribution_summary(raw: pd.DataFrame) -> dict:
-    """存貨分佈彙總（管理層視角）— 回傳 dict 含 3 個 DataFrame。
+def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: int = 300) -> dict:
+    """存貨分佈彙總（管理層視角）— 回傳 dict 含 4 個 DataFrame。
+
+    Args:
+        stock_threshold: 低存貨 SKU 門檻（D001 + Shop Stock 總和 < 此值視為低存貨，預設 300）。
 
     回傳:
         {
             "mix_turnday": Mix Turnday 分級表 (B1),
             "nature_compare": Nature 存貨對比表 (B2),
             "imbalance_sku": 存貨失衡 SKU 清單 (B3, Tourist缺貨+其他過剩),
+            "low_stock_allocation": 低存貨 SKU 配置決策表 (B4),
         }
     """
-    result = {"mix_turnday": pd.DataFrame(), "nature_compare": pd.DataFrame(), "imbalance_sku": pd.DataFrame()}
+    result = {
+        "mix_turnday": pd.DataFrame(),
+        "nature_compare": pd.DataFrame(),
+        "imbalance_sku": pd.DataFrame(),
+        "low_stock_allocation": pd.DataFrame(),
+    }
 
     if raw.empty or "Shop Nature" not in raw.columns:
         return result
@@ -3040,57 +3049,115 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame) -> dict:
     ]
 
     if tourist_oos.empty or other_over.empty or "SKU" not in raw.columns:
-        return result
-
-    # Tourist 缺貨損失（by SKU）
-    t_loss = _safe_numeric(tourist_oos.get("Max Sales Loss (P90D)", _safe_default_series(0, tourist_oos.index)))
-    tourist_oos = tourist_oos.assign(_loss=t_loss)
-    t_agg = (
+        result["imbalance_sku"] = pd.DataFrame()  # 無失衡 SKU 時回傳空
+    else:
+        # Tourist 缺貨損失（by SKU）
+        t_loss = _safe_numeric(tourist_oos.get("Max Sales Loss (P90D)", _safe_default_series(0, tourist_oos.index)))
+        tourist_oos = tourist_oos.assign(_loss=t_loss)
+        t_agg = (
         tourist_oos.groupby(["SKU"] + (["Brand"] if "Brand" in tourist_oos.columns else []), dropna=False)
         .agg(
             Tourist缺貨店數=("SKU", "count"),
             Tourist缺貨損失_P90D=("_loss", "sum"),
         )
         .reset_index()
-    )
+        )
 
-    # 其他 Nature 過剩可釋放存貨（by SKU × Nature）
-    other_over = other_over.assign(_stock=cm_stock[other_over.index])
-    o_agg = (
+        # 其他 Nature 過剩可釋放存貨（by SKU × Nature）
+        other_over = other_over.assign(_stock=cm_stock[other_over.index])
+        o_agg = (
         other_over.groupby(["SKU", "Shop Nature"], dropna=False)
         .agg(
             過剩存貨=("_stock", "sum"),
             過剩店數=("SKU", "count"),
         )
         .reset_index()
-    )
-    o_pivot_stock = o_agg.pivot_table(index="SKU", columns="Shop Nature", values="過剩存貨", fill_value=0).reset_index()
-    o_pivot_shops = o_agg.pivot_table(index="SKU", columns="Shop Nature", values="過剩店數", fill_value=0).reset_index()
+        )
+        o_pivot_stock = o_agg.pivot_table(index="SKU", columns="Shop Nature", values="過剩存貨", fill_value=0).reset_index()
+        o_pivot_shops = o_agg.pivot_table(index="SKU", columns="Shop Nature", values="過剩店數", fill_value=0).reset_index()
 
-    merged = t_agg.merge(o_pivot_stock, on="SKU", how="inner")
-    # 重新命名過剩存貨欄
-    rename_map = {c: f"{c}過剩存貨" for c in o_pivot_stock.columns if c != "SKU"}
-    merged = merged.rename(columns=rename_map)
+        merged = t_agg.merge(o_pivot_stock, on="SKU", how="inner")
+        # 重新命名過剩存貨欄
+        rename_map = {c: f"{c}過剩存貨" for c in o_pivot_stock.columns if c != "SKU"}
+        merged = merged.rename(columns=rename_map)
 
-    # 確保 Mix/Non Tourist 過剩欄存在
-    for n in ["Mix", "Non Tourist"]:
-        col = f"{n}過剩存貨"
-        if col not in merged.columns:
-            merged[col] = 0
-        merged[col] = merged[col].fillna(0).astype(int)
+        # 確保 Mix/Non Tourist 過剩欄存在
+        for n in ["Mix", "Non Tourist"]:
+            col = f"{n}過剩存貨"
+            if col not in merged.columns:
+                merged[col] = 0
+            merged[col] = merged[col].fillna(0).astype(int)
 
-    merged["其他Nature過剩總存貨"] = (merged["Mix過剩存貨"] + merged["Non Tourist過剩存貨"]).astype(int)
-    merged = merged[merged["其他Nature過剩總存貨"] > 0]
-    # 可調貨建議量 = min(Tourist 缺貨損失, 其他過剩存貨)
-    merged["建議調貨量"] = np.minimum(merged["Tourist缺貨損失_P90D"], merged["其他Nature過剩總存貨"]).astype(int)
+        merged["其他Nature過剩總存貨"] = (merged["Mix過剩存貨"] + merged["Non Tourist過剩存貨"]).astype(int)
+        merged = merged[merged["其他Nature過剩總存貨"] > 0]
+        # 可調貨建議量 = min(Tourist 缺貨損失, 其他過剩存貨)
+        merged["建議調貨量"] = np.minimum(merged["Tourist缺貨損失_P90D"], merged["其他Nature過剩總存貨"]).astype(int)
 
-    out_cols = ["SKU"]
-    if "Brand" in merged.columns:
-        out_cols.append("Brand")
-    out_cols += ["Tourist缺貨店數", "Tourist缺貨損失_P90D", "Mix過剩存貨", "Non Tourist過剩存貨", "其他Nature過剩總存貨", "建議調貨量"]
-    merged = merged[[c for c in out_cols if c in merged.columns]]
-    merged = merged.sort_values(["Tourist缺貨損失_P90D", "建議調貨量"], ascending=[False, False]).reset_index(drop=True)
-    result["imbalance_sku"] = merged
+        out_cols = ["SKU"]
+        if "Brand" in merged.columns:
+                out_cols.append("Brand")
+        out_cols += ["Tourist缺貨店數", "Tourist缺貨損失_P90D", "Mix過剩存貨", "Non Tourist過剩存貨", "其他Nature過剩總存貨", "建議調貨量"]
+        merged = merged[[c for c in out_cols if c in merged.columns]]
+        merged = merged.sort_values(["Tourist缺貨損失_P90D", "建議調貨量"], ascending=[False, False]).reset_index(drop=True)
+        result["imbalance_sku"] = merged
+
+    # ── B4: 低存貨 SKU 配置決策（D001 + Shop Stock < 門檻）─────────────────────
+    # 找出總可用存貨不足門檻的 SKU，分析是否該減少 Non Tourist RF 店舖。
+    # 同時統計 RF 店「無銷售有存貨」與 ND 店存貨（有/無銷售）的浪費情況。
+    if "SKU" in raw.columns:
+        d001_cm_col = "D001 Stock Qty (CM)" if "D001 Stock Qty (CM)" in raw.columns else None
+        d001_cm = _safe_numeric(raw.get(d001_cm_col or "SKU", _safe_default_series(0, raw.index)))
+        if d001_cm_col is None:
+            d001_cm = pd.Series(0, index=raw.index)  # 無 D001 欄位時視為 0
+        low_df = raw.assign(_d001=d001_cm, _shop_stock=cm_stock, _p90d=p90d)
+        # 每個 SKU 的總可用存貨
+        sku_avail = (
+            low_df.groupby("SKU", dropna=False)
+            .agg(總可用存貨=("_d001", "first"), _shop_total=("_shop_stock", "sum"))
+            .reset_index()
+        )
+        sku_avail["總可用存貨"] = sku_avail["總可用存貨"] + sku_avail["_shop_total"]
+        low_skus = set(sku_avail[sku_avail["總可用存貨"] < stock_threshold]["SKU"])
+
+        if low_skus:
+            low = low_df[low_df["SKU"].isin(low_skus)].copy()
+            rp = low.get("RP Type", _safe_default_series("", low.index)).fillna("").astype(str).str.strip().str.upper()
+
+            # Tourist/Mix 缺貨且有需求（RF）— 代表真的不夠貨
+            impacted_mask = low.get("Is Stock Impacted", pd.Series([False] * len(low), index=low.index))
+            t_oos = int(((low["Shop Nature"] == "Tourist") & (impacted_mask)).sum()) if "Shop Nature" in low.columns else 0
+            m_oos = int(((low["Shop Nature"] == "Mix") & (impacted_mask)).sum()) if "Shop Nature" in low.columns else 0
+
+            # Non Tourist RF 店「無銷售有存貨」— 浪費，建議減店
+            nt_rf = low[(low["Shop Nature"] == "Non Tourist") & (rp == "RF")] if "Shop Nature" in low.columns else pd.DataFrame()
+            nt_waste_mask = (nt_rf["_p90d"] == 0) & (nt_rf["_shop_stock"] > 0)
+            nt_waste_rows = int(nt_waste_mask.sum())
+            nt_waste_stock = int(nt_rf.loc[nt_waste_mask, "_shop_stock"].sum())
+
+            # ND 店存貨統計（有/無銷售）— 計畫淘汰卻佔存貨
+            nd_all = low[rp == "ND"]
+            nd_has_stock = nd_all[nd_all["_shop_stock"] > 0]
+            nd_stock_total = int(nd_has_stock["_shop_stock"].sum())
+            nd_sale = nd_has_stock[nd_has_stock["_p90d"] > 0]
+            nd_nosale = nd_has_stock[nd_has_stock["_p90d"] == 0]
+            nd_sale_rows = int(len(nd_sale))
+            nd_nosale_rows = int(len(nd_nosale))
+            nd_nosale_stock = int(nd_nosale["_shop_stock"].sum())
+
+            b4 = pd.DataFrame([{
+                "低存貨門檻(件)": stock_threshold,
+                "低存貨SKU數": len(low_skus),
+                "Tourist缺貨行數": t_oos,
+                "Mix缺貨行數": m_oos,
+                "NT_RF無銷售有存貨行數": nt_waste_rows,
+                "NT_RF無銷售佔用存貨(件)": nt_waste_stock,
+                "ND有存貨行數": nd_sale_rows + nd_nosale_rows,
+                "ND存貨總量(件)": nd_stock_total,
+                "ND有存貨有銷售行數": nd_sale_rows,
+                "ND有存貨無銷售行數": nd_nosale_rows,
+                "ND無銷售浪費存貨(件)": nd_nosale_stock,
+            }])
+            result["low_stock_allocation"] = b4
 
     return result
 
@@ -3110,6 +3177,7 @@ def transform_stock_impact(
     progress_callback=None,
     shop_natures: list[str] | None = None,
     warehouse_only: bool = True,
+    stock_threshold: int = 300,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict, list[str]]:
     """Stock Impact Analysis 主流程。
 
@@ -3187,7 +3255,7 @@ def transform_stock_impact(
     if progress_callback:
         progress_callback(0.66, "建構存貨分佈分析中...")
 
-    inv_distribution = _build_inventory_distribution_summary(raw)
+    inv_distribution = _build_inventory_distribution_summary(raw, stock_threshold=stock_threshold)
 
     if progress_callback:
         progress_callback(0.7, "轉換完成")
@@ -3409,6 +3477,19 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
     if progress_callback:
         progress_callback(0.90, "寫入存貨失衡 SKU...")
     current_row = _write_subtable("🔄 存貨失衡 SKU（Tourist 缺貨 + Non Tourist/Mix 過剩 → 建議調貨）", inv_distribution.get("imbalance_sku"), current_row)
+
+    # B4: 低存貨 SKU 配置決策
+    if progress_callback:
+        progress_callback(0.93, "寫入低存貨 SKU 配置決策...")
+    low_alloc = inv_distribution.get("low_stock_allocation")
+    if low_alloc is not None and not low_alloc.empty:
+        # 轉置為 2 欄（指標/數值）方便閱讀
+        low_display = low_alloc.T.reset_index()
+        low_display.columns = ["指標", "數值"]
+        current_row = _write_subtable("⚖️ 低存貨 SKU 配置決策（D001 + Shop Stock < 門檻 → 是否減少 Non Tourist RF 店舖）", low_display, current_row)
+    else:
+        ws.cell(row=current_row, column=1, value="⚖️ 低存貨 SKU 配置決策：無資料").font = Font(size=12, color="1E40AF")
+        current_row += 3
 
     _auto_width(ws)
 
