@@ -3368,14 +3368,17 @@ def _build_transfer_priority_analysis(raw: pd.DataFrame) -> dict:
     result["summary"] = summary
 
     # 5. Build detail table: per SKU
-    t_loss = _safe_numeric(transferrable_oos.get("Max Sales Loss (P90D)", _safe_default_series(0, transferrable_oos.index)))
-    transferrable_oos = transferrable_oos.assign(_loss_p90d=t_loss)
+    # Tourist缺失件數 = max(0, Adj. Safety Stock - Shop Stock Qty (CM))
+    adj_safety = _safe_numeric(transferrable_oos.get("Adj. Safety Stock", _safe_default_series(0, transferrable_oos.index)))
+    shop_stock = _safe_numeric(transferrable_oos.get("Shop Stock Qty (CM)", _safe_default_series(0, transferrable_oos.index)))
+    shortage = np.maximum(0, adj_safety.values - shop_stock.values)
+    transferrable_oos = transferrable_oos.assign(_shortage=shortage)
 
     t_agg = (
         transferrable_oos.groupby("SKU", dropna=False)
         .agg(
             Tourist缺貨行數=("SKU", "count"),
-            Tourist損失_P90D=("_loss_p90d", "sum"),
+            Tourist缺失件數=("_shortage", "sum"),
         )
         .reset_index()
     )
@@ -3415,7 +3418,7 @@ def _build_transfer_priority_analysis(raw: pd.DataFrame) -> dict:
     for _c in ["Brand", "SKU Desc", "Buyer"]:
         if _c in detail.columns:
             out_cols.append(_c)
-    out_cols += ["Tourist缺貨行數", "Tourist損失_P90D", "Mix可釋放件數", "NonTourist可釋放件數", "可釋放總件數", "D001狀態"]
+    out_cols += ["Tourist缺貨行數", "Tourist缺失件數", "Mix可釋放件數", "NonTourist可釋放件數", "可釋放總件數", "D001狀態"]
 
     detail = detail[[c for c in out_cols if c in detail.columns]]
 
@@ -3423,7 +3426,7 @@ def _build_transfer_priority_analysis(raw: pd.DataFrame) -> dict:
     detail = detail.sort_values(["Tourist缺貨行數", "可釋放總件數"], ascending=[False, False]).reset_index(drop=True)
 
     # Cast int columns
-    for c in ["Tourist缺貨行數", "Tourist損失_P90D", "Mix可釋放件數", "NonTourist可釋放件數", "可釋放總件數"]:
+    for c in ["Tourist缺貨行數", "Tourist缺失件數", "Mix可釋放件數", "NonTourist可釋放件數", "可釋放總件數"]:
         if c in detail.columns:
             detail[c] = detail[c].fillna(0).astype(int)
 
