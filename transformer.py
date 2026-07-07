@@ -3133,12 +3133,60 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
         # 可調貨建議量 = min(Tourist 缺貨損失, 其他過剩存貨)
         merged["建議調貨量"] = np.minimum(merged["Tourist缺貨損失_P90D"], merged["其他Nature過剩總存貨"]).astype(int)
 
+        # 附加 SKU 級資訊：SKU Desc / Buyer / D001 Net Stock + Shop Stock 總數
+        sku_info_cols = ["SKU"]
+        for _c in ["SKU Desc", "Buyer"]:
+            if _c in raw.columns:
+                sku_info_cols.append(_c)
+        d001_net = "D001 Net Stock Qty (CM)"
+        has_d001_net = d001_net in raw.columns
+        has_shop_cm = "Shop Stock Qty (CM)" in raw.columns
+        if sku_info_cols:
+            agg_dict = {}
+            for c in sku_info_cols:
+                if c != "SKU":
+                    agg_dict[c] = (c, "first")
+            if has_d001_net:
+                agg_dict["_d001_net"] = (d001_net, "first")
+            if has_shop_cm:
+                agg_dict["_shop_total"] = ("Shop Stock Qty (CM)", "sum")
+            sku_info = (
+                raw[sku_info_cols + ([d001_net] if has_d001_net else []) + (["Shop Stock Qty (CM)"] if has_shop_cm else [])]
+                .groupby("SKU", dropna=False)
+                .agg(**agg_dict)
+                .reset_index()
+            )
+            merged = merged.merge(sku_info, on="SKU", how="left")
+            if has_d001_net and has_shop_cm:
+                merged["總可用存貨"] = (_safe_numeric(merged.get("_d001_net", _safe_default_series(0, merged.index))) +
+                                        _safe_numeric(merged.get("_shop_total", _safe_default_series(0, merged.index)))).astype(int)
+            for _c in ["_d001_net", "_shop_total"]:
+                if _c in merged.columns:
+                    merged.drop(columns=[_c], inplace=True)
+
         out_cols = ["SKU"]
         if "Brand" in merged.columns:
                 out_cols.append("Brand")
+        if "SKU Desc" in merged.columns:
+            out_cols.append("SKU Desc")
+        if "Buyer" in merged.columns:
+            out_cols.append("Buyer")
+        if "總可用存貨" in merged.columns:
+            out_cols.append("總可用存貨")
         out_cols += ["Tourist缺貨店數", "Tourist缺貨損失_P90D", "Mix過剩存貨", "Non Tourist過剩存貨", "其他Nature過剩總存貨", "建議調貨量"]
         merged = merged[[c for c in out_cols if c in merged.columns]]
         merged = merged.sort_values(["Tourist缺貨損失_P90D", "建議調貨量"], ascending=[False, False]).reset_index(drop=True)
+
+        # 附註解（計算方式說明）
+        merged.attrs["annotation"] = (
+            "【計算方式】\n"
+            "Tourist缺貨損失_P90D：Tourist 店舖 CM Shop Stock=0 且有需求 (P90D>0 或 M-2 Sold>0) 時，"
+            "以 P90D 月均為基準的缺貨損失總和。公式 = Sum(Max Sales Loss (P90D))。\n"
+            "Mix過剩存貨：Mix 店舖 Shop Stock (CM) > 0 且 Turnday > 14 日的過剩部分 "
+            "（超出 P90D/30×14 標準的存貨總和）。\n"
+            "Non Tourist過剩存貨：Non Tourist 店舖 Shop Stock (CM) > 0 且 Turnday > 30 日的存貨總和。\n"
+            "建議調貨量 = min(Tourist缺貨損失_P90D, Mix過剩存貨 + Non Tourist過剩存貨)。"
+        )
         result["imbalance_sku"] = merged
 
     # ── B4: 低存貨 SKU 配置決策（D001 + Shop Stock < 門檻）─────────────────────
@@ -3521,7 +3569,15 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
     # B3: 存貨失衡 SKU
     if progress_callback:
         progress_callback(0.90, "寫入存貨失衡 SKU...")
-    current_row = _write_subtable("🔄 存貨失衡 SKU（Tourist 缺貨 + Non Tourist/Mix 過剩 → 建議調貨）", inv_distribution.get("imbalance_sku"), current_row)
+    imb = inv_distribution.get("imbalance_sku")
+    current_row = _write_subtable("🔄 存貨失衡 SKU（Tourist 缺貨 + Non Tourist/Mix 過剩 → 建議調貨）", imb, current_row)
+
+    # B3 註解（計算方式說明）
+    if imb is not None and hasattr(imb, "attrs") and "annotation" in imb.attrs:
+        for line in imb.attrs["annotation"].split("\n"):
+            ws.cell(row=current_row, column=1, value=line).font = Font(size=9, italic=True, color="6B7280")
+            current_row += 1
+        current_row += 1
 
     # B4: 低存貨 SKU 配置決策
     if progress_callback:

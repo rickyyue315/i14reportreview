@@ -332,9 +332,10 @@ def test_inventory_distribution_summary():
     assert not imb.empty, "應有存貨失衡 SKU"
     skus = set(imb["SKU"].astype(str))
     assert "1" in skus and "2" in skus, "SKU 1 & 2 應為存貨失衡"
-    # 建議調貨量 = min(Tourist缺貨損失, 其他過剩存貨)
     assert "建議調貨量" in imb.columns
-    print(f"OK B3: 存貨失衡 SKU（{len(imb)} 個，含建議調貨量）")
+    # 驗證註解屬性存在
+    assert hasattr(imb, "attrs") and "annotation" in imb.attrs, "應有計算方式註解"
+    print(f"OK B3: 存貨失衡 SKU（{len(imb)} 個，含建議調貨量 + 計算註解）")
 
 
     # B4: 低存貨 SKU 配置決策應存在

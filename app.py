@@ -942,6 +942,10 @@ if uploaded_file is not None:
                     if imb is not None and not imb.empty:
                         st.markdown(f"**存貨失衡 SKU 清單**（{len(imb):,} 個 SKU，Tourist 缺貨 + Non Tourist/Mix 過剩）")
                         st.dataframe(imb, width='stretch', hide_index=True)
+                        # 註解（計算方式說明）
+                        if hasattr(imb, "attrs") and "annotation" in imb.attrs:
+                            with st.expander("📝 計算方式說明"):
+                                st.caption(imb.attrs["annotation"])
                     else:
                         st.info("無存貨失衡 SKU")
                     # B4: 低存貨 SKU 配置決策
