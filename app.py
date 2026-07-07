@@ -825,6 +825,16 @@ if uploaded_file is not None:
             # 存貨失衡 SKU 數
             imbalance_sku = inv_distribution.get("imbalance_sku", _pd.DataFrame()) if inv_distribution else _pd.DataFrame()
             imbalance_count = len(imbalance_sku)
+            # 可調貨優先分析（Tourist缺貨 + 同SKU在Mix/NT有可釋放件數）
+            tp_data = inv_distribution.get("transfer_priority", {}) if inv_distribution else {}
+            tp_summary = tp_data.get("summary", _pd.DataFrame()) if isinstance(tp_data, dict) else _pd.DataFrame()
+            tp_detail = tp_data.get("detail", _pd.DataFrame()) if isinstance(tp_data, dict) else _pd.DataFrame()
+            transferrable_tourist_rows = 0
+            transferrable_sku_count = 0
+            if tp_summary is not None and not tp_summary.empty:
+                _s = tp_summary.iloc[0]
+                transferrable_tourist_rows = int(_s.get("可調貨Tourist行數", 0))
+                transferrable_sku_count = int(_s.get("可調貨SKU數", 0))
             # 各 Nature 平均 Turnday
             tourist_td = turnday_s[nature_s == "Tourist"]
             tourist_avg_td = round(float(tourist_td.mean()), 1) if tourist_td.notna().any() and len(tourist_td) else 0
@@ -917,6 +927,26 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+            r3_col1, r3_col2, r3_col3, r3_col4 = st.columns(4)
+            with r3_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #059669;">
+                    <div class="metric-title">🔄 可調貨Tourist行數</div>
+                    <div class="metric-value" style="color: #059669;">{transferrable_tourist_rows:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
+                    <div class="metric-desc">Tourist缺貨+同SKU在Mix/NT有可釋放件數｜單位：行數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r3_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #0D9488;">
+                    <div class="metric-title">📦 可調貨SKU數</div>
+                    <div class="metric-value" style="color: #0D9488;">{transferrable_sku_count:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">個</span></div>
+                    <div class="metric-desc">涉及的不重複SKU｜單位：SKU數</div>
+                </div>
+                """, unsafe_allow_html=True)
+
             st.markdown('</div>', unsafe_allow_html=True)
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
@@ -960,6 +990,14 @@ if uploaded_file is not None:
                         st.dataframe(la_display, width='stretch', hide_index=True)
                     else:
                         st.info("無低存貨 SKU 配置決策數據")
+                    # B5: 可調貨優先 SKU 清單
+                    if tp_detail is not None and not tp_detail.empty:
+                        summary_text = f"可調貨Tourist行數: {transferrable_tourist_rows:,} 行｜可調貨SKU數: {transferrable_sku_count:,} 個"
+                        st.markdown(f"**🔄 可調貨優先 SKU 清單**（Tourist缺貨 + 同SKU在Mix/NT有可釋放件數 → 優先調貨）")
+                        st.caption(summary_text)
+                        st.dataframe(tp_detail, width='stretch', hide_index=True)
+                    else:
+                        st.info("無可調貨優先 SKU（所有Tourist缺貨SKU在Mix/NT均無可釋放存貨）")
                 else:
                     st.info("無存貨分佈數據")
 

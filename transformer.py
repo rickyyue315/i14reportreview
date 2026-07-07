@@ -689,13 +689,17 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
     _auto_width(ws)
 
 
-def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None, progress_pct=0.95):
+def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None, progress_pct=0.95, row3_metrics=None):
     ws.merge_cells("A1:D1")
     title_cell = ws.cell(row=1, column=1, value=title)
     title_cell.font = Font(bold=True, size=14, color="1E40AF")
     title_cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    for row_offset, metrics in [(3, row1_metrics), (7, row2_metrics)]:
+    row_offsets = [(3, row1_metrics), (7, row2_metrics)]
+    if row3_metrics:
+        row_offsets.append((11, row3_metrics))
+
+    for row_offset, metrics in row_offsets:
         for i, (name, value, desc, color) in enumerate(metrics):
             col = i + 1
             tc = ws.cell(row=row_offset, column=col, value=name)
@@ -3040,6 +3044,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
             "nature_compare": Nature 存貨對比表 (B2),
             "imbalance_sku": 存貨失衡 SKU 清單 (B3, Tourist缺貨+其他過剩),
             "low_stock_allocation": 低存貨 SKU 配置決策表 (B4),
+            "transfer_priority": 可調貨優先分析 (B5, Tourist缺貨+同SKU在Mix/NT有可釋放件數),
         }
     """
     result = {
@@ -3048,6 +3053,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
         "nature_compare": pd.DataFrame(),
         "imbalance_sku": pd.DataFrame(),
         "low_stock_allocation": pd.DataFrame(),
+        "transfer_priority": {},
     }
 
     if raw.empty or "Shop Nature" not in raw.columns:
@@ -3290,6 +3296,138 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
                 "ND無銷售浪費存貨(件)": nd_nosale_stock,
             }])
             result["low_stock_allocation"] = b4
+
+    # ── B5: 可調貨優先分析 (Tourist缺貨 + 同SKU在Mix/NT有可釋放件數) ──────────
+    result["transfer_priority"] = _build_transfer_priority_analysis(raw)
+
+    return result
+
+
+def _build_transfer_priority_analysis(raw: pd.DataFrame) -> dict:
+    """可調貨優先分析：Tourist 缺貨行中，同 SKU 在 Mix/Non Tourist 有可釋放件數的行數及 SKU 明細。
+
+    回傳:
+        {
+            "summary": DataFrame with aggregate metrics (可調貨Tourist行數, 可調貨SKU數),
+            "detail": DataFrame with per-SKU transfer priority details,
+        }
+    """
+    result: dict = {
+        "summary": pd.DataFrame(),
+        "detail": pd.DataFrame(),
+    }
+
+    if raw.empty or "Shop Nature" not in raw.columns or "SKU" not in raw.columns:
+        return result
+
+    nature = raw["Shop Nature"].fillna("").astype(str)
+    cm_stock = _safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, raw.index)))
+
+    # 1. Tourist OOS rows (Is Stock Impacted + CM stock <= 0)
+    is_impacted = raw.get("Is Stock Impacted", pd.Series(False, index=raw.index))
+    tourist_oos_mask = (nature == "Tourist") & is_impacted & (cm_stock <= 0)
+    if not tourist_oos_mask.any():
+        return result
+
+    tourist_oos = raw[tourist_oos_mask].copy()
+
+    # 2. Aggregate Mix/NT releasable stock by SKU（可釋放件數 = Mix Excess Stock + Non Tourist Excess Stock）
+    mix_excess = _safe_numeric(raw.get("Mix Excess Stock", _safe_default_series(0, raw.index)))
+    nt_excess = _safe_numeric(raw.get("Non Tourist Excess Stock", _safe_default_series(0, raw.index)))
+
+    sku_releasable = (
+        raw.assign(_mix_excess=mix_excess, _nt_excess=nt_excess)
+        .groupby("SKU", dropna=False)
+        .agg(
+            Mix可釋放件數=("_mix_excess", "sum"),
+            NonTourist可釋放件數=("_nt_excess", "sum"),
+        )
+        .reset_index()
+    )
+    sku_releasable["可釋放總件數"] = sku_releasable["Mix可釋放件數"] + sku_releasable["NonTourist可釋放件數"]
+    skus_with_releasable = set(sku_releasable[sku_releasable["可釋放總件數"] > 0]["SKU"])
+
+    if not skus_with_releasable:
+        return result
+
+    # 3. Filter Tourist OOS to only those SKUs with releasable stock
+    transferrable_mask = tourist_oos["SKU"].isin(skus_with_releasable)
+    if not transferrable_mask.any():
+        return result
+
+    transferrable_oos = tourist_oos[transferrable_mask]
+
+    # 4. Count metrics
+    row_count = len(transferrable_oos)
+    sku_count = transferrable_oos["SKU"].nunique()
+
+    summary = pd.DataFrame([{
+        "可調貨Tourist行數": row_count,
+        "可調貨SKU數": sku_count,
+    }])
+    result["summary"] = summary
+
+    # 5. Build detail table: per SKU
+    t_loss = _safe_numeric(transferrable_oos.get("Max Sales Loss (P90D)", _safe_default_series(0, transferrable_oos.index)))
+    transferrable_oos = transferrable_oos.assign(_loss_p90d=t_loss)
+
+    t_agg = (
+        transferrable_oos.groupby("SKU", dropna=False)
+        .agg(
+            Tourist缺貨行數=("SKU", "count"),
+            Tourist損失_P90D=("_loss_p90d", "sum"),
+        )
+        .reset_index()
+    )
+
+    # Merge with releasable stock info
+    detail = t_agg.merge(sku_releasable, on="SKU", how="left")
+    detail = detail[detail["可釋放總件數"] > 0]
+
+    # Add SKU-level info: Brand, SKU Desc, Buyer
+    sku_info_cols = ["SKU"]
+    for _c in ["Brand", "SKU Desc", "Buyer"]:
+        if _c in raw.columns:
+            sku_info_cols.append(_c)
+
+    sku_info = (
+        raw[sku_info_cols].groupby("SKU", dropna=False)
+        .agg({c: "first" for c in sku_info_cols if c != "SKU"})
+        .reset_index()
+    )
+    detail = detail.merge(sku_info, on="SKU", how="left")
+
+    # D001 status
+    d001_cm_col = "D001 Stock Qty (CM)"
+    if d001_cm_col in raw.columns:
+        d001_per_sku = (
+            raw.groupby("SKU", dropna=False)
+            .agg(D001_Stock_CM=(d001_cm_col, "first"))
+            .reset_index()
+        )
+        d001_per_sku["D001狀態"] = d001_per_sku["D001_Stock_CM"].apply(_classify_d001_status)
+        detail = detail.merge(d001_per_sku[["SKU", "D001狀態"]], on="SKU", how="left")
+    else:
+        detail["D001狀態"] = "—"
+
+    # Column ordering
+    out_cols = ["SKU"]
+    for _c in ["Brand", "SKU Desc", "Buyer"]:
+        if _c in detail.columns:
+            out_cols.append(_c)
+    out_cols += ["Tourist缺貨行數", "Tourist損失_P90D", "Mix可釋放件數", "NonTourist可釋放件數", "可釋放總件數", "D001狀態"]
+
+    detail = detail[[c for c in out_cols if c in detail.columns]]
+
+    # Sort: Tourist OOS count desc, then releasable total desc
+    detail = detail.sort_values(["Tourist缺貨行數", "可釋放總件數"], ascending=[False, False]).reset_index(drop=True)
+
+    # Cast int columns
+    for c in ["Tourist缺貨行數", "Tourist損失_P90D", "Mix可釋放件數", "NonTourist可釋放件數", "可釋放總件數"]:
+        if c in detail.columns:
+            detail[c] = detail[c].fillna(0).astype(int)
+
+    result["detail"] = detail
 
     return result
 
@@ -3652,6 +3790,26 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
         ws.cell(row=current_row, column=1, value="⚖️ 低存貨 SKU 配置決策：無資料").font = Font(size=12, color="1E40AF")
         current_row += 3
 
+    # B5: 可調貨優先 SKU 清單（Tourist缺貨 + 同SKU在Mix/NT有可釋放件數）
+    if progress_callback:
+        progress_callback(0.81, "寫入可調貨優先 SKU 清單...")
+    tp = inv_distribution.get("transfer_priority", {})
+    tp_detail = tp.get("detail") if isinstance(tp, dict) else pd.DataFrame()
+    tp_summary = tp.get("summary") if isinstance(tp, dict) else pd.DataFrame()
+    if tp_detail is not None and not tp_detail.empty:
+        if tp_summary is not None and not tp_summary.empty:
+            s = tp_summary.iloc[0]
+            summary_text = f"📋 可調貨Tourist行數: {int(s.get('可調貨Tourist行數', 0)):,} 行｜可調貨SKU數: {int(s.get('可調貨SKU數', 0)):,} 個"
+        else:
+            summary_text = f"📋 可調貨優先 SKU 清單（{len(tp_detail):,} 個 SKU）"
+        current_row = _write_subtable(
+            f"🔄 可調貨優先 SKU 清單（Tourist缺貨 + 同SKU在Mix/NT有可釋放件數 → 優先調貨）\n{summary_text}",
+            tp_detail, current_row,
+        )
+    else:
+        ws.cell(row=current_row, column=1, value="🔄 可調貨優先 SKU 清單：無符合條件 SKU（所有Tourist缺貨SKU在Mix/NT均無可釋放存貨）").font = Font(size=11, color="1E40AF")
+        current_row += 3
+
     _auto_width(ws)
 
 
@@ -3678,6 +3836,16 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
 
     # 存貨失衡 SKU 數（Tourist 缺貨 + 其他 Nature 過剩）
     imbalance_count = len(inv_distribution.get("imbalance_sku", pd.DataFrame())) if inv_distribution else 0
+
+    # 可調貨優先分析（Tourist缺貨 + 同SKU在Mix/NT有可釋放件數）
+    tp = inv_distribution.get("transfer_priority", {}) if inv_distribution else {}
+    tp_summary = tp.get("summary", pd.DataFrame()) if isinstance(tp, dict) else pd.DataFrame()
+    transferrable_tourist_rows = 0
+    transferrable_sku_count = 0
+    if tp_summary is not None and not tp_summary.empty:
+        s = tp_summary.iloc[0]
+        transferrable_tourist_rows = int(s.get("可調貨Tourist行數", 0))
+        transferrable_sku_count = int(s.get("可調貨SKU數", 0))
 
     # 各 Nature 平均 Turnday
     tourist_td = turnday[nature == "Tourist"]
@@ -3713,7 +3881,14 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
         ("受影響最嚴重 Buyer", top_buyer_name, f"Tourist 缺貨: {top_buyer_loss:,} 行", "1E40AF"),
     ]
 
-    _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
+    row3_metrics = [
+        ("🔄 可調貨Tourist行數", transferrable_tourist_rows, "Tourist缺貨+同SKU在Mix/NT有可釋放件數｜單位：行數", "059669"),
+        ("📦 可調貨SKU數", transferrable_sku_count, "涉及的不重複SKU數量｜單位：SKU數", "0D9488"),
+        ("", "", "", "FFFFFF"),
+        ("", "", "", "FFFFFF"),
+    ]
+
+    _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback, row3_metrics=row3_metrics)
 
     # Top 5 受影響 Brand（按 Tourist 缺貨）
     if summary_buyer is not None and not summary_buyer.empty and len(summary_buyer) > 1:
