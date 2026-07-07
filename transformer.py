@@ -3292,7 +3292,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
 
 _OOS_DETAIL_COLS = [
     "Buyer", "Brand", "SKU", "SKU Desc", "Site Code", "Shop Name", "OM",
-    "Shop Nature", "Supply Source", "ND行数", "RF行数",
+    "Shop Nature", "Supply Source", "NDRF Status",
     "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)",
     "Shop Stock Qty (CM)", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
     "Shop Monthly Sold Qty (P90D)", "Is OOS (M-2)", "Is OOS (M-1)", "Is OOS (CM)",
@@ -3405,13 +3405,12 @@ def _write_oos_detail_sheet(ws, raw_df, header_font, header_fill, thin_border, p
         ws.cell(row=1, column=1, value="無缺貨影響資料").font = Font(size=12)
         return
 
-    # ND行数 / RF行数（每列 0/1 標記）
+    # NDRF Status（顯示 RF 或 ND）
     rp_type = (
         detail.get("RP Type", _safe_default_series("", detail.index))
         .fillna("").astype(str).str.strip().str.upper()
     )
-    detail["ND行数"] = (rp_type == "ND").astype(int)
-    detail["RF行数"] = (rp_type == "RF").astype(int)
+    detail["NDRF Status"] = rp_type
 
     # 排序：缺貨期數降序 → M-2 銷售降序
     detail["_oos"] = _safe_numeric(detail.get("OOS Periods Count", _safe_default_series(0, detail.index)))
@@ -3422,7 +3421,7 @@ def _write_oos_detail_sheet(ws, raw_df, header_font, header_fill, thin_border, p
     detail = detail[avail_cols]
 
     # 標題
-    ws.cell(row=1, column=1, value="OOS Impact Detail — 缺貨銷售影響明細（按缺貨期數降序，含 ND/RF 行數）").font = Font(bold=True, size=12, color="1E40AF")
+    ws.cell(row=1, column=1, value="OOS Impact Detail — 缺貨銷售影響明細（按缺貨期數降序，含 NDRF Status）").font = Font(bold=True, size=12, color="1E40AF")
 
     headers = list(detail.columns)
     for col_idx, h in enumerate(headers, 1):
