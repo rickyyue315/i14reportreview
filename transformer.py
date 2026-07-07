@@ -2584,7 +2584,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     turnday_clean = turnday.replace([np.inf, -np.inf], np.nan).fillna(-1)
     df["Turnday (Days)"] = turnday_clean.where(turnday_clean >= 0, np.nan)
 
-    # Mix 店舖 Turnday 分級（管理層要求 Mix 保留 7-14 日）
+    # Mix 店舖 Turnday 分級（Mix 標準：保留 7-14 日）
     shop_nature = df.get("Shop Nature", _safe_default_series("", idx)).fillna("").astype(str)
     is_mix = shop_nature == "Mix"
     cm_stock_val = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, idx)))
@@ -2948,7 +2948,7 @@ _MIX_BAND_ORDER = ["<7日(過低)", "7-14日(理想)", "14-30日(偏高)", ">30�
 
 
 def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: int = 300) -> dict:
-    """存貨分佈彙總（管理層視角）— 回傳 dict 含 4 個 DataFrame。
+    """存貨分佈彙總 — 回傳 dict 含 4 個 DataFrame。
 
     Args:
         stock_threshold: 低存貨 SKU 門檻（D001 + Shop Stock 總和 < 此值視為低存貨，預設 300）。
@@ -3431,8 +3431,8 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
     B2: Nature 存貨對比
     B3: 存貨失衡 SKU 清單
     """
-    ws.cell(row=1, column=1, value="Inventory Distribution — 存貨分佈分析（管理層視角）").font = Font(bold=True, size=14, color="1E40AF")
-    ws.cell(row=2, column=1, value="焦點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積；Mix 只需保留 7-14 日 Turnday").font = Font(size=10, italic=True, color="6B7280")
+    ws.cell(row=1, column=1, value="Inventory Distribution — 存貨分佈分析").font = Font(bold=True, size=14, color="1E40AF")
+    ws.cell(row=2, column=1, value="重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積；Mix 只需保留 7-14 日 Turnday").font = Font(size=10, italic=True, color="6B7280")
 
     current_row = 4
 
@@ -3466,7 +3466,7 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
     # B1: Mix Turnday 分級
     if progress_callback:
         progress_callback(0.80, "寫入 Mix Turnday 分級...")
-    current_row = _write_subtable("📊 Mix 店舖 Turnday 分級（管理層要求保留 7-14 日）", inv_distribution.get("mix_turnday"), current_row)
+    current_row = _write_subtable("📊 Mix 店舖 Turnday 分級（標準：保留 7-14 日）", inv_distribution.get("mix_turnday"), current_row)
 
     # B2: Nature 對比
     if progress_callback:
@@ -3497,7 +3497,7 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
 def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, thin_border, desc_font, progress_callback):
     """重做為「存貨分佈分析」焦點 Dashboard（v1.6.1）。
 
-    metric cards 聚焦管理層最關心的存貨錯配議題：
+    聚焦存貨錯配議題：
     - Tourist 高銷售店缺貨 vs Non Tourist 大量囤積
     - Mix 店舖可釋放存貨（>14 日標準）
     """
@@ -3509,7 +3509,7 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
     # Tourist 缺貨行數（高銷售店無貨）
     tourist_oos_rows = int(((nature == "Tourist") & (cm_stock <= 0) & raw_df["Is Stock Impacted"]).sum()) if "Is Stock Impacted" in raw_df else 0
 
-    # Non Tourist 過剩存貨件數（>30日 Turnday，管理層最怕的囤積）
+    # Non Tourist 過剩存貨件數（>30日 Turnday，最需關注的囤積）
     nt_over_mask = (nature == "Non Tourist") & (turnday > 30) & (cm_stock > 0)
     nt_over_stock = int(cm_stock[nt_over_mask].sum())
 
@@ -3665,7 +3665,7 @@ def generate_excel_stock_impact(
     ws_diag = wb.create_sheet(title="SKU Stock Diagnosis")
     _write_sku_stock_diagnosis_sheet(ws_diag, sku_diagnosis, header_font, header_fill, thin_border, progress_callback)
 
-    # Sheet 9: Inventory Distribution (存貨分佈分析, 管理層視角)
+    # Sheet 9: Inventory Distribution (存貨分佈分析)
     if progress_callback:
         progress_callback(0.79, "建立存貨分佈分析工作表...")
     ws_inv = wb.create_sheet(title="Inventory Distribution")

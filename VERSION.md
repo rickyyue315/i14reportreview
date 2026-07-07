@@ -2,14 +2,14 @@
 
 ## v1.6.1 (2026-07-07)
 
-- Upgrade: Stock Impact Dashboard 從「缺貨焦點」升級為「存貨分佈分析」，回應管理層需求
-- Why: 管理層最怕高銷售 Tourist 店無貨、Non Tourist 店卻大量囤積；Mix 店舖只需保留 7-14 日 Turnday 存貨。資料驗證 Mix `>30日` 過剩存貨 96,834 件，按 14 日標準可釋放 84,320 件；688 個 SKU 同時 Tourist 缺貨 + Non Tourist 過剩
+- Upgrade: Stock Impact Dashboard 從「缺貨焦點」升級為「存貨分佈分析」
+- Why: 高銷售 Tourist 店無貨、Non Tourist 店卻大量囤積；Mix 店舖只需保留 7-14 日 Turnday 存貨。資料驗證 Mix `>30日` 過剩存貨 96,834 件，按 14 日標準可釋放 84,320 件；688 個 SKU 同時 Tourist 缺貨 + Non Tourist 過剩
 - New: 每列新增 `Turnday (Days)`、`Mix Turnday Band`（<7日/7-14日/14-30日/>30日/無銷售有存貨）、`Mix Excess Stock`（Mix 可釋放存貨 = max(0, Shop Stock − P90D/30×14)）
 - New: `_build_inventory_distribution_summary()` — 3 表存貨分佈彙總（Mix Turnday 分級 / Nature 存貨對比 / 存貨失衡 SKU）
 - Upgrade: `_build_sku_allocation_summary()` 改用「過剩存貨」(Mix>14日 / Non Tourist>30日) 而非全部存貨；新增可調貨建議量 = min(Tourist 缺貨損失, 其他過剩存貨)
 - Upgrade: Dashboard metric cards 重做為「存貨分佈焦點」（Tourist 缺貨 / Non Tourist 過剩 / Mix 可釋放 / 存貨失衡 SKU 數）
 - New: Excel 新增「Inventory Distribution」工作表（Mix Turnday 分級 + Nature 對比 + 失衡 SKU），共 10 個工作表
-- New: UI 新增「📊 存貨分佈」tab（管理層優先看）
+- New: UI 新增「📊 存貨分佈」tab（優先顯示）
 - Update: `version.py` 1.6.0 → 1.6.1
 
 ## v1.6.0 (2026-07-07)

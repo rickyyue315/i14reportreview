@@ -742,7 +742,7 @@ if uploaded_file is not None:
             value=300,
             min_value=0,
             step=10,
-            help="當 SKU 的總可用存貨（D001 倉庫 + 全部店舖存貨）低於此門檻，系統將分析 Non Tourist RF 店舖的浪費存貨以及 ND 店的囤積情況，供管理層決定是否減少 Non Tourist 鋪點。"
+            help="當 SKU 的總可用存貨（D001 倉庫 + 全部店舖存貨）低於此門檻，系統將分析 Non Tourist RF 店舖的浪費存貨以及 ND 店的囤積情況，供決定是否減少 Non Tourist 鋪點。"
         )
         st.caption(f"當前門檻: {stock_threshold} 件 — 低於此值的 SKU 將觸發配置決策分析")
 
@@ -810,7 +810,7 @@ if uploaded_file is not None:
             from transformer import _safe_numeric, _safe_default_series
             import pandas as _pd
 
-            # 存貨分佈指標計算（管理層視角）
+            # 存貨分佈指標計算
             nature_s = raw_df["Shop Nature"].fillna("").astype(str) if "Shop Nature" in raw_df.columns else _pd.Series([""]*len(raw_df))
             cm_stock_s = _safe_numeric(raw_df.get("Shop Stock Qty (CM)", _safe_default_series(0, raw_df.index)))
             turnday_s = _pd.to_numeric(raw_df.get("Turnday (Days)", _safe_default_series(0, raw_df.index)), errors="coerce")
@@ -844,7 +844,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card" style="border-top: 4px solid #dc2626;">', unsafe_allow_html=True)
             st.markdown("### 📦 存貨分佈分析摘要 (Stock Impact Dashboard)")
-            st.caption("🎯 管理層焦點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積｜Mix 只需保留 7-14 日 Turnday")
+            st.caption("🎯 重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積｜Mix 只需保留 7-14 日 Turnday")
 
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
@@ -923,7 +923,7 @@ if uploaded_file is not None:
             impact_tabs = st.tabs(["📊 存貨分佈", "🏪 By Site", "🏷️ By Brand", "👤 By Buyer", "📦 By Category", "🔄 SKU 調貨建議", "🔍 SKU 缺貨診斷"])
 
             with impact_tabs[0]:
-                st.markdown("#### 📊 存貨分佈分析（管理層視角）")
+                st.markdown("#### 📊 存貨分佈分析")
                 st.caption("🎯 焦點：Tourist 高銷售店無貨 vs Non Tourist/Mix 大量囤積；Mix 只需保留 7-14 日 Turnday。")
                 if inv_distribution:
                     mix_td = inv_distribution.get("mix_turnday")
