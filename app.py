@@ -320,7 +320,7 @@ MODE_KEYS = {
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
-    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_site": None, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_allocation": None, "sku_diagnosis": None, "inv_distribution": None, "raw_df": None, "excel_data": None, "warnings": []},
+    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_site": None, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_allocation": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -780,7 +780,11 @@ if uploaded_file is not None:
                 st.session_state.stock_impact_sku_allocation = sku_allocation
                 st.session_state.stock_impact_sku_diagnosis = sku_diagnosis
                 st.session_state.stock_impact_inv_distribution = inv_distribution
-                st.session_state.stock_impact_raw_df = raw_df
+                # 只存 Dashboard 需要的 6 個欄位（節省 ~90% 記憶體）
+                _slim_cols = ["Is Stock Impacted", "Shop Nature", "Shop Stock Qty (CM)",
+                              "Turnday (Days)", "Mix Excess Stock", "Total Sales Loss (P90D)"]
+                _available = [c for c in _slim_cols if c in raw_df.columns]
+                st.session_state.stock_impact_raw_slim = raw_df[_available].copy() if _available else pd.DataFrame()
                 st.session_state.stock_impact_excel_data = buf
                 st.session_state.stock_impact_warnings = _warnings
             except Exception as e:
@@ -804,17 +808,17 @@ if uploaded_file is not None:
             sku_allocation = st.session_state.stock_impact_sku_allocation
             sku_diagnosis = st.session_state.stock_impact_sku_diagnosis
             inv_distribution = st.session_state.stock_impact_inv_distribution
-            raw_df = st.session_state.stock_impact_raw_df
+            raw_slim = st.session_state.stock_impact_raw_slim
             excel_data = st.session_state.stock_impact_excel_data
 
             from transformer import _safe_numeric, _safe_default_series
             import pandas as _pd
 
-            # 存貨分佈指標計算
-            nature_s = raw_df["Shop Nature"].fillna("").astype(str) if "Shop Nature" in raw_df.columns else _pd.Series([""]*len(raw_df))
-            cm_stock_s = _safe_numeric(raw_df.get("Shop Stock Qty (CM)", _safe_default_series(0, raw_df.index)))
-            turnday_s = _pd.to_numeric(raw_df.get("Turnday (Days)", _safe_default_series(0, raw_df.index)), errors="coerce")
-            impacted_mask = raw_df["Is Stock Impacted"] if "Is Stock Impacted" in raw_df.columns else _pd.Series([False]*len(raw_df))
+            # 存貨分佈指標計算（使用 raw_slim 節省記憶體）
+            nature_s = raw_slim["Shop Nature"].fillna("").astype(str) if "Shop Nature" in raw_slim.columns else _pd.Series([""]*len(raw_slim))
+            cm_stock_s = _safe_numeric(raw_slim.get("Shop Stock Qty (CM)", _safe_default_series(0, raw_slim.index)))
+            turnday_s = _pd.to_numeric(raw_slim.get("Turnday (Days)", _safe_default_series(0, raw_slim.index)), errors="coerce")
+            impacted_mask = raw_slim["Is Stock Impacted"] if "Is Stock Impacted" in raw_slim.columns else _pd.Series([False]*len(raw_slim))
 
             # Tourist 缺貨行數（高銷售店無貨）
             tourist_oos_rows = int(((nature_s == "Tourist") & (cm_stock_s <= 0) & impacted_mask).sum())
@@ -822,12 +826,12 @@ if uploaded_file is not None:
             nt_over_mask = (nature_s == "Non Tourist") & (turnday_s > 30) & (cm_stock_s > 0)
             nt_over_stock = int(cm_stock_s[nt_over_mask].sum())
             # Mix 可釋放存貨件數（>14日標準）
-            mix_excess_total = int(_safe_numeric(raw_df.get("Mix Excess Stock", _safe_default_series(0, raw_df.index))).sum())
+            mix_excess_total = int(_safe_numeric(raw_slim.get("Mix Excess Stock", _safe_default_series(0, raw_slim.index))).sum())
             # 存貨失衡 SKU 數
             imbalance_sku = inv_distribution.get("imbalance_sku", _pd.DataFrame()) if inv_distribution else _pd.DataFrame()
             imbalance_count = len(imbalance_sku)
             # Tourist 缺貨損失 (P90D)
-            impacted_df = raw_df[impacted_mask]
+            impacted_df = raw_slim[impacted_mask]
             loss_p90d = int(_safe_numeric(impacted_df.get("Total Sales Loss (P90D)", _safe_default_series(0, impacted_df.index))).sum()) if len(impacted_df) else 0
             # Non Tourist 平均 Turnday
             nt_td = turnday_s[nature_s == "Non Tourist"]
@@ -987,10 +991,8 @@ if uploaded_file is not None:
                 st.markdown("#### Category (Adj. MCH1) 層級缺貨影響分析")
                 if summary_category is not None and not summary_category.empty:
                     st.dataframe(summary_category, width='stretch', hide_index=True)
-                elif "Adj. MCH1" not in raw_df.columns:
-                    st.info("來源檔案缺少 Adj. MCH1 欄位，無法產出 By Category 分析")
                 else:
-                    st.info("無 Category 層級缺貨影響數據")
+                    st.info("無 Category 層級缺貨影響數據（若缺少 Adj. MCH1 欄位則無法產出）")
 
             with impact_tabs[5]:
                 st.markdown("#### 🔄 SKU 跨 Nature 調貨建議")
