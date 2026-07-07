@@ -3174,17 +3174,17 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, thin_border, desc_f
             top_buyer_loss = int(top.get("最大銷售損失(P90D)", 0))
 
     row1_metrics = [
-        ("總缺貨影響行數", total_impacted, "Shop Stock=0 且有需求（只計 RF 店舖）", "EF4444"),
-        ("Tourist 缺貨", nature_counts["Tourist"], "公司最重視的店舖類型", "DC2626"),
-        ("Mix 缺貨", nature_counts["Mix"], "次重視店舖類型", "F97316"),
-        ("Non Tourist 缺貨", nature_counts["Non Tourist"], "一般店舖類型", "F59E0B"),
+        ("總缺貨影響行數", total_impacted, "Shop Stock=0 且有需求（只計 RF）｜單位：行數", "EF4444"),
+        ("Tourist 缺貨", nature_counts["Tourist"], "公司最重視的店舖類型｜單位：行數", "DC2626"),
+        ("Mix 缺貨", nature_counts["Mix"], "次重視店舖類型｜單位：行數", "F97316"),
+        ("Non Tourist 缺貨", nature_counts["Non Tourist"], "一般店舖類型｜單位：行數", "F59E0B"),
     ]
 
     row2_metrics = [
-        ("總銷售損失 (M-2基準)", loss_m2, "以 M-2 Sold 為需求基準", "3B82F6"),
-        ("總銷售損失 (P90D基準)", loss_p90d, "以 90 天月均為需求基準", "8B5CF6"),
-        ("受影響最嚴重 Buyer", top_buyer_name, f"最大損失(P90D): {top_buyer_loss:,}", "06B6D4"),
-        ("Tourist 占比", f"{(nature_counts['Tourist']/total_impacted*100):.1f}%" if total_impacted else "0%", "Tourist 缺貨 / 總缺貨", "1E40AF"),
+        ("總銷售損失 (M-2基準)", loss_m2, "以 M-2 Sold 為需求基準｜單位：件數", "3B82F6"),
+        ("總銷售損失 (P90D基準)", loss_p90d, "以 90 天月均為需求基準｜單位：件數", "8B5CF6"),
+        ("受影響最嚴重 Buyer", top_buyer_name, f"最大損失(P90D): {top_buyer_loss:,} 件", "06B6D4"),
+        ("Tourist 占比", f"{(nature_counts['Tourist']/total_impacted*100):.1f}%" if total_impacted else "0%", "Tourist 缺貨行數 / 總缺貨行數", "1E40AF"),
     ]
 
     _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)

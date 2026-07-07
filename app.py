@@ -827,32 +827,32 @@ if uploaded_file is not None:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #EF4444;">
                     <div class="metric-title">總缺貨影響行數</div>
-                    <div class="metric-value" style="color: #EF4444;">{total_impacted:,}</div>
-                    <div class="metric-desc">Shop Stock=0 且有需求（只計 RF 店舖）</div>
+                    <div class="metric-value" style="color: #EF4444;">{total_impacted:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
+                    <div class="metric-desc">Shop Stock=0 且有需求（只計 RF 店舖）｜單位：行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #DC2626;">
                     <div class="metric-title">⭐ Tourist 缺貨</div>
-                    <div class="metric-value" style="color: #DC2626;">{nature_counts['Tourist']:,}</div>
-                    <div class="metric-desc">公司最重視的店舖類型</div>
+                    <div class="metric-value" style="color: #DC2626;">{nature_counts['Tourist']:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
+                    <div class="metric-desc">公司最重視的店舖類型｜單位：行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col3:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #F97316;">
                     <div class="metric-title">Mix 缺貨</div>
-                    <div class="metric-value" style="color: #F97316;">{nature_counts['Mix']:,}</div>
-                    <div class="metric-desc">次重視店舖類型</div>
+                    <div class="metric-value" style="color: #F97316;">{nature_counts['Mix']:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
+                    <div class="metric-desc">次重視店舖類型｜單位：行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col4:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #F59E0B;">
                     <div class="metric-title">Non Tourist 缺貨</div>
-                    <div class="metric-value" style="color: #F59E0B;">{nature_counts['Non Tourist']:,}</div>
-                    <div class="metric-desc">一般店舖類型</div>
+                    <div class="metric-value" style="color: #F59E0B;">{nature_counts['Non Tourist']:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
+                    <div class="metric-desc">一般店舖類型｜單位：行數</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -863,16 +863,16 @@ if uploaded_file is not None:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #3B82F6;">
                     <div class="metric-title">總銷售損失 (M-2基準)</div>
-                    <div class="metric-value" style="color: #3B82F6;">{loss_m2:,}</div>
-                    <div class="metric-desc">以 M-2 Sold 為需求基準</div>
+                    <div class="metric-value" style="color: #3B82F6;">{loss_m2:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
+                    <div class="metric-desc">以 M-2 Sold 為需求基準｜單位：件數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #8B5CF6;">
                     <div class="metric-title">總銷售損失 (P90D基準)</div>
-                    <div class="metric-value" style="color: #8B5CF6;">{loss_p90d:,}</div>
-                    <div class="metric-desc">以 90 天月均為需求基準</div>
+                    <div class="metric-value" style="color: #8B5CF6;">{loss_p90d:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
+                    <div class="metric-desc">以 90 天月均為需求基準｜單位：件數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col3:
@@ -880,7 +880,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #06B6D4;">
                     <div class="metric-title">受影響最嚴重 Buyer</div>
                     <div class="metric-value" style="color: #06B6D4; font-size: 1.1rem;">{top_buyer_name}</div>
-                    <div class="metric-desc">最大損失(P90D): {top_buyer_loss:,}</div>
+                    <div class="metric-desc">最大損失(P90D): {top_buyer_loss:,} 件</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col4:
@@ -888,7 +888,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #1E40AF;">
                     <div class="metric-title">Tourist 缺貨占比</div>
                     <div class="metric-value" style="color: #1E40AF;">{tourist_pct:.1f}%</div>
-                    <div class="metric-desc">Tourist 缺貨 / 總缺貨</div>
+                    <div class="metric-desc">Tourist 缺貨行數 / 總缺貨行數</div>
                 </div>
                 """, unsafe_allow_html=True)
 
