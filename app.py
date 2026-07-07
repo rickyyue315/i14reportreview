@@ -927,11 +927,15 @@ if uploaded_file is not None:
                 st.caption("🎯 焦點：Tourist 高銷售店無貨 vs Non Tourist/Mix 大量囤積；Mix 只需保留 7-14 日 Turnday。")
                 if inv_distribution:
                     mix_td = inv_distribution.get("mix_turnday")
+                    nt_td = inv_distribution.get("nt_turnday")
                     nat_cmp = inv_distribution.get("nature_compare")
                     imb = inv_distribution.get("imbalance_sku")
                     if mix_td is not None and not mix_td.empty:
                         st.markdown("**Mix 店舖 Turnday 分級**")
                         st.dataframe(mix_td, width='stretch', hide_index=True)
+                    if nt_td is not None and not nt_td.empty:
+                        st.markdown("**Non Tourist 店舖 Turnday 分級**")
+                        st.dataframe(nt_td, width='stretch', hide_index=True)
                     if nat_cmp is not None and not nat_cmp.empty:
                         st.markdown("**各 Shop Nature 存貨分佈對比**")
                         st.dataframe(nat_cmp, width='stretch', hide_index=True)

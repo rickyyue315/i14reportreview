@@ -276,9 +276,9 @@ def test_mix_turnday_banding():
     assert int(raw.iloc[1]["Mix Excess Stock"]) == 0
     print("OK r1: Mix 7-14日理想, 可釋放 0")
 
-    assert raw.iloc[2]["Mix Turnday Band"] == "無銷售有存貨"
+    assert raw.iloc[2]["Mix Turnday Band"] == "無銷售有存貨(RF)"
     assert int(raw.iloc[2]["Mix Excess Stock"]) == 50, "無銷售應全數可釋放"
-    print("OK r2: Mix 無銷售有存貨, 全數 50 件可釋放")
+    print("OK r2: Mix 無銷售有存貨(RF), 全數 50 件可釋放")
 
     assert raw.iloc[3]["Mix Turnday Band"] == "", "Tourist 不應有 Mix Band"
     assert int(raw.iloc[3]["Mix Excess Stock"]) == 0, "Tourist 不計 Mix Excess"
@@ -310,8 +310,16 @@ def test_inventory_distribution_summary():
     mix_td = inv["mix_turnday"]
     assert not mix_td.empty, "Mix Turnday 分級表應有資料"
     assert "可釋放件數" in mix_td.columns
-    assert "總計" in mix_td["Mix Turnday 區間"].values
-    print(f"OK B1: Mix Turnday 分級表（{len(mix_td)} 列含總計）")
+    assert "總計" in mix_td["Turnday 區間"].values
+    # 分級正確性驗證：至少包含一種分級 + 總計
+    assert len(mix_td) >= 2, f"至少應含分級資料 + 總計，得 {len(mix_td)} 列"
+    print(f"OK B1a: Mix Turnday 分級表（{len(mix_td)} 列）")
+
+    # B1b: NT Turnday
+    nt_td = inv["nt_turnday"]
+    assert not nt_td.empty, "NT Turnday 分級表應有資料"
+    assert "總計" in nt_td["Turnday 區間"].values
+    print(f"OK B1b: Non Tourist Turnday 分級表（{len(nt_td)} 列）")
 
     # B2: Nature 對比表應有 3 個 Nature
     nat_cmp = inv["nature_compare"]

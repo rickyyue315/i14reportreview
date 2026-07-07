@@ -70,6 +70,7 @@ RAW_COLUMN_ORDER_NAMES = [
     "Turnday (Days)",
     "Mix Turnday Band",
     "Mix Excess Stock",
+    "Non Tourist Turnday Band",
 ]
 
 
@@ -2622,6 +2623,36 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     )
     df["Mix Excess Stock"] = excess.astype(int)
 
+    # Non Tourist Turnday 分級（同樣標準，但不計可釋放量）
+    is_nt = shop_nature == "Non Tourist"
+    nt_band = np.full(len(df), "", dtype=object)
+    nt_mask = is_nt.values
+    nt_band[nt_mask & no_stock] = "無存貨"
+    nt_band[nt_mask & no_sale_has_stock] = "無銷售有存貨"
+    nt_band[nt_mask & band_under7] = "<7日(過低)"
+    nt_band[nt_mask & band_7_14] = "7-14日(理想)"
+    nt_band[nt_mask & band_14_30] = "14-30日(偏高)"
+    nt_band[nt_mask & band_over30] = ">30日(過剩)"
+    df["Non Tourist Turnday Band"] = nt_band
+
+    # 為「無銷售有存貨」行附上 RP Type（供後續拆分 ND/RF）
+    rp_for_band = rp_type.values
+    mix_band_with_rp = mix_band.copy()
+    mix_band_with_rp[mix_mask & no_sale_has_stock] = np.where(
+        rp_for_band[mix_mask & no_sale_has_stock] == "ND",
+        "無銷售有存貨(ND)",
+        "無銷售有存貨(RF)",
+    )
+    df["Mix Turnday Band"] = mix_band_with_rp
+
+    nt_band_with_rp = nt_band.copy()
+    nt_band_with_rp[nt_mask & no_sale_has_stock] = np.where(
+        rp_for_band[nt_mask & no_sale_has_stock] == "ND",
+        "無銷售有存貨(ND)",
+        "無銷售有存貨(RF)",
+    )
+    df["Non Tourist Turnday Band"] = nt_band_with_rp
+
     return df
 
 
@@ -2943,8 +2974,11 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
     return merged
 
 
-# Mix Turnday 分級順序（用於排序）
-_MIX_BAND_ORDER = ["<7日(過低)", "7-14日(理想)", "14-30日(偏高)", ">30日(過剩)", "無銷售有存貨", "無存貨"]
+# Turnday 分級順序（用於排序；含 RF/ND 拆分）
+_TURNDAY_BAND_ORDER = [
+    "<7日(過低)", "7-14日(理想)", "14-30日(偏高)", ">30日(過剩)",
+    "無銷售有存貨(RF)", "無銷售有存貨(ND)", "無存貨",
+]
 
 
 def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: int = 300) -> dict:
@@ -2955,7 +2989,8 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
 
     回傳:
         {
-            "mix_turnday": Mix Turnday 分級表 (B1),
+            "mix_turnday": Mix Turnday 分級表 (B1a),
+            "nt_turnday": Non Tourist Turnday 分級表 (B1b),
             "nature_compare": Nature 存貨對比表 (B2),
             "imbalance_sku": 存貨失衡 SKU 清單 (B3, Tourist缺貨+其他過剩),
             "low_stock_allocation": 低存貨 SKU 配置決策表 (B4),
@@ -2963,6 +2998,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
     """
     result = {
         "mix_turnday": pd.DataFrame(),
+        "nt_turnday": pd.DataFrame(),
         "nature_compare": pd.DataFrame(),
         "imbalance_sku": pd.DataFrame(),
         "low_stock_allocation": pd.DataFrame(),
@@ -2976,38 +3012,42 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
     p90d = _safe_numeric(raw.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, raw.index)))
     turnday = pd.to_numeric(raw.get("Turnday (Days)", _safe_default_series(0, raw.index)), errors="coerce")
 
-    # ── B1: Mix Turnday 分級彙總 ──────────────────────────────────────────────
-    mix_mask = nature == "Mix"
-    mix_data = raw[mix_mask].copy()
-    if not mix_data.empty and "Mix Turnday Band" in mix_data.columns:
-        mix_stock = _safe_numeric(mix_data.get("Shop Stock Qty (CM)", _safe_default_series(0, mix_data.index)))
-        mix_excess = _safe_numeric(mix_data.get("Mix Excess Stock", _safe_default_series(0, mix_data.index)))
-        mix_band_col = mix_data["Mix Turnday Band"].fillna("無存貨")
-        b1 = (
-            mix_data.assign(_stock=mix_stock, _excess=mix_excess, _band=mix_band_col)
+    # ── B1: Turnday 分級彙總（Mix + Non Tourist）─────────────────────────────────
+    def _build_turnday_table(data, band_col, excess_col=None, label_prefix=""):
+        """建構單一 Nature 的 Turnday 分級表。"""
+        if data.empty or band_col not in data.columns:
+            return pd.DataFrame()
+        stock = _safe_numeric(data.get("Shop Stock Qty (CM)", _safe_default_series(0, data.index)))
+        excess = _safe_numeric(data.get(excess_col, _safe_default_series(0, data.index))) if excess_col else _safe_default_series(0, data.index)
+        band = data[band_col].fillna("無存貨")
+        tbl = (
+            data.assign(_stock=stock, _excess=excess, _band=band)
             .groupby("_band", dropna=False)
-            .agg(
-                行數=("_band", "count"),
-                存貨件數=("_stock", "sum"),
-                可釋放件數=("_excess", "sum"),
-            )
+            .agg(行數=("_band", "count"), 存貨件數=("_stock", "sum"), 可釋放件數=("_excess", "sum"))
             .reset_index()
-            .rename(columns={"_band": "Mix Turnday 區間"})
+            .rename(columns={"_band": "Turnday 區間"})
         )
-        # 按預設順序排列
-        b1["__order"] = b1["Mix Turnday 區間"].map({b: i for i, b in enumerate(_MIX_BAND_ORDER)}).fillna(99)
-        b1 = b1.sort_values("__order").drop(columns=["__order"]).reset_index(drop=True)
+        tbl["__order"] = tbl["Turnday 區間"].map({b: i for i, b in enumerate(_TURNDAY_BAND_ORDER)}).fillna(99)
+        tbl = tbl.sort_values("__order").drop(columns=["__order"]).reset_index(drop=True)
         for c in ["行數", "存貨件數", "可釋放件數"]:
-            b1[c] = b1[c].astype(int)
-        # 總計行
+            tbl[c] = tbl[c].fillna(0).astype(int)
         total = pd.DataFrame([{
-            "Mix Turnday 區間": "總計",
-            "行數": int(b1["行數"].sum()),
-            "存貨件數": int(b1["存貨件數"].sum()),
-            "可釋放件數": int(b1["可釋放件數"].sum()),
+            "Turnday 區間": "總計",
+            "行數": int(tbl["行數"].sum()),
+            "存貨件數": int(tbl["存貨件數"].sum()),
+            "可釋放件數": int(tbl["可釋放件數"].sum()),
         }])
-        b1 = pd.concat([b1, total], ignore_index=True)
-        result["mix_turnday"] = b1
+        return pd.concat([tbl, total], ignore_index=True)
+
+    # B1a: Mix
+    mix_mask = nature == "Mix"
+    if mix_mask.any() and "Mix Turnday Band" in raw.columns:
+        result["mix_turnday"] = _build_turnday_table(raw[mix_mask], "Mix Turnday Band", excess_col="Mix Excess Stock")
+
+    # B1b: Non Tourist
+    nt_mask = nature == "Non Tourist"
+    if nt_mask.any() and "Non Tourist Turnday Band" in raw.columns:
+        result["nt_turnday"] = _build_turnday_table(raw[nt_mask], "Non Tourist Turnday Band")
 
     # ── B2: Nature 存貨分佈對比 ───────────────────────────────────────────────
     b2_rows = []
@@ -3427,7 +3467,7 @@ def _write_sku_stock_diagnosis_sheet(ws, diag_df, header_font, header_fill, thin
 def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, header_fill, thin_border, progress_callback):
     """寫入存貨分佈分析 sheet（3 個表垂直排列）。
 
-    B1: Mix Turnday 分級彙總
+    B1: Mix + Non Tourist Turnday 分級彙總
     B2: Nature 存貨對比
     B3: 存貨失衡 SKU 清單
     """
@@ -3463,10 +3503,15 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
                     cell.number_format = "#,##0"
         return start_row + 1 + len(df) + 2  # header + data + spacing
 
-    # B1: Mix Turnday 分級
+    # B1a: Mix Turnday 分級
     if progress_callback:
         progress_callback(0.80, "寫入 Mix Turnday 分級...")
     current_row = _write_subtable("📊 Mix 店舖 Turnday 分級（標準：保留 7-14 日）", inv_distribution.get("mix_turnday"), current_row)
+
+    # B1b: Non Tourist Turnday 分級
+    if progress_callback:
+        progress_callback(0.82, "寫入 Non Tourist Turnday 分級...")
+    current_row = _write_subtable("📊 Non Tourist 店舖 Turnday 分級", inv_distribution.get("nt_turnday"), current_row)
 
     # B2: Nature 對比
     if progress_callback:
