@@ -786,7 +786,8 @@ if uploaded_file is not None:
                 st.session_state.stock_impact_inv_distribution = inv_distribution
                 # 只存 Dashboard 需要的欄位（節省 ~90% 記憶體）
                 _slim_cols = ["Is Stock Impacted", "Shop Nature", "Shop Stock Qty (CM)",
-                              "Turnday (Days)", "Mix Excess Stock", "Non Tourist Excess Stock"]
+                              "Turnday (Days)", "Mix Excess Stock", "Non Tourist Excess Stock",
+                              "Adj. Safety Stock"]
                 _available = [c for c in _slim_cols if c in raw_df.columns]
                 st.session_state.stock_impact_raw_slim = raw_df[_available].copy() if _available else pd.DataFrame()
                 st.session_state.stock_impact_excel_data = buf
