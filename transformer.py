@@ -3499,11 +3499,13 @@ def transform_stock_impact(
     shop_natures: list[str] | None = None,
     warehouse_only: bool = True,
     stock_threshold: int = 300,
+    ref_date: datetime.date | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict, list[str]]:
     """Stock Impact Analysis 主流程。
 
     Args:
         warehouse_only: 若 True（預設），只分析 Supply Source = Warehouse 的列。
+        ref_date: Launch Date 計算 New SKU 的參考日期（預設今天，建議傳入 MTD 截止日期）。
     Returns:
         (summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, raw_df, warnings)
     """
@@ -3549,7 +3551,7 @@ def transform_stock_impact(
     raw = _add_stock_impact_columns(df)
 
     # 新增 Launch Date / Is New SKU 資訊（於所有 Sheet 共用）
-    raw = _add_launch_info(raw)
+    raw = _add_launch_info(raw, ref_date=ref_date)
 
     if progress_callback:
         progress_callback(0.4, "建構多維度彙總中...")

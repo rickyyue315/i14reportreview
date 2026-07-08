@@ -769,6 +769,7 @@ if uploaded_file is not None:
                     progress_callback=_cb_transform,
                     warehouse_only=warehouse_only,
                     stock_threshold=stock_threshold,
+                    ref_date=mtd_date,
                 )
                 buf = generate_excel_stock_impact(summary_brand, summary_buyer, summary_category, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel)
 
