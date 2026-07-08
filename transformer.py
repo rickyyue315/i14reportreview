@@ -3492,6 +3492,143 @@ def _build_transfer_priority_analysis(raw: pd.DataFrame) -> dict:
     return result
 
 
+def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300) -> pd.DataFrame:
+    """按 SKU 計算遊客/混合/非遊客的每月銷量及存儲量分析。
+
+    每列為一個 SKU，彙總各 Nature 的月均銷售、當期庫存、店數等。
+    低存貨 SKU（D001 + Shop < threshold）排在前面。
+
+    排序：低存貨優先 → Tourist RF 月均銷售降序。
+    """
+    if raw.empty or "SKU" not in raw.columns or "Shop Nature" not in raw.columns:
+        return pd.DataFrame()
+
+    _NATURES = ["Tourist", "Mix", "Non Tourist"]
+
+    nature = raw["Shop Nature"].fillna("").astype(str)
+    cm_stock = _safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, raw.index)))
+    p90d = _safe_numeric(raw.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, raw.index)))
+    cm_sold = _safe_numeric(raw.get("Sold Qty (CM - MTD)", _safe_default_series(0, raw.index)))
+    turnday = pd.to_numeric(raw.get("Turnday (Days)", _safe_default_series(0, raw.index)), errors="coerce")
+    rp_type = (
+        raw.get("RP Type", _safe_default_series("", raw.index))
+        .fillna("").astype(str).str.strip().str.upper()
+    )
+    d001_col = "D001 Stock Qty (CM)"
+    d001_cm = _safe_numeric(raw[d001_col]) if d001_col in raw.columns else _safe_default_series(0, raw.index)
+
+    work = raw[["SKU", "Shop Nature"]].copy()
+    work["_nature"] = nature.values
+    work["_cm_stock"] = cm_stock.values
+    work["_p90d"] = p90d.values
+    work["_cm_sold"] = cm_sold.values
+    work["_turnday"] = turnday.values
+    work["_d001"] = d001_cm.values
+    work["_rp"] = rp_type.values
+    work["_is_rf"] = (work["_rp"] == "RF").astype(int)
+
+    # SKU 級基本資訊
+    sku_base = (
+        work.groupby("SKU", dropna=False)
+        .agg(
+            D001_庫存=("_d001", "first"),
+            總店舖庫存=("_cm_stock", "sum"),
+            總行數=("SKU", "count"),
+            RF行數=("_is_rf", "sum"),
+            ND行數=("_rp", lambda x: (x == "ND").sum()),
+        )
+        .reset_index()
+    )
+    # 從 raw 取 Brand/Buyer/SKU Desc
+    for col, out_name in [("Brand", "Brand"), ("Buyer", "Buyer"), ("SKU Desc", "SKU Desc")]:
+        if col in raw.columns:
+            col_first = raw.groupby("SKU", dropna=False)[col].first().reset_index()
+            sku_base = sku_base.merge(col_first, on="SKU", how="left")
+    sku_base["RF行數"] = sku_base["RF行數"].fillna(0).astype(int)
+    sku_base["ND行數"] = sku_base["ND行數"].fillna(0).astype(int)
+    sku_base["總可用存貨"] = sku_base["D001_庫存"] + sku_base["總店舖庫存"]
+    sku_base["低存貨"] = sku_base["總可用存貨"] < stock_threshold
+
+    # SKU × Nature 級聚合
+    sku_nat = (
+        work.groupby(["SKU", "_nature"], dropna=False, observed=True)
+        .agg(
+            月均銷售=("_p90d", "sum"),
+            當期CM銷售=("_cm_sold", "sum"),
+            當期庫存=("_cm_stock", "sum"),
+            店數=("SKU", "count"),
+            平均Turnday=("_turnday", "mean"),
+        )
+        .reset_index()
+    )
+    sku_nat["月均銷售"] = sku_nat["月均銷售"] / 3.0
+
+    # RF 月均銷售（只計 RF 店）
+    work_rf = work[work["_rp"] == "RF"]
+    if not work_rf.empty:
+        sku_nat_rf = (
+            work_rf.groupby(["SKU", "_nature"], dropna=False, observed=True)
+            .agg(RF月均銷售=("_p90d", "sum"))
+            .reset_index()
+        )
+        sku_nat_rf["RF月均銷售"] = sku_nat_rf["RF月均銷售"] / 3.0
+        sku_nat = sku_nat.merge(sku_nat_rf, on=["SKU", "_nature"], how="left")
+    else:
+        sku_nat["RF月均銷售"] = 0.0
+
+    # 展開各 Nature 為寬表
+    result = sku_base.copy()
+    for nat in _NATURES:
+        nat_data = sku_nat[sku_nat["_nature"] == nat].copy()
+        if nat_data.empty:
+            result[f"{nat}_月均銷售"] = 0.0
+            result[f"{nat}_當期CM銷售"] = 0.0
+            result[f"{nat}_當期庫存"] = 0
+            result[f"{nat}_店數"] = 0
+            result[f"{nat}_平均Turnday"] = 0.0
+            result[f"{nat}_RF月均銷售"] = 0.0
+            continue
+        nat_data = nat_data.drop(columns=["_nature"])
+        nat_data.columns = [f"{nat}_{c}" if c != "SKU" else c for c in nat_data.columns]
+        result = result.merge(nat_data, on="SKU", how="left")
+
+    # 填補 NaN
+    for nat in _NATURES:
+        result[f"{nat}_平均Turnday"] = result.get(f"{nat}_平均Turnday", 0).fillna(0).round(1)
+        for c in [f"{nat}_月均銷售", f"{nat}_當期CM銷售", f"{nat}_RF月均銷售"]:
+            result[c] = result.get(c, 0).fillna(0).round(1)
+        for c in [f"{nat}_當期庫存", f"{nat}_店數"]:
+            result[c] = result.get(c, 0).fillna(0).astype(int)
+
+    # 排序：低存貨優先 → Tourist RF 月均銷售降序
+    result = result.sort_values(
+        ["低存貨", "Tourist_RF月均銷售"],
+        ascending=[False, False],
+    ).reset_index(drop=True)
+
+    # 轉整數
+    for c in ["D001_庫存", "總店舖庫存", "總可用存貨", "總行數", "RF行數", "ND行數"]:
+        result[c] = result[c].fillna(0).astype(int)
+    for nat in _NATURES:
+        result[f"{nat}_當期庫存"] = result[f"{nat}_當期庫存"].fillna(0).astype(int)
+        result[f"{nat}_店數"] = result[f"{nat}_店數"].fillna(0).astype(int)
+
+    # 欄位順序
+    out_cols = ["SKU"]
+    for col in ["SKU Desc", "Brand", "Buyer"]:
+        if col in result.columns:
+            out_cols.append(col)
+    out_cols += ["低存貨", "總可用存貨", "D001_庫存", "總店舖庫存", "總行數", "RF行數", "ND行數"]
+    for nat in _NATURES:
+        out_cols += [
+            f"{nat}_月均銷售", f"{nat}_當期CM銷售", f"{nat}_當期庫存",
+            f"{nat}_店數", f"{nat}_平均Turnday", f"{nat}_RF月均銷售",
+        ]
+    out_cols = [c for c in out_cols if c in result.columns]
+
+    return result[out_cols]
+
+
 _OOS_DETAIL_COLS = [
     "Buyer", "Brand", "SKU", "SKU Desc", "Item Class", "Launch Date", "Is New SKU (3mo)",
     "Site Code", "Shop Name", "OM",
@@ -3543,7 +3680,7 @@ def transform_stock_impact(
         warehouse_only: 若 True（預設），只分析 Supply Source = Warehouse 的列。
         ref_date: Launch Date 計算 New SKU 的參考日期（預設今天，建議傳入 MTD 截止日期）。
     Returns:
-        (summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, raw_df, warnings)
+        (summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, inv_distribution, sku_monthly_analysis, raw_df, warnings)
     """
     missing = validate_input(df_input)
     if missing:
@@ -3600,33 +3737,8 @@ def transform_stock_impact(
         if _gc in raw.columns:
             raw[_gc] = raw[_gc].astype("category")
 
-    # --- 低存貨 SKU 過濾（D001 + Shop Stock < stock_threshold）----------------
-    # 當 stock_threshold > 0 時，只保留總可用存貨低於門檻的 SKU
-    # （影響所有後續報表：缺貨分析、存貨分佈、調貨建議、Brand/Buyer 彙總等）
-    if stock_threshold > 0 and "SKU" in raw.columns:
-        _d001_col = "D001 Stock Qty (CM)" if "D001 Stock Qty (CM)" in raw.columns else None
-        if _d001_col is not None:
-            _d001_cm = _safe_numeric(raw[_d001_col])
-        else:
-            _d001_cm = pd.Series(0, index=raw.index)
-        _shop_cm = _safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, raw.index)))
-
-        _sku_total = (
-            raw.assign(_d001=_d001_cm, _shop=_shop_cm)
-            .groupby("SKU", dropna=False)
-            .agg(_d001_first=("_d001", "first"), _shop_sum=("_shop", "sum"))
-        )
-        _sku_total["_total"] = _sku_total["_d001_first"] + _sku_total["_shop_sum"]
-        _low_skus = set(_sku_total[_sku_total["_total"] < stock_threshold].index)
-
-        _before = len(raw)
-        raw = raw[raw["SKU"].isin(_low_skus)].copy()
-        if _before > 0 and len(raw) == 0:
-            warnings.append(f"門檻值 {stock_threshold} 過低，所有 SKU 已被過濾，請調高門檻值")
-        elif len(raw) < _before:
-            _n_skus = len(_sku_total) - len(_low_skus)
-            warnings.append(f"已過濾 {_before - len(raw)} 行（{_n_skus} 個 SKU），因總可用存貨 >= {stock_threshold} 件（僅保留低存貨 SKU）")
-
+    # 注意：stock_threshold 不再用於全域過濾，只會在 low_stock_allocation（B4）
+    # 中內部使用，分析所有低存貨 SKU 的配置決策。
     if progress_callback:
         progress_callback(0.4, "建構多維度彙總中...")
 
@@ -3679,9 +3791,14 @@ def transform_stock_impact(
     inv_distribution = _build_inventory_distribution_summary(raw, stock_threshold=stock_threshold)
 
     if progress_callback:
-        progress_callback(0.7, "轉換完成")
+        progress_callback(0.72, "建構 SKU 月銷量和存儲量分析中...")
 
-    return summary_site, summary_brand, summary_buyer, summary_category, summary_item_class, sku_allocation, sku_diagnosis, inv_distribution, raw, warnings
+    sku_monthly_analysis = _build_sku_monthly_analysis(raw, stock_threshold=stock_threshold)
+
+    if progress_callback:
+        progress_callback(0.75, "轉換完成")
+
+    return summary_site, summary_brand, summary_buyer, summary_category, summary_item_class, sku_allocation, sku_diagnosis, inv_distribution, sku_monthly_analysis, raw, warnings
 
 
 def _write_oos_detail_sheet(ws, raw_df, header_font, header_fill, thin_border, progress_callback):
@@ -4081,6 +4198,7 @@ def generate_excel_stock_impact(
     inv_distribution: dict,
     raw_df: pd.DataFrame,
     progress_callback=None,
+    sku_monthly_analysis: pd.DataFrame | None = None,
 ) -> BytesIO:
     wb = Workbook()
 
@@ -4146,6 +4264,37 @@ def generate_excel_stock_impact(
                                           header_font, header_fill, thin_border, progress_callback, 0.68, 0.70)
     else:
         ws_item_class.cell(row=1, column=1, value="無 Item Class 層級缺貨影響數據").font = Font(size=12)
+
+    # Sheet 6b: SKU Monthly Sales & Storage (按 SKU 月銷量與存儲量)
+    if progress_callback:
+        progress_callback(0.69, "建立 SKU 月銷量和存儲量工作表...")
+    ws_sku_monthly = wb.create_sheet(title="SKU Monthly Sales&Store")
+    if sku_monthly_analysis is not None and not sku_monthly_analysis.empty:
+        ws_sku_monthly.cell(row=1, column=1, value="SKU 月銷量和存儲量分析（按 Shop Nature）").font = Font(bold=True, size=12, color="1E40AF")
+        ws_sku_monthly.cell(row=2, column=1, value="各 SKU 在 Tourist/Mix/Non Tourist 店舖的月均銷售（P90D/3）與當期庫存（CM Shop Stock）。低存貨 SKU 優先顯示。").font = Font(size=10, italic=True, color="6B7280")
+        headers = list(sku_monthly_analysis.columns)
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws_sku_monthly.cell(row=4, column=col_idx, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+        for row_idx, row_data in enumerate(sku_monthly_analysis.itertuples(index=False), start=5):
+            for col_idx, val in enumerate(row_data, 1):
+                if pd.isna(val):
+                    val = None
+                cell = ws_sku_monthly.cell(row=row_idx, column=col_idx, value=val)
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                if isinstance(val, bool):
+                    cell.value = "✓ 低存貨" if val else ""
+                elif isinstance(val, (int, float)) and val is not None:
+                    cell.number_format = "#,##0"
+            if progress_callback and (row_idx % 500 == 0 or row_idx - 4 == len(sku_monthly_analysis)):
+                progress_callback(0.69 + 0.01 * ((row_idx - 4) / max(len(sku_monthly_analysis), 1)), f"寫入 SKU 月銷量 ({row_idx-4}/{len(sku_monthly_analysis)})...")
+        _auto_width(ws_sku_monthly)
+    else:
+        ws_sku_monthly.cell(row=1, column=1, value="無 SKU 月銷量/存儲量數據").font = Font(size=12)
 
     # Sheet 7: SKU Stock Diagnosis (by-SKU 缺貨診斷, 含 D001 + 店舖貨量)
     if progress_callback:

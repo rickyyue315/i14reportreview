@@ -214,12 +214,14 @@ with st.sidebar:
     - 以 Shop Stock Qty = 0（缺貨）為核心，分析存貨對 Sold Qty 的因果影響（無貨就無銷售）
     - 缺貨模式判別：長期缺貨（≥2 期）/ 間歇缺貨（1 期）/ 恢復供貨 / 無缺貨
     - 銷售損失雙基準並列：M-2 Sold 為需求基準 vs P90D 90 天月均為基準（只計 RF 店）
+    - 📦 **SKU 月銷量和存儲量分析**：按 SKU 計算各 Nature（Tourist/Mix/NT）月均銷售與庫存，低存貨優先
     - 🎯 **存貨分佈分析**：Mix / Non Tourist Turnday 分級（7-14 日標準）、Nature 存貨對比
     - ⚠️ **存貨失衡 SKU 判定**：Tourist 缺貨 + Non Tourist/Mix 過剩 → 揪出配置不當
     - 🔄 **跨 Nature 調貨建議**：Tourist 缺貨但 Mix/NT 有可釋放件數 → 可調貨優先清單
     - ⚖️ **低存貨 SKU 配置決策**：D001 + Shop Stock < N 件時分析 NT RF 浪費與 ND 囤積
     - 🔍 **by-SKU 缺貨診斷**：含 D001 倉庫三期貨量 → 區分「倉庫有貨（補貨問題）」vs「源頭斷貨」
     - 📊 **多維度彙總**：By Brand / Buyer / Category (Adj. MCH1) 缺貨影響
+    - 門檻只影響低存貨配置決策，不限制整體分析的 SKU 範圍
     - 預設只分析 Warehouse SKU，可切換納入 Vendor
     """)
     
@@ -743,16 +745,16 @@ if uploaded_file is not None:
         st.caption(f"參考日期: {mtd_date.strftime('%Y-%m-%d')}（CM = 當月至今 {mtd_date.day} 日）")
 
         stock_threshold = st.number_input(
-            "📦 低存貨門檻 (僅分析 D001 + Shop Stock < N 件的低存貨 SKU)",
+            "📦 低存貨門檻（只影響低存貨配置決策，不限制整體分析範圍）",
             value=300,
             min_value=0,
             step=10,
-            help="設定為 0 時包含所有 SKU（不過濾）。\n"
-            "當設定為 N（N > 0），系統將只分析「總可用存貨（D001 倉庫 + 全部店舖存貨）」\n"
-            "低於 N 件的 SKU。所有報表（缺貨分析、存貨分佈、調貨建議、\n"
-            "Brand/Buyer 彙總等）均只涵蓋這些低存貨 SKU。"
+            help="設定為 0 時不標記低存貨 SKU。\n"
+            "當設定為 N（N > 0），系統會在「SKU 月銷量和存儲量分析」\n"
+            "和「低存貨 SKU 配置決策」中標記 D001 + Shop Stock < N 的低存貨 SKU。\n"
+            "整體分析（缺貨、Brand/Buyer 彙總等）不受此門檻限制，涵蓋所有 SKU。"
         )
-        st.caption(f"當前門檻: {stock_threshold} 件 — 設定為 0 即不過濾，包含所有 SKU。")
+        st.caption(f"當前門檻: {stock_threshold} 件 — 只影響低存貨標記與配置決策，不限制報表範圍。")
 
         st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
@@ -772,14 +774,14 @@ if uploaded_file is not None:
                 def _cb_excel(pct, msg):
                     _cb(0.6 + 0.4 * pct, msg)
 
-                _, summary_brand, summary_buyer, summary_category, summary_item_class, _, sku_diagnosis, inv_distribution, raw_df, _warnings = transform_stock_impact(
+                _, summary_brand, summary_buyer, summary_category, summary_item_class, _, sku_diagnosis, inv_distribution, sku_monthly_analysis, raw_df, _warnings = transform_stock_impact(
                     df_input,
                     progress_callback=_cb_transform,
                     warehouse_only=warehouse_only,
                     stock_threshold=stock_threshold,
                     ref_date=mtd_date,
                 )
-                buf = generate_excel_stock_impact(summary_brand, summary_buyer, summary_category, summary_item_class, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel)
+                buf = generate_excel_stock_impact(summary_brand, summary_buyer, summary_category, summary_item_class, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_analysis)
 
                 st.session_state.stock_impact_processed = True
                 st.session_state.stock_impact_summary_brand = summary_brand
@@ -787,6 +789,7 @@ if uploaded_file is not None:
                 st.session_state.stock_impact_summary_category = summary_category
                 st.session_state.stock_impact_sku_diagnosis = sku_diagnosis
                 st.session_state.stock_impact_inv_distribution = inv_distribution
+                st.session_state.stock_impact_sku_monthly_analysis = sku_monthly_analysis
                 # 只存 Dashboard 需要的欄位（節省 ~90% 記憶體）
                 _slim_cols = ["Is Stock Impacted", "Shop Nature", "Shop Stock Qty (CM)",
                               "Turnday (Days)", "Mix Excess Stock", "Non Tourist Excess Stock",
@@ -814,6 +817,7 @@ if uploaded_file is not None:
             summary_category = st.session_state.stock_impact_summary_category
             sku_diagnosis = st.session_state.stock_impact_sku_diagnosis
             inv_distribution = st.session_state.stock_impact_inv_distribution
+            sku_monthly_analysis = st.session_state.stock_impact_sku_monthly_analysis
             raw_slim = st.session_state.stock_impact_raw_slim
             excel_data = st.session_state.stock_impact_excel_data
 
@@ -973,7 +977,7 @@ if uploaded_file is not None:
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
-            impact_tabs = st.tabs(["📊 存貨分佈", "🏷️ By Brand", "👤 By Buyer", "📦 By Category", "🔍 SKU 缺貨診斷"])
+            impact_tabs = st.tabs(["📊 存貨分佈", "📦 SKU月銷量和存儲", "🏷️ By Brand", "👤 By Buyer", "📦 By Category", "🔍 SKU 缺貨診斷"])
 
             with impact_tabs[0]:
                 st.markdown("#### 📊 存貨分佈分析")
@@ -1024,27 +1028,37 @@ if uploaded_file is not None:
                     st.info("無存貨分佈數據")
 
             with impact_tabs[1]:
+                st.markdown("#### 📦 SKU 月銷量和存儲量分析（按 Shop Nature）")
+                st.caption("各 SKU 在 Tourist/Mix/Non Tourist 店舖的月均銷售（P90D/3）與當期庫存（CM Shop Stock）。低存貨 SKU 優先顯示。")
+                if sku_monthly_analysis is not None and not sku_monthly_analysis.empty:
+                    low_count = int(sku_monthly_analysis["低存貨"].sum()) if "低存貨" in sku_monthly_analysis.columns else 0
+                    st.markdown(f"**共 {len(sku_monthly_analysis):,} 個 SKU** — 🔴 低存貨 SKU: {low_count:,} 個（D001 + Shop Stock < {stock_threshold} 件）")
+                    st.dataframe(sku_monthly_analysis, width='stretch', hide_index=True)
+                else:
+                    st.info("無 SKU 月銷量/存儲量數據")
+
+            with impact_tabs[2]:
                 st.markdown("#### Brand 層級缺貨影響分析")
                 if summary_brand is not None and not summary_brand.empty:
                     st.dataframe(summary_brand, width='stretch', hide_index=True)
                 else:
                     st.info("無 Brand 層級缺貨影響數據")
 
-            with impact_tabs[2]:
+            with impact_tabs[3]:
                 st.markdown("#### Buyer 層級缺貨影響分析")
                 if summary_buyer is not None and not summary_buyer.empty:
                     st.dataframe(summary_buyer, width='stretch', hide_index=True)
                 else:
                     st.info("無 Buyer 層級缺貨影響數據")
 
-            with impact_tabs[3]:
+            with impact_tabs[4]:
                 st.markdown("#### Category (Adj. MCH1) 層級缺貨影響分析")
                 if summary_category is not None and not summary_category.empty:
                     st.dataframe(summary_category, width='stretch', hide_index=True)
                 else:
                     st.info("無 Category 層級缺貨影響數據（若缺少 Adj. MCH1 欄位則無法產出）")
 
-            with impact_tabs[4]:
+            with impact_tabs[5]:
                 st.markdown("#### 🔍 by-SKU 缺貨診斷（Tourist + Mix + Non Tourist）")
                 st.caption("每個缺貨 SKU 的 Tourist/Mix/Non Tourist 缺貨店數、D001 倉庫三期貨量與店舖總存貨。🟧 **倉庫有貨** = 補貨流程問題；⬜ **源頭斷貨** = 倉庫也斷貨需上游補貨。")
                 if sku_diagnosis is not None and not sku_diagnosis.empty:
