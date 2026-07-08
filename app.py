@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import calendar
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -826,7 +827,7 @@ if uploaded_file is not None:
             # Tourist 缺貨數量（缺失件數 = max(0, Adj. Safety Stock - Shop Stock Qty (CM))）
             _adj_ss_s = _safe_numeric(raw_slim.get("Adj. Safety Stock", _safe_default_series(0, raw_slim.index)))
             _oos_mask = (nature_s == "Tourist") & (cm_stock_s <= 0) & impacted_mask
-            tourist_oos_qty = int(_pd.np.maximum(0, (_adj_ss_s - cm_stock_s))[_oos_mask].sum())
+            tourist_oos_qty = int(np.maximum(0, (_adj_ss_s - cm_stock_s))[_oos_mask].sum())
             # Non Tourist 可釋存貨（>14日標準，與 Mix 一致）
             nt_excess_total = int(_safe_numeric(raw_slim.get("Non Tourist Excess Stock", _safe_default_series(0, raw_slim.index))).sum())
             # Mix 可釋放存貨件數（>14日標準）
