@@ -78,16 +78,16 @@ def test_oos_detection():
 # ──────────────────────────────────────────────────────────────────────────────
 def test_sales_loss_calculation():
     df = _df([
-        # r0: CM 缺貨，M-2 Sold=10, P90D=10, CM Sold=2
-        #   Loss vs M-2 = max(0, 10-2) = 8；Loss vs P90D = max(0, 10-2) = 8
+        # r0: CM 缺貨，M-2 Sold=10, P90D=30 (90日總量/3=月均10), CM Sold=2
+        #   Loss vs M-2 = max(0, 10-2) = 8；Loss vs P90D = max(0, 30/3-2) = 8
         {"SKU": "1", "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 10.0, "Sold Qty (CM - MTD)": 2.0,
-         "Shop Monthly Sold Qty (P90D)": 10.0},
-        # r1: CM 缺貨，M-2 Sold=20, P90D=5, CM Sold=1
-        #   Loss vs M-2 = max(0, 20-1) = 19；Loss vs P90D = max(0, 5-1) = 4
+         "Shop Monthly Sold Qty (P90D)": 30.0},
+        # r1: CM 缺貨，M-2 Sold=20, P90D=15 (90日總量/3=月均5), CM Sold=1
+        #   Loss vs M-2 = max(0, 20-1) = 19；Loss vs P90D = max(0, 15/3-1) = 4
         {"SKU": "2", "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 20.0, "Sold Qty (CM - MTD)": 1.0,
-         "Shop Monthly Sold Qty (P90D)": 5.0},
+         "Shop Monthly Sold Qty (P90D)": 15.0},
         # r2: 有貨 → 不計損失（即使 Sold 下降）
         {"SKU": "3", "Shop Stock Qty (CM)": 5,
          "Sold Qty (M-2)": 30.0, "Sold Qty (CM - MTD)": 0.0},
@@ -221,13 +221,14 @@ def test_warehouse_filter():
 # ──────────────────────────────────────────────────────────────────────────────
 def test_mix_turnday_banding():
     df = _df([
-        # r0: Mix, Turnday 60日 → >30日(過剩), 存貨200, P90D=100
-        #   理想=100/30*14=46.7, 可釋放=200-46.7=153
+        # r0: Mix, Turnday 60日 → >30日(過剩), 存貨200, P90D=300 (90日總量)
+        #   理想=300/90*14=46.7, 可釋放=200-46.7=153
         {"SKU": "1", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 200,
-         "Shop Monthly Sold Qty (P90D)": 100.0, "Turnday (P90D Qty)": 60},
-        # r1: Mix, Turnday 10日 → 7-14日(理想), 可釋放=0
+         "Shop Monthly Sold Qty (P90D)": 300.0, "Turnday (P90D Qty)": 60},
+        # r1: Mix, Turnday 10日 → 7-14日(理想), P90D=360 (90日總量)
+        #   理想=360/90*14=56, 可釋放=0
         {"SKU": "2", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 40,
-         "Shop Monthly Sold Qty (P90D)": 120.0, "Turnday (P90D Qty)": 10},
+         "Shop Monthly Sold Qty (P90D)": 360.0, "Turnday (P90D Qty)": 10},
         # r2: Mix, P90D=0 有存貨 → 無銷售有存貨(純囤積), 全數50可釋放
         {"SKU": "3", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 50,
          "Shop Monthly Sold Qty (P90D)": 0.0, "Turnday (P90D Qty)": float("inf")},

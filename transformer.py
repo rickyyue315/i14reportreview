@@ -2570,7 +2570,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     """計算每列的缺貨狀態、缺貨模式與銷售損失（雙基準並列）。
 
     缺貨定義採嚴格標準：Shop Stock Qty = 0。
-    損失基準並列：(1) Sold Qty (M-2) 需求基準；(2) Shop Monthly Sold Qty (P90D) 月均基準。
+    損失基準並列：(1) Sold Qty (M-2) 需求基準；(2) Shop Monthly Sold Qty (P90D) 90日總量（/3得月均）。
     """
     df = df.copy()
     idx = df.index
@@ -2615,7 +2615,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
         is_oos = oos_flags[label].values
         # 缺貨當期才算損失；損失 = max(0, 需求基準 − 當期實際銷售)
         loss_m2 = np.where(is_oos & (m2_sold.values > 0), np.maximum(0, m2_sold.values - sold.values), 0)
-        loss_p90d = np.where(is_oos & (p90d.values > 0), np.maximum(0, p90d.values - sold.values), 0)
+        loss_p90d = np.where(is_oos & (p90d.values > 0), np.maximum(0, p90d.values / 3.0 - sold.values), 0)
         loss_m2_max = np.maximum(loss_m2_max, loss_m2)
         loss_p90d_max = np.maximum(loss_p90d_max, loss_p90d)
         loss_m2_sum = loss_m2_sum + loss_m2
@@ -2675,7 +2675,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     # Mix 可釋放存貨：超過 14 日標準的部分；無銷售但有存貨者全數可釋放
     # 理想存貨 = P90D / 30 × 14；可釋放 = max(0, 實際存貨 − 理想存貨)
-    ideal_14d = p90d.values / 30.0 * 14
+    ideal_14d = p90d.values / 90.0 * 14
     excess = np.where(
         mix_mask,
         np.where(no_sale_has_stock, cm_stock_val.values, np.maximum(0, cm_stock_val.values - ideal_14d)),
@@ -2969,7 +2969,7 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
                     f"{nat}損失_M2": ("_loss_m2", "sum"),
                     f"{nat}損失_P90D": ("_loss_p90d", "sum"),
                     f"{nat}_CM銷售件數": ("_cm_sold", "sum"),
-                    f"{nat}_P90D月均銷量": ("_p90d", "sum"),
+                    f"{nat}_P90D總量(90日)": ("_p90d", "sum"),
                 }
             )
             .reset_index()
@@ -3051,9 +3051,9 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
         out_cols.append("Is New SKU (3mo)")
     out_cols += ["Brand", "Buyer",
                 "NDRF_ND行数", "NDRF_RF行数",
-                "Tourist缺貨店數", "Tourist_CM銷售件數", "Tourist_P90D月均銷量",
-                "Mix缺貨店數", "Mix_CM銷售件數", "Mix_P90D月均銷量",
-                "Non Tourist缺貨店數", "Non Tourist_CM銷售件數", "Non Tourist_P90D月均銷量",
+                "Tourist缺貨店數", "Tourist_CM銷售件數", "Tourist_P90D總量(90日)",
+                "Mix缺貨店數", "Mix_CM銷售件數", "Mix_P90D總量(90日)",
+                "Non Tourist缺貨店數", "Non Tourist_CM銷售件數", "Non Tourist_P90D總量(90日)",
                 "D001 狀態", "D001_Stock_M2", "D001_Stock_M1", "D001_Stock_CM",
                 "店舖存貨總_M2", "店舖存貨總_M1", "店舖存貨總_CM"]
     # 排序
@@ -3280,7 +3280,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
         merged.attrs["annotation"] = (
             "【計算方式】\n"
             "Mix過剩存貨：Mix 店舖 Shop Stock (CM) > 0 且 Turnday > 14 日的過剩部分 "
-            "（超出 P90D/30×14 標準的存貨總和）。\n"
+            "（超出 P90D/90×14 標準的存貨總和）。\n"
             "Non Tourist過剩存貨：Non Tourist 店舖 Shop Stock (CM) > 0 且 Turnday > 30 日的存貨總和。\n"
             "建議調貨量 = min(Tourist 缺貨店數對應的需求量, Mix過剩存貨 + Non Tourist過剩存貨)。"
         )
