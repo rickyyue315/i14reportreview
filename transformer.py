@@ -7,6 +7,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
+import datetime
 
 REQUIRED_COLUMNS = ["Buyer", "Brand", "SKU", "Shop Stock Status"]
 
@@ -2531,6 +2532,40 @@ _NATURE_PRIORITY = {"Tourist": 0, "Mix": 1, "Non Tourist": 2}
 _NATURE_ORDER = ["Tourist", "Mix", "Non Tourist"]
 
 
+def _add_launch_info(df: pd.DataFrame, ref_date: datetime.date | None = None) -> pd.DataFrame:
+    """從 Launch Date 新增 認證是否New SKU(3個月內) 欄位。
+
+    Args:
+        ref_date: 參考日期（預設今天）。
+    """
+    if "Launch Date" not in df.columns:
+        return df  # 無 Launch Date 欄位則跳過
+
+    if ref_date is None:
+        ref_date = datetime.date.today()
+
+    df = df.copy()
+    launch_raw = df["Launch Date"].fillna("").astype(str).str.strip()
+    # 嘗試多種日期格式解析
+    launch_dt = pd.to_datetime(launch_raw, errors="coerce")
+    # 若全部 NaN，再嘗試其他常見格式
+    if launch_dt.isna().all():
+        launch_dt = pd.to_datetime(launch_raw, errors="coerce", format="%Y/%m/%d")
+    if launch_dt.isna().all():
+        launch_dt = pd.to_datetime(launch_raw, errors="coerce", format="%d/%m/%Y")
+    if launch_dt.isna().all():
+        launch_dt = pd.to_datetime(launch_raw, errors="coerce", format="%Y%m%d")
+
+    # 3個月內（約 90 天）視為 New SKU
+    cutoff = pd.Timestamp(ref_date) - pd.Timedelta(days=90)
+    df["Is New SKU (3mo)"] = launch_dt.notna() & (launch_dt >= cutoff)
+    df["Is New SKU (3mo)"] = df["Is New SKU (3mo)"].map({True: "✓ New SKU", False: ""})
+
+    # 保留 Launch Date 原始值
+    df["Launch Date"] = launch_raw
+    return df
+
+
 def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     """計算每列的缺貨狀態、缺貨模式與銷售損失（雙基準並列）。
 
@@ -2951,13 +2986,17 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
-    # 品牌資訊（first）+ SKU Desc
+    # 品牌資訊（first）+ SKU Desc + Launch Info
     brand_agg_dict = {
         "Brand": ("Brand", "first") if "Brand" in focus.columns else ("SKU", "first"),
         "Buyer": ("Buyer", "first") if "Buyer" in focus.columns else ("SKU", "first"),
     }
     if "SKU Desc" in focus.columns:
         brand_agg_dict["SKU Desc"] = ("SKU Desc", "first")
+    if "Launch Date" in focus.columns:
+        brand_agg_dict["Launch Date"] = ("Launch Date", "first")
+    if "Is New SKU (3mo)" in focus.columns:
+        brand_agg_dict["Is New SKU (3mo)"] = ("Is New SKU (3mo)", "first")
     brand_per_sku = (
         focus.groupby("SKU", dropna=False)
         .agg(**brand_agg_dict)
@@ -3006,6 +3045,10 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
     out_cols = ["SKU"]
     if "SKU Desc" in merged.columns:
         out_cols.append("SKU Desc")
+    if "Launch Date" in merged.columns:
+        out_cols.append("Launch Date")
+    if "Is New SKU (3mo)" in merged.columns:
+        out_cols.append("Is New SKU (3mo)")
     out_cols += ["Brand", "Buyer",
                 "NDRF_ND行数", "NDRF_RF行数",
                 "Tourist缺貨店數", "Tourist_CM銷售件數", "Tourist_P90D月均銷量",
@@ -3185,9 +3228,9 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
         # 可調貨建議量 = min(Tourist 缺貨損失, 其他過剩存貨)
         merged["建議調貨量"] = np.minimum(merged["Tourist缺貨損失_P90D"], merged["其他Nature過剩總存貨"]).astype(int)
 
-        # 附加 SKU 級資訊：SKU Desc / Buyer / D001 Net Stock + Shop Stock 總數
+        # 附加 SKU 級資訊：SKU Desc / Launch Date / Buyer / D001 Net Stock + Shop Stock 總數
         sku_info_cols = ["SKU"]
-        for _c in ["SKU Desc", "Buyer"]:
+        for _c in ["SKU Desc", "Launch Date", "Is New SKU (3mo)", "Buyer"]:
             if _c in raw.columns:
                 sku_info_cols.append(_c)
         d001_net = "D001 Net Stock Qty (CM)"
@@ -3221,6 +3264,10 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
                 out_cols.append("Brand")
         if "SKU Desc" in merged.columns:
             out_cols.append("SKU Desc")
+        if "Launch Date" in merged.columns:
+            out_cols.append("Launch Date")
+        if "Is New SKU (3mo)" in merged.columns:
+            out_cols.append("Is New SKU (3mo)")
         if "Buyer" in merged.columns:
             out_cols.append("Buyer")
         if "總可用存貨" in merged.columns:
@@ -3436,7 +3483,8 @@ def _build_transfer_priority_analysis(raw: pd.DataFrame) -> dict:
 
 
 _OOS_DETAIL_COLS = [
-    "Buyer", "Brand", "SKU", "SKU Desc", "Site Code", "Shop Name", "OM",
+    "Buyer", "Brand", "SKU", "SKU Desc", "Launch Date", "Is New SKU (3mo)",
+    "Site Code", "Shop Name", "OM",
     "Shop Nature", "Supply Source", "NDRF Status",
     "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)",
     "Shop Stock Qty (CM)", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
@@ -3499,6 +3547,9 @@ def transform_stock_impact(
         progress_callback(0.2, "計算缺貨影響指標中...")
 
     raw = _add_stock_impact_columns(df)
+
+    # 新增 Launch Date / Is New SKU 資訊（於所有 Sheet 共用）
+    raw = _add_launch_info(raw)
 
     if progress_callback:
         progress_callback(0.4, "建構多維度彙總中...")
