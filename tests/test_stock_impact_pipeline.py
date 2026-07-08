@@ -46,7 +46,7 @@ def test_oos_detection():
         {"SKU": "1", "Shop Stock Qty (CM)": 0, "Sold Qty (M-2)": 10, "Sold Qty (CM - MTD)": 0},
         # r1: 全期有貨 → 無缺貨
         {"SKU": "2", "Shop Stock Qty (M-2)": 5, "Shop Stock Qty (M-1)": 5, "Shop Stock Qty (CM)": 5},
-        # r2: M-1 缺貨，其他有貨 → 間歇缺貨
+        # r2: M-1 缺貨，M-2/CM 有貨 → 恢復供貨（M-1 OOS 但 CM 已補回）
         {"SKU": "3", "Shop Stock Qty (M-1)": 0, "Sold Qty (M-2)": 10},
         # r3: 全期缺貨 → 長期缺貨
         {"SKU": "4", "Shop Stock Qty (M-2)": 0, "Shop Stock Qty (M-1)": 0, "Shop Stock Qty (CM)": 0,
@@ -65,8 +65,8 @@ def test_oos_detection():
 
     assert raw.iloc[2]["Is OOS (M-1)"] == True
     assert int(raw.iloc[2]["OOS Periods Count"]) == 1
-    assert raw.iloc[2]["OOS Pattern"] == "間歇缺貨"
-    print("OK r2: M-1 缺貨 → 間歇缺貨")
+    assert raw.iloc[2]["OOS Pattern"] == "恢復供貨"
+    print("OK r2: M-1 缺貨 → 恢復供貨")
 
     assert int(raw.iloc[3]["OOS Periods Count"]) == 3
     assert raw.iloc[3]["OOS Pattern"] == "長期缺貨"
@@ -122,6 +122,9 @@ def test_oos_pattern_classification():
         # r3: 無需求（M-2 Sold=0, P90D=0）即使缺貨也不算 Impacted
         {"SKU": "4", "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 0, "Shop Monthly Sold Qty (P90D)": 0},
+        # r4: M-1 缺貨，M-2/CM 有貨 → 恢復供貨（M-1 OOS 但 CM 已補回）
+        {"SKU": "5", "Shop Stock Qty (M-1)": 0, "Shop Stock Qty (M-2)": 5,
+         "Shop Stock Qty (CM)": 5, "Sold Qty (M-2)": 10},
     ])
     raw = _add_stock_impact_columns(df)
 
@@ -136,6 +139,10 @@ def test_oos_pattern_classification():
 
     assert raw.iloc[3]["Is Stock Impacted"] == False, "無需求證據不應算影響"
     print("OK r3: 無需求 → 不算 Impacted")
+
+    # r4: M-1 缺貨，M-2/CM 有貨 → 恢復供貨（M-1 OOS 但 CM 已補回）
+    assert raw.iloc[4]["OOS Pattern"] == "恢復供貨", "M-1 OOS 但 CM 有貨應為恢復供貨"
+    print("OK r4: M-1 缺貨 → 恢復供貨（M-1 OOS 但 M-2/CM 有貨，已補回）")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

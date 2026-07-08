@@ -2589,7 +2589,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     # ── 缺貨模式分類 ────────────────────────────────────────────────────────────
     pattern = np.full(len(df), "無缺貨", dtype=object)
     # 恢復供貨：M-2 缺貨（或 M-2、M-1 都缺貨）但 CM 有貨 → 後期補回
-    recovered = (~oos_flags["CM"]) & (oos_flags["M-2"] | oos_flags["M-2"])
+    recovered = (~oos_flags["CM"]) & (oos_flags["M-2"] | oos_flags["M-1"])
     # 間歇：僅 1 期缺貨（且非恢復供貨的 M-2/M-1 缺貨 → CM 有貨已涵蓋）
     intermittent = (oos_count == 1) & ~recovered
     # 長期：≥2 期缺貨
@@ -2674,7 +2674,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["Mix Turnday Band"] = mix_band
 
     # Mix 可釋放存貨：超過 14 日標準的部分；無銷售但有存貨者全數可釋放
-    # 理想存貨 = P90D / 30 × 14；可釋放 = max(0, 實際存貨 − 理想存貨)
+    # 理想存貨 = P90D / 90 × 14（P90D為90日總量）；可釋放 = max(0, 實際存貨 − 理想存貨)
     ideal_14d = p90d.values / 90.0 * 14
     excess = np.where(
         mix_mask,
