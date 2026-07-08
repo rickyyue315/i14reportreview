@@ -8,6 +8,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 REQUIRED_COLUMNS = ["Buyer", "Brand", "SKU", "Shop Stock Status"]
 
@@ -2745,18 +2746,26 @@ def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.
     impacted["_nature"] = impacted.get("Shop Nature", pd.Series(dtype=object)).fillna("")
     impacted["_pattern"] = impacted.get("OOS Pattern", pd.Series(dtype=object)).fillna("")
 
+    # Vectorized pre-computation: avoid slow lambda in groupby
+    impacted["_is_tourist"] = (impacted["_nature"] == "Tourist").astype(int)
+    impacted["_is_mix"] = (impacted["_nature"] == "Mix").astype(int)
+    impacted["_is_nt"] = (impacted["_nature"] == "Non Tourist").astype(int)
+    impacted["_is_long"] = (impacted["_pattern"] == "長期缺貨").astype(int)
+    impacted["_is_inter"] = (impacted["_pattern"] == "間歇缺貨").astype(int)
+    impacted["_is_recover"] = (impacted["_pattern"] == "恢復供貨").astype(int)
+
     agg = (
         impacted.groupby(group_cols, dropna=False, observed=True)
         .agg(
             缺貨行數=("_nature", "count"),
             涉及SKU數=("SKU", "nunique"),
             **{
-                "Tourist 缺貨行數": ("_nature", lambda x: (x == "Tourist").sum()),
-                "Mix 缺貨行數": ("_nature", lambda x: (x == "Mix").sum()),
-                "Non Tourist 缺貨行數": ("_nature", lambda x: (x == "Non Tourist").sum()),
-                "長期缺貨行數": ("_pattern", lambda x: (x == "長期缺貨").sum()),
-                "間歇缺貨行數": ("_pattern", lambda x: (x == "間歇缺貨").sum()),
-                "恢復供貨行數": ("_pattern", lambda x: (x == "恢復供貨").sum()),
+                "Tourist 缺貨行數": ("_is_tourist", "sum"),
+                "Mix 缺貨行數": ("_is_mix", "sum"),
+                "Non Tourist 缺貨行數": ("_is_nt", "sum"),
+                "長期缺貨行數": ("_is_long", "sum"),
+                "間歇缺貨行數": ("_is_inter", "sum"),
+                "恢復供貨行數": ("_is_recover", "sum"),
             },
         )
         .reset_index()
@@ -2797,9 +2806,10 @@ def _build_sku_allocation_summary(raw: pd.DataFrame) -> pd.DataFrame:
     if "SKU" not in raw.columns or "Shop Nature" not in raw.columns:
         return pd.DataFrame()
 
-    # 先找出同時出現在 Tourist 與其他 Nature 的 SKU
-    sku_natures = raw.groupby("SKU")["Shop Nature"].apply(lambda x: set(x.dropna()))
-    shared_skus = sku_natures[sku_natures.apply(lambda s: "Tourist" in s and len(s) >= 2)].index
+    # 先找出同時出現在 Tourist 與其他 Nature 的 SKU（向量化替代 apply+set）
+    _nature_dedup = raw.dropna(subset=["Shop Nature"]).groupby("SKU")["Shop Nature"].agg("unique")
+    _nature_sets = _nature_dedup.apply(lambda arr: set(arr))
+    shared_skus = _nature_sets[_nature_sets.apply(lambda s: "Tourist" in s and len(s) >= 2)].index
     if len(shared_skus) == 0:
         return pd.DataFrame()
 
@@ -3493,6 +3503,32 @@ _OOS_DETAIL_COLS = [
 ]
 
 
+
+# ── 平行化輔助 ──────────────────────────────────────────────────────────────────
+# 批次預處理數值欄位，避免各 summary 函式重複呼叫 _safe_numeric
+_STOCK_IMPACT_NUMERIC_COLS = [
+    "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)", "Shop Stock Qty (CM)",
+    "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
+    "Shop Monthly Sold Qty (P90D)", "D001 Stock Qty (CM)",
+    "D001 Stock Qty (M-2)", "D001 Stock Qty (M-1)",
+    "Max Sales Loss (M-2)", "Max Sales Loss (P90D)",
+    "Mix Excess Stock", "Non Tourist Excess Stock",
+]
+
+def _preprocess_numeric_columns(raw: pd.DataFrame) -> pd.DataFrame:
+    """一次性轉換所有後續會用到的數值欄位。"""
+    for _col in _STOCK_IMPACT_NUMERIC_COLS:
+        if _col in raw.columns:
+            raw[_col] = pd.to_numeric(raw[_col], errors="coerce").fillna(0)
+    return raw
+
+
+def _build_summary_safe(raw: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
+    """安全的摘要建構：檢查欄位是否存在。"""
+    if not group_cols or group_cols[0] not in raw.columns:
+        return pd.DataFrame()
+    return _build_stock_impact_summary(raw, group_cols)
+
 def transform_stock_impact(
     df_input: pd.DataFrame,
     progress_callback=None,
@@ -3553,6 +3589,17 @@ def transform_stock_impact(
     # 新增 Launch Date / Is New SKU 資訊（於所有 Sheet 共用）
     raw = _add_launch_info(raw, ref_date=ref_date)
 
+    # 批次預處理數值欄位（避免各 summary 函式重複轉換）
+    raw = _preprocess_numeric_columns(raw)
+
+    # groupby 加速：將 groupby 欄位轉為 category
+    _groupby_cols = ["Brand", "Buyer", "Item Class"]
+    if "Adj. MCH1" in raw.columns:
+        _groupby_cols.append("Adj. MCH1")
+    for _gc in _groupby_cols:
+        if _gc in raw.columns:
+            raw[_gc] = raw[_gc].astype("category")
+
     # --- 低存貨 SKU 過濾（D001 + Shop Stock < stock_threshold）----------------
     # 當 stock_threshold > 0 時，只保留總可用存貨低於門檻的 SKU
     # （影響所有後續報表：缺貨分析、存貨分佈、調貨建議、Brand/Buyer 彙總等）
@@ -3586,19 +3633,35 @@ def transform_stock_impact(
     # Site 層級已取消（v1.6.2）
     summary_site = pd.DataFrame()
 
-    summary_brand = _build_stock_impact_summary(raw, ["Brand"]) if "Brand" in raw.columns else pd.DataFrame()
-    summary_buyer = _build_stock_impact_summary(raw, ["Buyer"]) if "Buyer" in raw.columns else pd.DataFrame()
-    summary_category = pd.DataFrame()
+    # 平行化：同時計算 4 個維度的摘要表（彼此獨立）
+    _summary_tasks = {}
+    if "Brand" in raw.columns:
+        _summary_tasks["brand"] = ["Brand"]
+    if "Buyer" in raw.columns:
+        _summary_tasks["buyer"] = ["Buyer"]
     if "Adj. MCH1" in raw.columns:
-        summary_category = _build_stock_impact_summary(raw, ["Adj. MCH1"])
+        _summary_tasks["category"] = ["Adj. MCH1"]
     else:
         warnings.append("缺少「Adj. MCH1」欄位，無法產出 By Category 分析")
-
-    summary_item_class = pd.DataFrame()
     if "Item Class" in raw.columns:
-        summary_item_class = _build_stock_impact_summary(raw, ["Item Class"])
+        _summary_tasks["item_class"] = ["Item Class"]
     else:
         warnings.append("缺少「Item Class」欄位，無法產出 By Item Class 分析")
+
+    if _summary_tasks:
+        with ThreadPoolExecutor(max_workers=min(4, len(_summary_tasks))) as _executor:
+            _futures = {
+                _key: _executor.submit(_build_summary_safe, raw, _cols)
+                for _key, _cols in _summary_tasks.items()
+            }
+            _results = {key: fut.result() for key, fut in _futures.items()}
+    else:
+        _results = {}
+
+    summary_brand = _results.get("brand", pd.DataFrame())
+    summary_buyer = _results.get("buyer", pd.DataFrame())
+    summary_category = _results.get("category", pd.DataFrame())
+    summary_item_class = _results.get("item_class", pd.DataFrame())
 
     if progress_callback:
         progress_callback(0.55, "建構 SKU 跨 Nature 調貨分析中...")
