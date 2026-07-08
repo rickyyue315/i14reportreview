@@ -211,11 +211,15 @@ with st.sidebar:
 
     **📦 Stock Impact Analysis（缺貨銷售影響分析）**
     - 以 Shop Stock Qty = 0（缺貨）為核心，分析存貨對 Sold Qty 的因果影響（無貨就無銷售）
-    - 比對 M-2 / M-1 / CM 三期的 Shop Stock 與 Sold Qty 對應關係
-    - 缺貨銷售損失雙基準並列：M-2 Sold 為需求基準 vs P90D 90 天月均為基準
-    - Shop Nature 優先級：Tourist > Mix > Non Tourist
-    - SKU 級跨 Nature 調貨建議：Tourist 缺貨但 Non-Tourist/Mix 仍有存貨 → 揪出存貨配置不當
-    - 預設只分析 Warehouse SKU，提供切換可納入 Vendor
+    - 缺貨模式判別：長期缺貨（≥2 期）/ 間歇缺貨（1 期）/ 恢復供貨 / 無缺貨
+    - 銷售損失雙基準並列：M-2 Sold 為需求基準 vs P90D 90 天月均為基準（只計 RF 店）
+    - 🎯 **存貨分佈分析**：Mix / Non Tourist Turnday 分級（7-14 日標準）、Nature 存貨對比
+    - ⚠️ **存貨失衡 SKU 判定**：Tourist 缺貨 + Non Tourist/Mix 過剩 → 揪出配置不當
+    - 🔄 **跨 Nature 調貨建議**：Tourist 缺貨但 Mix/NT 有可釋放件數 → 可調貨優先清單
+    - ⚖️ **低存貨 SKU 配置決策**：D001 + Shop Stock < N 件時分析 NT RF 浪費與 ND 囤積
+    - 🔍 **by-SKU 缺貨診斷**：含 D001 倉庫三期貨量 → 區分「倉庫有貨（補貨問題）」vs「源頭斷貨」
+    - 📊 **多維度彙總**：By Brand / Buyer / Category (Adj. MCH1) 缺貨影響
+    - 預設只分析 Warehouse SKU，可切換納入 Vendor
     """)
     
     st.divider()
