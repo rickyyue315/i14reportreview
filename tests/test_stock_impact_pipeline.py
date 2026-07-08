@@ -23,7 +23,7 @@ BASE = {
     "Turnday (P90D Qty)": 15.0,
     "Shop Stock Qty (M-2)": 5, "Shop Stock Qty (M-1)": 5, "Shop Stock Qty (CM)": 5,
     "Sold Qty (M-2)": 10.0, "Sold Qty (M-1)": 8.0, "Sold Qty (CM - MTD)": 4.0,
-    "OM": "OM1", "Adj. MCH1": "CatX",
+    "OM": "OM1", "Adj. MCH1": "CatX", "Item Class": "Cream",
 }
 
 
@@ -190,12 +190,13 @@ def test_transform_stock_impact():
          "Sold Qty (M-2)": 20.0, "Sold Qty (CM - MTD)": 5.0, "Shop Monthly Sold Qty (P90D)": 15.0},
         {"SKU": "3", "Adj. MCH1": "CatA", "Shop Nature": "Non Tourist", "Shop Stock Qty (CM)": 5,
          "Sold Qty (M-2)": 30.0, "Sold Qty (CM - MTD)": 10.0},
-    ])
-    _, brand, buyer, cat, _, diag, inv, raw, warns = transform_stock_impact(df)
+     ])
+    _, brand, buyer, cat, item_class, _, diag, inv, raw, warns = transform_stock_impact(df)
 
     assert len(brand) > 0
     assert len(buyer) > 0
     assert len(cat) > 0
+    assert len(item_class) > 0
     impacted_count = int(raw["Is Stock Impacted"].sum())
     assert impacted_count == 2, f"應有 2 行缺貨影響，得 {impacted_count}"
     print(f"OK transform_stock_impact（3 維度彙總 + 缺貨影響 {impacted_count} 行）")
@@ -212,13 +213,13 @@ def test_warehouse_filter():
          "Sold Qty (M-2)": 10.0, "Shop Monthly Sold Qty (P90D)": 10.0},
     ])
     # warehouse_only=True（預設）→ 只剩 1 行
-    _, _, _, _, _, _, _, raw_wh, _ = transform_stock_impact(df, warehouse_only=True)
+    _, _, _, _, _, _, _, _, raw_wh, _ = transform_stock_impact(df, warehouse_only=True)
     assert len(raw_wh) == 1
     assert str(raw_wh.iloc[0]["Supply Source"]) == "Warehouse"
     print("OK warehouse_only=True（過濾 Vendor）")
 
     # warehouse_only=False → 保留 2 行
-    _, _, _, _, _, _, _, raw_all, _ = transform_stock_impact(df, warehouse_only=False)
+    _, _, _, _, _, _, _, _, raw_all, _ = transform_stock_impact(df, warehouse_only=False)
     assert len(raw_all) == 2
     print("OK warehouse_only=False（保留 Vendor）")
 
@@ -331,7 +332,7 @@ def test_no_impacted_items():
         {"SKU": "1", "Shop Stock Qty (CM)": 5, "Sold Qty (M-2)": 10.0},
         {"SKU": "2", "Shop Stock Qty (CM)": 3, "Sold Qty (M-2)": 20.0},
     ])
-    _, brand, buyer, cat, _, diag, inv, raw, warns = transform_stock_impact(df)
+    _, brand, buyer, cat, item_class, _, diag, inv, raw, warns = transform_stock_impact(df)
     assert int(raw["Is Stock Impacted"].sum()) == 0
     print("OK 無缺貨影響：空彙總")
 
@@ -454,8 +455,8 @@ def test_generate_excel_stock_impact():
         {"SKU": "2", "Adj. MCH1": "CatB", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 20.0, "Sold Qty (CM - MTD)": 5.0, "Shop Monthly Sold Qty (P90D)": 15.0},
     ])
-    _, brand, buyer, cat, _, diag, inv, raw, _ = transform_stock_impact(df)
-    buf = generate_excel_stock_impact(brand, buyer, cat, diag, inv, raw)
+    _, brand, buyer, cat, item_class, _, diag, inv, raw, _ = transform_stock_impact(df)
+    buf = generate_excel_stock_impact(brand, buyer, cat, item_class, diag, inv, raw)
     assert isinstance(buf, BytesIO)
     data = buf.getvalue()
     assert len(data) > 100
@@ -465,10 +466,10 @@ def test_generate_excel_stock_impact():
     import openpyxl
     wb = openpyxl.load_workbook(BytesIO(data))
     expected = ["RAW", "OOS Impact Detail", "By Brand", "By Buyer",
-                "By Category", "SKU Stock Diagnosis",
+                "By Category", "By Item Class", "SKU Stock Diagnosis",
                 "Inventory Distribution", "Stock Impact Dashboard"]
     assert wb.sheetnames == expected, f"sheets mismatch: {wb.sheetnames}"
-    print("OK generate_excel_stock_impact（8 sheets valid xlsx）")
+    print("OK generate_excel_stock_impact（9 sheets valid xlsx）")
 
 
 if __name__ == "__main__":

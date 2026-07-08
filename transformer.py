@@ -3483,7 +3483,7 @@ def _build_transfer_priority_analysis(raw: pd.DataFrame) -> dict:
 
 
 _OOS_DETAIL_COLS = [
-    "Buyer", "Brand", "SKU", "SKU Desc", "Launch Date", "Is New SKU (3mo)",
+    "Buyer", "Brand", "SKU", "SKU Desc", "Item Class", "Launch Date", "Is New SKU (3mo)",
     "Site Code", "Shop Name", "OM",
     "Shop Nature", "Supply Source", "NDRF Status",
     "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)",
@@ -3553,6 +3553,33 @@ def transform_stock_impact(
     # 新增 Launch Date / Is New SKU 資訊（於所有 Sheet 共用）
     raw = _add_launch_info(raw, ref_date=ref_date)
 
+    # --- 低存貨 SKU 過濾（D001 + Shop Stock < stock_threshold）----------------
+    # 當 stock_threshold > 0 時，只保留總可用存貨低於門檻的 SKU
+    # （影響所有後續報表：缺貨分析、存貨分佈、調貨建議、Brand/Buyer 彙總等）
+    if stock_threshold > 0 and "SKU" in raw.columns:
+        _d001_col = "D001 Stock Qty (CM)" if "D001 Stock Qty (CM)" in raw.columns else None
+        if _d001_col is not None:
+            _d001_cm = _safe_numeric(raw[_d001_col])
+        else:
+            _d001_cm = pd.Series(0, index=raw.index)
+        _shop_cm = _safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, raw.index)))
+
+        _sku_total = (
+            raw.assign(_d001=_d001_cm, _shop=_shop_cm)
+            .groupby("SKU", dropna=False)
+            .agg(_d001_first=("_d001", "first"), _shop_sum=("_shop", "sum"))
+        )
+        _sku_total["_total"] = _sku_total["_d001_first"] + _sku_total["_shop_sum"]
+        _low_skus = set(_sku_total[_sku_total["_total"] < stock_threshold].index)
+
+        _before = len(raw)
+        raw = raw[raw["SKU"].isin(_low_skus)].copy()
+        if _before > 0 and len(raw) == 0:
+            warnings.append(f"門檻值 {stock_threshold} 過低，所有 SKU 已被過濾，請調高門檻值")
+        elif len(raw) < _before:
+            _n_skus = len(_sku_total) - len(_low_skus)
+            warnings.append(f"已過濾 {_before - len(raw)} 行（{_n_skus} 個 SKU），因總可用存貨 >= {stock_threshold} 件（僅保留低存貨 SKU）")
+
     if progress_callback:
         progress_callback(0.4, "建構多維度彙總中...")
 
@@ -3566,6 +3593,12 @@ def transform_stock_impact(
         summary_category = _build_stock_impact_summary(raw, ["Adj. MCH1"])
     else:
         warnings.append("缺少「Adj. MCH1」欄位，無法產出 By Category 分析")
+
+    summary_item_class = pd.DataFrame()
+    if "Item Class" in raw.columns:
+        summary_item_class = _build_stock_impact_summary(raw, ["Item Class"])
+    else:
+        warnings.append("缺少「Item Class」欄位，無法產出 By Item Class 分析")
 
     if progress_callback:
         progress_callback(0.55, "建構 SKU 跨 Nature 調貨分析中...")
@@ -3585,7 +3618,7 @@ def transform_stock_impact(
     if progress_callback:
         progress_callback(0.7, "轉換完成")
 
-    return summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, inv_distribution, raw, warnings
+    return summary_site, summary_brand, summary_buyer, summary_category, summary_item_class, sku_allocation, sku_diagnosis, inv_distribution, raw, warnings
 
 
 def _write_oos_detail_sheet(ws, raw_df, header_font, header_fill, thin_border, progress_callback):
@@ -3980,6 +4013,7 @@ def generate_excel_stock_impact(
     summary_brand: pd.DataFrame,
     summary_buyer: pd.DataFrame,
     summary_category: pd.DataFrame,
+    summary_item_class: pd.DataFrame,
     sku_diagnosis: pd.DataFrame,
     inv_distribution: dict,
     raw_df: pd.DataFrame,
@@ -4040,19 +4074,29 @@ def generate_excel_stock_impact(
     else:
         ws_category.cell(row=1, column=1, value="無 Category (Adj. MCH1) 層級缺貨影響數據").font = Font(size=12)
 
-    # Sheet 6: SKU Stock Diagnosis (by-SKU 缺貨診斷, 含 D001 + 店舖貨量)
+    # Sheet 6: By Item Class
+    if progress_callback:
+        progress_callback(0.68, "建立 By Item Class 分析工作表...")
+    ws_item_class = wb.create_sheet(title="By Item Class")
+    if not summary_item_class.empty:
+        _write_stock_impact_summary_sheet(ws_item_class, summary_item_class, "By Item Class — 缺貨影響分析",
+                                          header_font, header_fill, thin_border, progress_callback, 0.68, 0.70)
+    else:
+        ws_item_class.cell(row=1, column=1, value="無 Item Class 層級缺貨影響數據").font = Font(size=12)
+
+    # Sheet 7: SKU Stock Diagnosis (by-SKU 缺貨診斷, 含 D001 + 店舖貨量)
     if progress_callback:
         progress_callback(0.70, "建立 by-SKU 缺貨診斷工作表...")
     ws_diag = wb.create_sheet(title="SKU Stock Diagnosis")
     _write_sku_stock_diagnosis_sheet(ws_diag, sku_diagnosis, header_font, header_fill, thin_border, progress_callback)
 
-    # Sheet 7: Inventory Distribution (存貨分佈分析)
+    # Sheet 8: Inventory Distribution (存貨分佈分析)
     if progress_callback:
         progress_callback(0.76, "建立存貨分佈分析工作表...")
     ws_inv = wb.create_sheet(title="Inventory Distribution")
     _write_inventory_distribution_sheet(ws_inv, inv_distribution, header_font, header_fill, thin_border, progress_callback)
 
-    # Sheet 8: Dashboard
+    # Sheet 9: Dashboard
     if progress_callback:
         progress_callback(0.80, "建立缺貨影響分析摘要工作表...")
     ws_dashboard = wb.create_sheet(title="Stock Impact Dashboard")

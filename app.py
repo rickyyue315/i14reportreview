@@ -743,13 +743,16 @@ if uploaded_file is not None:
         st.caption(f"參考日期: {mtd_date.strftime('%Y-%m-%d')}（CM = 當月至今 {mtd_date.day} 日）")
 
         stock_threshold = st.number_input(
-            "📦 低存貨門檻 (D001 + Shop Stock < N 件視為低存貨 SKU)",
+            "📦 低存貨門檻 (僅分析 D001 + Shop Stock < N 件的低存貨 SKU)",
             value=300,
             min_value=0,
             step=10,
-            help="當 SKU 的總可用存貨（D001 倉庫 + 全部店舖存貨）低於此門檻，系統將分析 Non Tourist RF 店舖的浪費存貨以及 ND 店的囤積情況，供決定是否減少 Non Tourist 鋪點。"
+            help="設定為 0 時包含所有 SKU（不過濾）。\n"
+            "當設定為 N（N > 0），系統將只分析「總可用存貨（D001 倉庫 + 全部店舖存貨）」\n"
+            "低於 N 件的 SKU。所有報表（缺貨分析、存貨分佈、調貨建議、\n"
+            "Brand/Buyer 彙總等）均只涵蓋這些低存貨 SKU。"
         )
-        st.caption(f"當前門檻: {stock_threshold} 件 — 低於此值的 SKU 將觸發配置決策分析")
+        st.caption(f"當前門檻: {stock_threshold} 件 — 設定為 0 即不過濾，包含所有 SKU。")
 
         st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
@@ -769,14 +772,14 @@ if uploaded_file is not None:
                 def _cb_excel(pct, msg):
                     _cb(0.6 + 0.4 * pct, msg)
 
-                _, summary_brand, summary_buyer, summary_category, _, sku_diagnosis, inv_distribution, raw_df, _warnings = transform_stock_impact(
+                _, summary_brand, summary_buyer, summary_category, summary_item_class, _, sku_diagnosis, inv_distribution, raw_df, _warnings = transform_stock_impact(
                     df_input,
                     progress_callback=_cb_transform,
                     warehouse_only=warehouse_only,
                     stock_threshold=stock_threshold,
                     ref_date=mtd_date,
                 )
-                buf = generate_excel_stock_impact(summary_brand, summary_buyer, summary_category, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel)
+                buf = generate_excel_stock_impact(summary_brand, summary_buyer, summary_category, summary_item_class, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel)
 
                 st.session_state.stock_impact_processed = True
                 st.session_state.stock_impact_summary_brand = summary_brand
