@@ -2581,11 +2581,9 @@ def _build_ndrf_shop_comparison(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_
 
 
 def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_label: str, month_b_label: str) -> pd.DataFrame:
-    """建構單一 Adj. SST 樞紐對比表，兩月份數據並列在同一頁。
+    """建構單一 Adj. SST 樞紐對比表，兩月份數據並列在同一頁，含變化欄位。
 
-    欄位結構：Site Code, Shop Name, Adj. SST,
-              {月A}: ND_P90D0, ND_Other, ND_Total, RF_P90D0, RF_Other, RF_Total, Grand_Total,
-              {月B}: ND_P90D0, ND_Other, ND_Total, RF_P90D0, RF_Other, RF_Total, Grand_Total
+    欄位命名使用空白取代底線（如 ND P90D0 Mar2026, ND Other Jul2026）。
     """
     def _pivot_for(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
@@ -2628,13 +2626,15 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
         for c in ["ND_P90D0", "ND_Other", "ND_Total", "RF_P90D0", "RF_Other", "RF_Total", "Grand_Total"]:
             pivot_b[c] = 0
 
-    site_code = pivot_a["Site Code"].fillna("").astype(str).str.strip() if not pivot_a.empty else (
-        pivot_b["Site Code"].fillna("").astype(str).str.strip()
-    )
     site_to_name = {}
-    for sc in site_code:
-        if sc and sc not in site_to_name:
-            site_to_name[sc] = ""
+    for _src in [df_a, df_b]:
+        if _src.empty:
+            continue
+        sc = _src["Site Code"].fillna("").astype(str).str.strip()
+        sn = _src.get("Shop Name", _src.get("Shop", _safe_default_series("", _src.index))).fillna("").astype(str).str.strip()
+        for s, n in zip(sc, sn):
+            if s and s not in site_to_name:
+                site_to_name[s] = n if n else ""
 
     data_cols = ["ND_P90D0", "ND_Other", "ND_Total", "RF_P90D0", "RF_Other", "RF_Total", "Grand_Total"]
     a_cols = [f"{c}_A" for c in data_cols]
@@ -2657,21 +2657,36 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
     orig_a_cols = {f"{c}_A": c for c in data_cols}
     orig_b_cols = {f"{c}_B": c for c in data_cols}
 
-    def _col_rename(c):
-        if c in a_cols:
-            return f"{orig_a_cols[c]}_{month_a_label}"
-        if c in b_cols:
-            return f"{orig_b_cols[c]}_{month_b_label}"
-        return c
+    def _col_name(base: str, month: str) -> str:
+        return f"{base.replace('_', ' ')} {month}"
+    def _delta_name(base: str) -> str:
+        return f"{base.replace('_', ' ')} 變化"
 
-    merged = merged.rename(columns=_col_rename)
+    a_rename = {}
+    b_rename = {}
+    for dc in data_cols:
+        a_rename[f"{dc}_A"] = _col_name(dc, month_a_label)
+        b_rename[f"{dc}_B"] = _col_name(dc, month_b_label)
+
+    merged = merged.rename(columns={**a_rename, **b_rename})
+
     merged = merged.drop(columns=[c for c in merged.columns if c in ["Shop Name", "Shop"] if c in merged.columns], errors="ignore")
+
+    displayed_a = [_col_name(dc, month_a_label) for dc in data_cols]
+    displayed_b = [_col_name(dc, month_b_label) for dc in data_cols]
+    delta_cols = [_delta_name(dc) for dc in data_cols]
+
+    for dc, a_c, b_c in zip(data_cols, displayed_a, displayed_b):
+        if a_c in merged.columns and b_c in merged.columns:
+            merged[_delta_name(dc)] = merged[b_c] - merged[a_c]
 
     col_order = ["Site Code", "Adj. SST"]
     for dc in data_cols:
-        col_order.append(f"{dc}_{month_a_label}")
+        col_order.append(_col_name(dc, month_a_label))
     for dc in data_cols:
-        col_order.append(f"{dc}_{month_b_label}")
+        col_order.append(_col_name(dc, month_b_label))
+    for dc in data_cols:
+        col_order.append(_delta_name(dc))
     existing = [c for c in col_order if c in merged.columns]
     trailing = [c for c in merged.columns if c not in existing]
     merged = merged[existing + trailing]
@@ -2683,9 +2698,11 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
         result_rows.append(group)
         sub = {"Site Code": [f"{site} 合計"], "Shop Name": [""], "Adj. SST": [None]}
         for dc in data_cols:
-            sub[f"{dc}_{month_a_label}"] = [int(group[f"{dc}_{month_a_label}"].sum())]
+            sub[_col_name(dc, month_a_label)] = [int(group[_col_name(dc, month_a_label)].sum())]
         for dc in data_cols:
-            sub[f"{dc}_{month_b_label}"] = [int(group[f"{dc}_{month_b_label}"].sum())]
+            sub[_col_name(dc, month_b_label)] = [int(group[_col_name(dc, month_b_label)].sum())]
+        for dc in data_cols:
+            sub[_delta_name(dc)] = [int(group[_delta_name(dc)].sum())]
         result_rows.append(pd.DataFrame(sub))
 
     result = pd.concat(result_rows, ignore_index=True) if result_rows else merged
