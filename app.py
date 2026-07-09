@@ -1899,7 +1899,7 @@ if uploaded_file is not None:
             st.markdown("#### 店舖級月份對比總覽")
             st.dataframe(comparison_by_shop, width='stretch', hide_index=True)
 
-            tab1, tab2, tab3, tab4 = st.tabs(["月份對比 (By Shop)", "Adj. SST 樞紐對比", "MCH2 樞紐對比", "RAW (前50筆)"])
+            tab1, tab2, tab3, tab4 = st.tabs(["月份對比 (By Shop)", "Adj. SST 樞紐對比", "Adj. MCH1 樞紐對比", "RAW (前50筆)"])
             with tab1:
                 st.dataframe(comparison_by_shop, width='stretch', hide_index=True)
             with tab2:
@@ -1911,7 +1911,7 @@ if uploaded_file is not None:
                 if mch2_pivot is not None and not mch2_pivot.empty:
                     st.dataframe(mch2_pivot, width='stretch', hide_index=True)
                 else:
-                    st.info("無 MCH2 樞紐資料")
+                    st.info("無 Adj. MCH1 樞紐資料")
             with tab4:
                 st.dataframe(raw_df.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆 RAW 明細，完整 {len(raw_df):,} 筆將包含在下載的 Excel 報表中。")

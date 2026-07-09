@@ -2445,9 +2445,9 @@ def _build_ndrf_adj_sst_combined_pivot(df_a, df_b, month_a_label, month_b_label)
     """Wrapper — Adj. SST 樞紐對比（委託通用函式）。"""
     return _build_ndrf_category_combined_pivot(df_a, df_b, month_a_label, month_b_label, "Adj. SST")
 
-def _build_ndrf_mch2_combined_pivot(df_a, df_b, month_a_label, month_b_label):
-    """Wrapper — MCH2 樞紐對比（委託通用函式）。"""
-    return _build_ndrf_category_combined_pivot(df_a, df_b, month_a_label, month_b_label, "MCH2")
+def _build_ndrf_adj_mch1_combined_pivot(df_a, df_b, month_a_label, month_b_label):
+    """Wrapper — Adj. MCH1 樞紐對比（委託通用函式）。"""
+    return _build_ndrf_category_combined_pivot(df_a, df_b, month_a_label, month_b_label, "Adj. MCH1")
 
 
 def transform_ndrf_comparison(
@@ -2529,9 +2529,9 @@ def transform_ndrf_comparison(
     adj_sst_pivot = _build_ndrf_adj_sst_combined_pivot(month_a_df, month_b_df, month_a, month_b)
 
     if progress_callback:
-        progress_callback(0.45, "建構 MCH2 樞紐對比表...")
+        progress_callback(0.45, "建構 Adj. MCH1 樞紐對比表...")
 
-    mch2_pivot = _build_ndrf_mch2_combined_pivot(month_a_df, month_b_df, month_a, month_b)
+    mch2_pivot = _build_ndrf_adj_mch1_combined_pivot(month_a_df, month_b_df, month_a, month_b)
 
     if progress_callback:
         progress_callback(0.6, "合併 RAW 資料...")
@@ -2803,8 +2803,8 @@ def generate_excel_ndrf_comparison(
     if progress_callback:
         progress_callback(0.45, "建立 MCH2 樞紐對比表...")
 
-    # ── Sheet 3: MCH2 Comparison Pivot ──
-    ws_mch2 = wb.create_sheet(title="MCH2 樞紐對比")
+    # ── Sheet 3: Adj. MCH1 Comparison Pivot ──
+    ws_mch2 = wb.create_sheet(title="Adj. MCH1 樞紐對比")
     _write_ndrf_generic_pivot(ws_mch2, mch2_pivot, thin_border, header_font, header_fill, bold_font)
 
     if progress_callback:
