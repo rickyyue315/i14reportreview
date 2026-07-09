@@ -2588,20 +2588,27 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
     def _pivot_for(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
             return pd.DataFrame(columns=["Site Code", "Adj. SST", "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"])
+        df = df.copy()
         rp = df["_rp"]
-        count_pivot = df.groupby(["Site Code", "Adj. SST", "_rp"], dropna=False, observed=True).size().reset_index(name="count")
-        wide = count_pivot.pivot_table(index=["Site Code", "Adj. SST"], columns="_rp", values="count", fill_value=0).reset_index()
-        for r in ["ND", "RF"]:
-            if r not in wide.columns:
-                wide[r] = 0
-        wide["ND_With_Stock"] = wide["ND"].fillna(0).astype(int)
+        stock = df["_stock_qty"]
+        df["_cat"] = np.select(
+            [(rp == "ND") & (stock > 0), (rp == "ND") & (stock == 0)],
+            ["ND_With_Stock", "ND_No_Stock"],
+            default="RF"
+        )
+        count_pivot = df.groupby(["Site Code", "Adj. SST", "_cat"], dropna=False, observed=True).size().reset_index(name="count")
+        wide = count_pivot.pivot_table(index=["Site Code", "Adj. SST"], columns="_cat", values="count", fill_value=0).reset_index()
+        for c in ["ND_With_Stock", "RF"]:
+            if c not in wide.columns:
+                wide[c] = 0
+        wide["ND_With_Stock"] = wide["ND_With_Stock"].fillna(0).astype(int)
         wide["RF_Total"] = wide["RF"].fillna(0).astype(int)
         wide["Carry"] = (wide["ND_With_Stock"] + wide["RF_Total"]).astype(int)
-        stock = df.groupby(["Site Code", "Adj. SST"], dropna=False, observed=True).agg(
+        stock_agg = df.groupby(["Site Code", "Adj. SST"], dropna=False, observed=True).agg(
             Stock_Qty=("_stock_qty", "sum"),
             Stock_Value=("_stock_value", "sum"),
         ).reset_index()
-        result = wide.merge(stock, on=["Site Code", "Adj. SST"], how="left")
+        result = wide.merge(stock_agg, on=["Site Code", "Adj. SST"], how="left")
         for c in ["Stock_Qty", "Stock_Value"]:
             result[c] = result[c].fillna(0).astype(int)
         keep = ["Site Code", "Adj. SST", "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]
