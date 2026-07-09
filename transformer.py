@@ -4393,13 +4393,20 @@ def _build_sku_monthly_analysis_simplified(raw: pd.DataFrame, stock_threshold: i
         Sold_MTD=("_sold_mtd", "sum"),
     ).reset_index()
 
+    # 重新命名為 M-2/M-1 顯示格式
+    extra_agg = extra_agg.rename(columns={
+        "D001_M2": "D001_M-2", "D001_M1": "D001_M-1",
+        "ShopStock_M2": "ShopStock_M-2", "ShopStock_M1": "ShopStock_M-1",
+        "Sold_M2": "Sold_M-2", "Sold_M1": "Sold_M-1",
+    })
+
     # 合併
     result = base.merge(extra_agg, on="SKU", how="left")
 
     # 轉整數
-    for c in ["D001_M2", "D001_M1",
-              "ShopStock_M2", "ShopStock_M1",
-              "Sold_M2", "Sold_M1", "Sold_MTD"]:
+    for c in ["D001_M-2", "D001_M-1",
+              "ShopStock_M-2", "ShopStock_M-1",
+              "Sold_M-2", "Sold_M-1", "Sold_MTD"]:
         if c in result.columns:
             result[c] = result[c].fillna(0).astype(int)
 
@@ -4414,14 +4421,19 @@ def _build_sku_monthly_analysis_simplified(raw: pd.DataFrame, stock_threshold: i
     _extra_info_cols = ["Vendor MC", "Adj. MCH1", "Item Status", "Launch Date", "Item Class", "Is New SKU (3mo)"]
     _extra_info_cols = [c for c in _extra_info_cols if c in result.columns]
 
-    _new_period_cols = ["D001_M2", "D001_M1", "ShopStock_M2", "ShopStock_M1", "Sold_M2", "Sold_M1", "Sold_MTD"]
-    _new_period_cols = [c for c in _new_period_cols if c in result.columns]
+    _sold_cols = ["Sold_M-2", "Sold_M-1", "Sold_MTD"]
+    _sold_cols = [c for c in _sold_cols if c in result.columns]
+
+    _d001_cols = ["D001_M-2", "D001_M-1", "ShopStock_M-2", "ShopStock_M-1"]
+    _d001_cols = [c for c in _d001_cols if c in result.columns]
 
     out_cols = ["SKU", "SKU Desc", "Brand", "Buyer"]
     out_cols += _extra_info_cols
-    out_cols += ["低存貨", "總可用存貨", "D001_庫存", "總店舖庫存", "總行數", "RF行數", "ND行數"]
+    out_cols += ["低存貨", "總可用存貨", "D001_庫存", "總店舖庫存"]
+    out_cols += _sold_cols  # Sold 放在 總店舖庫存之後
+    out_cols += ["總行數", "RF行數", "ND行數"]
     out_cols += _nature_cols
-    out_cols += _new_period_cols
+    out_cols += _d001_cols  # D001/ShopStock 放在最後
     out_cols = [c for c in out_cols if c in result.columns]
 
     return result[out_cols]
