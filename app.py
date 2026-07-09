@@ -346,7 +346,7 @@ MODE_KEYS = {
     "OOS Review": {"prefix": "oos_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
-    "NDRF 月份對比": {"prefix": "ndrf_comp_", "processed": False, "comparison_by_shop": None, "adj_sst_pivot": None, "raw_df": None, "excel_data": None, "warnings": []},
+    "NDRF 月份對比": {"prefix": "ndrf_comp_", "processed": False, "comparison_by_shop": None, "adj_sst_pivot": None, "mch2_pivot": None, "raw_df": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "excel_data": None, "warnings": []},
@@ -1365,7 +1365,7 @@ if uploaded_file is not None:
                     st.session_state.nd_excel_data = buf
                     st.session_state.nd_warnings = _warnings
                 elif mode == "NDRF 月份對比":
-                    comparison_by_shop, adj_sst_pivot, raw_df, _warnings = transform_ndrf_comparison(
+                    comparison_by_shop, adj_sst_pivot, mch2_pivot, raw_df, _warnings = transform_ndrf_comparison(
                         df_input,
                         month_a=month_a_selected,
                         month_b=month_b_selected,
@@ -1373,12 +1373,13 @@ if uploaded_file is not None:
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                     )
                     buf = generate_excel_ndrf_comparison(
-                        comparison_by_shop, adj_sst_pivot, raw_df,
+                        comparison_by_shop, adj_sst_pivot, mch2_pivot, raw_df,
                         month_a_selected, month_b_selected, progress_callback=_cb_excel,
                     )
                     st.session_state.ndrf_comp_processed = True
                     st.session_state.ndrf_comp_comparison_by_shop = comparison_by_shop
                     st.session_state.ndrf_comp_adj_sst_pivot = adj_sst_pivot
+                    st.session_state.ndrf_comp_mch2_pivot = mch2_pivot
                     st.session_state.ndrf_comp_raw_df = raw_df
                     st.session_state.ndrf_comp_excel_data = buf
                     st.session_state.ndrf_comp_warnings = _warnings
@@ -1815,6 +1816,7 @@ if uploaded_file is not None:
         if mode == "NDRF 月份對比" and st.session_state.ndrf_comp_processed:
             comparison_by_shop = st.session_state.ndrf_comp_comparison_by_shop
             adj_sst_pivot = st.session_state.ndrf_comp_adj_sst_pivot
+            mch2_pivot = st.session_state.ndrf_comp_mch2_pivot
             raw_df = st.session_state.ndrf_comp_raw_df
             excel_data = st.session_state.ndrf_comp_excel_data
 
@@ -1884,7 +1886,7 @@ if uploaded_file is not None:
             st.markdown("#### 店舖級月份對比總覽")
             st.dataframe(comparison_by_shop, width='stretch', hide_index=True)
 
-            tab1, tab2, tab3 = st.tabs(["月份對比 (By Shop)", "Adj. SST 樞紐對比", "RAW (前50筆)"])
+            tab1, tab2, tab3, tab4 = st.tabs(["月份對比 (By Shop)", "Adj. SST 樞紐對比", "MCH2 樞紐對比", "RAW (前50筆)"])
             with tab1:
                 st.dataframe(comparison_by_shop, width='stretch', hide_index=True)
             with tab2:
@@ -1893,6 +1895,11 @@ if uploaded_file is not None:
                 else:
                     st.info("無 Adj. SST 樞紐資料")
             with tab3:
+                if mch2_pivot is not None and not mch2_pivot.empty:
+                    st.dataframe(mch2_pivot, width='stretch', hide_index=True)
+                else:
+                    st.info("無 MCH2 樞紐資料")
+            with tab4:
                 st.dataframe(raw_df.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆 RAW 明細，完整 {len(raw_df):,} 筆將包含在下載的 Excel 報表中。")
 

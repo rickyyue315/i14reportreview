@@ -1134,16 +1134,45 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     _write_metric_cards(ws_dashboard, "異常庫存數據分析摘要 (Analysis Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
 
     if progress_callback:
-        progress_callback(0.97, "正在儲存 Excel 檔案...")
+        progress_callback(0.95, "正在儲存 Excel 檔案...")
 
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
 
     if progress_callback:
-        progress_callback(1.0, "\u5b8c\u6210!")
+        progress_callback(1.0, "完成!")
 
     return buf
+
+
+def _write_ndrf_generic_pivot(ws, pivot_df, thin_border, header_font, header_fill, bold_font):
+    """寫入通用樞紐對比表（Adj. SST / MCH2 共用）。"""
+    if pivot_df is None or pivot_df.empty:
+        ws.cell(row=1, column=1, value="無樞紐資料").font = Font(size=12)
+        return
+    headers = list(pivot_df.columns)
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+    for row_idx, row_data in pivot_df.iterrows():
+        excel_row = row_idx + 2
+        is_subtotal = "合計" in str(row_data.get("Site Code", ""))
+        for col_idx, h in enumerate(headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_subtotal:
+                cell.font = bold_font
+            if isinstance(val, (int, float)) and val is not None:
+                cell.number_format = "#,##0"
+    _auto_width(ws)
 
 
 # ─── ND SKU Review (SKU 精簡 Review) Functions ─────────────────────────────────
@@ -2412,13 +2441,22 @@ def generate_excel_carry(
 # ─── NDRF Month Comparison Functions ─────────────────────────────────────────────
 
 
+def _build_ndrf_adj_sst_combined_pivot(df_a, df_b, month_a_label, month_b_label):
+    """Wrapper — Adj. SST 樞紐對比（委託通用函式）。"""
+    return _build_ndrf_category_combined_pivot(df_a, df_b, month_a_label, month_b_label, "Adj. SST")
+
+def _build_ndrf_mch2_combined_pivot(df_a, df_b, month_a_label, month_b_label):
+    """Wrapper — MCH2 樞紐對比（委託通用函式）。"""
+    return _build_ndrf_category_combined_pivot(df_a, df_b, month_a_label, month_b_label, "MCH2")
+
+
 def transform_ndrf_comparison(
     df_input: pd.DataFrame,
     month_a: str,
     month_b: str,
     progress_callback=None,
     shop_natures: list[str] | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
     """對比兩個月份每個店舖的 Carry SKU 數量、RF SKU 數量、ND With Stock SKU 數量，並拆解 Adj. SST 分析。
 
     Returns:
@@ -2486,9 +2524,14 @@ def transform_ndrf_comparison(
     comparison_by_shop = _build_ndrf_shop_comparison(month_a_df, month_b_df, month_a, month_b)
 
     if progress_callback:
-        progress_callback(0.4, "建構 Adj. SST 樞紐對比表...")
+        progress_callback(0.3, "建構 Adj. SST 樞紐對比表...")
 
     adj_sst_pivot = _build_ndrf_adj_sst_combined_pivot(month_a_df, month_b_df, month_a, month_b)
+
+    if progress_callback:
+        progress_callback(0.45, "建構 MCH2 樞紐對比表...")
+
+    mch2_pivot = _build_ndrf_mch2_combined_pivot(month_a_df, month_b_df, month_a, month_b)
 
     if progress_callback:
         progress_callback(0.6, "合併 RAW 資料...")
@@ -2502,7 +2545,7 @@ def transform_ndrf_comparison(
     if progress_callback:
         progress_callback(0.7, "轉換完成")
 
-    return comparison_by_shop, adj_sst_pivot, combined_raw, warnings
+    return comparison_by_shop, adj_sst_pivot, mch2_pivot, combined_raw, warnings
 
 
 def _build_ndrf_shop_comparison(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_label: str, month_b_label: str) -> pd.DataFrame:
@@ -2583,11 +2626,11 @@ def _build_ndrf_shop_comparison(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_
     return result
 
 
-def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_label: str, month_b_label: str) -> pd.DataFrame:
-    """建構單一 Adj. SST 樞紐對比表，兩月份數據並列，含 ND Total、RF Total、Grand Total、Shop Stock Qty (CM)、Shop Stock Value (CM) 及變化欄位。"""
+def _build_ndrf_category_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_label: str, month_b_label: str, category_col: str) -> pd.DataFrame:
+    """建構單一樞紐對比表（依 category_col 分組），兩月份數據並列，含 ND With Stock、RF Total、Carry、Stock Qty、Stock Value 及變化欄位。"""
     def _pivot_for(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
-            return pd.DataFrame(columns=["Site Code", "Adj. SST", "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"])
+            return pd.DataFrame(columns=["Site Code", category_col, "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"])
         df = df.copy()
         rp = df["_rp"]
         stock = df["_stock_qty"]
@@ -2596,36 +2639,36 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
             ["ND_With_Stock", "ND_No_Stock"],
             default="RF"
         )
-        count_pivot = df.groupby(["Site Code", "Adj. SST", "_cat"], dropna=False, observed=True).size().reset_index(name="count")
-        wide = count_pivot.pivot_table(index=["Site Code", "Adj. SST"], columns="_cat", values="count", fill_value=0).reset_index()
+        count_pivot = df.groupby(["Site Code", category_col, "_cat"], dropna=False, observed=True).size().reset_index(name="count")
+        wide = count_pivot.pivot_table(index=["Site Code", category_col], columns="_cat", values="count", fill_value=0).reset_index()
         for c in ["ND_With_Stock", "RF"]:
             if c not in wide.columns:
                 wide[c] = 0
         wide["ND_With_Stock"] = wide["ND_With_Stock"].fillna(0).astype(int)
         wide["RF_Total"] = wide["RF"].fillna(0).astype(int)
         wide["Carry"] = (wide["ND_With_Stock"] + wide["RF_Total"]).astype(int)
-        stock_agg = df.groupby(["Site Code", "Adj. SST"], dropna=False, observed=True).agg(
+        stock_agg = df.groupby(["Site Code", category_col], dropna=False, observed=True).agg(
             Stock_Qty=("_stock_qty", "sum"),
             Stock_Value=("_stock_value", "sum"),
         ).reset_index()
-        result = wide.merge(stock_agg, on=["Site Code", "Adj. SST"], how="left")
+        result = wide.merge(stock_agg, on=["Site Code", category_col], how="left")
         for c in ["Stock_Qty", "Stock_Value"]:
             result[c] = result[c].fillna(0).astype(int)
-        keep = ["Site Code", "Adj. SST", "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]
-        return result[keep].sort_values(["Site Code", "Adj. SST"])
+        keep = ["Site Code", category_col, "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]
+        return result[keep].sort_values(["Site Code", category_col])
 
     pivot_a = _pivot_for(df_a) if not df_a.empty else pd.DataFrame()
     pivot_b = _pivot_for(df_b) if not df_b.empty else pd.DataFrame()
 
     if pivot_a.empty and pivot_b.empty:
-        return pd.DataFrame(columns=["Site Code", "Shop Name", "Adj. SST"])
+        return pd.DataFrame(columns=["Site Code", "Shop Name", category_col])
 
     if pivot_a.empty:
-        pivot_a = pivot_b[["Site Code", "Adj. SST"]].copy()
+        pivot_a = pivot_b[["Site Code", category_col]].copy()
         for c in ["ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]:
             pivot_a[c] = 0
     if pivot_b.empty:
-        pivot_b = pivot_a[["Site Code", "Adj. SST"]].copy()
+        pivot_b = pivot_a[["Site Code", category_col]].copy()
         for c in ["ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]:
             pivot_b[c] = 0
 
@@ -2643,7 +2686,7 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
     a_suffix = f"_{month_a_label}"
     b_suffix = f"_{month_b_label}"
 
-    merged = pd.merge(pivot_a, pivot_b, on=["Site Code", "Adj. SST"], how="outer",
+    merged = pd.merge(pivot_a, pivot_b, on=["Site Code", category_col], how="outer",
                       suffixes=(a_suffix, b_suffix))
 
     _all_a = [f"{c}{a_suffix}" for c in data_cols]
@@ -2653,7 +2696,7 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
             merged[c] = 0
         merged[c] = merged[c].fillna(0).astype(int)
 
-    merged = merged.sort_values(["Site Code", "Adj. SST"]).reset_index(drop=True)
+    merged = merged.sort_values(["Site Code", category_col]).reset_index(drop=True)
 
     def _col_name(base: str, month: str) -> str:
         return f"{base.replace('_', ' ')} {month}"
@@ -2673,7 +2716,7 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
         if a_c in merged.columns and b_c in merged.columns:
             merged[_delta_name(dc)] = merged[b_c] - merged[a_c]
 
-    col_order = ["Site Code", "Adj. SST"]
+    col_order = ["Site Code", category_col]
     for dc in data_cols:
         col_order.append(_col_name(dc, month_a_label))
     for dc in data_cols:
@@ -2689,7 +2732,7 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
     result_rows = []
     for site, group in merged.groupby("Site Code", sort=False):
         result_rows.append(group)
-        sub = {"Site Code": [f"{site} 合計"], "Shop Name": [""], "Adj. SST": [None]}
+        sub = {"Site Code": [f"{site} 合計"], "Shop Name": [""], category_col: [None]}
         for dc in data_cols:
             sub[_col_name(dc, month_a_label)] = [int(group[_col_name(dc, month_a_label)].sum())]
             sub[_col_name(dc, month_b_label)] = [int(group[_col_name(dc, month_b_label)].sum())]
@@ -2703,6 +2746,7 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
 def generate_excel_ndrf_comparison(
     comparison_by_shop: pd.DataFrame,
     adj_sst_pivot: pd.DataFrame,
+    mch2_pivot: pd.DataFrame,
     raw_df: pd.DataFrame,
     month_a: str,
     month_b: str,
@@ -2754,37 +2798,19 @@ def generate_excel_ndrf_comparison(
 
     # ── Sheet 2: Adj. SST Comparison Pivot (both months side by side) ──
     ws_pivot = wb.create_sheet(title=f"Adj. SST 樞紐對比")
-    if adj_sst_pivot is not None and not adj_sst_pivot.empty:
-        pivot_headers = list(adj_sst_pivot.columns)
-        for col_idx, h in enumerate(pivot_headers, 1):
-            cell = ws_pivot.cell(row=1, column=col_idx, value=h)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            cell.border = thin_border
+    _write_ndrf_generic_pivot(ws_pivot, adj_sst_pivot, thin_border, header_font, header_fill, bold_font)
 
-        for row_idx, row_data in adj_sst_pivot.iterrows():
-            excel_row = row_idx + 2
-            is_subtotal = "合計" in str(row_data.get("Site Code", ""))
-            for col_idx, h in enumerate(pivot_headers, 1):
-                val = row_data.get(h)
-                if pd.isna(val):
-                    val = None
-                cell = ws_pivot.cell(row=excel_row, column=col_idx, value=val)
-                cell.border = thin_border
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-                if is_subtotal:
-                    cell.font = bold_font
-                if isinstance(val, (int, float)) and val is not None:
-                    cell.number_format = "#,##0"
-        _auto_width(ws_pivot)
-    else:
-        ws_pivot.cell(row=1, column=1, value="無 Adj. SST 樞紐資料").font = Font(size=12)
+    if progress_callback:
+        progress_callback(0.45, "建立 MCH2 樞紐對比表...")
+
+    # ── Sheet 3: MCH2 Comparison Pivot ──
+    ws_mch2 = wb.create_sheet(title="MCH2 樞紐對比")
+    _write_ndrf_generic_pivot(ws_mch2, mch2_pivot, thin_border, header_font, header_fill, bold_font)
 
     if progress_callback:
         progress_callback(0.6, "建立 RAW 工作表...")
 
-    # ── Sheet 3: RAW ──
+    # ── Sheet 4: RAW ──
     ws_raw = wb.create_sheet(title="RAW")
     _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.6, progress_end=0.9)
 
