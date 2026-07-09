@@ -859,6 +859,8 @@ if uploaded_file is not None:
             _adj_ss_s = _safe_numeric(raw_slim.get("Adj. Safety Stock", _safe_default_series(0, raw_slim.index)))
             _oos_mask = (nature_s == "Tourist") & (cm_stock_s <= 0) & impacted_mask
             tourist_oos_qty = int(np.maximum(0, (_adj_ss_s - cm_stock_s))[_oos_mask].sum())
+            # 曾缺貨 Tourist 行數（含已恢復，不限 CM 當期缺貨）
+            tourist_oos_broader = int(((nature_s == 'Tourist') & impacted_mask).sum())
             # Non Tourist 可釋存貨（>14日標準，與 Mix 一致）
             nt_excess_total = int(_safe_numeric(raw_slim.get("Non Tourist Excess Stock", _safe_default_series(0, raw_slim.index))).sum())
             # Mix 可釋放存貨件數（>14日標準）
@@ -996,6 +998,14 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
+            with r3_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #6366F1;">
+                    <div class="metric-title">🕐 曾缺貨Tourist行數(含已恢復)</div>
+                    <div class="metric-value" style="color: #6366F1;">{tourist_oos_broader:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
+                    <div class="metric-desc">任何一期曾缺貨的Tourist RF行數｜含已恢復供貨</div>
+                </div>
+                """, unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
             st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
@@ -1062,6 +1072,7 @@ if uploaded_file is not None:
 
             with impact_tabs[2]:
                 st.markdown("#### Brand 層級缺貨影響分析")
+                st.caption("💡 「Tourist 缺貨行數」含已恢復供貨的店舖（不限當期 CM 缺貨）。Dashboard 的 ⭐「Tourist 缺貨行數」僅計當期仍在缺貨的店舖。")
                 if summary_brand is not None and not summary_brand.empty:
                     st.dataframe(summary_brand, width='stretch', hide_index=True)
                 else:
@@ -1069,6 +1080,7 @@ if uploaded_file is not None:
 
             with impact_tabs[3]:
                 st.markdown("#### Buyer 層級缺貨影響分析")
+                st.caption("💡 「Tourist 缺貨行數」含已恢復供貨的店舖（不限當期 CM 缺貨）。Dashboard 的 ⭐「Tourist 缺貨行數」僅計當期仍在缺貨的店舖。")
                 if summary_buyer is not None and not summary_buyer.empty:
                     st.dataframe(summary_buyer, width='stretch', hide_index=True)
                 else:
@@ -1076,6 +1088,7 @@ if uploaded_file is not None:
 
             with impact_tabs[4]:
                 st.markdown("#### Category (Adj. MCH1) 層級缺貨影響分析")
+                st.caption("💡 「Tourist 缺貨行數」含已恢復供貨的店舖（不限當期 CM 缺貨）。Dashboard 的 ⭐「Tourist 缺貨行數」僅計當期仍在缺貨的店舖。")
                 if summary_category is not None and not summary_category.empty:
                     st.dataframe(summary_category, width='stretch', hide_index=True)
                 else:
@@ -2075,3 +2088,7 @@ st.markdown(
     '</div>',
     unsafe_allow_html=True,
 )
+
+
+
+

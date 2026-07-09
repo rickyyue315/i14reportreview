@@ -4571,6 +4571,8 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
     _adj_ss = _safe_numeric(raw_df.get("Adj. Safety Stock", _safe_default_series(0, raw_df.index)))
     _oos_mask = (nature == "Tourist") & (cm_stock <= 0) & (raw_df.get("Is Stock Impacted", pd.Series(False, index=raw_df.index)))
     tourist_oos_qty = int(np.maximum(0, (_adj_ss.values - cm_stock.values))[_oos_mask.values].sum())
+    # 曾缺貨 Tourist 行數（含已恢復，不限 CM 當期缺貨）
+    tourist_oos_broader = int(((nature == "Tourist") & raw_df["Is Stock Impacted"]).sum()) if "Is Stock Impacted" in raw_df else 0
 
     # Non Tourist 可釋放存貨件數（>14日標準，與 Mix 一致）
     nt_excess_total = int(_safe_numeric(raw_df.get("Non Tourist Excess Stock", _safe_default_series(0, raw_df.index))).sum())
@@ -4629,7 +4631,7 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
         ("🔄 可調貨Tourist行數", transferrable_tourist_rows, "Tourist缺貨+同SKU在Mix/NT有可釋放件數｜單位：行數", "059669"),
         ("📦 可調貨SKU數", transferrable_sku_count, "涉及的不重複SKU數量｜單位：SKU數", "0D9488"),
         ("📉 Tourist 缺貨數量", tourist_oos_qty, "缺失件數 = Safety − Shop Net Stock｜單位：件數", "DC2626"),
-        ("", "", "", "FFFFFF"),
+        ("🕐 曾缺貨Tourist行數(含已恢復)", tourist_oos_broader, "任何一期曾缺貨的Tourist RF行數｜含已恢復供貨", "6366F1"),
     ]
 
     _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback, row3_metrics=row3_metrics)
@@ -4887,3 +4889,4 @@ def generate_excel_stock_impact_simplified(
         progress_callback(1.0, "完成!")
 
     return buf
+
