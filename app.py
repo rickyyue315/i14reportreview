@@ -16,6 +16,7 @@ from transformer import (
 )
 import time
 import traceback
+import gc
 from openpyxl import load_workbook
 from io import BytesIO
 from version import __version__
@@ -310,7 +311,14 @@ with st.sidebar:
     """)
     
     st.divider()
-    
+
+    if st.button("🧹 釋放記憶體", type="secondary", use_container_width=True,
+                 help="清除所有快取資料與上傳的 Excel 檔案，釋放記憶體空間。清除後需重新上傳檔案。"):
+        for _key in list(st.session_state.keys()):
+            del st.session_state[_key]
+        gc.collect()
+        st.rerun()
+
     st.markdown(
         '<div style="color: #444455; font-size: 0.75rem; text-align: center; line-height: 1.5;">'
         f'I14 報表計算工具 v{__version__}<br>'
@@ -365,6 +373,7 @@ if prev_mode is not None and prev_mode != current_mode:
             key = f"{cfg['prefix']}{attr}"
             st.session_state[key] = [] if isinstance(default, list) else default
     st.session_state.pop("last_uploaded_key", None)
+    gc.collect()
 st.session_state.mode = current_mode
 mode = current_mode
 
@@ -1148,8 +1157,11 @@ if uploaded_file is not None:
                 sku_monthly_simp = _build_sku_monthly_analysis_simplified(raw_df, stock_threshold=stock_threshold)
                 buf = generate_excel_stock_impact_simplified(raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_simp)
 
+                # raw_df is no longer needed after Excel generation — only sku_monthly_simp and buf are used downstream
+                del raw_df
+                gc.collect()
+
                 st.session_state.stock_impact_simp_processed = True
-                st.session_state.stock_impact_simp_raw_df = raw_df
                 st.session_state.stock_impact_simp_sku_monthly_analysis = sku_monthly_simp
                 st.session_state.stock_impact_simp_excel_data = buf
                 st.session_state.stock_impact_simp_warnings = _warnings

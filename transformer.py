@@ -2587,16 +2587,16 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
     """建構單一 Adj. SST 樞紐對比表，兩月份數據並列，含 ND Total、RF Total、Grand Total、Shop Stock Qty (CM)、Shop Stock Value (CM) 及變化欄位。"""
     def _pivot_for(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
-            return pd.DataFrame(columns=["Site Code", "Adj. SST", "ND_Total", "RF_Total", "Grand_Total", "Stock_Qty", "Stock_Value"])
+            return pd.DataFrame(columns=["Site Code", "Adj. SST", "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"])
         rp = df["_rp"]
         count_pivot = df.groupby(["Site Code", "Adj. SST", "_rp"], dropna=False, observed=True).size().reset_index(name="count")
         wide = count_pivot.pivot_table(index=["Site Code", "Adj. SST"], columns="_rp", values="count", fill_value=0).reset_index()
         for r in ["ND", "RF"]:
             if r not in wide.columns:
                 wide[r] = 0
-        wide["ND_Total"] = wide["ND"].fillna(0).astype(int)
+        wide["ND_With_Stock"] = wide["ND"].fillna(0).astype(int)
         wide["RF_Total"] = wide["RF"].fillna(0).astype(int)
-        wide["Grand_Total"] = (wide["ND_Total"] + wide["RF_Total"]).astype(int)
+        wide["Carry"] = (wide["ND_With_Stock"] + wide["RF_Total"]).astype(int)
         stock = df.groupby(["Site Code", "Adj. SST"], dropna=False, observed=True).agg(
             Stock_Qty=("_stock_qty", "sum"),
             Stock_Value=("_stock_value", "sum"),
@@ -2604,7 +2604,7 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
         result = wide.merge(stock, on=["Site Code", "Adj. SST"], how="left")
         for c in ["Stock_Qty", "Stock_Value"]:
             result[c] = result[c].fillna(0).astype(int)
-        keep = ["Site Code", "Adj. SST", "ND_Total", "RF_Total", "Grand_Total", "Stock_Qty", "Stock_Value"]
+        keep = ["Site Code", "Adj. SST", "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]
         return result[keep].sort_values(["Site Code", "Adj. SST"])
 
     pivot_a = _pivot_for(df_a) if not df_a.empty else pd.DataFrame()
@@ -2615,11 +2615,11 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
 
     if pivot_a.empty:
         pivot_a = pivot_b[["Site Code", "Adj. SST"]].copy()
-        for c in ["ND_Total", "RF_Total", "Grand_Total", "Stock_Qty", "Stock_Value"]:
+        for c in ["ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]:
             pivot_a[c] = 0
     if pivot_b.empty:
         pivot_b = pivot_a[["Site Code", "Adj. SST"]].copy()
-        for c in ["ND_Total", "RF_Total", "Grand_Total", "Stock_Qty", "Stock_Value"]:
+        for c in ["ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]:
             pivot_b[c] = 0
 
     site_to_name = {}
@@ -2632,7 +2632,7 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
             if s and s not in site_to_name:
                 site_to_name[s] = n if n else ""
 
-    data_cols = ["ND_Total", "RF_Total", "Grand_Total", "Stock_Qty", "Stock_Value"]
+    data_cols = ["ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]
     a_suffix = f"_{month_a_label}"
     b_suffix = f"_{month_b_label}"
 
