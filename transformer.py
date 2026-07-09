@@ -4336,22 +4336,26 @@ def generate_excel_stock_impact(
 # SKU Monthly Sales&Store 不分 Shop Nature，隻顯示 M-2, M-1, MTD 的 D001 存貨、店舖存貨和總銷售量
 
 def _build_sku_monthly_analysis_simplified(raw: pd.DataFrame, stock_threshold: int = 300) -> pd.DataFrame:
-    """簡化版 SKU 月銷量和存儲量分析（不分 Shop Nature）。
+    """簡化版 SKU 月銷量和存儲量分析（保留原版所有欄位，新增不分 Nature 的週期存貨/銷售欄位）。
 
-    每列為一個 SKU，顯示 M-2, M-1, MTD 的 D001 存貨量、店舖總存貨量和店舖總銷售量。
+    保留原版 `_build_sku_monthly_analysis` 的所有欄位（含 Tourist/Mix/Non Tourist 分拆），
+    再附加 M-2, M-1, MTD 的 D001 存貨量、店舖總存貨量和店舖總銷售量（不分 Shop Nature）。
     """
     if raw.empty or "SKU" not in raw.columns:
         return pd.DataFrame()
 
-    # 三期對應欄位
+    # 先取得原版完整輸出（含 Nature 分拆欄位）
+    base = _build_sku_monthly_analysis(raw, stock_threshold=stock_threshold)
+    if base.empty:
+        return base
+
+    # 計算不分 Nature 的週期欄位
     periods = [
         ("M-2", "Shop Stock Qty (M-2)", "Sold Qty (M-2)", "D001 Stock Qty (M-2)"),
         ("M-1", "Shop Stock Qty (M-1)", "Sold Qty (M-1)", "D001 Stock Qty (M-1)"),
         ("MTD", "Shop Stock Qty (CM)", "Sold Qty (CM - MTD)", "D001 Stock Qty (CM)"),
     ]
 
-    # 安全取得各欄位
-    sku = raw["SKU"].fillna("").astype(str)
     d001_cols = {}
     shop_stock_cols = {}
     sold_cols = {}
@@ -4360,90 +4364,37 @@ def _build_sku_monthly_analysis_simplified(raw: pd.DataFrame, stock_threshold: i
         shop_stock_cols[label] = _safe_numeric(raw.get(stock_col, _safe_default_series(0, raw.index)))
         sold_cols[label] = _safe_numeric(raw.get(sold_col, _safe_default_series(0, raw.index)))
 
-    # P90D 月均銷售
-    p90d = _safe_numeric(raw.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, raw.index)))
-
-    # RP Type
-    rp_type = (
-        raw.get("RP Type", _safe_default_series("", raw.index))
-        .fillna("").astype(str).str.strip().str.upper()
-    )
-    is_rf = (rp_type == "RF").astype(int)
-    is_nd = (rp_type == "ND").astype(int)
-
-    # 建立工作 DataFrame
-    work = pd.DataFrame({"SKU": sku.values})
+    sku_raw = raw["SKU"].fillna("").astype(str).values
+    extra_data = {"SKU": sku_raw}
     for label, _, _, _ in periods:
-        work[f"_d001_{label}"] = d001_cols[label].values
-        work[f"_stock_{label}"] = shop_stock_cols[label].values
-        work[f"_sold_{label}"] = sold_cols[label].values
-    work["_p90d"] = p90d.values
-    work["_is_rf"] = is_rf.values
-    work["_is_nd"] = is_nd.values
+        extra_data[f"D001_{label}"] = d001_cols[label].values
+        extra_data[f"ShopStock_{label}"] = shop_stock_cols[label].values
+        extra_data[f"Sold_{label}"] = sold_cols[label].values
+    extra = pd.DataFrame(extra_data)
 
-    # SKU 級聚合
-    agg_dict = {
-        "D001_M-2": ("_d001_M-2", "first"),
-        "D001_M-1": ("_d001_M-1", "first"),
-        "D001_MTD": ("_d001_MTD", "first"),
-        "ShopStock_M-2": ("_stock_M-2", "sum"),
-        "ShopStock_M-1": ("_stock_M-1", "sum"),
-        "ShopStock_MTD": ("_stock_MTD", "sum"),
-        "Sold_M-2": ("_sold_M-2", "sum"),
-        "Sold_M-1": ("_sold_M-1", "sum"),
-        "Sold_MTD": ("_sold_MTD", "sum"),
-        "P90D_sum": ("_p90d", "sum"),
-        "總店數": ("SKU", "count"),
-        "RF店數": ("_is_rf", "sum"),
-        "ND店數": ("_is_nd", "sum"),
-    }
+    extra_agg = extra.groupby("SKU", dropna=False).agg(
+        D001_M2=("D001_M-2", "first"),
+        D001_M1=("D001_M-1", "first"),
+        D001_MTD=("D001_MTD", "first"),
+        ShopStock_M2=("ShopStock_M-2", "sum"),
+        ShopStock_M1=("ShopStock_M-1", "sum"),
+        ShopStock_MTD=("ShopStock_MTD", "sum"),
+        Sold_M2=("Sold_M-2", "sum"),
+        Sold_M1=("Sold_M-1", "sum"),
+        Sold_MTD=("Sold_MTD", "sum"),
+    ).reset_index()
 
-    sku_agg = work.groupby("SKU", dropna=False).agg(**agg_dict).reset_index()
-    sku_agg["P90D_月均"] = sku_agg["P90D_sum"] / 3.0
-    sku_agg = sku_agg.drop(columns=["P90D_sum"])
-
-    # 從 raw 取 Brand/Buyer/SKU Desc
-    for col in ["Brand", "Buyer", "SKU Desc"]:
-        if col in raw.columns:
-            col_first = raw.groupby("SKU", dropna=False)[col].first().reset_index()
-            sku_agg = sku_agg.merge(col_first, on="SKU", how="left")
-
-    # 計算總可用存貨 (D001_MTD + ShopStock_MTD)
-    sku_agg["總可用存貨"] = sku_agg["D001_MTD"] + sku_agg["ShopStock_MTD"]
-    sku_agg["低存貨"] = sku_agg["總可用存貨"] < stock_threshold
-
-    # 排序：低存貨優先 → P90D 月均銷售降序
-    sku_agg = sku_agg.sort_values(
-        ["低存貨", "P90D_月均"],
-        ascending=[False, False],
-    ).reset_index(drop=True)
+    # 合併到 base
+    result = base.merge(extra_agg, on="SKU", how="left")
 
     # 轉整數
-    int_cols = ["D001_M-2", "D001_M-1", "D001_MTD",
-                "ShopStock_M-2", "ShopStock_M-1", "ShopStock_MTD",
-                "Sold_M-2", "Sold_M-1", "Sold_MTD",
-                "總店數", "RF店數", "ND店數", "總可用存貨"]
-    for c in int_cols:
-        sku_agg[c] = sku_agg[c].fillna(0).astype(int)
-    sku_agg["P90D_月均"] = sku_agg["P90D_月均"].fillna(0).round(1)
+    for c in ["D001_M2", "D001_M1", "D001_MTD",
+              "ShopStock_M2", "ShopStock_M1", "ShopStock_MTD",
+              "Sold_M2", "Sold_M1", "Sold_MTD"]:
+        if c in result.columns:
+            result[c] = result[c].fillna(0).astype(int)
 
-    # 欄位順序
-    out_cols = ["SKU"]
-    for col in ["SKU Desc", "Brand", "Buyer"]:
-        if col in sku_agg.columns:
-            out_cols.append(col)
-    out_cols += ["低存貨", "總可用存貨"]
-    # D001 存貨
-    out_cols += ["D001_M-2", "D001_M-1", "D001_MTD"]
-    # 店舖存貨
-    out_cols += ["ShopStock_M-2", "ShopStock_M-1", "ShopStock_MTD"]
-    # 店舖總銷售量
-    out_cols += ["Sold_M-2", "Sold_M-1", "Sold_MTD"]
-    # 其他
-    out_cols += ["P90D_月均", "總店數", "RF店數", "ND店數"]
-    out_cols = [c for c in out_cols if c in sku_agg.columns]
-
-    return sku_agg[out_cols]
+    return result
 
 
 def generate_excel_stock_impact_simplified(
@@ -4451,7 +4402,11 @@ def generate_excel_stock_impact_simplified(
     progress_callback=None,
     sku_monthly_analysis: pd.DataFrame | None = None,
 ) -> BytesIO:
-    """簡化版 Excel 輸出：隻有 RAW 和 SKU Monthly Sales&Store 兩個工作表。"""
+    """簡化版 Excel 輸出：隻輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表。
+
+    SKU Monthly Sales&Store 保留原版所有欄位，並新增 M-2, M-1, MTD 的
+    D001 存貨量、店舖總存貨量及店舖總銷售量（不分 Shop Nature）。
+    """
     wb = Workbook()
 
     if progress_callback:
@@ -4475,8 +4430,8 @@ def generate_excel_stock_impact_simplified(
     # Sheet 2: SKU Monthly Sales&Store
     ws_sku_monthly = wb.create_sheet(title="SKU Monthly Sales&Store")
     if sku_monthly_analysis is not None and not sku_monthly_analysis.empty:
-        ws_sku_monthly.cell(row=1, column=1, value="SKU 月銷量和存儲量分析（簡化版，不分 Shop Nature）").font = Font(bold=True, size=12, color="1E40AF")
-        ws_sku_monthly.cell(row=2, column=1, value="各 SKU 的 M-2, M-1, MTD 期 D001 存貨量、店舖總存貨量及店舖總銷售量。低存貨 SKU 優先顯示。").font = Font(size=10, italic=True, color="6B7280")
+        ws_sku_monthly.cell(row=1, column=1, value="SKU 月銷量和存儲量分析（簡化版，含原版欄位 + 新增不分 Nature 的週期存貨/銷售）").font = Font(bold=True, size=12, color="1E40AF")
+        ws_sku_monthly.cell(row=2, column=1, value="保留原版 Tourist/Mix/Non Tourist 所有欄位，再新增 M-2, M-1, MTD 的 D001 存貨量、店舖總存貨量及店舖總銷售量（不分 Shop Nature）。低存貨 SKU 優先顯示。").font = Font(size=10, italic=True, color="6B7280")
         headers = list(sku_monthly_analysis.columns)
         for col_idx, h in enumerate(headers, 1):
             cell = ws_sku_monthly.cell(row=4, column=col_idx, value=h)
