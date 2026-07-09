@@ -2469,10 +2469,13 @@ def transform_ndrf_comparison(
     ndrf_mask = rp_type.isin(["ND", "RF"])
     df = df[ndrf_mask].copy()
 
+    shop_stock_value_cm = _safe_numeric(df.get("Shop Stock Value (CM)", _safe_default_series(0, df.index)))
+
     df["_is_carry"] = ~((rp_type[ndrf_mask] == "ND") & (shop_stock_cm[ndrf_mask] == 0))
     df["_is_rf"] = (rp_type[ndrf_mask] == "RF").astype(int)
     df["_is_nd_with_stock"] = ((rp_type[ndrf_mask] == "ND") & (shop_stock_cm[ndrf_mask] > 0)).astype(int)
     df["_stock_qty"] = shop_stock_cm[ndrf_mask]
+    df["_stock_value"] = shop_stock_value_cm[ndrf_mask]
 
     month_a_df = df[df["Month"].astype(str).str.strip() == month_a].copy()
     month_b_df = df[df["Month"].astype(str).str.strip() == month_b].copy()
@@ -2581,35 +2584,28 @@ def _build_ndrf_shop_comparison(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_
 
 
 def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_label: str, month_b_label: str) -> pd.DataFrame:
-    """建構單一 Adj. SST 樞紐對比表，兩月份數據並列在同一頁，含變化欄位。
-
-    欄位命名使用空白取代底線（如 ND P90D0 Mar2026, ND Other Jul2026）。
-    """
+    """建構單一 Adj. SST 樞紐對比表，兩月份數據並列，含 ND Total、RF Total、Grand Total、Shop Stock Qty (CM)、Shop Stock Value (CM) 及變化欄位。"""
     def _pivot_for(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
-            return pd.DataFrame(columns=["Site Code", "Adj. SST", "ND_P90D0", "ND_Other", "ND_Total", "RF_P90D0", "RF_Other", "RF_Total", "Grand_Total"])
-        status = df["Shop Stock Status"].fillna("")
-        df = df.copy()
-        df["_st2"] = np.where(status == CARRY_P90D0_STATUS, "P90D 0 Sales", "Other Status")
+            return pd.DataFrame(columns=["Site Code", "Adj. SST", "ND_Total", "RF_Total", "Grand_Total", "Stock_Qty", "Stock_Value"])
         rp = df["_rp"]
-        group_cols = ["Site Code", "Adj. SST", "_rp", "_st2"]
-        pivot = df.groupby(group_cols, dropna=False, observed=True).size().reset_index(name="count")
-        wide = pivot.pivot_table(index=["Site Code", "Adj. SST"], columns=["_rp", "_st2"], values="count", fill_value=0)
-        wide.columns = [f"{r}_{s}" for r, s in wide.columns]
-        wide = wide.reset_index()
+        count_pivot = df.groupby(["Site Code", "Adj. SST", "_rp"], dropna=False, observed=True).size().reset_index(name="count")
+        wide = count_pivot.pivot_table(index=["Site Code", "Adj. SST"], columns="_rp", values="count", fill_value=0).reset_index()
         for r in ["ND", "RF"]:
-            for s in ["P90D 0 Sales", "Other Status"]:
-                col = f"{r}_{s}"
-                if col not in wide.columns:
-                    wide[col] = 0
-        wide = wide.rename(columns={"ND_P90D 0 Sales": "ND_P90D0", "ND_Other Status": "ND_Other",
-                                     "RF_P90D 0 Sales": "RF_P90D0", "RF_Other Status": "RF_Other"})
-        wide["ND_Total"] = (wide["ND_P90D0"] + wide["ND_Other"]).astype(int)
-        wide["RF_Total"] = (wide["RF_P90D0"] + wide["RF_Other"]).astype(int)
+            if r not in wide.columns:
+                wide[r] = 0
+        wide["ND_Total"] = wide["ND"].fillna(0).astype(int)
+        wide["RF_Total"] = wide["RF"].fillna(0).astype(int)
         wide["Grand_Total"] = (wide["ND_Total"] + wide["RF_Total"]).astype(int)
-        for c in ["ND_P90D0", "ND_Other", "RF_P90D0", "RF_Other"]:
-            wide[c] = wide[c].fillna(0).astype(int)
-        return wide.sort_values(["Site Code", "Adj. SST"])
+        stock = df.groupby(["Site Code", "Adj. SST"], dropna=False, observed=True).agg(
+            Stock_Qty=("_stock_qty", "sum"),
+            Stock_Value=("_stock_value", "sum"),
+        ).reset_index()
+        result = wide.merge(stock, on=["Site Code", "Adj. SST"], how="left")
+        for c in ["Stock_Qty", "Stock_Value"]:
+            result[c] = result[c].fillna(0).astype(int)
+        keep = ["Site Code", "Adj. SST", "ND_Total", "RF_Total", "Grand_Total", "Stock_Qty", "Stock_Value"]
+        return result[keep].sort_values(["Site Code", "Adj. SST"])
 
     pivot_a = _pivot_for(df_a) if not df_a.empty else pd.DataFrame()
     pivot_b = _pivot_for(df_b) if not df_b.empty else pd.DataFrame()
@@ -2619,11 +2615,11 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
 
     if pivot_a.empty:
         pivot_a = pivot_b[["Site Code", "Adj. SST"]].copy()
-        for c in ["ND_P90D0", "ND_Other", "ND_Total", "RF_P90D0", "RF_Other", "RF_Total", "Grand_Total"]:
+        for c in ["ND_Total", "RF_Total", "Grand_Total", "Stock_Qty", "Stock_Value"]:
             pivot_a[c] = 0
     if pivot_b.empty:
         pivot_b = pivot_a[["Site Code", "Adj. SST"]].copy()
-        for c in ["ND_P90D0", "ND_Other", "ND_Total", "RF_P90D0", "RF_Other", "RF_Total", "Grand_Total"]:
+        for c in ["ND_Total", "RF_Total", "Grand_Total", "Stock_Qty", "Stock_Value"]:
             pivot_b[c] = 0
 
     site_to_name = {}
@@ -2636,47 +2632,37 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
             if s and s not in site_to_name:
                 site_to_name[s] = n if n else ""
 
-    data_cols = ["ND_P90D0", "ND_Other", "ND_Total", "RF_P90D0", "RF_Other", "RF_Total", "Grand_Total"]
-    a_cols = [f"{c}_A" for c in data_cols]
-    b_cols = [f"{c}_B" for c in data_cols]
+    data_cols = ["ND_Total", "RF_Total", "Grand_Total", "Stock_Qty", "Stock_Value"]
+    a_suffix = f"_{month_a_label}"
+    b_suffix = f"_{month_b_label}"
 
     merged = pd.merge(pivot_a, pivot_b, on=["Site Code", "Adj. SST"], how="outer",
-                      suffixes=("_A", "_B"))
+                      suffixes=(a_suffix, b_suffix))
 
-    for c in a_cols:
-        if c not in merged.columns:
-            merged[c] = 0
-        merged[c] = merged[c].fillna(0).astype(int)
-    for c in b_cols:
+    _all_a = [f"{c}{a_suffix}" for c in data_cols]
+    _all_b = [f"{c}{b_suffix}" for c in data_cols]
+    for c in _all_a + _all_b:
         if c not in merged.columns:
             merged[c] = 0
         merged[c] = merged[c].fillna(0).astype(int)
 
     merged = merged.sort_values(["Site Code", "Adj. SST"]).reset_index(drop=True)
 
-    orig_a_cols = {f"{c}_A": c for c in data_cols}
-    orig_b_cols = {f"{c}_B": c for c in data_cols}
-
     def _col_name(base: str, month: str) -> str:
         return f"{base.replace('_', ' ')} {month}"
     def _delta_name(base: str) -> str:
         return f"{base.replace('_', ' ')} 變化"
 
-    a_rename = {}
-    b_rename = {}
+    rename_map = {}
     for dc in data_cols:
-        a_rename[f"{dc}_A"] = _col_name(dc, month_a_label)
-        b_rename[f"{dc}_B"] = _col_name(dc, month_b_label)
-
-    merged = merged.rename(columns={**a_rename, **b_rename})
-
+        rename_map[f"{dc}{a_suffix}"] = _col_name(dc, month_a_label)
+        rename_map[f"{dc}{b_suffix}"] = _col_name(dc, month_b_label)
+    merged = merged.rename(columns=rename_map)
     merged = merged.drop(columns=[c for c in merged.columns if c in ["Shop Name", "Shop"] if c in merged.columns], errors="ignore")
 
-    displayed_a = [_col_name(dc, month_a_label) for dc in data_cols]
-    displayed_b = [_col_name(dc, month_b_label) for dc in data_cols]
-    delta_cols = [_delta_name(dc) for dc in data_cols]
-
-    for dc, a_c, b_c in zip(data_cols, displayed_a, displayed_b):
+    for dc in data_cols:
+        a_c = _col_name(dc, month_a_label)
+        b_c = _col_name(dc, month_b_label)
         if a_c in merged.columns and b_c in merged.columns:
             merged[_delta_name(dc)] = merged[b_c] - merged[a_c]
 
@@ -2699,9 +2685,7 @@ def _build_ndrf_adj_sst_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, m
         sub = {"Site Code": [f"{site} 合計"], "Shop Name": [""], "Adj. SST": [None]}
         for dc in data_cols:
             sub[_col_name(dc, month_a_label)] = [int(group[_col_name(dc, month_a_label)].sum())]
-        for dc in data_cols:
             sub[_col_name(dc, month_b_label)] = [int(group[_col_name(dc, month_b_label)].sum())]
-        for dc in data_cols:
             sub[_delta_name(dc)] = [int(group[_delta_name(dc)].sum())]
         result_rows.append(pd.DataFrame(sub))
 
