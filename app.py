@@ -12,6 +12,7 @@ from transformer import (
     transform_nd, generate_excel_nd,
     transform_stock_impact, generate_excel_stock_impact,
     _build_sku_monthly_analysis_simplified, generate_excel_stock_impact_simplified,
+    transform_ndrf_comparison, generate_excel_ndrf_comparison,
 )
 import time
 import traceback
@@ -206,6 +207,11 @@ with st.sidebar:
     - 依 Supply Source × Shop Stock Status 雙層動態分類
     - 輸出：RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要
 
+    **📊 NDRF 月份對比**
+    - 對比兩個月份（如 Mar2026 vs Jul2026）各店舖的 Carry SKU、RF SKU、ND With Stock SKU 數量
+    - 支援按 Adj. SST 交叉分析與 SKU 級明細檢視
+    - 輸出：月份對比 (By Shop)、Adj. SST 樞紐表 (x2)、SKU 明細、RAW
+
     **🔒 Safety Stock Review**
     - 全面審查各 SKU×Shop 的安全庫存設定是否合理
     - 結合 Overstock Cap（庫存上限）與 OOS Floor（缺貨底線），雙向平衡調整 Safety Stock
@@ -323,7 +329,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 5. 模式選擇器
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)"]
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0)
 
 # 6. 初始化 Session State (確保下載與重整時狀態持久化)
@@ -332,6 +338,7 @@ MODE_KEYS = {
     "OOS Review": {"prefix": "oos_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
+    "NDRF 月份對比": {"prefix": "ndrf_comp_", "processed": False, "comparison_by_shop": None, "adj_sst_pivot_a": None, "adj_sst_pivot_b": None, "sku_detail": None, "raw_df": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "excel_data": None, "warnings": []},
@@ -1210,6 +1217,29 @@ if uploaded_file is not None:
             month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
             st.caption(f"MTD: {mtd_days}日，當月共 {month_total_days} 日")
 
+        if mode == "NDRF 月份對比":
+            _all_months = sorted(df_input["Month"].dropna().unique())
+            if len(_all_months) < 2:
+                st.error(f"❌ 來源檔案的「Month」欄位至少需有 2 個不同月份值，目前僅有: {_all_months}")
+                st.stop()
+            col_month_a, col_month_b = st.columns(2)
+            with col_month_a:
+                month_a_selected = st.selectbox(
+                    "📅 選擇對比月份 A",
+                    options=_all_months,
+                    index=0,
+                    help="選擇月份 A（對比的基準月份）"
+                )
+            with col_month_b:
+                month_b_selected = st.selectbox(
+                    "📅 選擇對比月份 B",
+                    options=_all_months,
+                    index=min(1, len(_all_months) - 1),
+                    help="選擇月份 B（對比的比較月份）"
+                )
+            if month_a_selected == month_b_selected:
+                st.warning("⚠️ 月份 A 與月份 B 相同，對比將無差異。請選擇不同月份。")
+
         st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 
         SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
@@ -1223,8 +1253,8 @@ if uploaded_file is not None:
         _is_overstock_mode = (mode == "Overstock Review")
         _is_carry_mode = (mode == "Carry SKU Review")
         # Modes that don't use the Shop Nature Rate sliders (no Safety Qty calculation):
-        # Carry SKU Review (pivot only) and SKU 精簡 Review (full 退倉, no rate needed).
-        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review")
+        # Carry SKU Review, SKU 精簡 Review, NDRF 月份對比 (pivot/comparison only).
+        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比")
 
         if not _skip_rates_mode:
             _tourist_default = 30 if _is_overstock_mode else 50
@@ -1322,7 +1352,27 @@ if uploaded_file is not None:
                     st.session_state.nd_categories = categories
                     st.session_state.nd_excel_data = buf
                     st.session_state.nd_warnings = _warnings
-                else:  # OOS Review
+                elif mode == "NDRF 月份對比":
+                    comparison_by_shop, adj_sst_pivot_a, adj_sst_pivot_b, sku_detail, raw_df, _warnings = transform_ndrf_comparison(
+                        df_input,
+                        month_a=month_a_selected,
+                        month_b=month_b_selected,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                    )
+                    buf = generate_excel_ndrf_comparison(
+                        comparison_by_shop, adj_sst_pivot_a, adj_sst_pivot_b, sku_detail, raw_df,
+                        month_a_selected, month_b_selected, progress_callback=_cb_excel,
+                    )
+                    st.session_state.ndrf_comp_processed = True
+                    st.session_state.ndrf_comp_comparison_by_shop = comparison_by_shop
+                    st.session_state.ndrf_comp_adj_sst_pivot_a = adj_sst_pivot_a
+                    st.session_state.ndrf_comp_adj_sst_pivot_b = adj_sst_pivot_b
+                    st.session_state.ndrf_comp_sku_detail = sku_detail
+                    st.session_state.ndrf_comp_raw_df = raw_df
+                    st.session_state.ndrf_comp_excel_data = buf
+                    st.session_state.ndrf_comp_warnings = _warnings
+                elif mode == "OOS Review":  # OOS Review
                     summary_df, raw_df, categories, _warnings = transform_oos(
                         df_input,
                         progress_callback=_cb_transform,
@@ -1745,6 +1795,113 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載 SKU 精簡 Review 分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+            )
+
+        if mode == "NDRF 月份對比" and st.session_state.ndrf_comp_processed:
+            comparison_by_shop = st.session_state.ndrf_comp_comparison_by_shop
+            adj_sst_pivot_a = st.session_state.ndrf_comp_adj_sst_pivot_a
+            adj_sst_pivot_b = st.session_state.ndrf_comp_adj_sst_pivot_b
+            sku_detail = st.session_state.ndrf_comp_sku_detail
+            raw_df = st.session_state.ndrf_comp_raw_df
+            excel_data = st.session_state.ndrf_comp_excel_data
+
+            st.markdown('<div class="custom-card" style="border-top: 4px solid #10b981;">', unsafe_allow_html=True)
+            st.markdown("### 📊 NDRF 月份對比分析摘要")
+
+            _total_row = comparison_by_shop[comparison_by_shop["Site Code"] == "總計"]
+            tr = _total_row.iloc[0] if not _total_row.empty else None
+
+            shop_count = len(comparison_by_shop[comparison_by_shop["Site Code"] != "總計"])
+            total_carry_a = int(tr["Carry 月A"]) if tr is not None else 0
+            total_carry_b = int(tr["Carry 月B"]) if tr is not None else 0
+            total_rf_a = int(tr["RF 月A"]) if tr is not None else 0
+            total_rf_b = int(tr["RF 月B"]) if tr is not None else 0
+            total_nd_a = int(tr["ND With Stock 月A"]) if tr is not None else 0
+            total_nd_b = int(tr["ND With Stock 月B"]) if tr is not None else 0
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #10b981;">
+                    <div class="metric-title">影響店舖數</div>
+                    <div class="metric-value" style="color: #10b981;">{shop_count:,}</div>
+                    <div class="metric-desc">個店舖含有 Carry SKU</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                _delta_carry = total_carry_b - total_carry_a
+                _sign_carry = "+" if _delta_carry >= 0 else ""
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #3B82F6;">
+                    <div class="metric-title">Carry SKU 變化</div>
+                    <div class="metric-value" style="color: #3B82F6;">{total_carry_a:,} → {total_carry_b:,}</div>
+                    <div class="metric-desc" style="color: {'#ef4444' if _delta_carry > 0 else '#10b981'};">變化: {_sign_carry}{_delta_carry:,}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                _delta_rf = total_rf_b - total_rf_a
+                _sign_rf = "+" if _delta_rf >= 0 else ""
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #8B5CF6;">
+                    <div class="metric-title">RF SKU 變化</div>
+                    <div class="metric-value" style="color: #8B5CF6;">{total_rf_a:,} → {total_rf_b:,}</div>
+                    <div class="metric-desc" style="color: {'#ef4444' if _delta_rf > 0 else '#10b981'};">變化: {_sign_rf}{_delta_rf:,}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                _delta_nd = total_nd_b - total_nd_a
+                _sign_nd = "+" if _delta_nd >= 0 else ""
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #F59E0B;">
+                    <div class="metric-title">ND With Stock 變化</div>
+                    <div class="metric-value" style="color: #F59E0B;">{total_nd_a:,} → {total_nd_b:,}</div>
+                    <div class="metric-desc" style="color: {'#ef4444' if _delta_nd > 0 else '#10b981'};">變化: {_sign_nd}{_delta_nd:,}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+            st.markdown("#### 店舖級月份對比總覽")
+            st.dataframe(comparison_by_shop, width='stretch', hide_index=True)
+
+            tab_names = ["月份對比 (By Shop)", f"Adj. SST 樞紐 (月A)", f"Adj. SST 樞紐 (月B)", "SKU 明細", "RAW (前50筆)"]
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_names)
+            with tab1:
+                st.dataframe(comparison_by_shop, width='stretch', hide_index=True)
+            with tab2:
+                if adj_sst_pivot_a is not None and not adj_sst_pivot_a.empty:
+                    st.dataframe(adj_sst_pivot_a, width='stretch', hide_index=True)
+                else:
+                    st.info("無月A 的 Adj. SST 樞紐資料")
+            with tab3:
+                if adj_sst_pivot_b is not None and not adj_sst_pivot_b.empty:
+                    st.dataframe(adj_sst_pivot_b, width='stretch', hide_index=True)
+                else:
+                    st.info("無月B 的 Adj. SST 樞紐資料")
+            with tab4:
+                if sku_detail is not None and not sku_detail.empty:
+                    st.dataframe(sku_detail.head(100), width='stretch', hide_index=True)
+                    st.caption(f"僅顯示前 100 筆 SKU 明細，完整 {len(sku_detail):,} 筆將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無 SKU 明細資料")
+            with tab5:
+                st.dataframe(raw_df.head(50), width='stretch')
+                st.caption(f"僅顯示前 50 筆 RAW 明細，完整 {len(raw_df):,} 筆將包含在下載的 Excel 報表中。")
+
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 NDRF 月份對比_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載 NDRF 月份對比分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

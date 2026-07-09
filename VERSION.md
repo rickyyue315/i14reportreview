@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.7.4 (2026-07-09)
+
+- New: NDRF 月份對比模式 — 對比兩個月份各店舖的 Carry SKU、RF SKU、ND With Stock SKU 數量
+- New: `transform_ndrf_comparison()`, `generate_excel_ndrf_comparison()` in transformer.py
+- New: 支援單一檔案含 Month 欄位，使用者選取兩個月份做對比
+- New: 輸出 Excel — 月份對比 (By Shop)、Adj. SST 樞紐表 (x2)、SKU 明細、RAW
+- New: SKU 明細包含 SKU Desc、Shop Name、Adj. SST 及兩月份 RP Type/Stock Qty 對照
+
 ## v1.7.3 (2026-07-09)
 
 - 

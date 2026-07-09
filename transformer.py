@@ -2409,6 +2409,481 @@ def generate_excel_carry(
     return buf
 
 
+# ─── NDRF Month Comparison Functions ─────────────────────────────────────────────
+
+
+def transform_ndrf_comparison(
+    df_input: pd.DataFrame,
+    month_a: str,
+    month_b: str,
+    progress_callback=None,
+    shop_natures: list[str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
+    """對比兩個月份（Month A vs Month B）每個店舖的 Carry SKU 數量、RF SKU 數量、ND With Stock SKU 數量，並拆解 Adj. SST 分析。
+
+    Returns:
+        comparison_by_shop: 店舖級月份對比表
+        adj_sst_pivot_a: Month A 的 Adj. SST 樞紐表 (Site Code × Adj. SST)
+        adj_sst_pivot_b: Month B 的 Adj. SST 樞紐表
+        sku_detail: SKU+Shop 級明細（含 SKU Desc, Shop Name, 兩月份狀態）
+        raw: 合併後完整 RAW 資料（含 Month 欄位）
+        warnings: 警告訊息列表
+    """
+    missing = [c for c in ["Month", "SKU", "RP Type", "Shop Stock Qty (CM)", "Adj. SST", "Shop Stock Status", "Site Code"] if c not in df_input.columns]
+    if missing:
+        raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
+
+    warnings = []
+
+    available_months = sorted(df_input["Month"].dropna().unique())
+    if len(available_months) < 2:
+        raise ValueError(f"Month 欄位至少需有 2 個不同月份值，目前僅有: {available_months}")
+
+    if progress_callback:
+        progress_callback(0.02, "驗證通過")
+
+    df = _clean_dataframe(df_input, shop_natures=shop_natures, progress_callback=progress_callback)
+    if df.empty:
+        raise ValueError("過濾後無有效資料列")
+
+    if "SKU Desc" not in df.columns:
+        df = _compute_raw_extra_columns(df)
+
+    if "Shop" not in df.columns:
+        shop_name_vals = [
+            _extract_shop_name(
+                df["Item_Shop"].iloc[i] if "Item_Shop" in df.columns else "",
+                df["Site Code"].iloc[i] if "Site Code" in df.columns else ""
+            )
+            for i in range(len(df))
+        ]
+        df["Shop"] = shop_name_vals
+
+    df = df.copy()
+    rp_type = df["RP Type"].fillna("").astype(str).str.strip().str.upper()
+    df["_rp"] = rp_type
+    shop_stock_cm = _safe_numeric(df["Shop Stock Qty (CM)"])
+
+    non_nd_rf = set(rp_type.unique()) - {"ND", "RF", ""}
+    if non_nd_rf:
+        warnings.append(f"偵測到非 ND/RF 的 RP Type 值: {', '.join(sorted(non_nd_rf))}，這些列將不納入統計")
+
+    ndrf_mask = rp_type.isin(["ND", "RF"])
+    df = df[ndrf_mask].copy()
+
+    df["_is_carry"] = ~((rp_type[ndrf_mask] == "ND") & (shop_stock_cm[ndrf_mask] == 0))
+    df["_is_rf"] = (rp_type[ndrf_mask] == "RF").astype(int)
+    df["_is_nd_with_stock"] = ((rp_type[ndrf_mask] == "ND") & (shop_stock_cm[ndrf_mask] > 0)).astype(int)
+    df["_stock_qty"] = shop_stock_cm[ndrf_mask]
+
+    month_a_df = df[df["Month"].astype(str).str.strip() == month_a].copy()
+    month_b_df = df[df["Month"].astype(str).str.strip() == month_b].copy()
+
+    if progress_callback:
+        progress_callback(0.2, "建構月份對比表...")
+
+    comparison_by_shop = _build_ndrf_shop_comparison(month_a_df, month_b_df, month_a, month_b)
+
+    if progress_callback:
+        progress_callback(0.35, "建構 Adj. SST 樞紐表...")
+
+    adj_sst_pivot_a = _build_ndrf_adj_sst_pivot(month_a_df) if not month_a_df.empty else pd.DataFrame()
+    adj_sst_pivot_b = _build_ndrf_adj_sst_pivot(month_b_df) if not month_b_df.empty else pd.DataFrame()
+
+    if progress_callback:
+        progress_callback(0.5, "建構 SKU 明細...")
+
+    sku_detail = _build_ndrf_sku_detail(month_a_df, month_b_df, month_a, month_b)
+
+    if progress_callback:
+        progress_callback(0.65, "合併 RAW 資料...")
+
+    combined_raw = pd.concat([month_a_df, month_b_df], ignore_index=True)
+    drop_cols = [c for c in combined_raw.columns if c.startswith("_")]
+    combined_raw = combined_raw.drop(columns=drop_cols, errors="ignore")
+
+    if progress_callback:
+        progress_callback(0.7, "轉換完成")
+
+    return comparison_by_shop, adj_sst_pivot_a, adj_sst_pivot_b, sku_detail, combined_raw, warnings
+
+
+def _build_ndrf_shop_comparison(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_label: str, month_b_label: str) -> pd.DataFrame:
+    """建構店舖級月份對比表。"""
+
+    def _agg_shop(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(columns=["Site Code", "Shop"])
+        site_code = df["Site Code"].fillna("").astype(str).str.strip()
+        shop_col = df["Shop"].fillna("").astype(str).str.strip() if "Shop" in df.columns else site_code
+        agg = df.groupby(["Site Code", "Shop"], dropna=False, observed=True).agg(
+            carry_count=("_is_carry", "sum"),
+            rf_count=("_is_rf", "sum"),
+            nd_with_stock_count=("_is_nd_with_stock", "sum"),
+        ).reset_index()
+        agg.columns = ["Site Code", "Shop", "carry_count", "rf_count", "nd_with_stock_count"]
+        for c in ["carry_count", "rf_count", "nd_with_stock_count"]:
+            agg[c] = agg[c].fillna(0).astype(int)
+        return agg
+
+    shop_a = _agg_shop(df_a)
+    shop_b = _agg_shop(df_b)
+
+    merged = pd.merge(shop_a, shop_b, on=["Site Code", "Shop"], how="outer", suffixes=(f"_{month_a_label}", f"_{month_b_label}"))
+
+    carry_a_col = f"carry_count_{month_a_label}"
+    carry_b_col = f"carry_count_{month_b_label}"
+    rf_a_col = f"rf_count_{month_a_label}"
+    rf_b_col = f"rf_count_{month_b_label}"
+    nd_a_col = f"nd_with_stock_count_{month_a_label}"
+    nd_b_col = f"nd_with_stock_count_{month_b_label}"
+
+    for c in [carry_a_col, carry_b_col, rf_a_col, rf_b_col, nd_a_col, nd_b_col]:
+        if c not in merged.columns:
+            merged[c] = 0
+        merged[c] = merged[c].fillna(0).astype(int)
+
+    merged["Carry 月A"] = merged[carry_a_col]
+    merged["Carry 月B"] = merged[carry_b_col]
+    merged["Carry 變化"] = merged["Carry 月B"] - merged["Carry 月A"]
+
+    merged["RF 月A"] = merged[rf_a_col]
+    merged["RF 月B"] = merged[rf_b_col]
+    merged["RF 變化"] = merged["RF 月B"] - merged["RF 月A"]
+
+    merged["ND With Stock 月A"] = merged[nd_a_col]
+    merged["ND With Stock 月B"] = merged[nd_b_col]
+    merged["ND With Stock 變化"] = merged["ND With Stock 月B"] - merged["ND With Stock 月A"]
+
+    display_cols = [
+        "Site Code", "Shop",
+        "Carry 月A", "Carry 月B", "Carry 變化",
+        "RF 月A", "RF 月B", "RF 變化",
+        "ND With Stock 月A", "ND With Stock 月B", "ND With Stock 變化",
+    ]
+    result = merged[display_cols].copy()
+    result = result.sort_values("Site Code").reset_index(drop=True)
+
+    total = {}
+    for col in result.columns:
+        if col == "Site Code":
+            total[col] = "總計"
+        elif col == "Shop":
+            total[col] = ""
+        elif result[col].dtype in ("int64", "int32", "float64"):
+            total[col] = int(result[col].sum())
+        else:
+            total[col] = None
+    total_row = pd.DataFrame([total])
+    result = pd.concat([result, total_row], ignore_index=True)
+
+    for col in result.columns:
+        if result[col].dtype == "float64":
+            result[col] = result[col].astype(int)
+
+    return result
+
+
+def _build_ndrf_adj_sst_pivot(df: pd.DataFrame) -> pd.DataFrame:
+    """建構 Site Code × Adj. SST 樞紐表（如同 Carry 模式的右區塊）。"""
+    if df.empty:
+        return pd.DataFrame(columns=["Site Code", "Shop Name", "Adj. SST", "ND_P90D0", "ND_Other", "ND_Total", "RF_P90D0", "RF_Other", "RF_Total", "Grand_Total"])
+
+    df = df.copy()
+    site_to_name = {}
+    site_code = df["Site Code"].fillna("").astype(str).str.strip()
+    shop_col = df.get("Shop", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    for sc, sn in zip(site_code, shop_col):
+        if sc and sc not in site_to_name:
+            site_to_name[sc] = sn if sn else ""
+
+    status = df["Shop Stock Status"].fillna("")
+    df["_status2"] = np.where(status == CARRY_P90D0_STATUS, "P90D 0 Sales", "Other Status")
+    rp = df["_rp"]
+
+    group_cols = ["Site Code", "Adj. SST", "_rp", "_status2"]
+    pivot = df.groupby(group_cols, dropna=False, observed=True).size().reset_index(name="count")
+
+    pivot_wide = pivot.pivot_table(
+        index=["Site Code", "Adj. SST"],
+        columns=["_rp", "_status2"],
+        values="count",
+        fill_value=0,
+    )
+    pivot_wide.columns = [f"{r}_{s}" for r, s in pivot_wide.columns]
+    pivot_wide = pivot_wide.reset_index()
+
+    for r in ["ND", "RF"]:
+        for s in ["P90D 0 Sales", "Other Status"]:
+            col = f"{r}_{s}"
+            if col not in pivot_wide.columns:
+                pivot_wide[col] = 0
+
+    pivot_wide = pivot_wide.rename(columns={
+        "ND_P90D 0 Sales": "ND_P90D0",
+        "ND_Other Status": "ND_Other",
+        "RF_P90D 0 Sales": "RF_P90D0",
+        "RF_Other Status": "RF_Other",
+    })
+
+    pivot_wide["ND_Total"] = (pivot_wide["ND_P90D0"] + pivot_wide["ND_Other"]).astype(int)
+    pivot_wide["RF_Total"] = (pivot_wide["RF_P90D0"] + pivot_wide["RF_Other"]).astype(int)
+    pivot_wide["Grand_Total"] = (pivot_wide["ND_Total"] + pivot_wide["RF_Total"]).astype(int)
+    for c in ["ND_P90D0", "ND_Other", "RF_P90D0", "RF_Other"]:
+        pivot_wide[c] = pivot_wide[c].fillna(0).astype(int)
+
+    pivot_wide.insert(1, "Shop Name", pivot_wide["Site Code"].map(site_to_name).fillna(""))
+    pivot_wide = pivot_wide.sort_values(["Site Code", "Adj. SST"])
+
+    result_rows = []
+    for site, group in pivot_wide.groupby("Site Code", sort=False):
+        result_rows.append(group)
+        subtotal = pd.DataFrame({
+            "Site Code": [f"{site} 合計"],
+            "Shop Name": [""],
+            "Adj. SST": [None],
+            "ND_P90D0": [int(group["ND_P90D0"].sum())],
+            "ND_Other": [int(group["ND_Other"].sum())],
+            "ND_Total": [int(group["ND_Total"].sum())],
+            "RF_P90D0": [int(group["RF_P90D0"].sum())],
+            "RF_Other": [int(group["RF_Other"].sum())],
+            "RF_Total": [int(group["RF_Total"].sum())],
+            "Grand_Total": [int(group["Grand_Total"].sum())],
+        })
+        result_rows.append(subtotal)
+
+    result = pd.concat(result_rows, ignore_index=True)
+    return result
+
+
+def _build_ndrf_sku_detail(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_label: str, month_b_label: str) -> pd.DataFrame:
+    """建構 SKU+Shop 級明細（含 SKU Desc、Shop Name、兩月份 RP Type 與 Stock Qty）。"""
+    def _tag(df: pd.DataFrame, month_label: str) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(columns=["SKU", "SKU Desc", "Brand", "Site Code", "Shop", "Adj. SST", "_rp", "_stock_qty"])
+        gb = df.groupby(["SKU", "SKU Desc", "Brand", "Site Code", "Shop", "Adj. SST"], dropna=False, observed=True).agg(
+            rp_type=("_rp", "first"),
+            stock_qty=("_stock_qty", "sum"),
+        ).reset_index()
+        return gb
+
+    detail_a = _tag(df_a, month_a_label) if not df_a.empty else pd.DataFrame()
+    detail_b = _tag(df_b, month_b_label) if not df_b.empty else pd.DataFrame()
+
+    merged = pd.merge(detail_a, detail_b, on=["SKU", "SKU Desc", "Brand", "Site Code", "Shop", "Adj. SST"],
+                      how="outer", suffixes=(f"_{month_a_label}", f"_{month_b_label}"), indicator=True)
+
+    merged[f"RP Type ({month_a_label})"] = merged.get(f"rp_type_{month_a_label}", "")
+    merged[f"Stock Qty ({month_a_label})"] = merged.get(f"stock_qty_{month_a_label}", 0)
+    merged[f"RP Type ({month_b_label})"] = merged.get(f"rp_type_{month_b_label}", "")
+    merged[f"Stock Qty ({month_b_label})"] = merged.get(f"stock_qty_{month_b_label}", 0)
+
+    for c in [f"Stock Qty ({month_a_label})", f"Stock Qty ({month_b_label})"]:
+        merged[c] = merged[c].fillna(0).astype(int)
+
+    merged["狀態"] = merged["_merge"].map({
+        "both": "兩月份均有",
+        "left_only": f"僅 {month_a_label} 有",
+        "right_only": f"僅 {month_b_label} 有",
+    })
+
+    display_cols = [
+        "SKU", "SKU Desc", "Brand", "Site Code", "Shop", "Adj. SST",
+        f"RP Type ({month_a_label})",
+        f"Stock Qty ({month_a_label})",
+        f"RP Type ({month_b_label})",
+        f"Stock Qty ({month_b_label})",
+        "狀態",
+    ]
+    result = merged[display_cols].copy()
+
+    for c in [f"RP Type ({month_a_label})", f"RP Type ({month_b_label})"]:
+        result[c] = result[c].fillna("").astype(str)
+
+    result = result.sort_values(["Site Code", "SKU"]).reset_index(drop=True)
+    return result
+
+
+def generate_excel_ndrf_comparison(
+    comparison_by_shop: pd.DataFrame,
+    adj_sst_pivot_a: pd.DataFrame,
+    adj_sst_pivot_b: pd.DataFrame,
+    sku_detail: pd.DataFrame,
+    raw_df: pd.DataFrame,
+    month_a: str,
+    month_b: str,
+    progress_callback=None,
+) -> BytesIO:
+    wb = Workbook()
+
+    if progress_callback:
+        progress_callback(0.0, "建立 Excel 結構...")
+
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    bold_font = Font(bold=True, size=11)
+    desc_font = Font(size=9, color="6B7280", italic=True)
+
+    # ── Sheet 1: Month Comparison (By Shop) ──
+    ws_compare = wb.active
+    ws_compare.title = "月份對比 (By Shop)"
+
+    _write_ndrf_comparison_sheet(ws_compare, comparison_by_shop, thin_border, header_font, header_fill, bold_font)
+    if progress_callback:
+        progress_callback(0.25, "建立 Adj. SST 樞紐表...")
+
+    # ── Sheet 2: Adj. SST Pivot (Month A) ──
+    ws_pivot_a = wb.create_sheet(title=f"Adj. SST 樞紐 ({month_a})")
+    _write_ndrf_pivot_sheet(ws_pivot_a, adj_sst_pivot_a, month_a, thin_border, header_font, header_fill, bold_font)
+
+    if progress_callback:
+        progress_callback(0.4, f"建立 Adj. SST 樞紐 ({month_b})...")
+
+    # ── Sheet 3: Adj. SST Pivot (Month B) ──
+    ws_pivot_b = wb.create_sheet(title=f"Adj. SST 樞紐 ({month_b})")
+    _write_ndrf_pivot_sheet(ws_pivot_b, adj_sst_pivot_b, month_b, thin_border, header_font, header_fill, bold_font)
+
+    if progress_callback:
+        progress_callback(0.55, "建立 SKU 明細...")
+
+    # ── Sheet 4: SKU Detail ──
+    ws_detail = wb.create_sheet(title="SKU 明細")
+    _write_ndrf_detail_sheet(ws_detail, sku_detail, thin_border, header_font, header_fill, bold_font,
+                              progress_callback, 0.55, 0.7)
+
+    if progress_callback:
+        progress_callback(0.72, "建立 RAW 工作表...")
+
+    # ── Sheet 5: RAW ──
+    ws_raw = wb.create_sheet(title="RAW")
+    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.72, progress_end=0.92)
+
+    if progress_callback:
+        progress_callback(0.95, "正在儲存 Excel 檔案...")
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    if progress_callback:
+        progress_callback(1.0, "完成!")
+
+    return buf
+
+
+def _write_ndrf_comparison_sheet(ws, df, thin_border, header_font, header_fill, bold_font):
+    headers = list(df.columns)
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    for row_idx, row_data in df.iterrows():
+        excel_row = row_idx + 2
+        is_total = row_data.get("Site Code") == "總計"
+        for col_idx, h in enumerate(headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_total:
+                cell.font = bold_font
+            if isinstance(val, (int, float)) and col_idx >= 3:
+                cell.number_format = "#,##0"
+
+    _auto_width(ws)
+
+
+def _write_ndrf_pivot_sheet(ws, pivot_df, month_label, thin_border, header_font, header_fill, bold_font):
+    if pivot_df is None or pivot_df.empty:
+        ws.cell(row=1, column=1, value=f"無 {month_label} 的 Adj. SST 樞紐資料").font = Font(size=12)
+        return
+
+    data_cols = ["ND_P90D0", "ND_Other", "ND_Total", "RF_P90D0", "RF_Other", "RF_Total", "Grand_Total"]
+    headers = ["Site Code", "Shop Name", "Adj. SST"] + data_cols
+
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    for row_idx, row_data in pivot_df.iterrows():
+        excel_row = row_idx + 2
+        is_subtotal = "合計" in str(row_data.get("Site Code", ""))
+        site_val = row_data.get("Site Code")
+        cell = ws.cell(row=excel_row, column=1, value=site_val if site_val else None)
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        if is_subtotal:
+            cell.font = bold_font
+
+        shop_val = row_data.get("Shop Name", "")
+        cell = ws.cell(row=excel_row, column=2, value=str(shop_val) if shop_val else None)
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        cat_val = row_data.get("Adj. SST")
+        if pd.isna(cat_val) or cat_val is None:
+            cat_val = None
+        cell = ws.cell(row=excel_row, column=3, value=str(cat_val) if cat_val is not None else None)
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        if is_subtotal:
+            cell.font = bold_font
+
+        for di, dc in enumerate(data_cols):
+            col_excel = 4 + di
+            val = int(row_data.get(dc, 0)) if pd.notna(row_data.get(dc)) else 0
+            cell = ws.cell(row=excel_row, column=col_excel, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_subtotal:
+                cell.font = bold_font
+            if isinstance(val, (int, float)):
+                cell.number_format = "#,##0"
+
+    _auto_width(ws)
+
+
+def _write_ndrf_detail_sheet(ws, df, thin_border, header_font, header_fill, bold_font,
+                               progress_callback=None, progress_start=0.0, progress_end=0.15):
+    headers = list(df.columns)
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    total_rows = len(df)
+    for row_idx, row_data in df.iterrows():
+        excel_row = row_idx + 2
+        for col_idx, h in enumerate(headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                cell.number_format = "#,##0"
+        if progress_callback and (row_idx % 500 == 0 or row_idx == total_rows - 1):
+            p = progress_start + (progress_end - progress_start) * ((row_idx + 1) / max(total_rows, 1))
+            progress_callback(p, f"寫入 SKU 明細 ({row_idx+1}/{total_rows})...")
+
+    _auto_width(ws)
+
+
 def _write_summary_headers(ws, header_font, header_fill, thin_border):
     """Write rows 3–6 of the Summary sheet (dual-block headers)."""
 
