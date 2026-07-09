@@ -4330,3 +4330,186 @@ def generate_excel_stock_impact(
 
 
 
+
+# ─── Stock Impact Analysis (Simplified) Functions ─────────────────────────────
+# 簡化版本：隻輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表
+# SKU Monthly Sales&Store 不分 Shop Nature，隻顯示 M-2, M-1, MTD 的 D001 存貨、店舖存貨和總銷售量
+
+def _build_sku_monthly_analysis_simplified(raw: pd.DataFrame, stock_threshold: int = 300) -> pd.DataFrame:
+    """簡化版 SKU 月銷量和存儲量分析（不分 Shop Nature）。
+
+    每列為一個 SKU，顯示 M-2, M-1, MTD 的 D001 存貨量、店舖總存貨量和店舖總銷售量。
+    """
+    if raw.empty or "SKU" not in raw.columns:
+        return pd.DataFrame()
+
+    # 三期對應欄位
+    periods = [
+        ("M-2", "Shop Stock Qty (M-2)", "Sold Qty (M-2)", "D001 Stock Qty (M-2)"),
+        ("M-1", "Shop Stock Qty (M-1)", "Sold Qty (M-1)", "D001 Stock Qty (M-1)"),
+        ("MTD", "Shop Stock Qty (CM)", "Sold Qty (CM - MTD)", "D001 Stock Qty (CM)"),
+    ]
+
+    # 安全取得各欄位
+    sku = raw["SKU"].fillna("").astype(str)
+    d001_cols = {}
+    shop_stock_cols = {}
+    sold_cols = {}
+    for label, stock_col, sold_col, d001_col in periods:
+        d001_cols[label] = _safe_numeric(raw[d001_col]) if d001_col in raw.columns else _safe_default_series(0, raw.index)
+        shop_stock_cols[label] = _safe_numeric(raw.get(stock_col, _safe_default_series(0, raw.index)))
+        sold_cols[label] = _safe_numeric(raw.get(sold_col, _safe_default_series(0, raw.index)))
+
+    # P90D 月均銷售
+    p90d = _safe_numeric(raw.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, raw.index)))
+
+    # RP Type
+    rp_type = (
+        raw.get("RP Type", _safe_default_series("", raw.index))
+        .fillna("").astype(str).str.strip().str.upper()
+    )
+    is_rf = (rp_type == "RF").astype(int)
+    is_nd = (rp_type == "ND").astype(int)
+
+    # 建立工作 DataFrame
+    work = pd.DataFrame({"SKU": sku.values})
+    for label, _, _, _ in periods:
+        work[f"_d001_{label}"] = d001_cols[label].values
+        work[f"_stock_{label}"] = shop_stock_cols[label].values
+        work[f"_sold_{label}"] = sold_cols[label].values
+    work["_p90d"] = p90d.values
+    work["_is_rf"] = is_rf.values
+    work["_is_nd"] = is_nd.values
+
+    # SKU 級聚合
+    agg_dict = {
+        "D001_M-2": ("_d001_M-2", "first"),
+        "D001_M-1": ("_d001_M-1", "first"),
+        "D001_MTD": ("_d001_MTD", "first"),
+        "ShopStock_M-2": ("_stock_M-2", "sum"),
+        "ShopStock_M-1": ("_stock_M-1", "sum"),
+        "ShopStock_MTD": ("_stock_MTD", "sum"),
+        "Sold_M-2": ("_sold_M-2", "sum"),
+        "Sold_M-1": ("_sold_M-1", "sum"),
+        "Sold_MTD": ("_sold_MTD", "sum"),
+        "P90D_sum": ("_p90d", "sum"),
+        "總店數": ("SKU", "count"),
+        "RF店數": ("_is_rf", "sum"),
+        "ND店數": ("_is_nd", "sum"),
+    }
+
+    sku_agg = work.groupby("SKU", dropna=False).agg(**agg_dict).reset_index()
+    sku_agg["P90D_月均"] = sku_agg["P90D_sum"] / 3.0
+    sku_agg = sku_agg.drop(columns=["P90D_sum"])
+
+    # 從 raw 取 Brand/Buyer/SKU Desc
+    for col in ["Brand", "Buyer", "SKU Desc"]:
+        if col in raw.columns:
+            col_first = raw.groupby("SKU", dropna=False)[col].first().reset_index()
+            sku_agg = sku_agg.merge(col_first, on="SKU", how="left")
+
+    # 計算總可用存貨 (D001_MTD + ShopStock_MTD)
+    sku_agg["總可用存貨"] = sku_agg["D001_MTD"] + sku_agg["ShopStock_MTD"]
+    sku_agg["低存貨"] = sku_agg["總可用存貨"] < stock_threshold
+
+    # 排序：低存貨優先 → P90D 月均銷售降序
+    sku_agg = sku_agg.sort_values(
+        ["低存貨", "P90D_月均"],
+        ascending=[False, False],
+    ).reset_index(drop=True)
+
+    # 轉整數
+    int_cols = ["D001_M-2", "D001_M-1", "D001_MTD",
+                "ShopStock_M-2", "ShopStock_M-1", "ShopStock_MTD",
+                "Sold_M-2", "Sold_M-1", "Sold_MTD",
+                "總店數", "RF店數", "ND店數", "總可用存貨"]
+    for c in int_cols:
+        sku_agg[c] = sku_agg[c].fillna(0).astype(int)
+    sku_agg["P90D_月均"] = sku_agg["P90D_月均"].fillna(0).round(1)
+
+    # 欄位順序
+    out_cols = ["SKU"]
+    for col in ["SKU Desc", "Brand", "Buyer"]:
+        if col in sku_agg.columns:
+            out_cols.append(col)
+    out_cols += ["低存貨", "總可用存貨"]
+    # D001 存貨
+    out_cols += ["D001_M-2", "D001_M-1", "D001_MTD"]
+    # 店舖存貨
+    out_cols += ["ShopStock_M-2", "ShopStock_M-1", "ShopStock_MTD"]
+    # 店舖總銷售量
+    out_cols += ["Sold_M-2", "Sold_M-1", "Sold_MTD"]
+    # 其他
+    out_cols += ["P90D_月均", "總店數", "RF店數", "ND店數"]
+    out_cols = [c for c in out_cols if c in sku_agg.columns]
+
+    return sku_agg[out_cols]
+
+
+def generate_excel_stock_impact_simplified(
+    raw_df: pd.DataFrame,
+    progress_callback=None,
+    sku_monthly_analysis: pd.DataFrame | None = None,
+) -> BytesIO:
+    """簡化版 Excel 輸出：隻有 RAW 和 SKU Monthly Sales&Store 兩個工作表。"""
+    wb = Workbook()
+
+    if progress_callback:
+        progress_callback(0.0, "建立 Excel 結構...")
+
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+
+    # Sheet 1: RAW
+    ws_raw = wb.active
+    ws_raw.title = "RAW"
+    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.3, columns=_OOS_DETAIL_COLS)
+
+    if progress_callback:
+        progress_callback(0.4, "建立 SKU Monthly Sales&Store 工作表...")
+
+    # Sheet 2: SKU Monthly Sales&Store
+    ws_sku_monthly = wb.create_sheet(title="SKU Monthly Sales&Store")
+    if sku_monthly_analysis is not None and not sku_monthly_analysis.empty:
+        ws_sku_monthly.cell(row=1, column=1, value="SKU 月銷量和存儲量分析（簡化版，不分 Shop Nature）").font = Font(bold=True, size=12, color="1E40AF")
+        ws_sku_monthly.cell(row=2, column=1, value="各 SKU 的 M-2, M-1, MTD 期 D001 存貨量、店舖總存貨量及店舖總銷售量。低存貨 SKU 優先顯示。").font = Font(size=10, italic=True, color="6B7280")
+        headers = list(sku_monthly_analysis.columns)
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws_sku_monthly.cell(row=4, column=col_idx, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+        for row_idx, row_data in enumerate(sku_monthly_analysis.itertuples(index=False), start=5):
+            for col_idx, val in enumerate(row_data, 1):
+                if pd.isna(val):
+                    val = None
+                cell = ws_sku_monthly.cell(row=row_idx, column=col_idx, value=val)
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                if isinstance(val, bool):
+                    cell.value = "✓ 低存貨" if val else ""
+                elif isinstance(val, (int, float)) and val is not None:
+                    cell.number_format = "#,##0"
+            if progress_callback and (row_idx % 500 == 0 or row_idx - 4 == len(sku_monthly_analysis)):
+                progress_callback(0.5 + 0.3 * ((row_idx - 4) / max(len(sku_monthly_analysis), 1)), f"寫入 SKU 月銷量 ({row_idx-4}/{len(sku_monthly_analysis)})...")
+        _auto_width(ws_sku_monthly)
+    else:
+        ws_sku_monthly.cell(row=1, column=1, value="無 SKU 月銷量/存儲量數據").font = Font(size=12)
+
+    if progress_callback:
+        progress_callback(0.95, "正在儲存 Excel 檔案...")
+
+    gc.collect()
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    if progress_callback:
+        progress_callback(1.0, "完成!")
+
+    return buf

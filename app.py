@@ -11,6 +11,7 @@ from transformer import (
     transform_combined, generate_excel_combined,
     transform_nd, generate_excel_nd,
     transform_stock_impact, generate_excel_stock_impact,
+    _build_sku_monthly_analysis_simplified, generate_excel_stock_impact_simplified,
 )
 import time
 import traceback
@@ -223,7 +224,12 @@ with st.sidebar:
     - 📊 **多維度彙總**：By Brand / Buyer / Category (Adj. MCH1) 缺貨影響
     - 門檻只影響低存貨配置決策，不限制整體分析的 SKU 範圍
     - 預設只分析 Warehouse SKU，可切換納入 Vendor
-    """)
+
+**📦 Stock Impact Analysis (簡化)**
+- 簡化版缺貨銷售影響分析，隻輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表
+- SKU Monthly Sales&Store 不分 Shop Nature，隻顯示 M-2, M-1, MTD 的 D001 存貨量、店舖總存貨量及店舖總銷售量
+- 適合快速查看各 SKU 三期存貨與銷售趨勢
+""")
     
     st.divider()
     
@@ -317,7 +323,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 5. 模式選擇器
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "Safety Stock Review", "Stock Impact Analysis"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)"]
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0)
 
 # 6. 初始化 Session State (確保下載與重整時狀態持久化)
@@ -328,6 +334,7 @@ MODE_KEYS = {
     "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
+    "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -1077,6 +1084,99 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載缺貨銷售影響分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+            )
+    elif mode == "Stock Impact Analysis (簡化)":
+        st.caption("📦 簡化版缺貨銷售影響分析 — 隻輸出 **RAW** 和 **SKU Monthly Sales&Store** 兩個工作表。SKU Monthly Sales&Store 不分 Shop Nature，隻顯示 M-2, M-1, MTD 的 D001 存貨量、店舖總存貨量及店舖總銷售量。")
+
+        warehouse_only = st.checkbox(
+            "🏗️ 隻分析 Warehouse SKU（建議）",
+            value=True,
+            help="Warehouse SKU 受 D001 倉庫補貨影響，缺貨分析最具意義。取消勾選可納入 Vendor SKU。"
+        )
+
+        mtd_date = st.date_input(
+            "📅 參考日期 (Sold Qty CM-MTD 的截止日期)",
+            value=datetime.now().date() - timedelta(days=1),
+            help="僅作 Sold Qty (CM-MTD) 語意參考。"
+        )
+
+        stock_threshold = st.number_input(
+            "📦 低存貨門檻",
+            value=300,
+            min_value=0,
+            step=10,
+            help="設定為 0 時不標記低存貨 SKU。"
+        )
+
+        st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+        if st.button("⚙️ 執行簡化版缺貨銷售影響分析", type="primary", width='stretch'):
+            _prog3 = st.progress(0, text="處理中... 0% | 開始處理...")
+            _t0_3 = time.time()
+
+            def _cb(pct, msg):
+                _e = time.time() - _t0_3
+                _eta3 = (_e / pct) - _e if pct > 0 else 0
+                _prog3.progress(min(pct, 1.0), text=f"處理中... {pct*100:.0f}% | {msg} | 已用: {_e:.0f}s | 預計剩餘: {_eta3:.0f}s")
+
+            try:
+                def _cb_transform(pct, msg):
+                    _cb(0.6 * pct, msg)
+
+                def _cb_excel(pct, msg):
+                    _cb(0.6 + 0.4 * pct, msg)
+
+                _, _, _, _, _, _, _, _, _, raw_df, _warnings = transform_stock_impact(
+                    df_input,
+                    progress_callback=_cb_transform,
+                    warehouse_only=warehouse_only,
+                    stock_threshold=stock_threshold,
+                    ref_date=mtd_date,
+                )
+                sku_monthly_simp = _build_sku_monthly_analysis_simplified(raw_df, stock_threshold=stock_threshold)
+                buf = generate_excel_stock_impact_simplified(raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_simp)
+
+                st.session_state.stock_impact_simp_processed = True
+                st.session_state.stock_impact_simp_raw_df = raw_df
+                st.session_state.stock_impact_simp_sku_monthly_analysis = sku_monthly_simp
+                st.session_state.stock_impact_simp_excel_data = buf
+                st.session_state.stock_impact_simp_warnings = _warnings
+            except Exception as e:
+                _prog3.empty()
+                _tb = traceback.format_exc()
+                print(f"❌ Stock Impact Analysis (簡化) 處理失敗: {e}\n{_tb}")
+                st.error(f"❌ Stock Impact Analysis (簡化) 處理失敗: {e}\n\n詳細錯誤: {_tb}")
+                st.stop()
+
+            _prog3.empty()
+            st.success("🎉 簡化版缺貨銷售影響分析完成！")
+            if _warnings:
+                for _w in _warnings:
+                    st.warning(f"⚠️ {_w}")
+
+        if st.session_state.stock_impact_simp_processed:
+            sku_monthly_simp = st.session_state.stock_impact_simp_sku_monthly_analysis
+            excel_data = st.session_state.stock_impact_simp_excel_data
+
+            if sku_monthly_simp is not None and not sku_monthly_simp.empty:
+                low_count = int(sku_monthly_simp["低存貨"].sum()) if "低存貨" in sku_monthly_simp.columns else 0
+                st.markdown(f"**共 {len(sku_monthly_simp):,} 個 SKU** — 🔴 低存貨 SKU: {low_count:,} 個")
+                st.dataframe(sku_monthly_simp, width='stretch', hide_index=True)
+            else:
+                st.info("無 SKU 月銷量/存儲量數據")
+
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 Stock Impact Analysis (Simplified)_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載簡化版缺貨銷售影響分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
