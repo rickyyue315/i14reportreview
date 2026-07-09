@@ -227,7 +227,7 @@ with st.sidebar:
 
 **📦 Stock Impact Analysis (簡化)**
 - 簡化版缺貨銷售影響分析，隻輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表
-- SKU Monthly Sales&Store **保留原版所有欄位**（Tourist/Mix/Non Tourist 分拆），並 **新增** M-2, M-1, MTD 的 D001 存貨量、店舖總存貨量、店舖總銷售量（不分 Shop Nature）
+- SKU Monthly Sales&Store **保留原版所有欄位**（含 Vendor MC/Adj. MCH1/Item Status/Launch Date/Item Class/Is New SKU），並 **新增** M-2, M-1 的 D001 存貨、店舖總存貨及 M-2, M-1, MTD 的店舖總銷售量（不分 Shop Nature，D001_MTD/ShopStock_MTD 已存在於原版不重複）
 - 適合快速查看各 SKU 三期存貨與銷售趨勢
 """)
     
