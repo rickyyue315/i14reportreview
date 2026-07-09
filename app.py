@@ -338,7 +338,7 @@ MODE_KEYS = {
     "OOS Review": {"prefix": "oos_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
-    "NDRF 月份對比": {"prefix": "ndrf_comp_", "processed": False, "comparison_by_shop": None, "adj_sst_pivot_a": None, "adj_sst_pivot_b": None, "sku_detail": None, "raw_df": None, "excel_data": None, "warnings": []},
+    "NDRF 月份對比": {"prefix": "ndrf_comp_", "processed": False, "comparison_by_shop": None, "adj_sst_pivot": None, "raw_df": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "excel_data": None, "warnings": []},
@@ -1353,7 +1353,7 @@ if uploaded_file is not None:
                     st.session_state.nd_excel_data = buf
                     st.session_state.nd_warnings = _warnings
                 elif mode == "NDRF 月份對比":
-                    comparison_by_shop, adj_sst_pivot_a, adj_sst_pivot_b, sku_detail, raw_df, _warnings = transform_ndrf_comparison(
+                    comparison_by_shop, adj_sst_pivot, raw_df, _warnings = transform_ndrf_comparison(
                         df_input,
                         month_a=month_a_selected,
                         month_b=month_b_selected,
@@ -1361,14 +1361,12 @@ if uploaded_file is not None:
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                     )
                     buf = generate_excel_ndrf_comparison(
-                        comparison_by_shop, adj_sst_pivot_a, adj_sst_pivot_b, sku_detail, raw_df,
+                        comparison_by_shop, adj_sst_pivot, raw_df,
                         month_a_selected, month_b_selected, progress_callback=_cb_excel,
                     )
                     st.session_state.ndrf_comp_processed = True
                     st.session_state.ndrf_comp_comparison_by_shop = comparison_by_shop
-                    st.session_state.ndrf_comp_adj_sst_pivot_a = adj_sst_pivot_a
-                    st.session_state.ndrf_comp_adj_sst_pivot_b = adj_sst_pivot_b
-                    st.session_state.ndrf_comp_sku_detail = sku_detail
+                    st.session_state.ndrf_comp_adj_sst_pivot = adj_sst_pivot
                     st.session_state.ndrf_comp_raw_df = raw_df
                     st.session_state.ndrf_comp_excel_data = buf
                     st.session_state.ndrf_comp_warnings = _warnings
@@ -1804,9 +1802,7 @@ if uploaded_file is not None:
 
         if mode == "NDRF 月份對比" and st.session_state.ndrf_comp_processed:
             comparison_by_shop = st.session_state.ndrf_comp_comparison_by_shop
-            adj_sst_pivot_a = st.session_state.ndrf_comp_adj_sst_pivot_a
-            adj_sst_pivot_b = st.session_state.ndrf_comp_adj_sst_pivot_b
-            sku_detail = st.session_state.ndrf_comp_sku_detail
+            adj_sst_pivot = st.session_state.ndrf_comp_adj_sst_pivot
             raw_df = st.session_state.ndrf_comp_raw_df
             excel_data = st.session_state.ndrf_comp_excel_data
 
@@ -1816,13 +1812,18 @@ if uploaded_file is not None:
             _total_row = comparison_by_shop[comparison_by_shop["Site Code"] == "總計"]
             tr = _total_row.iloc[0] if not _total_row.empty else None
 
+            _cols = list(comparison_by_shop.columns)
+            _carry_cols = [c for c in _cols if c.startswith("Carry (")]
+            _rf_cols = [c for c in _cols if c.startswith("RF (")]
+            _nd_cols = [c for c in _cols if c.startswith("ND With Stock (")]
+
             shop_count = len(comparison_by_shop[comparison_by_shop["Site Code"] != "總計"])
-            total_carry_a = int(tr["Carry 月A"]) if tr is not None else 0
-            total_carry_b = int(tr["Carry 月B"]) if tr is not None else 0
-            total_rf_a = int(tr["RF 月A"]) if tr is not None else 0
-            total_rf_b = int(tr["RF 月B"]) if tr is not None else 0
-            total_nd_a = int(tr["ND With Stock 月A"]) if tr is not None else 0
-            total_nd_b = int(tr["ND With Stock 月B"]) if tr is not None else 0
+            total_carry_a = int(tr[_carry_cols[0]]) if tr is not None and _carry_cols else 0
+            total_carry_b = int(tr[_carry_cols[1]]) if tr is not None and len(_carry_cols) > 1 else 0
+            total_rf_a = int(tr[_rf_cols[0]]) if tr is not None and _rf_cols else 0
+            total_rf_b = int(tr[_rf_cols[1]]) if tr is not None and len(_rf_cols) > 1 else 0
+            total_nd_a = int(tr[_nd_cols[0]]) if tr is not None and _nd_cols else 0
+            total_nd_b = int(tr[_nd_cols[1]]) if tr is not None and len(_nd_cols) > 1 else 0
 
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
@@ -1834,33 +1835,33 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
-                _delta_carry = total_carry_b - total_carry_a
-                _sign_carry = "+" if _delta_carry >= 0 else ""
+                _dc = total_carry_b - total_carry_a
+                _sc = "+" if _dc >= 0 else ""
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #3B82F6;">
                     <div class="metric-title">Carry SKU 變化</div>
                     <div class="metric-value" style="color: #3B82F6;">{total_carry_a:,} → {total_carry_b:,}</div>
-                    <div class="metric-desc" style="color: {'#ef4444' if _delta_carry > 0 else '#10b981'};">變化: {_sign_carry}{_delta_carry:,}</div>
+                    <div class="metric-desc" style="color: {'#ef4444' if _dc > 0 else '#10b981'};">變化: {_sc}{_dc:,}</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col3:
-                _delta_rf = total_rf_b - total_rf_a
-                _sign_rf = "+" if _delta_rf >= 0 else ""
+                _dc = total_rf_b - total_rf_a
+                _sc = "+" if _dc >= 0 else ""
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #8B5CF6;">
                     <div class="metric-title">RF SKU 變化</div>
                     <div class="metric-value" style="color: #8B5CF6;">{total_rf_a:,} → {total_rf_b:,}</div>
-                    <div class="metric-desc" style="color: {'#ef4444' if _delta_rf > 0 else '#10b981'};">變化: {_sign_rf}{_delta_rf:,}</div>
+                    <div class="metric-desc" style="color: {'#ef4444' if _dc > 0 else '#10b981'};">變化: {_sc}{_dc:,}</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col4:
-                _delta_nd = total_nd_b - total_nd_a
-                _sign_nd = "+" if _delta_nd >= 0 else ""
+                _dc = total_nd_b - total_nd_a
+                _sc = "+" if _dc >= 0 else ""
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #F59E0B;">
                     <div class="metric-title">ND With Stock 變化</div>
                     <div class="metric-value" style="color: #F59E0B;">{total_nd_a:,} → {total_nd_b:,}</div>
-                    <div class="metric-desc" style="color: {'#ef4444' if _delta_nd > 0 else '#10b981'};">變化: {_sign_nd}{_delta_nd:,}</div>
+                    <div class="metric-desc" style="color: {'#ef4444' if _dc > 0 else '#10b981'};">變化: {_sc}{_dc:,}</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -1871,27 +1872,15 @@ if uploaded_file is not None:
             st.markdown("#### 店舖級月份對比總覽")
             st.dataframe(comparison_by_shop, width='stretch', hide_index=True)
 
-            tab_names = ["月份對比 (By Shop)", f"Adj. SST 樞紐 (月A)", f"Adj. SST 樞紐 (月B)", "SKU 明細", "RAW (前50筆)"]
-            tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_names)
+            tab1, tab2, tab3 = st.tabs(["月份對比 (By Shop)", "Adj. SST 樞紐對比", "RAW (前50筆)"])
             with tab1:
                 st.dataframe(comparison_by_shop, width='stretch', hide_index=True)
             with tab2:
-                if adj_sst_pivot_a is not None and not adj_sst_pivot_a.empty:
-                    st.dataframe(adj_sst_pivot_a, width='stretch', hide_index=True)
+                if adj_sst_pivot is not None and not adj_sst_pivot.empty:
+                    st.dataframe(adj_sst_pivot, width='stretch', hide_index=True)
                 else:
-                    st.info("無月A 的 Adj. SST 樞紐資料")
+                    st.info("無 Adj. SST 樞紐資料")
             with tab3:
-                if adj_sst_pivot_b is not None and not adj_sst_pivot_b.empty:
-                    st.dataframe(adj_sst_pivot_b, width='stretch', hide_index=True)
-                else:
-                    st.info("無月B 的 Adj. SST 樞紐資料")
-            with tab4:
-                if sku_detail is not None and not sku_detail.empty:
-                    st.dataframe(sku_detail.head(100), width='stretch', hide_index=True)
-                    st.caption(f"僅顯示前 100 筆 SKU 明細，完整 {len(sku_detail):,} 筆將包含在下載的 Excel 報表中。")
-                else:
-                    st.info("無 SKU 明細資料")
-            with tab5:
                 st.dataframe(raw_df.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆 RAW 明細，完整 {len(raw_df):,} 筆將包含在下載的 Excel 報表中。")
 
