@@ -2965,15 +2965,17 @@ def _add_launch_info(df: pd.DataFrame, ref_date: datetime.date | None = None) ->
 
     df = df.copy()
     launch_raw = df["Launch Date"].fillna("").astype(str).str.strip()
-    # 嘗試多種日期格式解析
-    launch_dt = pd.to_datetime(launch_raw, errors="coerce")
-    # 若全部 NaN，再嘗試其他常見格式
-    if launch_dt.isna().all():
-        launch_dt = pd.to_datetime(launch_raw, errors="coerce", format="%Y/%m/%d")
-    if launch_dt.isna().all():
-        launch_dt = pd.to_datetime(launch_raw, errors="coerce", format="%d/%m/%Y")
-    if launch_dt.isna().all():
-        launch_dt = pd.to_datetime(launch_raw, errors="coerce", format="%Y%m%d")
+    # 一次性嘗試所有常見格式推斷（pd.to_datetime 內建推斷比逐次嘗試快）
+    launch_dt = pd.to_datetime(launch_raw, errors="coerce", infer_datetime_format=True)
+    # 若全部 NaN（可能是較少見格式），再嘗試顯式格式
+    if launch_dt.isna().any():
+        still_na = launch_dt.isna()
+        for fmt in ("%Y/%m/%d", "%d/%m/%Y", "%Y%m%d"):
+            if not still_na.any():
+                break
+            retry = pd.to_datetime(launch_raw[still_na], errors="coerce", format=fmt)
+            launch_dt[still_na] = retry
+            still_na = launch_dt.isna()
 
     # 3個月內（約 90 天）視為 New SKU
     cutoff = pd.Timestamp(ref_date) - pd.Timedelta(days=90)
@@ -3214,12 +3216,33 @@ def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.
     return agg
 
 
-def _build_sku_allocation_summary(raw: pd.DataFrame) -> pd.DataFrame:
+def _build_sku_info_lookup(raw: pd.DataFrame) -> pd.DataFrame:
+    """建立 SKU 級基本資訊查找表（單一次 groupby，供多個 summary 函式共用）。
+
+    回傳 DataFrame 每列一個 SKU，含 Brand / Buyer / SKU Desc / Launch Date /
+    Is New SKU (3mo) / Vendor MC / Adj. MCH1 / Item Status / Item Class 等 first-value 欄位。
+    """
+    if "SKU" not in raw.columns:
+        return pd.DataFrame()
+    info_cols = [c for c in [
+        "Brand", "Buyer", "SKU Desc", "Launch Date", "Is New SKU (3mo)",
+        "Vendor MC", "Adj. MCH1", "Item Status", "Item Class",
+    ] if c in raw.columns]
+    if not info_cols:
+        return raw[["SKU"]].drop_duplicates().reset_index(drop=True)
+    agg_dict = {col: (col, "first") for col in info_cols}
+    return raw.groupby("SKU", dropna=False).agg(**agg_dict).reset_index()
+
+
+def _build_sku_allocation_summary(raw: pd.DataFrame, sku_lookup: pd.DataFrame | None = None) -> pd.DataFrame:
     """SKU 級跨 Nature 調貨建議。
 
     針對同時存在於多種 Shop Nature 的 SKU：當 Tourist 店舖缺貨（CM Shop Stock=0）
     但同 SKU 在 Non-Tourist / Mix 店舖仍有存貨時，列出可調貨支援機會。
     排序：Tourist 缺貨損失 → 可調貨存貨量（降序）。
+    
+    Args:
+        sku_lookup: 預先建好的 SKU 基本資訊查找表，為 None 時即時計算。
     """
     if "SKU" not in raw.columns or "Shop Nature" not in raw.columns:
         return pd.DataFrame()
@@ -3341,7 +3364,7 @@ def _classify_d001_status(d001_cm: float) -> str:
     return "倉庫有貨" if d001_cm > 0 else "源頭斷貨"
 
 
-def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
+def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | None = None) -> pd.DataFrame:
     """by-SKU 缺貨診斷表（Tourist + Mix + Non Tourist 缺貨 SKU）。
 
     每列為一個缺貨 SKU，彙總：
@@ -3349,89 +3372,86 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
     - D001 倉庫三期貨量 (M-2/M-1/CM) + D001 狀態分類（源頭斷貨 vs 補貨問題）
     - 店舖三期總存貨 (M-2/M-1/CM)
     排序：Tourist 缺貨店數 → Mix 缺貨店數 → Non Tourist 缺貨店數 → Tourist 損失(P90D)（皆降序）。
+
+    效能優化：原本 6 次独立 groupby + 5 次 merge → 改為 2 次 groupby（SKU-level ＋ SKU×Nature-level）。
+
+    Args:
+        sku_lookup: 預先建好的 SKU 基本資訊查找表，為 None 時即時計算。
     """
     if "SKU" not in raw.columns or "Shop Nature" not in raw.columns:
         return pd.DataFrame()
 
     # 只看 Tourist + Mix + Non Tourist 的缺貨行（CM Shop Stock=0 且有需求）
-    focus = raw[
+    cm_stock_vec = _safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, raw.index)))
+    focus_mask = (
         raw["Shop Nature"].isin(["Tourist", "Mix", "Non Tourist"])
-        & (raw["Is Stock Impacted"])
-        & (_safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, raw.index))) <= 0)
-    ].copy()
-    if focus.empty:
+        & raw["Is Stock Impacted"]
+        & (cm_stock_vec <= 0)
+    )
+    if not focus_mask.any():
         return pd.DataFrame()
 
+    # 預先建立 SKU 基本資訊查找表（只建一次，之後所有函式可重用）
+    if sku_lookup is None:
+        sku_lookup = _build_sku_info_lookup(raw)
+
+    focus = raw.loc[focus_mask].copy()
+
     # 補上需要的數值欄位
-    focus["_loss_p90d"] = _safe_numeric(focus.get("Max Sales Loss (P90D)", _safe_default_series(0, focus.index)))
-    focus["_loss_m2"] = _safe_numeric(focus.get("Max Sales Loss (M-2)", _safe_default_series(0, focus.index)))
-    focus["_m2_sold"] = _safe_numeric(focus.get("Sold Qty (M-2)", _safe_default_series(0, focus.index)))
-    focus["_cm_sold"] = _safe_numeric(focus.get("Sold Qty (CM - MTD)", _safe_default_series(0, focus.index)))
-    focus["_p90d"] = _safe_numeric(focus.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, focus.index)))
+    focus["_loss_p90d"] = _safe_numeric(focus.get("Max Sales Loss (P90D)", pd.Series(dtype=float, index=focus.index)))
+    focus["_loss_m2"] = _safe_numeric(focus.get("Max Sales Loss (M-2)", pd.Series(dtype=float, index=focus.index)))
+    focus["_cm_sold"] = _safe_numeric(focus.get("Sold Qty (CM - MTD)", pd.Series(dtype=float, index=focus.index)))
+    focus["_p90d"] = _safe_numeric(focus.get("Shop Monthly Sold Qty (P90D)", pd.Series(dtype=float, index=focus.index)))
     for label, col in [("M-2", "Shop Stock Qty (M-2)"), ("M-1", "Shop Stock Qty (M-1)"), ("CM", "Shop Stock Qty (CM)")]:
-        focus[f"_shop_stock_{label}"] = _safe_numeric(focus.get(col, _safe_default_series(0, focus.index)))
+        focus[f"_shop_stock_{label}"] = _safe_numeric(focus.get(col, pd.Series(dtype=float, index=focus.index)))
     for label, col in [("M-2", "D001 Stock Qty (M-2)"), ("M-1", "D001 Stock Qty (M-1)"), ("CM", "D001 Stock Qty (CM)")]:
-        focus[f"_d001_{label}"] = _safe_numeric(focus.get(col, _safe_default_series(0, focus.index)))
+        focus[f"_d001_{label}"] = _safe_numeric(focus.get(col, pd.Series(dtype=float, index=focus.index)))
 
-    # 先取每個 SKU 的 D001 三期值（D001 是 SKU 級共享，first 即可）
-    d001_per_sku = (
-        focus.groupby("SKU", dropna=False)
-        .agg(
-            D001_Stock_M2=("_d001_M-2", "first"),
-            D001_Stock_M1=("_d001_M-1", "first"),
-            D001_Stock_CM=("_d001_CM", "first"),
-        )
-        .reset_index()
-    )
+    # 判斷 Site Code 可用性（用於 nunique）
+    has_site_code = "Site Code" in focus.columns
 
-    # 各 Nature 的缺貨店數 + 銷售（只保留缺貨店數，取消缺貨行數）
-    nature_aggs = {}
+    # ── 單次 groupby 計算所有 SKU-level 指標（D001 + Shop Stock + Brand/Buyer 已從 lookup 取得）──
+    sku_agg = focus.groupby("SKU", dropna=False).agg(
+        **{
+            "D001_Stock_M2": ("_d001_M-2", "first"),
+            "D001_Stock_M1": ("_d001_M-1", "first"),
+            "D001_Stock_CM": ("_d001_CM", "first"),
+            "店舖存貨總_M2": ("_shop_stock_M-2", "sum"),
+            "店舖存貨總_M1": ("_shop_stock_M-1", "sum"),
+            "店舖存貨總_CM": ("_shop_stock_CM", "sum"),
+        }
+    ).reset_index()
+
+    # ── 單次 groupby 計算 SKU×Nature-level 指標（取代 3 次獨立 filter+groupby）──
     _DIAG_NATURES = ["Tourist", "Mix", "Non Tourist"]
+    nat_agg_dict = {}
     for nat in _DIAG_NATURES:
-        sub = focus[focus["Shop Nature"] == nat]
-        nature_aggs[nat] = (
-            sub.groupby("SKU", dropna=False)
-            .agg(
-                **{
-                    f"{nat}缺貨店數": ("Site Code", "nunique") if "Site Code" in sub.columns else ("SKU", "count"),
-                    f"{nat}損失_M2": ("_loss_m2", "sum"),
-                    f"{nat}損失_P90D": ("_loss_p90d", "sum"),
-                    f"{nat}_CM銷售件數": ("_cm_sold", "sum"),
-                    f"{nat}_P90D總量(90日)": ("_p90d", "sum"),
-                }
-            )
-            .reset_index()
-        )
+        shop_count_col = "Site Code" if has_site_code else "SKU"
+        nat_agg_dict[f"{nat}缺貨店數"] = (shop_count_col, "nunique") if has_site_code else (shop_count_col, "count")
+        nat_agg_dict[f"{nat}損失_M2"] = ("_loss_m2", "sum")
+        nat_agg_dict[f"{nat}損失_P90D"] = ("_loss_p90d", "sum")
+        nat_agg_dict[f"{nat}_CM銷售件數"] = ("_cm_sold", "sum")
+        nat_agg_dict[f"{nat}_P90D總量(90日)"] = ("_p90d", "sum")
 
-    # 店舖總存貨（Tourist+Mix+Non Tourist 缺貨店加總）
-    shop_stock_per_sku = (
-        focus.groupby("SKU", dropna=False)
-        .agg(
-            店舖存貨總_M2=("_shop_stock_M-2", "sum"),
-            店舖存貨總_M1=("_shop_stock_M-1", "sum"),
-            店舖存貨總_CM=("_shop_stock_CM", "sum"),
-        )
-        .reset_index()
-    )
+    sku_nat_agg = focus.groupby(["SKU", "Shop Nature"], dropna=False, observed=True).agg(
+        **{k: v for k, v in nat_agg_dict.items() if v[0] in focus.columns or has_site_code}
+    ).reset_index()
 
-    # 品牌資訊（first）+ SKU Desc + Launch Info
-    brand_agg_dict = {
-        "Brand": ("Brand", "first") if "Brand" in focus.columns else ("SKU", "first"),
-        "Buyer": ("Buyer", "first") if "Buyer" in focus.columns else ("SKU", "first"),
-    }
-    if "SKU Desc" in focus.columns:
-        brand_agg_dict["SKU Desc"] = ("SKU Desc", "first")
-    if "Launch Date" in focus.columns:
-        brand_agg_dict["Launch Date"] = ("Launch Date", "first")
-    if "Is New SKU (3mo)" in focus.columns:
-        brand_agg_dict["Is New SKU (3mo)"] = ("Is New SKU (3mo)", "first")
-    brand_per_sku = (
-        focus.groupby("SKU", dropna=False)
-        .agg(**brand_agg_dict)
-        .reset_index()
-    )
+    # 將 Nature 展開為寬表（pivot 比 merge 3 次快，避免重複欄位問題）
+    merged = sku_agg.copy()
+    for nat in _DIAG_NATURES:
+        nat_cols = [c for c in [f"{nat}缺貨店數", f"{nat}損失_M2", f"{nat}損失_P90D",
+                                 f"{nat}_CM銷售件數", f"{nat}_P90D總量(90日)"] if c in sku_nat_agg.columns]
+        if nat_cols:
+            nat_sub = sku_nat_agg[sku_nat_agg["Shop Nature"] == nat][["SKU"] + nat_cols].copy()
+            if not nat_sub.empty:
+                merged = merged.merge(nat_sub, on="SKU", how="left")
 
-    # 各 SKU 的 NDRF 行數統計（從完整 raw 資料計算，分 ND / RF）
+    # 補上 SKU 基本資訊（從 lookup，取代原本的 brand_per_sku groupby）
+    lookup_cols = ["SKU"] + [c for c in ["Brand", "Buyer", "SKU Desc", "Launch Date", "Is New SKU (3mo)"] if c in sku_lookup.columns]
+    merged = merged.merge(sku_lookup[lookup_cols], on="SKU", how="left")
+
+    # NDRF 行數統計（從完整 raw 計算）
     rp_full = (
         raw.get("RP Type", _safe_default_series("", raw.index))
         .fillna("").astype(str).str.strip().str.upper()
@@ -3445,26 +3465,24 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
         )
         .reset_index()
     )
-    for c in ["NDRF_ND行数", "NDRF_RF行数"]:
-        ndrf_per_sku[c] = ndrf_per_sku[c].fillna(0).astype(int)
-
-    # 合併
-    merged = brand_per_sku.merge(d001_per_sku, on="SKU", how="left")
     merged = merged.merge(ndrf_per_sku, on="SKU", how="left")
-    for nat in _DIAG_NATURES:
-        merged = merged.merge(nature_aggs[nat], on="SKU", how="left")
-    merged = merged.merge(shop_stock_per_sku, on="SKU", how="left")
-
-    # 填補 NDRF NaN
     for c in ["NDRF_ND行数", "NDRF_RF行数"]:
         merged[c] = merged[c].fillna(0).astype(int)
 
-    # 填補缺漏 Nature 的 NaN
+    # 確保各 Nature 欄位存在（當 focus 無該 Nature 時補 0）
+    _diag_sort_keys = []
     for nat in _DIAG_NATURES:
-        for col in nature_aggs[nat].columns:
-            if col == "SKU":
-                continue
-            merged[col] = merged[col].fillna(0).astype(int)
+        for col in [f"{nat}缺貨店數", f"{nat}損失_M2", f"{nat}損失_P90D",
+                     f"{nat}_CM銷售件數", f"{nat}_P90D總量(90日)"]:
+            if col not in merged.columns:
+                merged[col] = 0
+            else:
+                merged[col] = merged[col].fillna(0).astype(int)
+        _diag_sort_keys.append(f"{nat}缺貨店數")
+    # 排序鍵：Tourist 損失 P90D（ Tour-specific，供排序用）
+    if "Tourist損失_P90D" not in merged.columns:
+        merged["Tourist損失_P90D"] = 0
+    _diag_sort_keys.append("Tourist損失_P90D")
 
     # D001 狀態分類
     merged["D001 狀態"] = merged["D001_Stock_CM"].apply(_classify_d001_status)
@@ -3486,8 +3504,8 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame) -> pd.DataFrame:
                 "店舖存貨總_M2", "店舖存貨總_M1", "店舖存貨總_CM"]
     # 排序
     merged = merged.sort_values(
-        ["Tourist缺貨店數", "Mix缺貨店數", "Non Tourist缺貨店數", "Tourist損失_P90D"],
-        ascending=[False, False, False, False],
+        _diag_sort_keys,
+        ascending=[False] * len(_diag_sort_keys),
     ).reset_index(drop=True)
     avail = [c for c in out_cols if c in merged.columns]
     merged = merged[avail]
@@ -3502,11 +3520,13 @@ _TURNDAY_BAND_ORDER = [
 ]
 
 
-def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: int = 300) -> dict:
+def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: int = 300,
+                                            sku_lookup: pd.DataFrame | None = None) -> dict:
     """存貨分佈彙總 — 回傳 dict 含 4 個 DataFrame。
 
     Args:
         stock_threshold: 低存貨 SKU 門檻（D001 + Shop Stock 總和 < 此值視為低存貨，預設 300）。
+        sku_lookup: 預先建好的 SKU 基本資訊查找表，為 None 時即時計算。
 
     回傳:
         {
@@ -3656,36 +3676,27 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
         # 可調貨建議量 = min(Tourist 缺貨損失, 其他過剩存貨)
         merged["建議調貨量"] = np.minimum(merged["Tourist缺貨損失_P90D"], merged["其他Nature過剩總存貨"]).astype(int)
 
-        # 附加 SKU 級資訊：SKU Desc / Launch Date / Buyer / D001 Net Stock + Shop Stock 總數
-        sku_info_cols = ["SKU"]
-        for _c in ["SKU Desc", "Launch Date", "Is New SKU (3mo)", "Buyer"]:
-            if _c in raw.columns:
-                sku_info_cols.append(_c)
+        # 附加 SKU 級資訊：SKU Desc / Launch Date / Buyer（從 lookup 讀取，避免重複 groupby）
+        if sku_lookup is None:
+            sku_lookup = _build_sku_info_lookup(raw)
+        info_from_lookup = [c for c in ["SKU Desc", "Launch Date", "Is New SKU (3mo)", "Buyer"]
+                           if c in sku_lookup.columns and c not in merged.columns]
+        if info_from_lookup:
+            merged = merged.merge(sku_lookup[["SKU"] + info_from_lookup], on="SKU", how="left")
+
+        # D001 Net Stock + Shop Stock 總數（不在 lookup 中，獨立計算）
         d001_net = "D001 Net Stock Qty (CM)"
         has_d001_net = d001_net in raw.columns
         has_shop_cm = "Shop Stock Qty (CM)" in raw.columns
-        if sku_info_cols:
-            agg_dict = {}
-            for c in sku_info_cols:
-                if c != "SKU":
-                    agg_dict[c] = (c, "first")
-            if has_d001_net:
-                agg_dict["_d001_net"] = (d001_net, "first")
-            if has_shop_cm:
-                agg_dict["_shop_total"] = ("Shop Stock Qty (CM)", "sum")
-            sku_info = (
-                raw[sku_info_cols + ([d001_net] if has_d001_net else []) + (["Shop Stock Qty (CM)"] if has_shop_cm else [])]
-                .groupby("SKU", dropna=False)
-                .agg(**agg_dict)
+        if has_d001_net and has_shop_cm:
+            extra_agg = (
+                raw.groupby("SKU", dropna=False)
+                .agg(_d001_net=(d001_net, "first"), _shop_total=("Shop Stock Qty (CM)", "sum"))
                 .reset_index()
             )
-            merged = merged.merge(sku_info, on="SKU", how="left")
-            if has_d001_net and has_shop_cm:
-                merged["總可用存貨"] = (_safe_numeric(merged.get("_d001_net", _safe_default_series(0, merged.index))) +
-                                        _safe_numeric(merged.get("_shop_total", _safe_default_series(0, merged.index)))).astype(int)
-            for _c in ["_d001_net", "_shop_total"]:
-                if _c in merged.columns:
-                    merged.drop(columns=[_c], inplace=True)
+            merged = merged.merge(extra_agg, on="SKU", how="left")
+            merged["總可用存貨"] = (_safe_numeric(merged["_d001_net"]) + _safe_numeric(merged["_shop_total"])).astype(int)
+            merged.drop(columns=["_d001_net", "_shop_total"], inplace=True)
 
         out_cols = ["SKU"]
         if "Brand" in merged.columns:
@@ -3773,12 +3784,12 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
             result["low_stock_allocation"] = b4
 
     # ── B5: 可調貨優先分析 (Tourist缺貨 + 同SKU在Mix/NT有可釋放件數) ──────────
-    result["transfer_priority"] = _build_transfer_priority_analysis(raw)
+    result["transfer_priority"] = _build_transfer_priority_analysis(raw, sku_lookup)
 
     return result
 
 
-def _build_transfer_priority_analysis(raw: pd.DataFrame) -> dict:
+def _build_transfer_priority_analysis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | None = None) -> dict:
     """可調貨優先分析：Tourist 缺貨行中，同 SKU 在 Mix/Non Tourist 有可釋放件數的行數及 SKU 明細。
 
     回傳:
@@ -3862,18 +3873,13 @@ def _build_transfer_priority_analysis(raw: pd.DataFrame) -> dict:
     detail = t_agg.merge(sku_releasable, on="SKU", how="left")
     detail = detail[detail["可釋放總件數"] > 0]
 
-    # Add SKU-level info: Brand, SKU Desc, Buyer
-    sku_info_cols = ["SKU"]
-    for _c in ["Brand", "SKU Desc", "Buyer"]:
-        if _c in raw.columns:
-            sku_info_cols.append(_c)
-
-    sku_info = (
-        raw[sku_info_cols].groupby("SKU", dropna=False)
-        .agg({c: "first" for c in sku_info_cols if c != "SKU"})
-        .reset_index()
-    )
-    detail = detail.merge(sku_info, on="SKU", how="left")
+    # Add SKU-level info: Brand, SKU Desc, Buyer（從 lookup 讀取，避免重複 groupby）
+    if sku_lookup is None:
+        sku_lookup = _build_sku_info_lookup(raw)
+    info_from_lookup = [c for c in ["Brand", "SKU Desc", "Buyer"]
+                       if c in sku_lookup.columns and c not in detail.columns]
+    if info_from_lookup:
+        detail = detail.merge(sku_lookup[["SKU"] + info_from_lookup], on="SKU", how="left")
 
     # D001 status
     d001_cm_col = "D001 Stock Qty (CM)"
@@ -3910,13 +3916,21 @@ def _build_transfer_priority_analysis(raw: pd.DataFrame) -> dict:
     return result
 
 
-def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300) -> pd.DataFrame:
+def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300, sku_lookup: pd.DataFrame | None = None) -> pd.DataFrame:
     """按 SKU 計算遊客/混合/非遊客的每月銷量及存儲量分析。
 
     每列為一個 SKU，彙總各 Nature 的月均銷售、當期庫存、店數等。
     低存貨 SKU（D001 + Shop < threshold）排在前面。
 
     排序：低存貨優先 → Tourist RF 月均銷售降序。
+
+    效能優化：
+    - 使用共用 sku_lookup 取代 3 次獨立 groupby.first() merge
+    - ND 行數改用預計算 int 欄位取代 groupby 內的 lambda
+    - 補充資訊欄位改用單次 merge 取代逐欄 merge
+
+    Args:
+        sku_lookup: 預先建好的 SKU 基本資訊查找表，為 None 時即時計算。
     """
     if raw.empty or "SKU" not in raw.columns or "Shop Nature" not in raw.columns:
         return pd.DataFrame()
@@ -3944,8 +3958,9 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300) -
     work["_d001"] = d001_cm.values
     work["_rp"] = rp_type.values
     work["_is_rf"] = (work["_rp"] == "RF").astype(int)
+    work["_is_nd"] = (work["_rp"] == "ND").astype(int)
 
-    # SKU 級基本資訊
+    # SKU 級基本資訊 (ND 行數改用預計算 int 取代 lambda)
     sku_base = (
         work.groupby("SKU", dropna=False)
         .agg(
@@ -3953,15 +3968,15 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300) -
             總店舖庫存=("_cm_stock", "sum"),
             總行數=("SKU", "count"),
             RF行數=("_is_rf", "sum"),
-            ND行數=("_rp", lambda x: (x == "ND").sum()),
+            ND行數=("_is_nd", "sum"),
         )
         .reset_index()
     )
-    # 從 raw 取 Brand/Buyer/SKU Desc
-    for col, out_name in [("Brand", "Brand"), ("Buyer", "Buyer"), ("SKU Desc", "SKU Desc")]:
-        if col in raw.columns:
-            col_first = raw.groupby("SKU", dropna=False)[col].first().reset_index()
-            sku_base = sku_base.merge(col_first, on="SKU", how="left")
+    # 使用共用 lookup 表（單次 merge），取代原本 3 次獨立 groupby.merge
+    if sku_lookup is None:
+        sku_lookup = _build_sku_info_lookup(raw)
+    info_cols = ["SKU"] + [c for c in ["Brand", "Buyer", "SKU Desc"] if c in sku_lookup.columns]
+    sku_base = sku_base.merge(sku_lookup[info_cols], on="SKU", how="left")
     sku_base["RF行數"] = sku_base["RF行數"].fillna(0).astype(int)
     sku_base["ND行數"] = sku_base["ND行數"].fillna(0).astype(int)
     sku_base["總可用存貨"] = sku_base["D001_庫存"] + sku_base["總店舖庫存"]
@@ -4031,16 +4046,11 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300) -
         result[f"{nat}_當期庫存"] = result[f"{nat}_當期庫存"].fillna(0).astype(int)
         result[f"{nat}_店數"] = result[f"{nat}_店數"].fillna(0).astype(int)
 
-    # ── 補充資訊欄位（Vendor MC, Adj. MCH1, Item Status, Launch Date, Item Class, Is New SKU） ──
-    _extra_cols = ["Vendor MC", "Adj. MCH1", "Item Status", "Launch Date", "Item Class"]
-    _present = [c for c in _extra_cols if c in raw.columns]
-    if _present:
-        col_first = raw.groupby("SKU", dropna=False)[_present].first().reset_index()
-        result = result.merge(col_first, on="SKU", how="left")
-    has_new_sku = "Is New SKU (3mo)" in raw.columns and "Is New SKU (3mo)" not in result.columns
-    if has_new_sku:
-        new_sku_col = raw.groupby("SKU", dropna=False)["Is New SKU (3mo)"].first().reset_index()
-        result = result.merge(new_sku_col, on="SKU", how="left")
+    # ── 補充資訊欄位（從 sku_lookup 一次性補齊，避免重複 groupby）──
+    extra_from_lookup = [c for c in ["Vendor MC", "Adj. MCH1", "Item Status", "Launch Date", "Item Class", "Is New SKU (3mo)"]
+                          if c not in sku_base.columns and c in sku_lookup.columns]
+    if extra_from_lookup:
+        result = result.merge(sku_lookup[["SKU"] + extra_from_lookup], on="SKU", how="left")
 
     # ── 不分 Nature 的週期存貨/銷售欄位（M-2, M-1 D001/ShopStock；Sold M-2, M-1, MTD） ──
     d001_m2 = _safe_numeric(raw["D001 Stock Qty (M-2)"]) if "D001 Stock Qty (M-2)" in raw.columns else _safe_default_series(0, raw.index)
@@ -4246,24 +4256,22 @@ def transform_stock_impact(
     summary_item_class = _results.get("item_class", pd.DataFrame())
 
     if progress_callback:
-        progress_callback(0.55, "建構 SKU 跨 Nature 調貨分析中...")
+        progress_callback(0.55, "建構 SKU 層級分析中...")
 
-    sku_allocation = _build_sku_allocation_summary(raw)
+    # 建立 SKU 基本資訊查找表（供 4 個 SKU-level 函式共用，避免重複 groupby）
+    _sku_lookup = _build_sku_info_lookup(raw)
 
-    if progress_callback:
-        progress_callback(0.62, "建構 by-SKU 缺貨診斷表中...")
+    # 平行化：同時計算 4 個 SKU-level 分析（彼此獨立，共用 _sku_lookup）
+    with ThreadPoolExecutor(max_workers=4) as _sku_executor:
+        f_alloc = _sku_executor.submit(_build_sku_allocation_summary, raw, _sku_lookup)
+        f_diag = _sku_executor.submit(_build_sku_stock_diagnosis, raw, _sku_lookup)
+        f_inv = _sku_executor.submit(_build_inventory_distribution_summary, raw, stock_threshold)
+        f_monthly = _sku_executor.submit(_build_sku_monthly_analysis, raw, stock_threshold, _sku_lookup)
 
-    sku_diagnosis = _build_sku_stock_diagnosis(raw)
-
-    if progress_callback:
-        progress_callback(0.66, "建構存貨分佈分析中...")
-
-    inv_distribution = _build_inventory_distribution_summary(raw, stock_threshold=stock_threshold)
-
-    if progress_callback:
-        progress_callback(0.72, "建構 SKU 月銷量和存儲量分析中...")
-
-    sku_monthly_analysis = _build_sku_monthly_analysis(raw, stock_threshold=stock_threshold)
+    sku_allocation = f_alloc.result()
+    sku_diagnosis = f_diag.result()
+    inv_distribution = f_inv.result()
+    sku_monthly_analysis = f_monthly.result()
 
     if progress_callback:
         progress_callback(0.75, "轉換完成")
