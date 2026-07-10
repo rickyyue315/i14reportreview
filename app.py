@@ -180,7 +180,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
     
-    st.divider()
+    st.markdown("<div style='margin: 1.2rem 0;'></div>", unsafe_allow_html=True)
     
     st.markdown("### 🎯 分析模式說明")
     st.markdown("""
@@ -236,9 +236,9 @@ with st.sidebar:
     - 簡化版缺貨銷售影響分析，隻輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表
     - SKU Monthly Sales&Store **保留原版所有欄位**（含 Vendor MC/Adj. MCH1/Item Status/Launch Date/Item Class/Is New SKU），並 **新增** M-2, M-1 的 D001 存貨、店舖總存貨及 M-2, M-1, MTD 的店舖總銷售量（不分 Shop Nature，D001_MTD/ShopStock_MTD 已存在於原版不重複）
     - 適合快速查看各 SKU 三期存貨與銷售趨勢
-""")
+    """)
     
-    st.divider()
+    st.markdown("<div style='margin: 1.2rem 0;'></div>", unsafe_allow_html=True)
     
     st.markdown("### 📋 系統操作流程")
     st.markdown("""
@@ -250,7 +250,7 @@ with st.sidebar:
     6. 💾 **下載成果**：於視覺化看板中即時查閱統計資訊，並一鍵導出美化後的 Excel 報表。
     """)
     
-    st.divider()
+    st.markdown("<div style='margin: 1.2rem 0;'></div>", unsafe_allow_html=True)
     
     st.markdown("### 🔍 必要欄位檢核標準")
     st.markdown("""
@@ -266,7 +266,7 @@ with st.sidebar:
     - 📌 **Shop Nature** <span style="color:#f59e0b;font-size:0.8em">(店鋪性質)</span>
     """, unsafe_allow_html=True)
     
-    st.divider()
+    st.markdown("<div style='margin: 1.2rem 0;'></div>", unsafe_allow_html=True)
     
     st.markdown("### ⚙️ 核心計算規則")
     st.markdown("""
@@ -310,7 +310,7 @@ with st.sidebar:
      所有模式均自動生成採購與品牌的交叉匯總樞紐分析表。
     """)
     
-    st.divider()
+    st.markdown("<div style='margin: 1.2rem 0;'></div>", unsafe_allow_html=True)
 
     if st.button("🧹 釋放記憶體", type="secondary", use_container_width=True,
                  help="清除所有快取資料與上傳的 Excel 檔案，釋放記憶體空間。清除後需重新上傳檔案。"):
@@ -517,7 +517,7 @@ if uploaded_file is not None:
                 os_rate_non_tourist = st.slider("Overstock Non Tourist Rate (%)", 0, 100, 50, 1, key="os_non_tourist_cb",
                     help="Non Tourist 類型 Overstock 上限 = floor(Monthly Sold × Rate)")
 
-            st.markdown("<hr style='margin: 1rem 0;'>", unsafe_allow_html=True)
+            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
             st.markdown("**OOS Rate** — 各 Shop Nature OOS 底線計算倍率。")
             col_oos1, col_oos2, col_oos3 = st.columns(3)
             with col_oos1:
@@ -608,7 +608,7 @@ if uploaded_file is not None:
             categories = st.session_state.combined_categories
             excel_data = st.session_state.combined_excel_data
 
-            st.markdown('<div class="custom-card" style="border-top: 4px solid #6366f1;">', unsafe_allow_html=True)
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📈 Safety Stock 數據分析摘要 (Safety Stock Analysis Dashboard)")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
@@ -896,7 +896,7 @@ if uploaded_file is not None:
                     top_buyer_name = str(_top["Buyer"])
                     top_buyer_loss = int(_top.get("Tourist 缺貨行數", 0))
 
-            st.markdown('<div class="custom-card" style="border-top: 4px solid #dc2626;">', unsafe_allow_html=True)
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📦 存貨分佈分析摘要 (Stock Impact Dashboard)")
             st.caption("🎯 重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積｜Non Tourist/Mix 只需保留 7-14 日 Turnday")
 
@@ -1434,7 +1434,7 @@ if uploaded_file is not None:
             categories = st.session_state.categories
             excel_data = st.session_state.excel_data
 
-            st.markdown('<div class="custom-card" style="border-top: 4px solid #6366f1;">', unsafe_allow_html=True)
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📈 異常庫存數據分析摘要 (Analysis Dashboard)")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
@@ -1676,7 +1676,7 @@ if uploaded_file is not None:
             categories = st.session_state.nd_categories
             excel_data = st.session_state.nd_excel_data
 
-            st.markdown('<div class="custom-card" style="border-top: 4px solid #6366f1;">', unsafe_allow_html=True)
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📈 ND SKU 數據分析摘要 (ND SKU Analysis Dashboard)")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
@@ -1833,7 +1833,7 @@ if uploaded_file is not None:
             raw_df = st.session_state.ndrf_comp_raw_df
             excel_data = st.session_state.ndrf_comp_excel_data
 
-            st.markdown('<div class="custom-card" style="border-top: 4px solid #10b981;">', unsafe_allow_html=True)
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📊 NDRF 月份對比分析摘要")
 
             _total_row = comparison_by_shop[comparison_by_shop["Site Code"] == "總計"]
@@ -1937,7 +1937,7 @@ if uploaded_file is not None:
             raw_df = st.session_state.carry_raw_df
             excel_data = st.session_state.carry_excel_data
 
-            st.markdown('<div class="custom-card" style="border-top: 4px solid #6366f1;">', unsafe_allow_html=True)
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📈 Carry SKU 分析摘要 (Carry SKU Analysis Dashboard)")
 
             _total_row = dashboard_df[dashboard_df["Site Code"] == "總計"]
@@ -2080,7 +2080,7 @@ if uploaded_file is not None:
             )
 
 # 9. 底部頁尾資訊
-st.divider()
+st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
 st.markdown(
     '<div style="text-align: center; color: #444455; font-size: 0.8rem; padding: 10px 0;">'
     'I14 報表轉換與分析系統 &nbsp;&nbsp;•&nbsp;&nbsp; Streamlit + Zeabur &nbsp;&nbsp;•&nbsp;&nbsp; '
