@@ -2965,9 +2965,9 @@ def _add_launch_info(df: pd.DataFrame, ref_date: datetime.date | None = None) ->
 
     df = df.copy()
     launch_raw = df["Launch Date"].fillna("").astype(str).str.strip()
-    # 一次性嘗試所有常見格式推斷（pd.to_datetime 內建推斷比逐次嘗試快）
-    launch_dt = pd.to_datetime(launch_raw, errors="coerce", infer_datetime_format=True)
-    # 若全部 NaN（可能是較少見格式），再嘗試顯式格式
+    # 嘗試自動推斷格式解析
+    launch_dt = pd.to_datetime(launch_raw, errors="coerce")
+    # 若有 NaN（可能是較少見格式），再嘗試顯式格式
     if launch_dt.isna().any():
         still_na = launch_dt.isna()
         for fmt in ("%Y/%m/%d", "%d/%m/%Y", "%Y%m%d"):
