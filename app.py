@@ -168,6 +168,14 @@ button[kind="primary"]:hover {
     background-color: #f8fbfc;
     color: #1a1a2e;
 }
+
+/* 自定義漸層分隔線 */
+.custom-divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0,119,163,0.15) 20%, rgba(0,119,163,0.15) 80%, transparent);
+    margin: 1.5rem 0;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -180,7 +188,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
     
-    st.markdown("<div style='margin: 1.2rem 0;'></div>", unsafe_allow_html=True)
+    st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
     
     st.markdown("### 🎯 分析模式說明")
     st.markdown("""
@@ -238,7 +246,7 @@ with st.sidebar:
     - 適合快速查看各 SKU 三期存貨與銷售趨勢
     """)
     
-    st.markdown("<div style='margin: 1.2rem 0;'></div>", unsafe_allow_html=True)
+    st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
     
     st.markdown("### 📋 系統操作流程")
     st.markdown("""
@@ -250,7 +258,7 @@ with st.sidebar:
     6. 💾 **下載成果**：於視覺化看板中即時查閱統計資訊，並一鍵導出美化後的 Excel 報表。
     """)
     
-    st.markdown("<div style='margin: 1.2rem 0;'></div>", unsafe_allow_html=True)
+    st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
     
     st.markdown("### 🔍 必要欄位檢核標準")
     st.markdown("""
@@ -266,7 +274,7 @@ with st.sidebar:
     - 📌 **Shop Nature** <span style="color:#f59e0b;font-size:0.8em">(店鋪性質)</span>
     """, unsafe_allow_html=True)
     
-    st.markdown("<div style='margin: 1.2rem 0;'></div>", unsafe_allow_html=True)
+    st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
     
     st.markdown("### ⚙️ 核心計算規則")
     st.markdown("""
@@ -310,7 +318,7 @@ with st.sidebar:
      所有模式均自動生成採購與品牌的交叉匯總樞紐分析表。
     """)
     
-    st.markdown("<div style='margin: 1.2rem 0;'></div>", unsafe_allow_html=True)
+    st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
     if st.button("🧹 釋放記憶體", type="secondary", use_container_width=True,
                  help="清除所有快取資料與上傳的 Excel 檔案，釋放記憶體空間。清除後需重新上傳檔案。"):
@@ -494,7 +502,7 @@ if uploaded_file is not None:
         month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
         st.caption(f"MTD: {mtd_days}日，當月共 {month_total_days} 日")
 
-        st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+        st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
         SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
         selected_shop_natures = st.multiselect(
@@ -517,7 +525,7 @@ if uploaded_file is not None:
                 os_rate_non_tourist = st.slider("Overstock Non Tourist Rate (%)", 0, 100, 50, 1, key="os_non_tourist_cb",
                     help="Non Tourist 類型 Overstock 上限 = floor(Monthly Sold × Rate)")
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
             st.markdown("**OOS Rate** — 各 Shop Nature OOS 底線計算倍率。")
             col_oos1, col_oos2, col_oos3 = st.columns(3)
             with col_oos1:
@@ -698,7 +706,7 @@ if uploaded_file is not None:
 
             st.markdown('</div>', unsafe_allow_html=True)
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             selected_site_code = st.selectbox(
                 "🏪 選擇 Site Code 檢視明細",
@@ -737,7 +745,7 @@ if uploaded_file is not None:
                 st.dataframe(_filtered_raw.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
             download_name = f"I14 Safety Stock Review_{hk_time}.xlsx"
@@ -779,7 +787,7 @@ if uploaded_file is not None:
         )
         st.caption(f"當前門檻: {stock_threshold} 件 — 只影響低存貨標記與配置決策，不限制報表範圍。")
 
-        st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+        st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
         if st.button("⚙️ 執行缺貨銷售影響分析", type="primary", width='stretch'):
             _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
@@ -1008,7 +1016,7 @@ if uploaded_file is not None:
                 """, unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             impact_tabs = st.tabs(["📊 存貨分佈", "📦 SKU月銷量和存儲", "🏷️ By Brand", "👤 By Buyer", "📦 By Category", "🔍 SKU 缺貨診斷"])
 
@@ -1106,7 +1114,7 @@ if uploaded_file is not None:
                 else:
                     st.info("無 Tourist / Mix / Non Tourist 缺貨 SKU")
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
             download_name = f"I14 Stock Impact Analysis_{hk_time}.xlsx"
@@ -1142,7 +1150,7 @@ if uploaded_file is not None:
             help="設定為 0 時不標記低存貨 SKU。"
         )
 
-        st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+        st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
         if st.button("⚙️ 執行簡化版缺貨銷售影響分析", type="primary", width='stretch'):
             _prog3 = st.progress(0, text="處理中... 0% | 開始處理...")
@@ -1202,7 +1210,7 @@ if uploaded_file is not None:
             else:
                 st.info("無 SKU 月銷量/存儲量數據")
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
             download_name = f"I14 Stock Impact Analysis (Simplified)_{hk_time}.xlsx"
@@ -1265,7 +1273,7 @@ if uploaded_file is not None:
             if month_a_selected == month_b_selected:
                 st.warning("⚠️ 月份 A 與月份 B 相同，對比將無差異。請選擇不同月份。")
 
-        st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+        st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
         SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
         selected_shop_natures = st.multiselect(
@@ -1536,7 +1544,7 @@ if uploaded_file is not None:
                 st.dataframe(raw_df.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
             download_name = f"I14 by SKUxShop_To Buyer_{hk_time}.xlsx"
@@ -1656,7 +1664,7 @@ if uploaded_file is not None:
                 st.dataframe(raw_df.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
             download_name = f"I14 OOS Review_{hk_time}.xlsx"
@@ -1812,7 +1820,7 @@ if uploaded_file is not None:
                 st.dataframe(_filtered_raw.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
             download_name = f"I14 SKU 精簡 Review_{hk_time}.xlsx"
@@ -1894,7 +1902,7 @@ if uploaded_file is not None:
 
             st.markdown('</div>', unsafe_allow_html=True)
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             st.markdown("#### 店舖級月份對比總覽")
             st.dataframe(comparison_by_shop, width='stretch', hide_index=True)
@@ -1916,7 +1924,7 @@ if uploaded_file is not None:
                 st.dataframe(raw_df.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆 RAW 明細，完整 {len(raw_df):,} 筆將包含在下載的 Excel 報表中。")
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
             download_name = f"I14 NDRF 月份對比_{hk_time}.xlsx"
@@ -2049,7 +2057,7 @@ if uploaded_file is not None:
 
             st.markdown('</div>', unsafe_allow_html=True)
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             st.markdown("#### 各店舖 Carry SKU 指標總覽")
             st.dataframe(dashboard_df, width='stretch', hide_index=True)
@@ -2065,7 +2073,7 @@ if uploaded_file is not None:
                 st.dataframe(raw_df.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
-            st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
             download_name = f"I14 Carry SKU Review_{hk_time}.xlsx"
@@ -2080,7 +2088,7 @@ if uploaded_file is not None:
             )
 
 # 9. 底部頁尾資訊
-st.markdown("<div style='margin: 1.5rem 0;'></div>", unsafe_allow_html=True)
+st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 st.markdown(
     '<div style="text-align: center; color: #444455; font-size: 0.8rem; padding: 10px 0;">'
     'I14 報表轉換與分析系統 &nbsp;&nbsp;•&nbsp;&nbsp; Streamlit + Zeabur &nbsp;&nbsp;•&nbsp;&nbsp; '
