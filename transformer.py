@@ -564,55 +564,32 @@ def transform_combined(
     oos_mask = (status_col == "OOS (0 Stock)") | (status_col == "Potential OOS (<7 Turnday)")
     balanced_mask = (safety_change != 0) & ~overstock_mask & ~oos_mask
 
-    counts = {}
-    counts["Overstock"] = (
-        raw[overstock_mask].groupby(group_cols, observed=True).size().rename("Overstock")
-    )
-    counts["OOS"] = (
-        raw[oos_mask].groupby(group_cols, observed=True).size().rename("OOS")
-    )
-    counts["Balanced (Safety Adjusted)"] = (
-        raw[balanced_mask].groupby(group_cols, observed=True).size().rename("Balanced (Safety Adjusted)")
-    )
+    # 預計算 int 旗標（單次 groupby + 條件聚合，取代 7 次獨立 groupby）
+    raw["_is_overstock"] = overstock_mask.astype(int)
+    raw["_is_oos"] = oos_mask.astype(int)
+    raw["_is_balanced"] = balanced_mask.astype(int)
+    raw["_is_inc"] = (safety_change > 0).astype(int)
+    raw["_is_dec"] = (safety_change < 0).astype(int)
+    raw["_is_unchanged"] = (safety_change == 0).astype(int)
 
     if progress_callback:
         progress_callback(0.5, "合併彙總中...")
 
-    summary = pd.concat(list(counts.values()), axis=1).fillna(0).astype(int).reset_index()
+    summary = (
+        raw.groupby(group_cols, observed=True)
+        .agg(
+            Overstock=("_is_overstock", "sum"),
+            OOS=("_is_oos", "sum"),
+            **{"Balanced (Safety Adjusted)": ("_is_balanced", "sum")},
+            **{"Safety Qty Change": ("Safety Qty Change", "sum")},
+            **{"增加Safety Qty的店舖數量": ("_is_inc", "sum")},
+            **{"減少Safety Qty的店舖數量": ("_is_dec", "sum")},
+            **{"Safety Qty不變的店舖數量": ("_is_unchanged", "sum")},
+        )
+        .fillna(0).astype(int).reset_index()
+    )
     summary["SKU"] = summary["SKU"].apply(_safe_sku)
     summary["總計"] = summary[categories].sum(axis=1)
-
-    safety_change_per_group = (
-        raw.groupby(group_cols, observed=True)["Safety Qty Change"]
-        .sum()
-        .astype(int)
-    )
-    summary = summary.merge(safety_change_per_group, on=group_cols, how="left")
-    summary["Safety Qty Change"] = summary["Safety Qty Change"].fillna(0).astype(int)
-
-    safety_inc_per_group = (
-        raw[raw["Safety Qty Change"] > 0]
-        .groupby(group_cols, observed=True)
-        .size()
-        .rename("增加Safety Qty的店舖數量")
-    )
-    safety_dec_per_group = (
-        raw[raw["Safety Qty Change"] < 0]
-        .groupby(group_cols, observed=True)
-        .size()
-        .rename("減少Safety Qty的店舖數量")
-    )
-    safety_unchanged_per_group = (
-        raw[raw["Safety Qty Change"] == 0]
-        .groupby(group_cols, observed=True)
-        .size()
-        .rename("Safety Qty不變的店舖數量")
-    )
-
-    for _series in [safety_inc_per_group, safety_dec_per_group, safety_unchanged_per_group]:
-        summary = summary.merge(_series, on=group_cols, how="left")
-    for _col in ["增加Safety Qty的店舖數量", "減少Safety Qty的店舖數量", "Safety Qty不變的店舖數量"]:
-        summary[_col] = summary[_col].fillna(0).astype(int)
 
     buyer_order = summary.groupby("Buyer")["總計"].sum().sort_values(ascending=False).index.tolist()
     summary["_buyer_key"] = summary["Buyer"].map({b: i for i, b in enumerate(buyer_order)})
@@ -633,6 +610,9 @@ def transform_combined(
         }
     )
     summary = pd.concat([summary, total_row], ignore_index=True)
+
+    # 清理暫存欄位
+    raw.drop(columns=[c for c in ["_is_overstock", "_is_oos", "_is_balanced", "_is_inc", "_is_dec", "_is_unchanged"] if c in raw.columns], inplace=True, errors="ignore")
 
     if total_cat == 0:
         warnings.append("未偵測到任何符合條件的 Safety Stock Review 資料。")
@@ -920,42 +900,30 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
     if progress_callback:
         progress_callback(0.2, "\u5206\u985e\u7d71\u8a08\u4e2d...")
 
-    counts = {}
-    for i, cat in enumerate(categories):
+    # 預計算 int 旗標（單次 groupby 取代多次 filter+groupby + transfer merge）
+    _agg_dict = {}
+    for cat in categories:
         mask = (status_col == _STATUS_VALUE.get(cat, cat))
-        counts[cat] = (
-            df[mask]
-            .groupby(group_cols, observed=True)
-            .size()
-            .rename(cat)
-        )
-        if progress_callback:
-            progress_callback(0.2 + 0.3 * (i + 1) / len(categories), f"\u7d71\u8a08 {cat}...")
+        key = f"_cat_{abs(hash(cat)) % 10_000_000}"
+        df[key] = mask.astype(int)
+        _agg_dict[cat] = (key, "sum")
 
     if progress_callback:
-        progress_callback(0.5, "\u8a08\u7b97\u5eab\u5b58\u5efa\u8b70\u4e2d...")
+        progress_callback(0.5, "計算庫存建議中...")
 
     raw = _add_recommendation_columns(df, rates=rates)
 
     transfer_col = "After new Safety Qty / ND can transfer out of QTY"
-    raw["_transfer_num"] = pd.to_numeric(raw[transfer_col], errors="coerce").fillna(0)
-    transfer_summary = (
-        raw.groupby(group_cols, observed=True)["_transfer_num"]
-        .sum()
-        .astype(int)
-        .rename(transfer_col)
-    )
+    raw["_transfer_num"] = pd.to_numeric(raw.get(transfer_col, _safe_default_series(0, raw.index)), errors="coerce").fillna(0)
+    _agg_dict[transfer_col] = ("_transfer_num", "sum")
 
     if progress_callback:
-        progress_callback(0.55, "\u6392\u5e8f\u5f59\u7e3d\u4e2d...")
+        progress_callback(0.55, "排序彙總中...")
 
-    summary = pd.concat(list(counts.values()), axis=1).fillna(0).astype(int).reset_index()
+    summary = raw.groupby(group_cols, observed=True).agg(**_agg_dict).fillna(0).astype(int).reset_index()
 
     summary["SKU"] = summary["SKU"].apply(_safe_sku)
-    summary["\u7e3d\u8a08"] = summary[categories].sum(axis=1)
-
-    summary = summary.merge(transfer_summary, on=group_cols, how="left")
-    summary[transfer_col] = summary[transfer_col].fillna(0).astype(int)
+    summary["總計"] = summary[categories].sum(axis=1)
 
     buyer_order = summary.groupby("Buyer")["總計"].sum().sort_values(ascending=False).index.tolist()
     summary["_buyer_key"] = summary["Buyer"].map({b: i for i, b in enumerate(buyer_order)})
@@ -977,6 +945,9 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
         }
     )
     summary = pd.concat([summary, total_row], ignore_index=True)
+
+    # 清理暫存欄位
+    raw.drop(columns=[c for c in raw.columns if c.startswith("_cat_") or c == "_transfer_num"], inplace=True, errors="ignore")
 
     if total_overstock == 0:
         warnings.append(
@@ -1376,39 +1347,23 @@ def transform_nd(
 
     group_cols = ["Buyer", "Brand", "SKU", "SKU Desc"]
 
-    counts = {}
+    # 預計算 int 旗標 + 單次 groupby 取代多次 filter+groupby + transfer merge
+    transfer_col = "After new Safety Qty / ND can transfer out of QTY"
+    raw["_transfer_num"] = pd.to_numeric(raw.get(transfer_col, _safe_default_series(0, raw.index)), errors="coerce").fillna(0)
+    _agg_dict = {transfer_col: ("_transfer_num", "sum")}
     _nd_cat_series = pd.Series(nd_source_status, index=raw.index)
     for cat in categories:
-        mask = nd_mask & (_nd_cat_series == cat)
-        counts[cat] = (
-            raw[mask]
-            .groupby(group_cols, observed=True)
-            .size()
-            .rename(cat)
-        )
-
-    transfer_col = "After new Safety Qty / ND can transfer out of QTY"
-    raw["_transfer_num"] = pd.to_numeric(raw[transfer_col], errors="coerce").fillna(0)
-    transfer_summary = (
-        raw.groupby(group_cols, observed=True)["_transfer_num"]
-        .sum()
-        .astype(int)
-        .rename(transfer_col)
-    )
+        safe_key = f"_cat_{abs(hash(cat)) % 10_000_000}"
+        raw[safe_key] = (nd_mask & (_nd_cat_series == cat)).astype(int)
+        _agg_dict[cat] = (safe_key, "sum")
 
     if progress_callback:
         progress_callback(0.55, "彙總排序中...")
 
-    if counts:
-        summary = pd.concat(list(counts.values()), axis=1).fillna(0).astype(int).reset_index()
-    else:
-        summary = pd.DataFrame(columns=group_cols)
+    summary = raw.groupby(group_cols, observed=True).agg(**_agg_dict).fillna(0).astype(int).reset_index()
 
     summary["SKU"] = summary["SKU"].apply(_safe_sku)
     summary["總計"] = summary[categories].sum(axis=1) if categories else 0
-
-    summary = summary.merge(transfer_summary, on=group_cols, how="left")
-    summary[transfer_col] = summary[transfer_col].fillna(0).astype(int)
 
     buyer_order = summary.groupby("Buyer")["總計"].sum().sort_values(ascending=False).index.tolist()
     summary["_buyer_key"] = summary["Buyer"].map({b: i for i, b in enumerate(buyer_order)})
@@ -1430,6 +1385,9 @@ def transform_nd(
         }
     )
     summary = pd.concat([summary, total_row], ignore_index=True)
+
+    # 清理暫存欄位
+    raw.drop(columns=[c for c in raw.columns if c.startswith("_cat_") or c == "_transfer_num"], inplace=True, errors="ignore")
 
     if total_nd == 0:
         warnings.append("未偵測到任何 RP Type 為 ND 的 SKU。請確認來源檔案中的「RP Type」欄位是否包含 ND 值。")
@@ -1826,35 +1784,25 @@ def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=Non
 
     group_cols = ["Buyer", "Brand", "SKU"]
 
-    counts = {}
-    for cat in OOS_CATEGORIES:
-        mask = (status_col == cat)
-        counts[cat] = (
-            raw[mask]
-            .groupby(group_cols, observed=True)
-            .size()
-            .rename(cat)
-        )
-
+    # 預計算 int 旗標（單次 groupby 取代多次 filter+groupby）
+    _agg_dict = {"Safety Qty Increase": ("Safety Qty Increase", "sum")}
     normal_mask = (status_col == "Normal") & (safety_increase > 0)
-    counts[SECONDARY_CATEGORY] = (
-        raw[normal_mask]
-        .groupby(group_cols, observed=True)
-        .size()
-        .rename(SECONDARY_CATEGORY)
-    )
+    raw["_is_normal_inc"] = normal_mask.astype(int)
+    _agg_dict[SECONDARY_CATEGORY] = ("_is_normal_inc", "sum")
+    for cat in OOS_CATEGORIES:
+        raw[f"_is_{cat.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')}"] = (status_col == cat).astype(int)
+        _agg_dict[cat] = (f"_is_{cat.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')}", "sum")
 
-    summary = pd.concat(list(counts.values()), axis=1).fillna(0).astype(int).reset_index()
+    _renames = {}
+    for cat in OOS_CATEGORIES:
+        _key = f"_is_{cat.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')}"
+        _renames[_key] = cat
+
+    summary = raw.groupby(group_cols, observed=True).agg(**_agg_dict).fillna(0).astype(int).reset_index()
+    if _renames:
+        summary = summary.rename(columns=_renames)
     summary["SKU"] = summary["SKU"].apply(_safe_sku)
     summary["總計"] = summary[categories].sum(axis=1)
-
-    safety_inc_per_group = (
-        raw.groupby(group_cols, observed=True)["Safety Qty Increase"]
-        .sum()
-        .astype(int)
-    )
-    summary = summary.merge(safety_inc_per_group, on=group_cols, how="left")
-    summary["Safety Qty Increase"] = summary["Safety Qty Increase"].fillna(0).astype(int)
 
     buyer_order = summary.groupby("Buyer")["總計"].sum().sort_values(ascending=False).index.tolist()
     summary["_buyer_key"] = summary["Buyer"].map({b: i for i, b in enumerate(buyer_order)})
@@ -1872,6 +1820,9 @@ def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=Non
         }
     )
     summary = pd.concat([summary, total_row], ignore_index=True)
+
+    # 清理暫存欄位
+    raw.drop(columns=[c for c in raw.columns if c.startswith("_is_")], inplace=True, errors="ignore")
 
     if total_oos == 0:
         warnings.append("未偵測到任何符合條件的 OOS 資料。請確認來源檔案中的「Shop Stock Status」欄位值是否包含以下分類: " + ", ".join(categories))
@@ -2044,9 +1995,8 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
 CARRY_P90D0_STATUS = "Overstock (P90D 0 Sales)"
 
 
-def _build_carry_pivot(df: pd.DataFrame, category_col: str) -> pd.DataFrame:
-    df = df.copy()
-
+def _build_site_to_name(df: pd.DataFrame) -> dict:
+    """建立 Site Code → Shop Name 查找表（供 Carry SKU / NDRF 相關函式共用）。"""
     site_to_name = {}
     if "Item_Shop" in df.columns:
         site_code = df["Site Code"].fillna("").astype(str).str.strip()
@@ -2060,6 +2010,14 @@ def _build_carry_pivot(df: pd.DataFrame, category_col: str) -> pd.DataFrame:
         for sc in site_code.unique():
             if sc and sc not in site_to_name:
                 site_to_name[sc] = ""
+    return site_to_name
+
+
+def _build_carry_pivot(df: pd.DataFrame, category_col: str, site_to_name: dict | None = None) -> pd.DataFrame:
+    df = df.copy()
+
+    if site_to_name is None:
+        site_to_name = _build_site_to_name(df)
 
     status = df["Shop Stock Status"].fillna("")
     df["_status2"] = np.where(status == CARRY_P90D0_STATUS, "P90D 0 Sales", "Other Status")
@@ -2128,22 +2086,11 @@ def _build_carry_pivot(df: pd.DataFrame, category_col: str) -> pd.DataFrame:
     return result
 
 
-def _build_carry_dashboard(df: pd.DataFrame) -> pd.DataFrame:
+def _build_carry_dashboard(df: pd.DataFrame, site_to_name: dict | None = None) -> pd.DataFrame:
     df = df.copy()
 
-    site_to_name = {}
-    if "Item_Shop" in df.columns:
-        site_code = df["Site Code"].fillna("").astype(str).str.strip()
-        item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
-        for i in range(len(df)):
-            sc = site_code.iloc[i]
-            if sc and sc not in site_to_name:
-                name = _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
-                if name:
-                    site_to_name[sc] = name
-        for sc in site_code.unique():
-            if sc and sc not in site_to_name:
-                site_to_name[sc] = ""
+    if site_to_name is None:
+        site_to_name = _build_site_to_name(df)
 
     site_code = df["Site Code"].fillna("").astype(str).str.strip()
     rp = df.get("RP Type", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.upper()
@@ -2301,13 +2248,21 @@ def transform_carry(
 
     raw = df.copy()
 
-    summary_left = _build_carry_pivot(df, "Adj. MCH1") if "Adj. MCH1" in df.columns else pd.DataFrame()
-    summary_right = _build_carry_pivot(df, "Adj. SST") if "Adj. SST" in df.columns else pd.DataFrame()
+    # 建立 site_to_name 一次，供所有 carry 分析函式共用
+    _carry_site_to_name = _build_site_to_name(df)
+
+    # 平行化：同時計算 pivot（Adj. MCH1 + Adj. SST）與 dashboard
+    with ThreadPoolExecutor(max_workers=3) as _executor:
+        f_left = _executor.submit(_build_carry_pivot, df, "Adj. MCH1", _carry_site_to_name) if "Adj. MCH1" in df.columns else None
+        f_right = _executor.submit(_build_carry_pivot, df, "Adj. SST", _carry_site_to_name) if "Adj. SST" in df.columns else None
+        f_dash = _executor.submit(_build_carry_dashboard, df, _carry_site_to_name)
+
+        summary_left = f_left.result() if f_left else pd.DataFrame()
+        summary_right = f_right.result() if f_right else pd.DataFrame()
+        dashboard_df = f_dash.result()
 
     if progress_callback:
         progress_callback(0.6, "建構分析摘要...")
-
-    dashboard_df = _build_carry_dashboard(df)
 
     if progress_callback:
         progress_callback(0.8, "轉換完成")
@@ -2521,17 +2476,15 @@ def transform_ndrf_comparison(
     if progress_callback:
         progress_callback(0.2, "建構月份對比表...")
 
-    comparison_by_shop = _build_ndrf_shop_comparison(month_a_df, month_b_df, month_a, month_b)
+    # 平行化：同時計算 3 個獨立对比表
+    with ThreadPoolExecutor(max_workers=3) as _executor:
+        f_shop = _executor.submit(_build_ndrf_shop_comparison, month_a_df, month_b_df, month_a, month_b)
+        f_sst = _executor.submit(_build_ndrf_adj_sst_combined_pivot, month_a_df, month_b_df, month_a, month_b)
+        f_mch1 = _executor.submit(_build_ndrf_adj_mch1_combined_pivot, month_a_df, month_b_df, month_a, month_b)
 
-    if progress_callback:
-        progress_callback(0.3, "建構 Adj. SST 樞紐對比表...")
-
-    adj_sst_pivot = _build_ndrf_adj_sst_combined_pivot(month_a_df, month_b_df, month_a, month_b)
-
-    if progress_callback:
-        progress_callback(0.45, "建構 Adj. MCH1 樞紐對比表...")
-
-    mch2_pivot = _build_ndrf_adj_mch1_combined_pivot(month_a_df, month_b_df, month_a, month_b)
+    comparison_by_shop = f_shop.result()
+    adj_sst_pivot = f_sst.result()
+    mch2_pivot = f_mch1.result()
 
     if progress_callback:
         progress_callback(0.6, "合併 RAW 資料...")
