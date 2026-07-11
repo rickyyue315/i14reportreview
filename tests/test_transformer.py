@@ -67,8 +67,8 @@ def test_fix1_combined_x_computed_without_overstock_status_rows():
     out = _add_combined_recommendation_columns(
         df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
     )
-    # floor(10*0.5)=5 capped at adj_ss 5 -> 5 ; floor(20*0.5)=10 capped at 5 -> 5
-    assert out["Overstock Cap (X)"].tolist() == [5, 5]
+    # P90D 為 90 日總量 /3 得月均: floor(10/3*0.5)=floor(1.67)=1→clip3→3 ; floor(20/3*0.5)=3→clip3→3
+    assert out["Overstock Cap (X)"].tolist() == [3, 3]
 
 
 def test_fix1_combined_x_independent_of_overstock_row_presence():
@@ -108,7 +108,7 @@ def test_fix2_combined_increase_only_recommend_synced_with_change():
     out = _add_combined_recommendation_columns(
         df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
     )
-    # X=floor(4*0.5)=2->clip3, Z=10 -> Z>X -> combined=max(Y,3)=3 ; delta=-7->clip0
+    # P90D 為 90 日總量: X=floor(4/3*0.5)=floor(0.67)=0→clip3→3, Z=10>X → combined=max(Y,3)=3 ; delta=-7→clip0
     assert out["Safety Qty Change"].tolist()[0] == 0
     # Recommended must equal current adj_ss (no decrease applied)
     assert out["Recommend Safety Stock"].tolist()[0] == 10

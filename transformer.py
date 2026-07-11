@@ -256,8 +256,8 @@ def _build_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
                 "更改NDRF行數": [int(by_shop["更改NDRF行數"].sum())],
                 "更改Safety行數": [int(by_shop["更改Safety行數"].sum())],
                 "預計總轉出貨量": [int(by_shop["預計總轉出貨量"].sum())],
-                "P90D 0 Sales SKU數量": [int(by_shop["P90D 0 Sales SKU數量"].sum())],
-                ">2*Monthly Sold Qty & >2pcs數量": [int(by_shop[">2*Monthly Sold Qty & >2pcs數量"].sum())],
+                "P90D 0 Sales SKU數量": [int(df["_sku_0_sales"].dropna().nunique())],
+                ">2*Monthly Sold Qty & >2pcs數量": [int(df["_sku_2x"].dropna().nunique())],
             }
         )
         by_shop = pd.concat([by_shop.sort_values(["Site Code", "Shop Name", "OM"], kind="stable"), total_row], ignore_index=True)
@@ -298,7 +298,8 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
         rate = np.full(len(df), _default_rate)
         rate[shop_nature.str.contains("tourist", na=False)] = _tourist_rate
         rate[shop_nature.str.contains("mix", na=False)] = _mix_rate
-        rec_2x = np.floor(monthly_sold[cond_overstock_2x] * rate[cond_overstock_2x]).clip(lower=3).astype(int)
+        # P90D 為 90 日總銷售量，除以 3 得到月均值再乘 rate
+        rec_2x = np.floor(monthly_sold[cond_overstock_2x] / 3.0 * rate[cond_overstock_2x]).clip(lower=3).astype(int)
         # If new safety qty > Adj. Safety Stock, cap at Adj. Safety Stock
         adj_ss_2x = adj_ss[cond_overstock_2x].values
         over_adj = rec_2x > adj_ss_2x
@@ -385,9 +386,9 @@ def _add_combined_recommendation_columns(
 
     cond_2x = (status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)")
 
-    # Overstock cap X
+    # Overstock cap X — P90D 為 90 日總銷售量，除以 3 得到月均值再乘 rate
     def _compute_x(monthly_sold_arr, rate_arr, adj_ss_arr):
-        x = np.floor(monthly_sold_arr * rate_arr).clip(min=3).astype(int)
+        x = np.floor(monthly_sold_arr / 3.0 * rate_arr).clip(min=3).astype(int)
         over_adj = x > adj_ss_arr
         x[over_adj] = adj_ss_arr[over_adj].astype(int)
         return x
@@ -499,12 +500,12 @@ def _build_combined_by_shop_summary(raw):
                 "Site Code": ["總計"],
                 "Shop Name": [""],
                 "OM": [""],
-                "Overstock_SKU数量": [int(by_shop["Overstock_SKU数量"].sum())],
-                "OOS_SKU数量": [int(by_shop["OOS_SKU数量"].sum())],
+                "Overstock_SKU数量": [int(df["_sku_overstock"].dropna().nunique())],
+                "OOS_SKU数量": [int(df["_sku_oos"].dropna().nunique())],
                 "需增加Safety_SKU数量": [int(by_shop["需增加Safety_SKU数量"].sum())],
                 "需减少Safety_SKU数量": [int(by_shop["需减少Safety_SKU数量"].sum())],
                 "安全库存调整总量": [int(by_shop["安全库存调整总量"].sum())],
-                "Combined_SKU总数": [int(by_shop["Combined_SKU总数"].sum())],
+                "Combined_SKU总数": [int(df["SKU"].dropna().nunique())],
             }
         )
         by_shop = pd.concat([by_shop.sort_values(["Site Code", "Shop Name", "OM"], kind="stable"), total_row], ignore_index=True)
@@ -1622,14 +1623,16 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
     projected_mtd_arr = projected_mtd.values
 
     if oos_calc_mode == "p90d":
+        # P90D 為 90 日總銷售量，除以 3 得到月均值
         p90d_monthly = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0.0, df.index)))
-        projected = p90d_monthly.values
+        projected = p90d_monthly.values / 3.0
     else:
         projected = projected_mtd_arr
 
+    # OOS 模式下所有 Shop Nature 預設 rate 均為 50%（與 UI 預設一致）
     _default_rate = rates.get("default", 0.50)
-    _tourist_rate = rates.get("tourist", 0.30)
-    _mix_rate = rates.get("mix", 0.40)
+    _tourist_rate = rates.get("tourist", 0.50)
+    _mix_rate = rates.get("mix", 0.50)
 
     rate_arr = np.full(len(df), _default_rate)
     rate_arr[shop_nature.str.contains("tourist", na=False)] = _tourist_rate
@@ -1727,10 +1730,10 @@ def _build_oos_by_shop_summary(raw):
                 "Site Code": ["總計"],
                 "Shop Name": [""],
                 "OM": [""],
-                "OOS_SKU数量": [int(by_shop["OOS_SKU数量"].sum())],
-                "Potential_OOS_SKU数量": [int(by_shop["Potential_OOS_SKU数量"].sum())],
+                "OOS_SKU数量": [int(df["_sku_oos"].dropna().nunique())],
+                "Potential_OOS_SKU数量": [int(df["_sku_potential_oos"].dropna().nunique())],
                 "建議SafetyQty增加行數": [int(by_shop["建議SafetyQty增加行數"].sum())],
-                "其他需調整SKU數量": [int(by_shop["其他需調整SKU數量"].sum())],
+                "其他需調整SKU數量": [int(df["_sku_normal_insufficient"].dropna().nunique())],
                 "建議SafetyQty增加總量": [int(by_shop["建議SafetyQty增加總量"].sum())],
             }
         )
@@ -3020,8 +3023,12 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["Turnday (Days)"] = turnday_clean.where(turnday_clean >= 0, np.nan)
 
     # Mix 店舖 Turnday 分級（Mix 標準：保留 7-14 日）
-    shop_nature = df.get("Shop Nature", _safe_default_series("", idx)).fillna("").astype(str)
+    # 正規化 Shop Nature（strip）並寫回，確保後續精確比對一致
+    shop_nature_raw = df.get("Shop Nature", _safe_default_series("", idx))
+    df["Shop Nature"] = shop_nature_raw.fillna("").astype(str).str.strip()
+    shop_nature = df["Shop Nature"]
     is_mix = shop_nature == "Mix"
+    is_nt = shop_nature == "Non Tourist"
     cm_stock_val = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, idx)))
     has_cm_stock = cm_stock_val.values > 0
 
@@ -3058,7 +3065,6 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["Mix Excess Stock"] = excess.astype(int)
 
     # Non Tourist Turnday 分級（同樣標準，>14日釋放）
-    is_nt = shop_nature == "Non Tourist"
     nt_band = np.full(len(df), "", dtype=object)
     nt_mask = is_nt.values
     nt_band[nt_mask & no_stock] = "無存貨"
@@ -3575,12 +3581,15 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
     else:
         tourist_oos = raw[(nature == "Tourist") & (cm_stock <= 0) & (p90d > 0)]
 
-    # 其他 Nature 過剩存貨：Mix>14日（Mix Excess Stock>0）或 Non Tourist>30日
+    # 其他 Nature 過剩存貨：Mix>14日（Mix Excess Stock>0）或 Non Tourist>14日（Non Tourist Excess Stock>0）
+    # 統一到相同 14 日標準，與 Turnday 分級邏輯一致
+    mix_excess_vec = _safe_numeric(raw.get("Mix Excess Stock", _safe_default_series(0, raw.index)))
+    nt_excess_vec = _safe_numeric(raw.get("Non Tourist Excess Stock", _safe_default_series(0, raw.index)))
     other_over = raw[
         (nature != "Tourist")
         & (
-            ((nature == "Mix") & (_safe_numeric(raw.get("Mix Excess Stock", _safe_default_series(0, raw.index))) > 0))
-            | ((nature == "Non Tourist") & (turnday > 30) & (cm_stock > 0))
+            ((nature == "Mix") & (mix_excess_vec > 0))
+            | ((nature == "Non Tourist") & (nt_excess_vec > 0))
         )
     ]
 
