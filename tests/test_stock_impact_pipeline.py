@@ -46,7 +46,7 @@ def test_oos_detection():
         {"SKU": "1", "Shop Stock Qty (CM)": 0, "Sold Qty (M-2)": 10, "Sold Qty (CM - MTD)": 0},
         # r1: 全期有貨 → 無缺貨
         {"SKU": "2", "Shop Stock Qty (M-2)": 5, "Shop Stock Qty (M-1)": 5, "Shop Stock Qty (CM)": 5},
-        # r2: M-1 缺貨，M-2/CM 有貨 → 恢復供貨（M-1 OOS 但 CM 已補回）
+        # r2: M-1 缺貨，M-2/CM 有貨 → 恢復供貨（M-1 OOS 但 CM 已補迴）
         {"SKU": "3", "Shop Stock Qty (M-1)": 0, "Sold Qty (M-2)": 10},
         # r3: 全期缺貨 → 長期缺貨
         {"SKU": "4", "Shop Stock Qty (M-2)": 0, "Shop Stock Qty (M-1)": 0, "Shop Stock Qty (CM)": 0,
@@ -122,7 +122,7 @@ def test_oos_pattern_classification():
         # r3: 無需求（M-2 Sold=0, P90D=0）即使缺貨也不算 Impacted
         {"SKU": "4", "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 0, "Shop Monthly Sold Qty (P90D)": 0},
-        # r4: M-1 缺貨，M-2/CM 有貨 → 恢復供貨（M-1 OOS 但 CM 已補回）
+        # r4: M-1 缺貨，M-2/CM 有貨 → 恢復供貨（M-1 OOS 但 CM 已補迴）
         {"SKU": "5", "Shop Stock Qty (M-1)": 0, "Shop Stock Qty (M-2)": 5,
          "Shop Stock Qty (CM)": 5, "Sold Qty (M-2)": 10},
     ])
@@ -140,9 +140,9 @@ def test_oos_pattern_classification():
     assert raw.iloc[3]["Is Stock Impacted"] == False, "無需求證據不應算影響"
     print("OK r3: 無需求 → 不算 Impacted")
 
-    # r4: M-1 缺貨，M-2/CM 有貨 → 恢復供貨（M-1 OOS 但 CM 已補回）
+    # r4: M-1 缺貨，M-2/CM 有貨 → 恢復供貨（M-1 OOS 但 CM 已補迴）
     assert raw.iloc[4]["OOS Pattern"] == "恢復供貨", "M-1 OOS 但 CM 有貨應為恢復供貨"
-    print("OK r4: M-1 缺貨 → 恢復供貨（M-1 OOS 但 M-2/CM 有貨，已補回）")
+    print("OK r4: M-1 缺貨 → 恢復供貨（M-1 OOS 但 M-2/CM 有貨，已補迴）")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -160,7 +160,7 @@ def test_build_stock_impact_summary():
     raw = _add_stock_impact_columns(df)
     brand_summary = _build_stock_impact_summary(raw, ["Brand"])
 
-    # Brand A 應排在 Brand B 前面（Tourist 缺貨 2 vs 0）
+    # Brand A 應排在 Brand B 前麵（Tourist 缺貨 2 vs 0）
     assert str(brand_summary.iloc[0]["Brand"]) == "A"
     assert int(brand_summary.iloc[0]["Tourist 缺貨行數"]) == 2
     assert str(brand_summary.iloc[1]["Brand"]) == "B"
@@ -175,7 +175,7 @@ def test_build_stock_impact_summary():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Test 5: SKU 級跨 Nature 調貨建議 (已於 v1.7.1 取消輸出，保留函數備用)
+# Test 5: SKU 級跨 Nature 調貨建議 (已於 v1.7.1 取消輸齣，保留函數備用)
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -213,7 +213,7 @@ def test_warehouse_filter():
         {"SKU": "2", "Supply Source": "Vendor", "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 10.0, "Shop Monthly Sold Qty (P90D)": 10.0},
     ])
-    # warehouse_only=True（預設）→ 只剩 1 行
+    # warehouse_only=True（預設）→ 隻剩 1 行
     _, _, _, _, _, _, _, _, _, raw_wh, _ = transform_stock_impact(df, warehouse_only=True)
     assert len(raw_wh) == 1
     assert str(raw_wh.iloc[0]["Supply Source"]) == "Warehouse"
@@ -265,7 +265,7 @@ def test_mix_turnday_banding():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Test 6b: 存貨分佈彙總（Mix Turnday 分級表 + Nature 對比 + 失衡 SKU）
+# Test 6b: 存貨分佈彙總（Mix Turnday 分級錶 + Nature 對比 + 失衡 SKU）
 # ──────────────────────────────────────────────────────────────────────────────
 def test_inventory_distribution_summary():
     df = _df([
@@ -285,28 +285,28 @@ def test_inventory_distribution_summary():
     raw = _add_stock_impact_columns(df)
     inv = _build_inventory_distribution_summary(raw)
 
-    # B1: Mix Turnday 分級表應有資料
+    # B1: Mix Turnday 分級錶應有資料
     mix_td = inv["mix_turnday"]
-    assert not mix_td.empty, "Mix Turnday 分級表應有資料"
+    assert not mix_td.empty, "Mix Turnday 分級錶應有資料"
     assert "可釋放件數" in mix_td.columns
     assert "總計" in mix_td["Turnday 區間"].values
     # 分級正確性驗證：至少包含一種分級 + 總計
     assert len(mix_td) >= 2, f"至少應含分級資料 + 總計，得 {len(mix_td)} 列"
-    print(f"OK B1a: Mix Turnday 分級表（{len(mix_td)} 列）")
+    print(f"OK B1a: Mix Turnday 分級錶（{len(mix_td)} 列）")
 
     # B1b: NT Turnday
     nt_td = inv["nt_turnday"]
-    assert not nt_td.empty, "NT Turnday 分級表應有資料"
+    assert not nt_td.empty, "NT Turnday 分級錶應有資料"
     assert "總計" in nt_td["Turnday 區間"].values
-    print(f"OK B1b: Non Tourist Turnday 分級表（{len(nt_td)} 列）")
+    print(f"OK B1b: Non Tourist Turnday 分級錶（{len(nt_td)} 列）")
 
-    # B2: Nature 對比表應有 3 個 Nature
+    # B2: Nature 對比錶應有 3 個 Nature
     nat_cmp = inv["nature_compare"]
     assert not nat_cmp.empty
     assert set(nat_cmp["Shop Nature"]) == {"Tourist", "Mix", "Non Tourist"}
-    print(f"OK B2: Nature 對比表（3 個 Nature）")
+    print(f"OK B2: Nature 對比錶（3 個 Nature）")
 
-    # B3: 存貨失衡 SKU（SKU 1 & 2 應出現：Tourist缺貨+其他過剩）
+    # B3: 存貨失衡 SKU（SKU 1 & 2 應齣現：Tourist缺貨+其他過剩）
     imb = inv["imbalance_sku"]
     assert not imb.empty, "應有存貨失衡 SKU"
     skus = set(imb["SKU"].astype(str))
@@ -319,10 +319,10 @@ def test_inventory_distribution_summary():
 
     # B4: 低存貨 SKU 配置決策應存在
     la = inv.get("low_stock_allocation")
-    assert la is not None and not la.empty, "應有低存貨 SKU 配置決策表"
+    assert la is not None and not la.empty, "應有低存貨 SKU 配置決策錶"
     assert "NT_RF無銷售有存貨行數" in la.columns
     assert "ND無銷售浪費存貨(件)" in la.columns
-    print(f"OK B4: 低存貨配置決策表（欄位 {list(la.columns)}）")
+    print(f"OK B4: 低存貨配置決策錶（欄位 {list(la.columns)}）")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -339,7 +339,7 @@ def test_no_impacted_items():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Test 6b: 只計算 RF 店舖（ND 店舖不納入影響計算）
+# Test 6b: 隻計算 RF 店舖（ND 店舖不納入影響計算）
 # ──────────────────────────────────────────────────────────────────────────────
 def test_rf_only_filter():
     df = _df([
@@ -363,7 +363,7 @@ def test_rf_only_filter():
     assert raw.iloc[2]["Is Stock Impacted"] == True, "髒資料 ' rf ' 應正規化為 RF"
     assert raw.iloc[3]["Is Stock Impacted"] == False, "空白 RP Type 不應納入"
     impacted_count = int(raw["Is Stock Impacted"].sum())
-    assert impacted_count == 2, f"應只有 2 行影響（RF），得 {impacted_count}"
+    assert impacted_count == 2, f"應隻有 2 行影響（RF），得 {impacted_count}"
     print(f"OK RF 篩選：{impacted_count} 行（排除 ND/空白，含髒資料正規化）")
 
 
@@ -377,7 +377,7 @@ def test_classify_d001_status():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Test 7b: by-SKU 缺貨診斷表（Tourist+Mix+Non Tourist, 含 D001 + 店舖貨量, v1.7.1 新增 Non Tourist / 取消缺貨行數）
+# Test 7b: by-SKU 缺貨診斷錶（Tourist+Mix+Non Tourist, 含 D001 + 店舖貨量, v1.7.1 新增 Non Tourist / 取消缺貨行數）
 # ──────────────────────────────────────────────────────────────────────────────
 def test_sku_stock_diagnosis():
     df = _df([
@@ -396,7 +396,7 @@ def test_sku_stock_diagnosis():
          "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 20.0, "Sold Qty (CM - MTD)": 5.0, "Shop Monthly Sold Qty (P90D)": 15.0,
          "D001 Stock Qty (M-2)": 200, "D001 Stock Qty (M-1)": 200, "D001 Stock Qty (CM)": 150},
-        # SKU 3: Non Tourist 缺貨 → v1.7.1 起納入診斷表
+        # SKU 3: Non Tourist 缺貨 → v1.7.1 起納入診斷錶
         {"SKU": "3", "Brand": "C", "Buyer": "B3", "SKU Desc": "Test Product C", "Shop Nature": "Non Tourist", "Site Code": "N01",
          "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 30.0, "Sold Qty (CM - MTD)": 10.0, "Shop Monthly Sold Qty (P90D)": 20.0},
@@ -406,13 +406,13 @@ def test_sku_stock_diagnosis():
 
     assert not diag.empty, "應有缺貨 SKU"
     skus = set(diag["SKU"].astype(str))
-    assert "1" in skus and "2" in skus and "3" in skus, "SKU 1, 2, 3 皆應在診斷表（含 Non Tourist）"
+    assert "1" in skus and "2" in skus and "3" in skus, "SKU 1, 2, 3 皆應在診斷錶（含 Non Tourist）"
 
     # SKU Desc 欄位應存在
     assert "SKU Desc" in diag.columns, "應有 SKU Desc 欄位"
     # NDRF 欄位應存在
-    assert "NDRF_ND行数" in diag.columns, "應有 NDRF_ND行数 欄位"
-    assert "NDRF_RF行数" in diag.columns, "應有 NDRF_RF行数 欄位"
+    assert "NDRF_ND行數" in diag.columns, "應有 NDRF_ND行數 欄位"
+    assert "NDRF_RF行數" in diag.columns, "應有 NDRF_RF行數 欄位"
     # Non Tourist 欄位應存在
     assert "Non Tourist缺貨店數" in diag.columns, "應有 Non Tourist缺貨店數 欄位"
     # 缺貨行數欄位應已取消
@@ -426,7 +426,7 @@ def test_sku_stock_diagnosis():
     assert row1["D001 狀態"] == "源頭斷貨"
     assert int(row1["D001_Stock_M2"]) == 100
     assert int(row1["D001_Stock_M1"]) == 50
-    assert int(row1["NDRF_RF行数"]) == 2
+    assert int(row1["NDRF_RF行數"]) == 2
     print("OK SKU 1: Tourist 缺貨 2 間, 源頭斷貨, NDRF_RF=2")
 
     # SKU 2: Mix 缺貨, D001 CM=150 → 補貨問題
@@ -443,7 +443,7 @@ def test_sku_stock_diagnosis():
 
     # 排序: Tourist 缺貨店數多的在前 → SKU 1 (2間) 應在最前
     assert str(diag.iloc[0]["SKU"]) == "1"
-    print("OK by-SKU 缺貨診斷表（Tourist+Mix+Non Tourist, 含 SKU Desc + NDRF 行數, 取消缺貨行數）")
+    print("OK by-SKU 缺貨診斷錶（Tourist+Mix+Non Tourist, 含 SKU Desc + NDRF 行數, 取消缺貨行數）")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

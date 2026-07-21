@@ -171,8 +171,8 @@ def test_fix5_carry_dashboard_matches_pivot_via_transform():
     ])
     summary_left, summary_right, dashboard_df, raw_df, warnings = transform_carry(df)
     dash_total = dashboard_df[dashboard_df["Site Code"] == "總計"].iloc[0]
-    # pivot Grand_Total over detail rows (exclude subtotal rows containing '合計')
-    detail = summary_left[~summary_left["Site Code"].astype(str).str.contains("合計")]
+    # pivot Grand_Total over detail rows (exclude subtotal rows containing '閤計')
+    detail = summary_left[~summary_left["Site Code"].astype(str).str.contains("閤計")]
     pivot_grand = int(detail["Grand_Total"].sum())
     assert int(dash_total["SKU 總數"]) == pivot_grand
 
