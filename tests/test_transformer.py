@@ -67,8 +67,8 @@ def test_fix1_combined_x_computed_without_overstock_status_rows():
     out = _add_combined_recommendation_columns(
         df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
     )
-    # P90D 為 90 日總量 /3 得月均: floor(10/3*0.5)=floor(1.67)=1→clip3→3 ; floor(20/3*0.5)=3→clip3→3
-    assert out["Overstock Cap (X)"].tolist() == [3, 3]
+    # Shop Monthly Sold Qty (P90D) 已是月均: floor(10*0.5)=5 ; floor(20*0.5)=10→cap at Adj.SS=5
+    assert out["Overstock Cap (X)"].tolist() == [5, 5]
 
 
 def test_fix1_combined_x_independent_of_overstock_row_presence():

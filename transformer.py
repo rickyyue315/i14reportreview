@@ -298,8 +298,8 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
         rate = np.full(len(df), _default_rate)
         rate[shop_nature.str.contains("tourist", na=False)] = _tourist_rate
         rate[shop_nature.str.contains("mix", na=False)] = _mix_rate
-        # P90D 為 90 日總銷售量，除以 3 得到月均值再乘 rate
-        rec_2x = np.floor(monthly_sold[cond_overstock_2x] / 3.0 * rate[cond_overstock_2x]).clip(lower=3).astype(int)
+        # Shop Monthly Sold Qty (P90D) 已是月均（P90D 總量 ÷ 3），直接乘 rate
+        rec_2x = np.floor(monthly_sold[cond_overstock_2x] * rate[cond_overstock_2x]).clip(lower=3).astype(int)
         # If new safety qty > Adj. Safety Stock, cap at Adj. Safety Stock
         adj_ss_2x = adj_ss[cond_overstock_2x].values
         over_adj = rec_2x > adj_ss_2x
@@ -395,9 +395,9 @@ def _add_combined_recommendation_columns(
 
     cond_2x = (status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)")
 
-    # Overstock cap X — P90D 為 90 日總銷售量，除以 3 得到月均值再乘 rate
+    # Overstock cap X — Shop Monthly Sold Qty (P90D) 已是月均，直接乘 rate
     def _compute_x(monthly_sold_arr, rate_arr, adj_ss_arr):
-        x = np.floor(monthly_sold_arr / 3.0 * rate_arr).clip(min=3).astype(int)
+        x = np.floor(monthly_sold_arr * rate_arr).clip(min=3).astype(int)
         over_adj = x > adj_ss_arr
         x[over_adj] = adj_ss_arr[over_adj].astype(int)
         return x
@@ -1655,9 +1655,9 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
     projected_mtd_arr = projected_mtd.values
 
     if oos_calc_mode == "p90d":
-        # P90D 為 90 日總銷售量，除以 3 得到月均值
+        # Shop Monthly Sold Qty (P90D) 已是月均，直接作為 projected
         p90d_monthly = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0.0, df.index)))
-        projected = p90d_monthly.values / 3.0
+        projected = p90d_monthly.values
     else:
         projected = projected_mtd_arr
 
@@ -2979,7 +2979,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     """計算每列的缺貨狀態、缺貨模式與銷售損失（雙基準並列）。
 
     缺貨定義採嚴格標準：Shop Stock Qty = 0。
-    損失基準並列：(1) Sold Qty (M-2) 需求基準；(2) Shop Monthly Sold Qty (P90D) 90日總量（/3得月均）。
+    損失基準並列：(1) Sold Qty (M-2) 需求基準；(2) Shop Monthly Sold Qty (P90D) 月均銷售。
     """
     df = df.copy()
     idx = df.index
@@ -3024,7 +3024,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
         is_oos = oos_flags[label].values
         # 缺貨當期才算損失；損失 = max(0, 需求基準 − 當期實際銷售)
         loss_m2 = np.where(is_oos & (m2_sold.values > 0), np.maximum(0, m2_sold.values - sold.values), 0)
-        loss_p90d = np.where(is_oos & (p90d.values > 0), np.maximum(0, p90d.values / 3.0 - sold.values), 0)
+        loss_p90d = np.where(is_oos & (p90d.values > 0), np.maximum(0, p90d.values - sold.values), 0)
         loss_m2_max = np.maximum(loss_m2_max, loss_m2)
         loss_p90d_max = np.maximum(loss_p90d_max, loss_p90d)
         loss_m2_sum = loss_m2_sum + loss_m2
@@ -3988,7 +3988,7 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300, s
         )
         .reset_index()
     )
-    sku_nat["月均銷售"] = sku_nat["月均銷售"] / 3.0
+    sku_nat["月均銷售"] = sku_nat["月均銷售"].astype(float)
 
     # RF 月均銷售（只計 RF 店）
     work_rf = work[work["_rp"] == "RF"]
@@ -3998,7 +3998,7 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300, s
             .agg(RF月均銷售=("_p90d", "sum"))
             .reset_index()
         )
-        sku_nat_rf["RF月均銷售"] = sku_nat_rf["RF月均銷售"] / 3.0
+        sku_nat_rf["RF月均銷售"] = sku_nat_rf["RF月均銷售"].astype(float)
         sku_nat = sku_nat.merge(sku_nat_rf, on=["SKU", "_nature"], how="left")
     else:
         sku_nat["RF月均銷售"] = 0.0
@@ -4745,7 +4745,7 @@ def generate_excel_stock_impact(
     ws_sku_monthly = wb.create_sheet(title="SKU Monthly Sales&Store")
     if sku_monthly_analysis is not None and not sku_monthly_analysis.empty:
         ws_sku_monthly.cell(row=1, column=1, value="SKU 月銷量和存儲量分析（按 Shop Nature）").font = Font(bold=True, size=12, color="1E40AF")
-        ws_sku_monthly.cell(row=2, column=1, value="各 SKU 在 Tourist/Mix/Non Tourist 店舖的月均銷售（P90D/3）與當期庫存（CM Shop Stock）。低存貨 SKU 優先顯示。").font = Font(size=10, italic=True, color="6B7280")
+        ws_sku_monthly.cell(row=2, column=1, value="各 SKU 在 Tourist/Mix/Non Tourist 店舖的月均銷售（Shop Monthly Sold Qty P90D 已是月均）與當期庫存（CM Shop Stock）。低存貨 SKU 優先顯示。").font = Font(size=10, italic=True, color="6B7280")
         headers = list(sku_monthly_analysis.columns)
         for col_idx, h in enumerate(headers, 1):
             cell = ws_sku_monthly.cell(row=4, column=col_idx, value=h)

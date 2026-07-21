@@ -78,13 +78,13 @@ def test_oos_detection():
 # ──────────────────────────────────────────────────────────────────────────────
 def test_sales_loss_calculation():
     df = _df([
-        # r0: CM 缺貨，M-2 Sold=10, P90D=30 (90日總量/3=月均10), CM Sold=2
-        #   Loss vs M-2 = max(0, 10-2) = 8；Loss vs P90D = max(0, 30/3-2) = 8
+        # r0: CM 缺貨，M-2 Sold=10, P90D=30 (已是月均), CM Sold=2
+        #   Loss vs M-2 = max(0, 10-2) = 8；Loss vs P90D = max(0, 30-2) = 28
         {"SKU": "1", "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 10.0, "Sold Qty (CM - MTD)": 2.0,
          "Shop Monthly Sold Qty (P90D)": 30.0},
-        # r1: CM 缺貨，M-2 Sold=20, P90D=15 (90日總量/3=月均5), CM Sold=1
-        #   Loss vs M-2 = max(0, 20-1) = 19；Loss vs P90D = max(0, 15/3-1) = 4
+        # r1: CM 缺貨，M-2 Sold=20, P90D=15 (已是月均), CM Sold=1
+        #   Loss vs M-2 = max(0, 20-1) = 19；Loss vs P90D = max(0, 15-1) = 14
         {"SKU": "2", "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 20.0, "Sold Qty (CM - MTD)": 1.0,
          "Shop Monthly Sold Qty (P90D)": 15.0},
@@ -95,13 +95,13 @@ def test_sales_loss_calculation():
     raw = _add_stock_impact_columns(df)
 
     assert int(raw.iloc[0]["Max Sales Loss (M-2)"]) == 8
-    assert int(raw.iloc[0]["Max Sales Loss (P90D)"]) == 8
+    assert int(raw.iloc[0]["Max Sales Loss (P90D)"]) == 28
     assert raw.iloc[0]["Is Stock Impacted"] == True
-    print("OK r0: 缺貨損失 M-2=8, P90D=8")
+    print("OK r0: 缺貨損失 M-2=8, P90D=28")
 
     assert int(raw.iloc[1]["Max Sales Loss (M-2)"]) == 19
-    assert int(raw.iloc[1]["Max Sales Loss (P90D)"]) == 4
-    print("OK r1: 缺貨損失 M-2=19, P90D=4（雙基準差異）")
+    assert int(raw.iloc[1]["Max Sales Loss (P90D)"]) == 14
+    print("OK r1: 缺貨損失 M-2=19, P90D=14（雙基準差異）")
 
     assert int(raw.iloc[2]["Max Sales Loss (M-2)"]) == 0
     assert raw.iloc[2]["Is Stock Impacted"] == False
