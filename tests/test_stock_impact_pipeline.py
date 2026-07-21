@@ -411,8 +411,8 @@ def test_sku_stock_diagnosis():
     # SKU Desc 欄位應存在
     assert "SKU Desc" in diag.columns, "應有 SKU Desc 欄位"
     # NDRF 欄位應存在
-    assert "NDRF_ND行数" in diag.columns, "應有 NDRF_ND行数 欄位"
-    assert "NDRF_RF行数" in diag.columns, "應有 NDRF_RF行数 欄位"
+    assert "NDRF_ND行數" in diag.columns, "應有 NDRF_ND行數 欄位"
+    assert "NDRF_RF行數" in diag.columns, "應有 NDRF_RF行數 欄位"
     # Non Tourist 欄位應存在
     assert "Non Tourist缺貨店數" in diag.columns, "應有 Non Tourist缺貨店數 欄位"
     # 缺貨行數欄位應已取消
@@ -426,7 +426,7 @@ def test_sku_stock_diagnosis():
     assert row1["D001 狀態"] == "源頭斷貨"
     assert int(row1["D001_Stock_M2"]) == 100
     assert int(row1["D001_Stock_M1"]) == 50
-    assert int(row1["NDRF_RF行数"]) == 2
+    assert int(row1["NDRF_RF行數"]) == 2
     print("OK SKU 1: Tourist 缺貨 2 間, 源頭斷貨, NDRF_RF=2")
 
     # SKU 2: Mix 缺貨, D001 CM=150 → 補貨問題

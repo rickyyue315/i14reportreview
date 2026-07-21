@@ -480,12 +480,12 @@ def _build_combined_by_shop_summary(raw):
     by_shop = (
         df.groupby(group_cols, dropna=False, observed=True)
         .agg(
-            Overstock_SKU数量=("_sku_overstock", "nunique"),
-            OOS_SKU数量=("_sku_oos", "nunique"),
-            需增加Safety_SKU数量=("_safety_increase", "sum"),
-            需减少Safety_SKU数量=("_safety_decrease", "sum"),
-            安全库存调整总量=("_safety_change", "sum"),
-            Combined_SKU总数=("SKU", "nunique"),
+            Overstock_SKU數量=("_sku_overstock", "nunique"),
+            OOS_SKU數量=("_sku_oos", "nunique"),
+            需增加Safety_SKU數量=("_safety_increase", "sum"),
+            需減少Safety_SKU數量=("_safety_decrease", "sum"),
+            安全庫存調整總量=("_safety_change", "sum"),
+            Combined_SKU總數=("SKU", "nunique"),
         )
         .reset_index()
     )
@@ -500,12 +500,12 @@ def _build_combined_by_shop_summary(raw):
                 "Site Code": ["總計"],
                 "Shop Name": [""],
                 "OM": [""],
-                "Overstock_SKU数量": [int(df["_sku_overstock"].dropna().nunique())],
-                "OOS_SKU数量": [int(df["_sku_oos"].dropna().nunique())],
-                "需增加Safety_SKU数量": [int(by_shop["需增加Safety_SKU数量"].sum())],
-                "需减少Safety_SKU数量": [int(by_shop["需减少Safety_SKU数量"].sum())],
-                "安全库存调整总量": [int(by_shop["安全库存调整总量"].sum())],
-                "Combined_SKU总数": [int(df["SKU"].dropna().nunique())],
+                "Overstock_SKU數量": [int(df["_sku_overstock"].dropna().nunique())],
+                "OOS_SKU數量": [int(df["_sku_oos"].dropna().nunique())],
+                "需增加Safety_SKU數量": [int(by_shop["需增加Safety_SKU數量"].sum())],
+                "需減少Safety_SKU數量": [int(by_shop["需減少Safety_SKU數量"].sum())],
+                "安全庫存調整總量": [int(by_shop["安全庫存調整總量"].sum())],
+                "Combined_SKU總數": [int(df["SKU"].dropna().nunique())],
             }
         )
         by_shop = pd.concat([by_shop.sort_values(["Site Code", "Shop Name", "OM"], kind="stable"), total_row], ignore_index=True)
@@ -776,12 +776,12 @@ def generate_excel_combined(
         "Site Code",
         "Shop Name",
         "OM",
-        "Overstock_SKU数量",
-        "OOS_SKU数量",
-        "需增加Safety_SKU数量",
-        "需减少Safety_SKU数量",
-        "安全库存调整总量",
-        "Combined_SKU总数",
+        "Overstock_SKU數量",
+        "OOS_SKU數量",
+        "需增加Safety_SKU數量",
+        "需減少Safety_SKU數量",
+        "安全庫存調整總量",
+        "Combined_SKU總數",
     ]
 
     for col_idx, h in enumerate(by_shop_headers, 1):
@@ -1711,8 +1711,8 @@ def _build_oos_by_shop_summary(raw):
     by_shop = (
         df.groupby(group_cols, dropna=False, observed=True)
         .agg(
-            OOS_SKU数量=("_sku_oos", "nunique"),
-            Potential_OOS_SKU数量=("_sku_potential_oos", "nunique"),
+            OOS_SKU數量=("_sku_oos", "nunique"),
+            Potential_OOS_SKU數量=("_sku_potential_oos", "nunique"),
             建議SafetyQty增加行數=("_is_normal_insufficient", "sum"),
             其他需調整SKU數量=("_sku_normal_insufficient", "nunique"),
             建議SafetyQty增加總量=("_safety_increase", "sum"),
@@ -1730,8 +1730,8 @@ def _build_oos_by_shop_summary(raw):
                 "Site Code": ["總計"],
                 "Shop Name": [""],
                 "OM": [""],
-                "OOS_SKU数量": [int(df["_sku_oos"].dropna().nunique())],
-                "Potential_OOS_SKU数量": [int(df["_sku_potential_oos"].dropna().nunique())],
+                "OOS_SKU數量": [int(df["_sku_oos"].dropna().nunique())],
+                "Potential_OOS_SKU數量": [int(df["_sku_potential_oos"].dropna().nunique())],
                 "建議SafetyQty增加行數": [int(by_shop["建議SafetyQty增加行數"].sum())],
                 "其他需調整SKU數量": [int(df["_sku_normal_insufficient"].dropna().nunique())],
                 "建議SafetyQty增加總量": [int(by_shop["建議SafetyQty增加總量"].sum())],
@@ -1909,8 +1909,8 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
         "Site Code",
         "Shop Name",
         "OM",
-        "OOS_SKU数量",
-        "Potential_OOS_SKU数量",
+        "OOS_SKU數量",
+        "Potential_OOS_SKU數量",
         "建議SafetyQty增加行數",
         "其他需調整SKU數量",
         "建議SafetyQty增加總量",
@@ -2479,7 +2479,7 @@ def transform_ndrf_comparison(
     if progress_callback:
         progress_callback(0.2, "建構月份對比表...")
 
-    # 平行化：同時計算 3 個獨立对比表
+    # 平行化：同時計算 3 個獨立對比表
     with ThreadPoolExecutor(max_workers=3) as _executor:
         f_shop = _executor.submit(_build_ndrf_shop_comparison, month_a_df, month_b_df, month_a, month_b)
         f_sst = _executor.submit(_build_ndrf_adj_sst_combined_pivot, month_a_df, month_b_df, month_a, month_b)
@@ -3332,7 +3332,7 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | Non
     - 店舖三期總存貨 (M-2/M-1/CM)
     排序：Tourist 缺貨店數 → Mix 缺貨店數 → Non Tourist 缺貨店數 → Tourist 損失(P90D)（皆降序）。
 
-    效能優化：原本 6 次独立 groupby + 5 次 merge → 改為 2 次 groupby（SKU-level ＋ SKU×Nature-level）。
+    效能優化：原本 6 次獨立 groupby + 5 次 merge → 改為 2 次 groupby（SKU-level ＋ SKU×Nature-level）。
 
     Args:
         sku_lookup: 預先建好的 SKU 基本資訊查找表，為 None 時即時計算。
@@ -3419,13 +3419,13 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | Non
     ndrf_per_sku = (
         raw_ndrf.groupby("SKU", dropna=False)
         .agg(
-            NDRF_ND行数=("_is_nd", "sum"),
-            NDRF_RF行数=("_is_rf", "sum"),
+            NDRF_ND行數=("_is_nd", "sum"),
+            NDRF_RF行數=("_is_rf", "sum"),
         )
         .reset_index()
     )
     merged = merged.merge(ndrf_per_sku, on="SKU", how="left")
-    for c in ["NDRF_ND行数", "NDRF_RF行数"]:
+    for c in ["NDRF_ND行數", "NDRF_RF行數"]:
         merged[c] = merged[c].fillna(0).astype(int)
 
     # 確保各 Nature 欄位存在（當 focus 無該 Nature 時補 0）
@@ -3455,7 +3455,7 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | Non
     if "Is New SKU (3mo)" in merged.columns:
         out_cols.append("Is New SKU (3mo)")
     out_cols += ["Brand", "Buyer",
-                "NDRF_ND行数", "NDRF_RF行数",
+                "NDRF_ND行數", "NDRF_RF行數",
                 "Tourist缺貨店數", "Tourist_CM銷售件數", "Tourist_P90D總量(90日)",
                 "Mix缺貨店數", "Mix_CM銷售件數", "Mix_P90D總量(90日)",
                 "Non Tourist缺貨店數", "Non Tourist_CM銷售件數", "Non Tourist_P90D總量(90日)",
