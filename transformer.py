@@ -4809,6 +4809,55 @@ def generate_excel_stock_impact(
 # 簡化版本：只輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表
 # SKU Monthly Sales&Store 不分 Shop Nature，只顯示 M-2, M-1, MTD 的 D001 存貨、店舖存貨和總銷售量
 
+
+def _write_stock_impact_dashboard_simplified(ws, raw_df, thin_border, desc_font, progress_callback):
+    """簡化版 Dashboard（8 個指標，不需要 inv_distribution / summary_buyer）。"""
+    nature = raw_df.get("Shop Nature", pd.Series(dtype=object)).fillna("").astype(str)
+    cm_stock = _safe_numeric(raw_df.get("Shop Stock Qty (CM)", _safe_default_series(0, raw_df.index)))
+    turnday = pd.to_numeric(raw_df.get("Turnday (Days)", _safe_default_series(0, raw_df.index)), errors="coerce")
+
+    # Tourist 缺貨行數（高銷售店無貨）
+    tourist_oos_rows = int(((nature == "Tourist") & (cm_stock <= 0) & raw_df["Is Stock Impacted"]).sum()) if "Is Stock Impacted" in raw_df else 0
+
+    # Tourist 缺貨數量（缺失件數 = max(0, Adj. Safety Stock - Shop Stock Qty (CM))）
+    _adj_ss = _safe_numeric(raw_df.get("Adj. Safety Stock", _safe_default_series(0, raw_df.index)))
+    _oos_mask = (nature == "Tourist") & (cm_stock <= 0) & (raw_df.get("Is Stock Impacted", pd.Series(False, index=raw_df.index)))
+    tourist_oos_qty = int(np.maximum(0, (_adj_ss.values - cm_stock.values))[_oos_mask.values].sum())
+
+    # 曾缺貨 Tourist 行數（含已恢復，不限 CM 當期缺貨）
+    tourist_oos_broader = int(((nature == "Tourist") & raw_df["Is Stock Impacted"]).sum()) if "Is Stock Impacted" in raw_df else 0
+
+    # Non Tourist 可釋放存貨件數（>14日標準）
+    nt_excess_total = int(_safe_numeric(raw_df.get("Non Tourist Excess Stock", _safe_default_series(0, raw_df.index))).sum())
+
+    # Mix 可釋放存貨件數（>14日標準）
+    mix_excess_total = int(_safe_numeric(raw_df.get("Mix Excess Stock", _safe_default_series(0, raw_df.index))).sum())
+
+    # 各 Nature 平均 Turnday
+    tourist_td = turnday[nature == "Tourist"]
+    tourist_avg_td = round(float(tourist_td.mean()), 1) if tourist_td.notna().any() and len(tourist_td) else 0
+    mix_td = turnday[nature == "Mix"]
+    mix_avg_td = round(float(mix_td.mean()), 1) if mix_td.notna().any() and len(mix_td) else 0
+    nt_td = turnday[nature == "Non Tourist"]
+    nt_avg_td = round(float(nt_td.mean()), 1) if nt_td.notna().any() and len(nt_td) else 0
+
+    row1_metrics = [
+        ("⭐ Tourist 缺貨行數", tourist_oos_rows, "高銷售店無貨（只計 RF）｜單位：行數", "DC2626"),
+        ("Non Tourist 可釋存貨", nt_excess_total, "超過14日標準可釋放｜單位：件數", "F59E0B"),
+        ("Mix 可釋放存貨", mix_excess_total, "超過14日標準可釋放｜單位：件數", "F97316"),
+        ("📉 Tourist 缺貨數量", tourist_oos_qty, "缺失件數 = Safety − Shop Net Stock｜單位：件數", "DC2626"),
+    ]
+
+    row2_metrics = [
+        ("Tourist 平均Turnday", tourist_avg_td, "Tourist 平均存貨天數｜單位：日", "8B5CF6"),
+        ("Mix 平均Turnday", mix_avg_td, "Mix 平均存貨天數｜單位：日", "3B82F6"),
+        ("Non Tourist 平均Turnday", nt_avg_td, "Non Tourist 平均存貨天數｜單位：日", "06B6D4"),
+        ("🕐 曾缺貨Tourist行數(含已恢復)", tourist_oos_broader, "任何一期曾缺貨的Tourist RF行數｜含已恢復供貨", "6366F1"),
+    ]
+
+    _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard - 簡化)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
+    _auto_width(ws)
+
 def _build_sku_monthly_analysis_simplified(raw: pd.DataFrame, stock_threshold: int = 300) -> pd.DataFrame:
     """簡化版 SKU 月銷量和存儲量分析（同原版欄位，含新增不分 Nature 的週期存貨/銷售欄位）。
 
@@ -4825,11 +4874,7 @@ def generate_excel_stock_impact_simplified(
     progress_callback=None,
     sku_monthly_analysis: pd.DataFrame | None = None,
 ) -> BytesIO:
-    """簡化版 Excel 輸出：只輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表。
-
-    SKU Monthly Sales&Store 保留原版所有欄位，並新增 M-2, M-1, MTD 的
-    D001 存貨量、店舖總存貨量及店舖總銷售量（不分 Shop Nature）。
-    """
+    """簡化版 Excel 輸出：輸出 RAW、SKU Monthly Sales&Store 及 Stock Impact Dashboard 三個工作表。"""
     wb = Workbook()
 
     if progress_callback:
@@ -4841,14 +4886,15 @@ def generate_excel_stock_impact_simplified(
     )
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
+    desc_font = Font(size=9, color="6B7280", italic=True)
 
     # Sheet 1: RAW
     ws_raw = wb.active
     ws_raw.title = "RAW"
-    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.3, columns=_OOS_DETAIL_COLS)
+    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.2, columns=_OOS_DETAIL_COLS)
 
     if progress_callback:
-        progress_callback(0.4, "建立 SKU Monthly Sales&Store 工作表...")
+        progress_callback(0.25, "建立 SKU Monthly Sales&Store 工作表...")
 
     # Sheet 2: SKU Monthly Sales&Store
     ws_sku_monthly = wb.create_sheet(title="SKU Monthly Sales&Store")
@@ -4874,10 +4920,20 @@ def generate_excel_stock_impact_simplified(
                 elif isinstance(val, (int, float)) and val is not None:
                     cell.number_format = "#,##0"
             if progress_callback and (row_idx % 500 == 0 or row_idx - 4 == len(sku_monthly_analysis)):
-                progress_callback(0.5 + 0.3 * ((row_idx - 4) / max(len(sku_monthly_analysis), 1)), f"寫入 SKU 月銷量 ({row_idx-4}/{len(sku_monthly_analysis)})...")
+                progress_callback(0.3 + 0.3 * ((row_idx - 4) / max(len(sku_monthly_analysis), 1)), f"寫入 SKU 月銷量 ({row_idx-4}/{len(sku_monthly_analysis)})...")
         _auto_width(ws_sku_monthly)
     else:
         ws_sku_monthly.cell(row=1, column=1, value="無 SKU 月銷量/存儲量數據").font = Font(size=12)
+
+    if progress_callback:
+        progress_callback(0.65, "建立 Stock Impact Dashboard 工作表...")
+
+    # Sheet 3: Stock Impact Dashboard
+    ws_dashboard = wb.create_sheet(title="Stock Impact Dashboard")
+    if "Is Stock Impacted" in raw_df.columns and not raw_df.empty:
+        _write_stock_impact_dashboard_simplified(ws_dashboard, raw_df, thin_border, desc_font, progress_callback)
+    else:
+        ws_dashboard.cell(row=1, column=1, value="無足夠數據生成 Dashboard").font = Font(size=12)
 
     if progress_callback:
         progress_callback(0.95, "正在儲存 Excel 檔案...")

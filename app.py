@@ -1178,7 +1178,13 @@ if uploaded_file is not None:
                 sku_monthly_simp = _build_sku_monthly_analysis_simplified(raw_df, stock_threshold=stock_threshold)
                 buf = generate_excel_stock_impact_simplified(raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_simp)
 
-                # raw_df is no longer needed after Excel generation — only sku_monthly_simp and buf are used downstream
+                # 儲存 Dashboard 需要的精簡欄位（節省 ~90% 記憶體）
+                _slim_cols = ["Is Stock Impacted", "Shop Nature", "Shop Stock Qty (CM)",
+                              "Turnday (Days)", "Mix Excess Stock", "Non Tourist Excess Stock",
+                              "Adj. Safety Stock"]
+                _available = [c for c in _slim_cols if c in raw_df.columns]
+                st.session_state.stock_impact_simp_raw_slim = raw_df[_available].copy() if _available else pd.DataFrame()
+
                 del raw_df
                 gc.collect()
 
@@ -1202,6 +1208,108 @@ if uploaded_file is not None:
         if st.session_state.stock_impact_simp_processed:
             sku_monthly_simp = st.session_state.stock_impact_simp_sku_monthly_analysis
             excel_data = st.session_state.stock_impact_simp_excel_data
+            raw_slim = st.session_state.stock_impact_simp_raw_slim
+
+            # ── 簡化版 Dashboard：8 個指標（全從 raw_df 計算） ──
+            if raw_slim is not None and not raw_slim.empty:
+                from transformer import _safe_numeric, _safe_default_series
+                import pandas as _pd
+
+                nature_s = raw_slim["Shop Nature"].fillna("").astype(str) if "Shop Nature" in raw_slim.columns else _pd.Series([""]*len(raw_slim))
+                cm_stock_s = _safe_numeric(raw_slim.get("Shop Stock Qty (CM)", _safe_default_series(0, raw_slim.index)))
+                turnday_s = _pd.to_numeric(raw_slim.get("Turnday (Days)", _safe_default_series(0, raw_slim.index)), errors="coerce")
+                impacted_mask = raw_slim["Is Stock Impacted"] if "Is Stock Impacted" in raw_slim.columns else _pd.Series([False]*len(raw_slim))
+
+                # 指標計算
+                tourist_oos_rows = int(((nature_s == "Tourist") & (cm_stock_s <= 0) & impacted_mask).sum())
+                _adj_ss_s = _safe_numeric(raw_slim.get("Adj. Safety Stock", _safe_default_series(0, raw_slim.index)))
+                _oos_mask = (nature_s == "Tourist") & (cm_stock_s <= 0) & impacted_mask
+                tourist_oos_qty = int(np.maximum(0, (_adj_ss_s - cm_stock_s))[_oos_mask].sum())
+                tourist_oos_broader = int(((nature_s == 'Tourist') & impacted_mask).sum())
+                nt_excess_total = int(_safe_numeric(raw_slim.get("Non Tourist Excess Stock", _safe_default_series(0, raw_slim.index))).sum())
+                mix_excess_total = int(_safe_numeric(raw_slim.get("Mix Excess Stock", _safe_default_series(0, raw_slim.index))).sum())
+                tourist_td = turnday_s[nature_s == "Tourist"]
+                tourist_avg_td = round(float(tourist_td.mean()), 1) if tourist_td.notna().any() and len(tourist_td) else 0
+                mix_td = turnday_s[nature_s == "Mix"]
+                mix_avg_td = round(float(mix_td.mean()), 1) if mix_td.notna().any() and len(mix_td) else 0
+                nt_td = turnday_s[nature_s == "Non Tourist"]
+                nt_avg_td = round(float(nt_td.mean()), 1) if nt_td.notna().any() and len(nt_td) else 0
+
+                st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+                st.markdown("### 📦 存貨分佈分析摘要 (Stock Impact Dashboard - 簡化)")
+                st.caption("🎯 重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積")
+
+                r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+                with r1_col1:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: #DC2626;">
+                        <div class="metric-title">⭐ Tourist 缺貨行數</div>
+                        <div class="metric-value" style="color: #DC2626;">{tourist_oos_rows:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
+                        <div class="metric-desc">高銷售店無貨（只計 RF）｜單位：行數</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with r1_col2:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: #F59E0B;">
+                        <div class="metric-title">Non Tourist 可釋存貨</div>
+                        <div class="metric-value" style="color: #F59E0B;">{nt_excess_total:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
+                        <div class="metric-desc">超過14日標準可釋放｜單位：件數</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with r1_col3:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: #F97316;">
+                        <div class="metric-title">Mix 可釋放存貨</div>
+                        <div class="metric-value" style="color: #F97316;">{mix_excess_total:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
+                        <div class="metric-desc">超過14日標準可釋放｜單位：件數</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with r1_col4:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: #DC2626;">
+                        <div class="metric-title">📉 Tourist 缺貨數量</div>
+                        <div class="metric-value" style="color: #DC2626;">{tourist_oos_qty:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">件</span></div>
+                        <div class="metric-desc">缺失件數 = Safety − Shop Net Stock｜單位：件數</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+                r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
+                with r2_col1:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: #8B5CF6;">
+                        <div class="metric-title">Tourist 平均Turnday</div>
+                        <div class="metric-value" style="color: #8B5CF6;">{tourist_avg_td:.1f}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">日</span></div>
+                        <div class="metric-desc">Tourist 平均存貨天數｜單位：日</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with r2_col2:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: #3B82F6;">
+                        <div class="metric-title">Mix 平均Turnday</div>
+                        <div class="metric-value" style="color: #3B82F6;">{mix_avg_td:.1f}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">日</span></div>
+                        <div class="metric-desc">Mix 平均存貨天數｜單位：日</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with r2_col3:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: #06B6D4;">
+                        <div class="metric-title">Non Tourist 平均Turnday</div>
+                        <div class="metric-value" style="color: #06B6D4;">{nt_avg_td:.1f}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">日</span></div>
+                        <div class="metric-desc">Non Tourist 平均存貨天數｜單位：日</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with r2_col4:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: #6366F1;">
+                        <div class="metric-title">🕐 曾缺貨Tourist行數(含已恢復)</div>
+                        <div class="metric-value" style="color: #6366F1;">{tourist_oos_broader:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
+                        <div class="metric-desc">任何一期曾缺貨的Tourist RF行數｜含已恢復供貨</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             if sku_monthly_simp is not None and not sku_monthly_simp.empty:
                 low_count = int(sku_monthly_simp["低存貨"].sum()) if "低存貨" in sku_monthly_simp.columns else 0
