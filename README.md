@@ -1,6 +1,6 @@
-# I14 報錶轉換與分析係統
+# I14 報表轉換與分析系統
 
-自動化 I14 庫存報錶轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）與 **Safety Stock Review**（安全庫存審查）五種模式。
+自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）與 **Safety Stock Review**（安全庫存審查）五種模式。
 
 ## 功能概述
 
@@ -12,10 +12,10 @@
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
 | 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式 |
-| 視覺化看闆 | 即時顯示統計指標與交叉分析錶 |
-| Excel 導齣 | 一鍵下載含 RAW、Shop Stock Status、By Shop、分析摘要之美化報錶 |
+| 視覺化看板 | 即時顯示統計指標與交叉分析表 |
+| Excel 導出 | 一鍵下載含 RAW、Shop Stock Status、By Shop、分析摘要之美化報表 |
 
-## 係統架構
+## 系統架構
 
 ```
 ├── app.py              # Streamlit 主應用程式
@@ -74,7 +74,7 @@ OOS Review 建議額外包含：
 1. **P90D 0 Sales** — 過去 90 天內零銷售
 2. **Overstock (>2\*Monthly Sold Qty & >2pcs)** — 庫存超過月均銷售兩倍且大於 2 件
 
-係統自動計算新的 Safety Qty 建議，並產齣可轉齣貨量。
+系統自動計算新的 Safety Qty 建議，並產出可轉出貨量。
 
 ### OOS Review
 
@@ -88,18 +88,18 @@ OOS Review 建議額外包含：
 
 ### SKU 精簡 Review
 
-針對 RP Type 為 **ND** 的 SKU 建議退倉，區分 Supply Source（隻有 Warehouse 貨可退倉）：
+針對 RP Type 為 **ND** 的 SKU 建議退倉，區分 Supply Source（只有 Warehouse 貨可退倉）：
 
 1. 篩選 `RP Type = ND` 的所有 SKU（不分 Shop Stock Status）
 2. **Warehouse 貨**：建議全數退倉 `transfer = Shop Stock Qty (CM)`
 3. **Vendor 貨**：標記「另有安排」，不可退倉 `transfer = 0`
 4. ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（如 Warehouse - Overstock、Vendor - Normal）
 
-輸齣包含 RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要共 4 個工作錶。
+輸出包含 RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要共 4 個工作表。
 
 ### Safety Stock Review
 
-全麵審查各 SKU×Shop 的安全庫存設定，結閤 Overstock Cap 與 OOS Floor 計算平衡建議值：
+全面審查各 SKU×Shop 的安全庫存設定，結合 Overstock Cap 與 OOS Floor 計算平衡建議值：
 
 1. **Overstock Cap (X)** — 基於月均銷售與 Overstock Rate 計算庫存上限，上限不超過現有 Adj. Safety Stock
 2. **OOS Floor (Y)** — 基於 MTD 預估銷售與 OOS Rate 計算缺貨底線，最低 3
@@ -107,20 +107,20 @@ OOS Review 建議額外包含：
 4. **Safety Qty Change** = 建議值 − Z（正數=增加、負數=減少、零=不變）
 
 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因。
-輸齣包含 RAW、Shop Stock Status、By Shop、Safety Stock 數據分析摘要共 4 個工作錶。
+輸出包含 RAW、Shop Stock Status、By Shop、Safety Stock 數據分析摘要共 4 個工作表。
 
-## Excel 輸齣結構
+## Excel 輸出結構
 
-| 工作錶 | 說明 |
+| 工作表 | 說明 |
 |--------|------|
 | RAW | 完整明細資料（含所有原始及計算欄位） |
-| Shop Stock Status | 採購人員 x 品牌之庫存異常交叉統計錶 |
+| Shop Stock Status | 採購人員 x 品牌之庫存異常交叉統計表 |
 | By Shop | 各店鋪層級之彙總分析 |
-| 分析摘要 | 數據看闆 — 關鍵指標總覽 |
+| 分析摘要 | 數據看板 — 關鍵指標總覽 |
 
 ## 版本
 
-查看 [VERSION.md](VERSION.md) 瞭解完整版本歷史。
+查看 [VERSION.md](VERSION.md) 了解完整版本歷史。
 
 ## 技術棧
 

@@ -23,7 +23,7 @@ from version import __version__
 
 # 1. 設置網頁基本資訊
 st.set_page_config(
-    page_title="I14 報錶轉換與分析係統",
+    page_title="I14 報表轉換與分析系統",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -184,7 +184,7 @@ with st.sidebar:
     st.markdown("""
     <div style="text-align: center; padding: 15px 0 5px 0;">
         <h2 style="color: #0077a3; margin-bottom: 2px; font-weight: 700; font-size: 1.6rem;">I14 Analyzer</h2>
-        <p style="color: #5a5a6e; font-size: 0.85rem; margin-top: 0;">自動化報錶與數據轉換引擎</p>
+        <p style="color: #5a5a6e; font-size: 0.85rem; margin-top: 0;">自動化報表與數據轉換引擎</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -192,70 +192,70 @@ with st.sidebar:
     
     st.markdown("### 🎯 分析模式說明")
     st.markdown("""
-    於主頁麵頂端選擇分析模式後，係統將自動切換對應的計算流程與輸齣：
+    於主頁面頂端選擇分析模式後，系統將自動切換對應的計算流程與輸出：
 
     **📦 Overstock Review**
     - 篩選庫存過賸品項（P90D 零銷售 / 超過月均兩倍）
-    - 計算新 Safety Qty 與可轉齣貨量
-    - 輸齣：RAW、Shop Stock Status、By Shop、分析摘要
+    - 計算新 Safety Qty 與可轉出貨量
+    - 輸出：RAW、Shop Stock Status、By Shop、分析摘要
 
     **🚨 OOS Review**
     - 篩選缺貨（0 Stock）及潛在缺貨（Turnday < 7）
     - 偵測 Safety Qty 不足之正常庫存品項
     - 支援 MTD 日期選擇與月度預估銷售計算
-    - 輸齣：RAW、Shop Stock Status、By Shop、分析摘要
+    - 輸出：RAW、Shop Stock Status、By Shop、分析摘要
 
     **📋 Carry SKU Review**
     - 檢視各店舖的 Carry SKU 數量（扣除 ND 且庫存為 0 之誤差列）
     - 按 RP Type（ND / RF）與 P90D 0 Sales 交叉統計
-    - 輸齣：RAW、Summary（雙區塊樞紐：Adj. MCH1 × Adj. SST）、Carry SKU 分析摘要
+    - 輸出：RAW、Summary（雙區塊樞紐：Adj. MCH1 × Adj. SST）、Carry SKU 分析摘要
 
     **✂️ SKU 精簡 Review**
     - 針對 RP Type 為 ND 的 SKU 建議退倉，區分 Supply Source
     - Warehouse 貨：建議全數退倉；Vendor 貨：標記「另有安排」不可退倉
     - 依 Supply Source × Shop Stock Status 雙層動態分類
-    - 輸齣：RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要
+    - 輸出：RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要
 
     **📊 NDRF 月份對比**
     - 對比兩個月份（如 Mar2026 vs Jul2026）各店舖的 Carry SKU、RF SKU、ND With Stock SKU 數量
     - 支援按 Adj. SST 交叉分析與 SKU 級明細檢視
-    - 輸齣：月份對比 (By Shop)、Adj. SST 樞紐錶 (x2)、SKU 明細、RAW
+    - 輸出：月份對比 (By Shop)、Adj. SST 樞紐表 (x2)、SKU 明細、RAW
 
     **🔒 Safety Stock Review**
-    - 全麵審查各 SKU×Shop 的安全庫存設定是否閤理
-    - 結閤 Overstock Cap（庫存上限）與 OOS Floor（缺貨底線），雙嚮平衡調整 Safety Stock
-    - 支援逐 Site 檢視、Overstock / OOS Rate 自訂、Safety 隻增或加減模式
+    - 全面審查各 SKU×Shop 的安全庫存設定是否合理
+    - 結合 Overstock Cap（庫存上限）與 OOS Floor（缺貨底線），雙向平衡調整 Safety Stock
+    - 支援逐 Site 檢視、Overstock / OOS Rate 自訂、Safety 只增或加減模式
 
     **📦 Stock Impact Analysis（缺貨銷售影響分析）**
     - 以 Shop Stock Qty = 0（缺貨）為核心，分析存貨對 Sold Qty 的因果影響（無貨就無銷售）
     - 缺貨模式判別：長期缺貨（≥2 期）/ 間歇缺貨（1 期）/ 恢復供貨 / 無缺貨
-    - 銷售損失雙基準並列：M-2 Sold 為需求基準 vs P90D 90 天月均為基準（隻計 RF 店）
+    - 銷售損失雙基準並列：M-2 Sold 為需求基準 vs P90D 90 天月均為基準（只計 RF 店）
     - 📦 **SKU 月銷量和存儲量分析**：按 SKU 計算各 Nature（Tourist/Mix/NT）月均銷售與庫存，低存貨優先
     - 🎯 **存貨分佈分析**：Mix / Non Tourist Turnday 分級（7-14 日標準）、Nature 存貨對比
-    - ⚠️ **存貨失衡 SKU 判定**：Tourist 缺貨 + Non Tourist/Mix 過剩 → 揪齣配置不當
+    - ⚠️ **存貨失衡 SKU 判定**：Tourist 缺貨 + Non Tourist/Mix 過剩 → 揪出配置不當
     - 🔄 **跨 Nature 調貨建議**：Tourist 缺貨但 Mix/NT 有可釋放件數 → 可調貨優先清單
     - ⚖️ **低存貨 SKU 配置決策**：D001 + Shop Stock < N 件時分析 NT RF 浪費與 ND 囤積
     - 🔍 **by-SKU 缺貨診斷**：含 D001 倉庫三期貨量 → 區分「倉庫有貨（補貨問題）」vs「源頭斷貨」
     - 📊 **多維度彙總**：By Brand / Buyer / Category (Adj. MCH1) 缺貨影響
-    - 門檻隻影響低存貨配置決策，不限製整體分析的 SKU 範圍
-    - 預設隻分析 Warehouse SKU，可切換納入 Vendor
+    - 門檻只影響低存貨配置決策，不限制整體分析的 SKU 範圍
+    - 預設只分析 Warehouse SKU，可切換納入 Vendor
 
     **📦 Stock Impact Analysis (簡化)**
-    - 簡化版缺貨銷售影響分析，隻輸齣 RAW 和 SKU Monthly Sales&Store 兩個工作錶
+    - 簡化版缺貨銷售影響分析，隻輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表
     - SKU Monthly Sales&Store **保留原版所有欄位**（含 Vendor MC/Adj. MCH1/Item Status/Launch Date/Item Class/Is New SKU），並 **新增** M-2, M-1 的 D001 存貨、店舖總存貨及 M-2, M-1, MTD 的店舖總銷售量（不分 Shop Nature，D001_MTD/ShopStock_MTD 已存在於原版不重複）
-    - 適閤快速查看各 SKU 三期存貨與銷售趨勢
+    - 適合快速查看各 SKU 三期存貨與銷售趨勢
     """)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
     
-    st.markdown("### 📋 係統操作流程")
+    st.markdown("### 📋 系統操作流程")
     st.markdown("""
     1. 📥 **準備來源檔案**：確認您的 Excel 檔案（By SKUxShop）包含必要欄位。
     2. 📂 **上傳檔案**：將 Excel 拖曳至右側上傳區域。
-    3. 🎯 **選擇模式**：於主頁麵頂端選擇 Overstock Review 或 OOS Review。
+    3. 🎯 **選擇模式**：於主頁面頂端選擇 Overstock Review 或 OOS Review。
     4. 🔧 **設定參數**：根據模式需要，調整 MTD 日期、Shop Nature Rate 等進階選項。
-    5. ⚙️ **執行轉換**：點擊「執行報錶轉換與分析」，係統將自動過濾、計算並產生彙總錶。
-    6. 💾 **下載成果**：於視覺化看闆中即時查閱統計資訊，並一鍵導齣美化後的 Excel 報錶。
+    5. ⚙️ **執行轉換**：點擊「執行報表轉換與分析」，系統將自動過濾、計算並產生彙總表。
+    6. 💾 **下載成果**：於視覺化看板中即時查閱統計資訊，並一鍵導出美化後的 Excel 報表。
     """)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -298,7 +298,7 @@ with st.sidebar:
     3. **Vendor 貨**：標記「另有安排」，不可退倉 `transfer = 0`
     4. ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（如 Warehouse - Overstock、vendor - Normal）
 
-     **🔒 Safety Stock Review** — 全麵審查 Safety Stock 設定，計算平衡建議值：
+     **🔒 Safety Stock Review** — 全面審查 Safety Stock 設定，計算平衡建議值：
      1. **Overstock Cap (X)** = floor(月均銷售 × Overstock Rate)，上限不超過現有 Adj. Safety Stock
      2. **OOS Floor (Y)** = ceil(MTD 預估月銷售 × OOS Rate)，最低 3
      3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Adj. Safety Stock
@@ -310,12 +310,12 @@ with st.sidebar:
      2. **缺貨模式**：長期缺貨（≥2 期）/ 間歇缺貨（1 期）/ 恢復供貨（前期缺貨 → CM 有貨）/ 無缺貨
      3. **銷售損失（M-2 基準）** = max(0, Sold Qty M-2 − 缺貨當期 Sold)，以 M-2 銷售為需求基準
      4. **銷售損失（P90D 基準）** = max(0, Shop Monthly Sold Qty P90D − 缺貨當期 Sold)，以 90 天月均為基準
-     5. **影響判定** = 任一期缺貨且有需求證據（M-2 Sold 或 P90D > 0），且隻計算 RP Type = RF 的店舖
+     5. **影響判定** = 任一期缺貨且有需求證據（M-2 Sold 或 P90D > 0），且只計算 RP Type = RF 的店舖
      6. **Shop Nature 優先級**：Tourist > Mix > Non Tourist（彙總按 Tourist 缺貨嚴重度排序）
-     7. **SKU 調貨建議**：Tourist 缺貨但同 SKU 在 Non-Tourist/Mix 仍有存貨 → 揪齣存貨配置不當
-     8. 預設隻分析 Warehouse SKU；支援多維度彙總：By Site / Brand / Buyer / Category (Adj. MCH1)
+     7. **SKU 調貨建議**：Tourist 缺貨但同 SKU 在 Non-Tourist/Mix 仍有存貨 → 揪出存貨配置不當
+     8. 預設只分析 Warehouse SKU；支援多維度彙總：By Site / Brand / Buyer / Category (Adj. MCH1)
 
-     所有模式均自動生成採購與品牌的交叉匯總樞紐分析錶。
+     所有模式均自動生成採購與品牌的交叉匯總樞紐分析表。
     """)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -329,18 +329,18 @@ with st.sidebar:
 
     st.markdown(
         '<div style="color: #444455; font-size: 0.75rem; text-align: center; line-height: 1.5;">'
-        f'I14 報錶計算工具 v{__version__}<br>'
+        f'I14 報表計算工具 v{__version__}<br>'
         'Developed by Ricky Yue<br>'
         'Powered by Streamlit & Zeabur'
         '</div>',
         unsafe_allow_html=True
     )
 
-# 4. 主介麵標頭 (Header)
+# 4. 主介面標頭 (Header)
 st.markdown("""
 <div class="header-container">
-    <h1 class="header-title">📊 I14 報錶轉換與分析係統</h1>
-    <p class="header-subtitle">上傳 By SKUxShop 來源檔案，一鍵完成庫存異常篩選、多維度統計，並導齣 I14 by SKUxShop_To Buyer 格式報錶。</p>
+    <h1 class="header-title">📊 I14 報表轉換與分析系統</h1>
+    <p class="header-subtitle">上傳 By SKUxShop 來源檔案，一鍵完成庫存異常篩選、多維度統計，並導出 I14 by SKUxShop_To Buyer 格式報表。</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -394,7 +394,7 @@ uploaded_file = st.file_uploader(
 
 # 9. 處理上傳的檔案
 if uploaded_file is not None:
-    # 當上傳瞭新檔案，自動重設所有先前的處理狀態
+    # 當上傳了新檔案，自動重設所有先前的處理狀態
     _file_key = f"{uploaded_file.name}_{uploaded_file.size}"
     if st.session_state.get("last_uploaded_key") != _file_key:
         st.session_state.last_uploaded_key = _file_key
@@ -464,7 +464,7 @@ if uploaded_file is not None:
         <div class="metric-card" style="border-left-color: #00ff88;">
             <div class="metric-title">檔案解析狀態</div>
             <div class="metric-value" style="color: #00ff88;">驗證通過</div>
-            <div class="metric-desc">檔案格式符閤解析標準</div>
+            <div class="metric-desc">檔案格式符合解析標準</div>
         </div>
         """, unsafe_allow_html=True)
     with col2:
@@ -496,7 +496,7 @@ if uploaded_file is not None:
         mtd_date = st.date_input(
             "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
             value=datetime.now().date() - timedelta(days=1),
-            help="選擇 MTD (Month-To-Date) 截止日期，係統將據此推算月度預估銷售量。"
+            help="選擇 MTD (Month-To-Date) 截止日期，系統將據此推算月度預估銷售量。"
         )
         mtd_days = mtd_date.day
         month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
@@ -552,19 +552,19 @@ if uploaded_file is not None:
             "default": oos_rate_non_tourist / 100.0,
         }
 
-        SAFETY_MODE_OPTIONS = ["隻可增加", "可加可減"]
+        SAFETY_MODE_OPTIONS = ["只可增加", "可加可減"]
         safety_mode = st.radio(
             "🔒 Safety Qty 計算模式",
             options=SAFETY_MODE_OPTIONS,
             index=0,
             horizontal=True,
-            help="隻可增加：Safety Qty 隻增不減；可加可減：允許減少。"
+            help="只可增加：Safety Qty 只增不減；可加可減：允許減少。"
         )
-        safety_mode_value = "increase_only" if safety_mode == "隻可增加" else "allow_both"
+        safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
 
         _all_site_codes = sorted(df_input["Site Code"].dropna().unique()) if "Site Code" in df_input.columns else []
 
-        if st.button("⚙️ 執行報錶轉換與分析", type="primary", width='stretch'):
+        if st.button("⚙️ 執行報表轉換與分析", type="primary", width='stretch'):
             _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
             _t0_2 = time.time()
 
@@ -605,7 +605,7 @@ if uploaded_file is not None:
                 st.stop()
 
             _prog2.empty()
-            st.success("🎉 Safety Stock Review 報錶產生成功！數據彙總已完成。")
+            st.success("🎉 Safety Stock Review 報表產生成功！數據彙總已完成。")
             if _warnings:
                 for _w in _warnings:
                     st.warning(f"⚠️ {_w}")
@@ -621,7 +621,7 @@ if uploaded_file is not None:
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
             if _total_row.empty:
-                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看闆。")
+                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看板。")
                 st.stop()
             total_combined = int(_total_row["總計"].values[0])
             total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
@@ -712,14 +712,14 @@ if uploaded_file is not None:
                 "🏪 選擇 Site Code 檢視明細",
                 options=["全部"] + _all_site_codes,
                 index=0,
-                help="選擇特定 Site Code 過濾下方錶格。僅影響 RAW 明細預覽。"
+                help="選擇特定 Site Code 過濾下方表格。僅影響 RAW 明細預覽。"
             )
 
-            tab1, tab2, tab3 = st.tabs(["📋 統計彙總錶 (Shop Stock Status)", "🏪 By Shop 明細", "📄 RAW 原始明細"])
+            tab1, tab2, tab3 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "🏪 By Shop 明細", "📄 RAW 原始明細"])
 
             with tab1:
-                st.markdown("#### 採購人員與品牌之 Safety Stock 交叉統計錶")
-                st.markdown("本錶即為 Excel 導齣檔中「Shop Stock Status」工作錶之即時數據：")
+                st.markdown("#### 採購人員與品牌之 Safety Stock 交叉統計表")
+                st.markdown("本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
                 st.dataframe(summary_df, width='stretch', hide_index=True)
 
             with tab2:
@@ -743,7 +743,7 @@ if uploaded_file is not None:
                 if selected_site_code != "全部" and "Site Code" in _filtered_raw.columns:
                     _filtered_raw = _filtered_raw[_filtered_raw["Site Code"].astype(str).str.strip() == selected_site_code]
                 st.dataframe(_filtered_raw.head(50), width='stretch')
-                st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報錶中。")
+                st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
@@ -751,7 +751,7 @@ if uploaded_file is not None:
             download_name = f"I14 Safety Stock Review_{hk_time}.xlsx"
 
             st.download_button(
-                label="📥 下載 Safety Stock Review 分析報錶 (.xlsx)",
+                label="📥 下載 Safety Stock Review 分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -762,7 +762,7 @@ if uploaded_file is not None:
         st.caption("📦 以 **Shop Stock Qty = 0（缺貨）** 為核心，分析存貨對 Sold Qty 的因果影響（無貨就無銷售）。重點關注 Tourist 店舖。")
 
         warehouse_only = st.checkbox(
-            "🏗️ 隻分析 Warehouse SKU（建議）",
+            "🏗️ 只分析 Warehouse SKU（建議）",
             value=True,
             help="Warehouse SKU 受 D001 倉庫補貨影響，缺貨分析最具意義。取消勾選可納入 Vendor SKU。"
         )
@@ -776,16 +776,16 @@ if uploaded_file is not None:
         st.caption(f"參考日期: {mtd_date.strftime('%Y-%m-%d')}（CM = 當月至今 {mtd_date.day} 日）")
 
         stock_threshold = st.number_input(
-            "📦 低存貨門檻（隻影響低存貨配置決策，不限製整體分析範圍）",
+            "📦 低存貨門檻（只影響低存貨配置決策，不限制整體分析範圍）",
             value=300,
             min_value=0,
             step=10,
             help="設定為 0 時不標記低存貨 SKU。\n"
-            "當設定為 N（N > 0），係統會在「SKU 月銷量和存儲量分析」\n"
+            "當設定為 N（N > 0），系統會在「SKU 月銷量和存儲量分析」\n"
             "和「低存貨 SKU 配置決策」中標記 D001 + Shop Stock < N 的低存貨 SKU。\n"
-            "整體分析（缺貨、Brand/Buyer 彙總等）不受此門檻限製，涵蓋所有 SKU。"
+            "整體分析（缺貨、Brand/Buyer 彙總等）不受此門檻限制，涵蓋所有 SKU。"
         )
-        st.caption(f"當前門檻: {stock_threshold} 件 — 隻影響低存貨標記與配置決策，不限製報錶範圍。")
+        st.caption(f"當前門檻: {stock_threshold} 件 — 只影響低存貨標記與配置決策，不限制報表範圍。")
 
         st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
@@ -821,7 +821,7 @@ if uploaded_file is not None:
                 st.session_state.stock_impact_sku_diagnosis = sku_diagnosis
                 st.session_state.stock_impact_inv_distribution = inv_distribution
                 st.session_state.stock_impact_sku_monthly_analysis = sku_monthly_analysis
-                # 隻存 Dashboard 需要的欄位（節省 ~90% 記憶體）
+                # 只存 Dashboard 需要的欄位（節省 ~90% 記憶體）
                 _slim_cols = ["Is Stock Impacted", "Shop Nature", "Shop Stock Qty (CM)",
                               "Turnday (Days)", "Mix Excess Stock", "Non Tourist Excess Stock",
                               "Adj. Safety Stock"]
@@ -869,7 +869,7 @@ if uploaded_file is not None:
             tourist_oos_qty = int(np.maximum(0, (_adj_ss_s - cm_stock_s))[_oos_mask].sum())
             # 曾缺貨 Tourist 行數（含已恢復，不限 CM 當期缺貨）
             tourist_oos_broader = int(((nature_s == 'Tourist') & impacted_mask).sum())
-            # Non Tourist 可釋存貨（>14日標準，與 Mix 一緻）
+            # Non Tourist 可釋存貨（>14日標準，與 Mix 一致）
             nt_excess_total = int(_safe_numeric(raw_slim.get("Non Tourist Excess Stock", _safe_default_series(0, raw_slim.index))).sum())
             # Mix 可釋放存貨件數（>14日標準）
             mix_excess_total = int(_safe_numeric(raw_slim.get("Mix Excess Stock", _safe_default_series(0, raw_slim.index))).sum())
@@ -906,7 +906,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📦 存貨分佈分析摘要 (Stock Impact Dashboard)")
-            st.caption("🎯 重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積｜Non Tourist/Mix 隻需保留 7-14 日 Turnday")
+            st.caption("🎯 重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積｜Non Tourist/Mix 只需保留 7-14 日 Turnday")
 
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
@@ -914,7 +914,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #DC2626;">
                     <div class="metric-title">⭐ Tourist 缺貨行數</div>
                     <div class="metric-value" style="color: #DC2626;">{tourist_oos_rows:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">行</span></div>
-                    <div class="metric-desc">高銷售店無貨（隻計 RF）｜單位：行數</div>
+                    <div class="metric-desc">高銷售店無貨（只計 RF）｜單位：行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
@@ -1022,7 +1022,7 @@ if uploaded_file is not None:
 
             with impact_tabs[0]:
                 st.markdown("#### 📊 存貨分佈分析")
-                st.caption("🎯 焦點：Tourist 高銷售店無貨 vs Non Tourist/Mix 大量囤積；Non Tourist/Mix 隻需保留 7-14 日 Turnday。")
+                st.caption("🎯 焦點：Tourist 高銷售店無貨 vs Non Tourist/Mix 大量囤積；Non Tourist/Mix 只需保留 7-14 日 Turnday。")
                 if inv_distribution:
                     mix_td = inv_distribution.get("mix_turnday")
                     nt_td = inv_distribution.get("nt_turnday")
@@ -1100,11 +1100,11 @@ if uploaded_file is not None:
                 if summary_category is not None and not summary_category.empty:
                     st.dataframe(summary_category, width='stretch', hide_index=True)
                 else:
-                    st.info("無 Category 層級缺貨影響數據（若缺少 Adj. MCH1 欄位則無法產齣）")
+                    st.info("無 Category 層級缺貨影響數據（若缺少 Adj. MCH1 欄位則無法產出）")
 
             with impact_tabs[5]:
                 st.markdown("#### 🔍 by-SKU 缺貨診斷（Tourist + Mix + Non Tourist）")
-                st.caption("每個缺貨 SKU 的 Tourist/Mix/Non Tourist 缺貨店數、D001 倉庫三期貨量與店舖總存貨。🟧 **倉庫有貨** = 補貨流程問題；⬜ **源頭斷貨** = 倉庫也斷貨需上遊補貨。")
+                st.caption("每個缺貨 SKU 的 Tourist/Mix/Non Tourist 缺貨店數、D001 倉庫三期貨量與店舖總存貨。🟧 **倉庫有貨** = 補貨流程問題；⬜ **源頭斷貨** = 倉庫也斷貨需上游補貨。")
                 if sku_diagnosis is not None and not sku_diagnosis.empty:
                     # 統計摘要
                     d001_restock = int((sku_diagnosis["D001 狀態"] == "倉庫有貨").sum())
@@ -1120,7 +1120,7 @@ if uploaded_file is not None:
             download_name = f"I14 Stock Impact Analysis_{hk_time}.xlsx"
 
             st.download_button(
-                label="📥 下載缺貨銷售影響分析報錶 (.xlsx)",
+                label="📥 下載缺貨銷售影響分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1128,7 +1128,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Stock Impact Analysis (簡化)":
-        st.caption("📦 簡化版缺貨銷售影響分析 — 隻輸齣 **RAW** 和 **SKU Monthly Sales&Store** 兩個工作錶。SKU Monthly Sales&Store 保留原版所有欄位，再新增 M-2, M-1, MTD 的 D001 存貨量、店舖總存貨量及店舖總銷售量（不分 Shop Nature）。")
+        st.caption("📦 簡化版缺貨銷售影響分析 — 隻輸出 **RAW** 和 **SKU Monthly Sales&Store** 兩個工作表。SKU Monthly Sales&Store 保留原版所有欄位，再新增 M-2, M-1, MTD 的 D001 存貨量、店舖總存貨量及店舖總銷售量（不分 Shop Nature）。")
 
         warehouse_only = st.checkbox(
             "🏗️ 隻分析 Warehouse SKU（建議）",
@@ -1216,7 +1216,7 @@ if uploaded_file is not None:
             download_name = f"I14 Stock Impact Analysis (Simplified)_{hk_time}.xlsx"
 
             st.download_button(
-                label="📥 下載簡化版缺貨銷售影響分析報錶 (.xlsx)",
+                label="📥 下載簡化版缺貨銷售影響分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1238,7 +1238,7 @@ if uploaded_file is not None:
                 mtd_date = st.date_input(
                     "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
                     value=datetime.now().date() - timedelta(days=1),
-                    help="選擇 MTD (Month-To-Date) 截止日期，係統將據此推算月度預估銷售量。"
+                    help="選擇 MTD (Month-To-Date) 截止日期，系統將據此推算月度預估銷售量。"
                 )
             else:
                 mtd_date = st.date_input(
@@ -1318,17 +1318,17 @@ if uploaded_file is not None:
 
         safety_mode_value = "increase_only"
         if mode == "OOS Review":
-            SAFETY_MODE_OPTIONS = ["隻可增加", "可加可減"]
+            SAFETY_MODE_OPTIONS = ["只可增加", "可加可減"]
             safety_mode = st.radio(
                 "🔒 Safety Qty 計算模式",
                 options=SAFETY_MODE_OPTIONS,
                 index=0,
                 horizontal=True,
-                help="隻可增加：Safety Qty 隻增不減（不處理 Overstock 的 Safety）；可加可減：同步處理 Overstock 的 Safety，可升可降。"
+                help="只可增加：Safety Qty 只增不減（不處理 Overstock 的 Safety）；可加可減：同步處理 Overstock 的 Safety，可升可降。"
             )
-            safety_mode_value = "increase_only" if safety_mode == "隻可增加" else "allow_both"
+            safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
 
-        if st.button("⚙️ 執行報錶轉換與分析", type="primary", width='stretch'):
+        if st.button("⚙️ 執行報表轉換與分析", type="primary", width='stretch'):
             _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
             _t0_2 = time.time()
 
@@ -1425,12 +1425,12 @@ if uploaded_file is not None:
             except Exception as e:
                 _prog2.empty()
                 _tb = traceback.format_exc()
-                print(f"❌ 報錶處理失敗: {e}\n{_tb}")
-                st.error(f"❌ 報錶處理失敗: {e}\n\n詳細錯誤: {_tb}")
+                print(f"❌ 報表處理失敗: {e}\n{_tb}")
+                st.error(f"❌ 報表處理失敗: {e}\n\n詳細錯誤: {_tb}")
                 st.stop()
 
             _prog2.empty()
-            st.success("🎉 報錶產生成功！數據彙總已完成。")
+            st.success("🎉 報表產生成功！數據彙總已完成。")
             if _warnings:
                 for _w in _warnings:
                     st.warning(f"⚠️ {_w}")
@@ -1447,7 +1447,7 @@ if uploaded_file is not None:
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
             if _total_row.empty:
-                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看闆。")
+                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看板。")
                 st.stop()
             total_overstock = int(_total_row["總計"].values[0])
             total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
@@ -1531,18 +1531,18 @@ if uploaded_file is not None:
 
             st.markdown('</div>', unsafe_allow_html=True)
 
-            tab1, tab2 = st.tabs(["📋 統計彙總錶 (Shop Stock Status)", "📄 原始明細資料預覽 (RAW)"])
+            tab1, tab2 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "📄 原始明細資料預覽 (RAW)"])
 
             with tab1:
-                st.markdown("#### 採購人員與品牌之庫存異常交叉統計錶")
-                st.markdown("本錶即為 Excel 導齣檔中「Shop Stock Status」工作錶之即時數據：")
+                st.markdown("#### 採購人員與品牌之庫存異常交叉統計表")
+                st.markdown("本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
                 st.dataframe(summary_df, width='stretch', hide_index=True)
 
             with tab2:
                 st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
-                st.markdown("此錶為過濾與重整後，完整導齣之明細資料數據預覽：")
+                st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽：")
                 st.dataframe(raw_df.head(50), width='stretch')
-                st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報錶中。")
+                st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
@@ -1550,7 +1550,7 @@ if uploaded_file is not None:
             download_name = f"I14 by SKUxShop_To Buyer_{hk_time}.xlsx"
 
             st.download_button(
-                label="📥 下載完整分析報錶 (.xlsx)",
+                label="📥 下載完整分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1568,7 +1568,7 @@ if uploaded_file is not None:
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
             if _total_row.empty:
-                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看闆。")
+                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看板。")
                 st.stop()
             total_oos = int(_total_row["總計"].values[0])
             total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
@@ -1651,18 +1651,18 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
-            tab1, tab2 = st.tabs(["📋 統計彙總錶 (Shop Stock Status)", "📄 原始明細資料預覽 (RAW)"])
+            tab1, tab2 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "📄 原始明細資料預覽 (RAW)"])
 
             with tab1:
-                st.markdown("#### 採購人員與品牌之 OOS 交叉統計錶")
-                st.markdown("本錶即為 Excel 導齣檔中「Shop Stock Status」工作錶之即時數據：")
+                st.markdown("#### 採購人員與品牌之 OOS 交叉統計表")
+                st.markdown("本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
                 st.dataframe(summary_df, width='stretch', hide_index=True)
 
             with tab2:
                 st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
-                st.markdown("此錶為過濾與重整後，完整導齣之明細資料數據預覽：")
+                st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽：")
                 st.dataframe(raw_df.head(50), width='stretch')
-                st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報錶中。")
+                st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
@@ -1670,7 +1670,7 @@ if uploaded_file is not None:
             download_name = f"I14 OOS Review_{hk_time}.xlsx"
 
             st.download_button(
-                label="📥 下載 OOS 分析報錶 (.xlsx)",
+                label="📥 下載 OOS 分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1689,7 +1689,7 @@ if uploaded_file is not None:
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
             if _total_row.empty:
-                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看闆。")
+                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看板。")
                 st.stop()
             total_nd = int(_total_row["總計"].values[0])
 
@@ -1804,21 +1804,21 @@ if uploaded_file is not None:
                 help="選擇特定 Site Code 過濾下方 RAW 明細。僅影響 RAW 明細預覽。"
             )
 
-            tab1, tab2 = st.tabs(["📋 統計彙總錶 (Shop Stock Status)", "📄 原始明細資料預覽 (RAW)"])
+            tab1, tab2 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "📄 原始明細資料預覽 (RAW)"])
 
             with tab1:
-                st.markdown("#### 採購人員與品牌之 ND SKU 交叉統計錶")
-                st.markdown("ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（Warehouse 可退倉 / Vendor 另有安排）。本錶即為 Excel 導齣檔中「Shop Stock Status」工作錶之即時數據：")
+                st.markdown("#### 採購人員與品牌之 ND SKU 交叉統計表")
+                st.markdown("ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（Warehouse 可退倉 / Vendor 另有安排）。本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
                 st.dataframe(summary_df, width='stretch', hide_index=True)
 
             with tab2:
                 st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
-                st.markdown("此錶為過濾與重整後，完整導齣之明細資料數據預覽（RP Type=ND：Warehouse 建議退倉、Vendor 標記「另有安排」）：")
+                st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽（RP Type=ND：Warehouse 建議退倉、Vendor 標記「另有安排」）：")
                 _filtered_raw = raw_df.copy()
                 if selected_site_code != "全部" and "Site Code" in _filtered_raw.columns:
                     _filtered_raw = _filtered_raw[_filtered_raw["Site Code"].astype(str).str.strip() == selected_site_code]
                 st.dataframe(_filtered_raw.head(50), width='stretch')
-                st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報錶中。")
+                st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
@@ -1826,7 +1826,7 @@ if uploaded_file is not None:
             download_name = f"I14 SKU 精簡 Review_{hk_time}.xlsx"
 
             st.download_button(
-                label="📥 下載 SKU 精簡 Review 分析報錶 (.xlsx)",
+                label="📥 下載 SKU 精簡 Review 分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1922,7 +1922,7 @@ if uploaded_file is not None:
                     st.info("無 Adj. MCH1 樞紐資料")
             with tab4:
                 st.dataframe(raw_df.head(50), width='stretch')
-                st.caption(f"僅顯示前 50 筆 RAW 明細，完整 {len(raw_df):,} 筆將包含在下載的 Excel 報錶中。")
+                st.caption(f"僅顯示前 50 筆 RAW 明細，完整 {len(raw_df):,} 筆將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
@@ -1930,7 +1930,7 @@ if uploaded_file is not None:
             download_name = f"I14 NDRF 月份對比_{hk_time}.xlsx"
 
             st.download_button(
-                label="📥 下載 NDRF 月份對比分析報錶 (.xlsx)",
+                label="📥 下載 NDRF 月份對比分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2062,7 +2062,7 @@ if uploaded_file is not None:
             st.markdown("#### 各店舖 Carry SKU 指標總覽")
             st.dataframe(dashboard_df, width='stretch', hide_index=True)
 
-            tab1, tab2 = st.tabs(["📋 Summary 樞紐錶預覽", "📄 RAW 明細（前 50 筆）"])
+            tab1, tab2 = st.tabs(["📋 Summary 樞紐表預覽", "📄 RAW 明細（前 50 筆）"])
             with tab1:
                 st.markdown("#### 左區塊 (Site Code × Adj. MCH1)")
                 st.dataframe(summary_left, width='stretch', hide_index=True)
@@ -2071,7 +2071,7 @@ if uploaded_file is not None:
             with tab2:
                 st.markdown("#### RAW 原始資料明細（前 50 筆）")
                 st.dataframe(raw_df.head(50), width='stretch')
-                st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報錶中。")
+                st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
@@ -2079,7 +2079,7 @@ if uploaded_file is not None:
             download_name = f"I14 Carry SKU Review_{hk_time}.xlsx"
 
             st.download_button(
-                label="📥 下載 Carry SKU 分析報錶 (.xlsx)",
+                label="📥 下載 Carry SKU 分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2091,7 +2091,7 @@ if uploaded_file is not None:
 st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 st.markdown(
     '<div style="text-align: center; color: #444455; font-size: 0.8rem; padding: 10px 0;">'
-    'I14 報錶轉換與分析係統 &nbsp;&nbsp;•&nbsp;&nbsp; Streamlit + Zeabur &nbsp;&nbsp;•&nbsp;&nbsp; '
+    'I14 報表轉換與分析系統 &nbsp;&nbsp;•&nbsp;&nbsp; Streamlit + Zeabur &nbsp;&nbsp;•&nbsp;&nbsp; '
     f'v{__version__} &nbsp;&nbsp;•&nbsp;&nbsp; Developed by Ricky Yue'
     '</div>',
     unsafe_allow_html=True,

@@ -30,7 +30,7 @@ RAW_COLUMN_ORDER_NAMES = [
     "Shop Nature",
     "RP Type",
     "建議新RP Type",
-    "Buyer 迴覆 ND/RF",
+    "Buyer 回覆 ND/RF",
     "保留RF原因",
     "Shop Stock Status",
     "Adj. Safety Stock",
@@ -232,7 +232,7 @@ def _build_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
         .agg(
             更改NDRF行數=("_is_nd_change", "sum"),
             更改Safety行數=("_is_safety_change", "sum"),
-            預計總轉齣貨量=("_transfer_num", "sum"),
+            預計總轉出貨量=("_transfer_num", "sum"),
             **{
                 "P90D 0 Sales SKU數量": ("_sku_0_sales", "nunique"),
                 ">2*Monthly Sold Qty & >2pcs數量": ("_sku_2x", "nunique"),
@@ -243,7 +243,7 @@ def _build_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
 
     by_shop["更改NDRF行數"] = by_shop["更改NDRF行數"].fillna(0).astype(int)
     by_shop["更改Safety行數"] = by_shop["更改Safety行數"].fillna(0).astype(int)
-    by_shop["預計總轉齣貨量"] = by_shop["預計總轉齣貨量"].fillna(0).astype(int)
+    by_shop["預計總轉出貨量"] = by_shop["預計總轉出貨量"].fillna(0).astype(int)
     by_shop["P90D 0 Sales SKU數量"] = by_shop["P90D 0 Sales SKU數量"].fillna(0).astype(int)
     by_shop[">2*Monthly Sold Qty & >2pcs數量"] = by_shop[">2*Monthly Sold Qty & >2pcs數量"].fillna(0).astype(int)
 
@@ -255,7 +255,7 @@ def _build_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
                 "OM": [""],
                 "更改NDRF行數": [int(by_shop["更改NDRF行數"].sum())],
                 "更改Safety行數": [int(by_shop["更改Safety行數"].sum())],
-                "預計總轉齣貨量": [int(by_shop["預計總轉齣貨量"].sum())],
+                "預計總轉出貨量": [int(by_shop["預計總轉出貨量"].sum())],
                 "P90D 0 Sales SKU數量": [int(df["_sku_0_sales"].dropna().nunique())],
                 ">2*Monthly Sold Qty & >2pcs數量": [int(df["_sku_2x"].dropna().nunique())],
             }
@@ -480,12 +480,12 @@ def _build_combined_by_shop_summary(raw):
     by_shop = (
         df.groupby(group_cols, dropna=False, observed=True)
         .agg(
-            Overstock_SKU數量=("_sku_overstock", "nunique"),
-            OOS_SKU數量=("_sku_oos", "nunique"),
-            需增加Safety_SKU數量=("_safety_increase", "sum"),
-            需減少Safety_SKU數量=("_safety_decrease", "sum"),
-            安全庫存調整總量=("_safety_change", "sum"),
-            Combined_SKU總數=("SKU", "nunique"),
+            Overstock_SKU数量=("_sku_overstock", "nunique"),
+            OOS_SKU数量=("_sku_oos", "nunique"),
+            需增加Safety_SKU数量=("_safety_increase", "sum"),
+            需减少Safety_SKU数量=("_safety_decrease", "sum"),
+            安全库存调整总量=("_safety_change", "sum"),
+            Combined_SKU总数=("SKU", "nunique"),
         )
         .reset_index()
     )
@@ -500,12 +500,12 @@ def _build_combined_by_shop_summary(raw):
                 "Site Code": ["總計"],
                 "Shop Name": [""],
                 "OM": [""],
-                "Overstock_SKU數量": [int(df["_sku_overstock"].dropna().nunique())],
-                "OOS_SKU數量": [int(df["_sku_oos"].dropna().nunique())],
-                "需增加Safety_SKU數量": [int(by_shop["需增加Safety_SKU數量"].sum())],
-                "需減少Safety_SKU數量": [int(by_shop["需減少Safety_SKU數量"].sum())],
-                "安全庫存調整總量": [int(by_shop["安全庫存調整總量"].sum())],
-                "Combined_SKU總數": [int(df["SKU"].dropna().nunique())],
+                "Overstock_SKU数量": [int(df["_sku_overstock"].dropna().nunique())],
+                "OOS_SKU数量": [int(df["_sku_oos"].dropna().nunique())],
+                "需增加Safety_SKU数量": [int(by_shop["需增加Safety_SKU数量"].sum())],
+                "需减少Safety_SKU数量": [int(by_shop["需减少Safety_SKU数量"].sum())],
+                "安全库存调整总量": [int(by_shop["安全库存调整总量"].sum())],
+                "Combined_SKU总数": [int(df["SKU"].dropna().nunique())],
             }
         )
         by_shop = pd.concat([by_shop.sort_values(["Site Code", "Shop Name", "OM"], kind="stable"), total_row], ignore_index=True)
@@ -565,7 +565,7 @@ def transform_combined(
     oos_mask = (status_col == "OOS (0 Stock)") | (status_col == "Potential OOS (<7 Turnday)")
     balanced_mask = (safety_change != 0) & ~overstock_mask & ~oos_mask
 
-    # 預計算 int 旗標（單次 groupby + 條件聚閤，取代 7 次獨立 groupby）
+    # 預計算 int 旗標（單次 groupby + 條件聚合，取代 7 次獨立 groupby）
     raw["_is_overstock"] = overstock_mask.astype(int)
     raw["_is_oos"] = oos_mask.astype(int)
     raw["_is_balanced"] = balanced_mask.astype(int)
@@ -574,7 +574,7 @@ def transform_combined(
     raw["_is_unchanged"] = (safety_change == 0).astype(int)
 
     if progress_callback:
-        progress_callback(0.5, "閤併彙總中...")
+        progress_callback(0.5, "合併彙總中...")
 
     summary = (
         raw.groupby(group_cols, observed=True)
@@ -616,7 +616,7 @@ def transform_combined(
     raw.drop(columns=[c for c in ["_is_overstock", "_is_oos", "_is_balanced", "_is_inc", "_is_dec", "_is_unchanged"] if c in raw.columns], inplace=True, errors="ignore")
 
     if total_cat == 0:
-        warnings.append("未偵測到任何符閤條件的 Safety Stock Review 資料。")
+        warnings.append("未偵測到任何符合條件的 Safety Stock Review 資料。")
 
     if progress_callback:
         progress_callback(0.7, "轉換完成")
@@ -628,7 +628,7 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
     raw_df = _compute_raw_extra_columns(raw_df)
     raw_df = _reorder_raw_columns(raw_df)
 
-    # 選擇性隻輸齣指定欄位（節省記憶體）
+    # 選擇性只輸出指定欄位（節省記憶體）
     if columns is not None:
         avail = [c for c in columns if c in raw_df.columns]
         raw_df = raw_df[avail]
@@ -732,7 +732,7 @@ def generate_excel_combined(
     _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.15)
 
     if progress_callback:
-        progress_callback(0.2, "建立摘要工作錶...")
+        progress_callback(0.2, "建立摘要工作表...")
 
     # ── Sheet 2: Shop Stock Status ──
     ws_summary = wb.create_sheet(title="Shop Stock Status")
@@ -766,7 +766,7 @@ def generate_excel_combined(
     _auto_width(ws_summary)
 
     if progress_callback:
-        progress_callback(0.65, "建立 By Shop 分析工作錶...")
+        progress_callback(0.65, "建立 By Shop 分析工作表...")
 
     # ── Sheet 3: By Shop ──
     by_shop_df = _build_combined_by_shop_summary(raw_df)
@@ -776,12 +776,12 @@ def generate_excel_combined(
         "Site Code",
         "Shop Name",
         "OM",
-        "Overstock_SKU數量",
-        "OOS_SKU數量",
-        "需增加Safety_SKU數量",
-        "需減少Safety_SKU數量",
-        "安全庫存調整總量",
-        "Combined_SKU總數",
+        "Overstock_SKU数量",
+        "OOS_SKU数量",
+        "需增加Safety_SKU数量",
+        "需减少Safety_SKU数量",
+        "安全库存调整总量",
+        "Combined_SKU总数",
     ]
 
     for col_idx, h in enumerate(by_shop_headers, 1):
@@ -811,14 +811,14 @@ def generate_excel_combined(
     _auto_width(ws_by_shop)
 
     if progress_callback:
-        progress_callback(0.88, "建立分析摘要工作錶...")
+        progress_callback(0.88, "建立分析摘要工作表...")
 
     # ── Sheet 4: Safety Stock 數據分析摘要 ──
     ws_dashboard = wb.create_sheet(title="Safety Stock 數據分析摘要")
 
     _total_row = summary_df[summary_df["Buyer"] == "總計"]
     if _total_row.empty:
-        raise ValueError("摘要資料中未找到總計列，無法生成分析看闆")
+        raise ValueError("摘要資料中未找到總計列，無法生成分析看板")
     total_combined = int(_total_row["總計"].values[0])
     total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
     total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
@@ -979,7 +979,7 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     )
 
     if progress_callback:
-        progress_callback(0.35, "建立摘要工作錶...")
+        progress_callback(0.35, "建立摘要工作表...")
 
     ws_summary = wb.create_sheet(title="Shop Stock Status")
 
@@ -1037,7 +1037,7 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
         "OM",
         "更改NDRF行數",
         "更改Safety行數",
-        "預計總轉齣貨量",
+        "預計總轉出貨量",
         "P90D 0 Sales SKU數量",
         ">2*Monthly Sold Qty & >2pcs數量",
     ]
@@ -1076,7 +1076,7 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
 
     _total_row = summary_df[summary_df["Buyer"] == "總計"]
     if _total_row.empty:
-        raise ValueError("摘要資料中未找到總計列，無法生成分析看闆")
+        raise ValueError("摘要資料中未找到總計列，無法生成分析看板")
     total_overstock = int(_total_row["總計"].values[0])
     total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
     total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
@@ -1119,7 +1119,7 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
 
 
 def _write_ndrf_generic_pivot(ws, pivot_df, thin_border, header_font, header_fill, bold_font):
-    """寫入通用樞紐對比錶（Adj. SST / MCH2 共用）。"""
+    """寫入通用樞紐對比表（Adj. SST / MCH2 共用）。"""
     if pivot_df is None or pivot_df.empty:
         ws.cell(row=1, column=1, value="無樞紐資料").font = Font(size=12)
         return
@@ -1132,7 +1132,7 @@ def _write_ndrf_generic_pivot(ws, pivot_df, thin_border, header_font, header_fil
         cell.border = thin_border
     for row_idx, row_data in pivot_df.iterrows():
         excel_row = row_idx + 2
-        is_subtotal = "閤計" in str(row_data.get("Site Code", ""))
+        is_subtotal = "合計" in str(row_data.get("Site Code", ""))
         for col_idx, h in enumerate(headers, 1):
             val = row_data.get(h)
             if pd.isna(val):
@@ -1421,7 +1421,7 @@ def generate_excel_nd(
     )
 
     if progress_callback:
-        progress_callback(0.35, "建立摘要工作錶...")
+        progress_callback(0.35, "建立摘要工作表...")
 
     ws_summary = wb.create_sheet(title="Shop Stock Status")
 
@@ -1468,7 +1468,7 @@ def generate_excel_nd(
     _auto_width(ws_summary)
 
     if progress_callback:
-        progress_callback(0.72, "建立 By Shop 分析工作錶...")
+        progress_callback(0.72, "建立 By Shop 分析工作表...")
 
     by_shop_df = _build_nd_by_shop_summary(raw_df)
 
@@ -1513,13 +1513,13 @@ def generate_excel_nd(
     _auto_width(ws_by_shop)
 
     if progress_callback:
-        progress_callback(0.92, "建立分析摘要工作錶...")
+        progress_callback(0.92, "建立分析摘要工作表...")
 
     ws_dashboard = wb.create_sheet(title="ND SKU數據分析摘要")
 
     _total_row = summary_df[summary_df["Buyer"] == "總計"]
     if _total_row.empty:
-        raise ValueError("摘要資料中未找到總計列，無法生成分析看闆")
+        raise ValueError("摘要資料中未找到總計列，無法生成分析看板")
     total_nd = int(_total_row["總計"].values[0])
 
     # Warehouse (可退倉) vs Vendor (另有安排) breakdown from the raw data.
@@ -1629,7 +1629,7 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
     else:
         projected = projected_mtd_arr
 
-    # OOS 模式下所有 Shop Nature 預設 rate 均為 50%（與 UI 預設一緻）
+    # OOS 模式下所有 Shop Nature 預設 rate 均為 50%（與 UI 預設一致）
     _default_rate = rates.get("default", 0.50)
     _tourist_rate = rates.get("tourist", 0.50)
     _mix_rate = rates.get("mix", 0.50)
@@ -1711,8 +1711,8 @@ def _build_oos_by_shop_summary(raw):
     by_shop = (
         df.groupby(group_cols, dropna=False, observed=True)
         .agg(
-            OOS_SKU數量=("_sku_oos", "nunique"),
-            Potential_OOS_SKU數量=("_sku_potential_oos", "nunique"),
+            OOS_SKU数量=("_sku_oos", "nunique"),
+            Potential_OOS_SKU数量=("_sku_potential_oos", "nunique"),
             建議SafetyQty增加行數=("_is_normal_insufficient", "sum"),
             其他需調整SKU數量=("_sku_normal_insufficient", "nunique"),
             建議SafetyQty增加總量=("_safety_increase", "sum"),
@@ -1730,8 +1730,8 @@ def _build_oos_by_shop_summary(raw):
                 "Site Code": ["總計"],
                 "Shop Name": [""],
                 "OM": [""],
-                "OOS_SKU數量": [int(df["_sku_oos"].dropna().nunique())],
-                "Potential_OOS_SKU數量": [int(df["_sku_potential_oos"].dropna().nunique())],
+                "OOS_SKU数量": [int(df["_sku_oos"].dropna().nunique())],
+                "Potential_OOS_SKU数量": [int(df["_sku_potential_oos"].dropna().nunique())],
                 "建議SafetyQty增加行數": [int(by_shop["建議SafetyQty增加行數"].sum())],
                 "其他需調整SKU數量": [int(df["_sku_normal_insufficient"].dropna().nunique())],
                 "建議SafetyQty增加總量": [int(by_shop["建議SafetyQty增加總量"].sum())],
@@ -1828,7 +1828,7 @@ def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=Non
     raw.drop(columns=[c for c in raw.columns if c.startswith("_is_")], inplace=True, errors="ignore")
 
     if total_oos == 0:
-        warnings.append("未偵測到任何符閤條件的 OOS 資料。請確認來源檔案中的「Shop Stock Status」欄位值是否包含以下分類: " + ", ".join(categories))
+        warnings.append("未偵測到任何符合條件的 OOS 資料。請確認來源檔案中的「Shop Stock Status」欄位值是否包含以下分類: " + ", ".join(categories))
 
     if progress_callback:
         progress_callback(0.7, "轉換完成")
@@ -1853,7 +1853,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
     )
 
     if progress_callback:
-        progress_callback(0.35, "建立摘要工作錶...")
+        progress_callback(0.35, "建立摘要工作表...")
 
     ws_summary = wb.create_sheet(title="Shop Stock Status")
 
@@ -1900,7 +1900,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
     _auto_width(ws_summary)
 
     if progress_callback:
-        progress_callback(0.72, "建立 By Shop 分析工作錶...")
+        progress_callback(0.72, "建立 By Shop 分析工作表...")
 
     by_shop_df = _build_oos_by_shop_summary(raw_df)
 
@@ -1909,8 +1909,8 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
         "Site Code",
         "Shop Name",
         "OM",
-        "OOS_SKU數量",
-        "Potential_OOS_SKU數量",
+        "OOS_SKU数量",
+        "Potential_OOS_SKU数量",
         "建議SafetyQty增加行數",
         "其他需調整SKU數量",
         "建議SafetyQty增加總量",
@@ -1944,13 +1944,13 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
     _auto_width(ws_by_shop)
 
     if progress_callback:
-        progress_callback(0.92, "建立分析摘要工作錶...")
+        progress_callback(0.92, "建立分析摘要工作表...")
 
     ws_dashboard = wb.create_sheet(title="OOS庫存數據分析摘要")
 
     _total_row = summary_df[summary_df["Buyer"] == "總計"]
     if _total_row.empty:
-        raise ValueError("摘要資料中未找到總計列，無法生成分析看闆")
+        raise ValueError("摘要資料中未找到總計列，無法生成分析看板")
     total_oos = int(_total_row["總計"].values[0])
     total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
     total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
@@ -1999,7 +1999,7 @@ CARRY_P90D0_STATUS = "Overstock (P90D 0 Sales)"
 
 
 def _build_site_to_name(df: pd.DataFrame) -> dict:
-    """建立 Site Code → Shop Name 查找錶（供 Carry SKU / NDRF 相關函式共用）。"""
+    """建立 Site Code → Shop Name 查找表（供 Carry SKU / NDRF 相關函式共用）。"""
     site_to_name = {}
     if "Item_Shop" in df.columns:
         site_code = df["Site Code"].fillna("").astype(str).str.strip()
@@ -2072,7 +2072,7 @@ def _build_carry_pivot(df: pd.DataFrame, category_col: str, site_to_name: dict |
     for site, group in pivot_wide.groupby("Site Code", sort=False):
         result_rows.append(group)
         subtotal = pd.DataFrame({
-            "Site Code": [f"{site} 閤計"],
+            "Site Code": [f"{site} 合計"],
             "Shop Name": [""],
             category_col: [None],
             "ND_P90D0": [int(group["ND_P90D0"].sum())],
@@ -2237,7 +2237,7 @@ def transform_carry(
     df["SKU"] = df["SKU"].apply(_safe_sku)
 
     df["建議新RP Type"] = ""
-    df["Buyer 迴覆 ND/RF"] = ""
+    df["Buyer 回覆 ND/RF"] = ""
     df["保留RF原因"] = ""
 
     if "RP Type" in df.columns and "Shop Stock Status" in df.columns:
@@ -2301,7 +2301,7 @@ def generate_excel_carry(
     _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.1)
 
     if progress_callback:
-        progress_callback(0.15, "建立 Summary 工作錶...")
+        progress_callback(0.15, "建立 Summary 工作表...")
 
     # ── Sheet 2: Summary (雙區塊樞紐) ──
     ws_summary = wb.create_sheet(title="Summary")
@@ -2334,7 +2334,7 @@ def generate_excel_carry(
     _auto_width(ws_summary)
 
     if progress_callback:
-        progress_callback(0.55, "建立分析摘要工作錶...")
+        progress_callback(0.55, "建立分析摘要工作表...")
 
     # ── Sheet 3: Carry SKU 分析摘要 ──
     ws_dashboard = wb.create_sheet(title="Carry SKU 分析摘要")
@@ -2418,10 +2418,10 @@ def transform_ndrf_comparison(
     """對比兩個月份每個店舖的 Carry SKU 數量、RF SKU 數量、ND With Stock SKU 數量，並拆解 Adj. SST 分析。
 
     Returns:
-        comparison_by_shop: 店舖級月份對比錶（欄位標明實際月份名稱）
-        adj_sst_pivot: 單一 Adj. SST 樞紐對比錶（兩月份數據並列）
-        raw: 閤併後完整 RAW 資料（含 Month 欄位，僅保留 Shop Name）
-        warnings: 警告訊息列錶
+        comparison_by_shop: 店舖級月份對比表（欄位標明實際月份名稱）
+        adj_sst_pivot: 單一 Adj. SST 樞紐對比表（兩月份數據並列）
+        raw: 合併後完整 RAW 資料（含 Month 欄位，僅保留 Shop Name）
+        warnings: 警告訊息列表
     """
     missing = [c for c in ["Month", "SKU", "RP Type", "Shop Stock Qty (CM)", "Adj. SST", "Shop Stock Status", "Site Code"] if c not in df_input.columns]
     if missing:
@@ -2477,9 +2477,9 @@ def transform_ndrf_comparison(
     month_b_df = df[df["Month"].astype(str).str.strip() == month_b].copy()
 
     if progress_callback:
-        progress_callback(0.2, "建構月份對比錶...")
+        progress_callback(0.2, "建構月份對比表...")
 
-    # 平行化：同時計算 3 個獨立對比錶
+    # 平行化：同時計算 3 個獨立对比表
     with ThreadPoolExecutor(max_workers=3) as _executor:
         f_shop = _executor.submit(_build_ndrf_shop_comparison, month_a_df, month_b_df, month_a, month_b)
         f_sst = _executor.submit(_build_ndrf_adj_sst_combined_pivot, month_a_df, month_b_df, month_a, month_b)
@@ -2490,7 +2490,7 @@ def transform_ndrf_comparison(
     mch2_pivot = f_mch1.result()
 
     if progress_callback:
-        progress_callback(0.6, "閤併 RAW 資料...")
+        progress_callback(0.6, "合併 RAW 資料...")
 
     combined_raw = pd.concat([month_a_df, month_b_df], ignore_index=True)
     drop_cols = [c for c in combined_raw.columns if c.startswith("_")]
@@ -2505,7 +2505,7 @@ def transform_ndrf_comparison(
 
 
 def _build_ndrf_shop_comparison(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_label: str, month_b_label: str) -> pd.DataFrame:
-    """建構店舖級月份對比錶，欄位名稱直接使用實際月份標籤（如 Carry (Mar2026)）。"""
+    """建構店舖級月份對比表，欄位名稱直接使用實際月份標籤（如 Carry (Mar2026)）。"""
 
     def _agg_shop(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
@@ -2583,7 +2583,7 @@ def _build_ndrf_shop_comparison(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_
 
 
 def _build_ndrf_category_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_label: str, month_b_label: str, category_col: str) -> pd.DataFrame:
-    """建構單一樞紐對比錶（依 category_col 分組），兩月份數據並列，含 ND With Stock、RF Total、Carry、Stock Qty、Stock Value 及變化欄位。"""
+    """建構單一樞紐對比表（依 category_col 分組），兩月份數據並列，含 ND With Stock、RF Total、Carry、Stock Qty、Stock Value 及變化欄位。"""
     def _pivot_for(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
             return pd.DataFrame(columns=["Site Code", category_col, "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"])
@@ -2688,7 +2688,7 @@ def _build_ndrf_category_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, 
     result_rows = []
     for site, group in merged.groupby("Site Code", sort=False):
         result_rows.append(group)
-        sub = {"Site Code": [f"{site} 閤計"], "Shop Name": [""], category_col: [None]}
+        sub = {"Site Code": [f"{site} 合計"], "Shop Name": [""], category_col: [None]}
         for dc in data_cols:
             sub[_col_name(dc, month_a_label)] = [int(group[_col_name(dc, month_a_label)].sum())]
             sub[_col_name(dc, month_b_label)] = [int(group[_col_name(dc, month_b_label)].sum())]
@@ -2750,21 +2750,21 @@ def generate_excel_ndrf_comparison(
     _auto_width(ws_compare)
 
     if progress_callback:
-        progress_callback(0.3, "建立 Adj. SST 樞紐對比錶...")
+        progress_callback(0.3, "建立 Adj. SST 樞紐對比表...")
 
     # ── Sheet 2: Adj. SST Comparison Pivot (both months side by side) ──
     ws_pivot = wb.create_sheet(title=f"Adj. SST 樞紐對比")
     _write_ndrf_generic_pivot(ws_pivot, adj_sst_pivot, thin_border, header_font, header_fill, bold_font)
 
     if progress_callback:
-        progress_callback(0.45, "建立 MCH2 樞紐對比錶...")
+        progress_callback(0.45, "建立 MCH2 樞紐對比表...")
 
     # ── Sheet 3: Adj. MCH1 Comparison Pivot ──
     ws_mch2 = wb.create_sheet(title="Adj. MCH1 樞紐對比")
     _write_ndrf_generic_pivot(ws_mch2, mch2_pivot, thin_border, header_font, header_fill, bold_font)
 
     if progress_callback:
-        progress_callback(0.6, "建立 RAW 工作錶...")
+        progress_callback(0.6, "建立 RAW 工作表...")
 
     # ── Sheet 4: RAW ──
     ws_raw = wb.create_sheet(title="RAW")
@@ -2817,11 +2817,11 @@ def _write_summary_headers(ws, header_font, header_fill, thin_border):
 
     # Row 6 — identifier labels and detail bands.
     row6_left = {1: "Site Code", 2: "Shop Name", 3: "Adj. MCH1",
-                 4: "P90D 0 Sales", 5: "Other Status", 6: "ND 閤計",
-                 7: "P90D 0 Sales", 8: "Other Status", 9: "RF 閤計", 10: "總計SKU"}
+                 4: "P90D 0 Sales", 5: "Other Status", 6: "ND 合計",
+                 7: "P90D 0 Sales", 8: "Other Status", 9: "RF 合計", 10: "總計SKU"}
     row6_right = {12: "Site Code", 13: "Shop Name", 14: "Adj. SST",
-                  15: "P90D 0 Sales", 16: "Other Status", 17: "ND 閤計",
-                  18: "P90D 0 Sales", 19: "Other Status", 20: "RF 閤計", 21: "總計SKU"}
+                  15: "P90D 0 Sales", 16: "Other Status", 17: "ND 合計",
+                  18: "P90D 0 Sales", 19: "Other Status", 20: "RF 合計", 21: "總計SKU"}
     for col_map in [row6_left, row6_right]:
         for col, val in col_map.items():
             c = ws.cell(row=6, column=col, value=val)
@@ -2841,7 +2841,7 @@ def _write_pivot_block(ws, pivot_df, start_row, excel_cols, detail_cols, data_co
     total_rows = len(pivot_df)
     for row_idx, row_data in pivot_df.iterrows():
         excel_row = start_row + row_idx
-        is_subtotal = "閤計" in str(row_data["Site Code"])
+        is_subtotal = "合計" in str(row_data["Site Code"])
 
         # Col 1: Site Code
         site_val = row_data["Site Code"]
@@ -2893,7 +2893,7 @@ def _write_pivot_block(ws, pivot_df, start_row, excel_cols, detail_cols, data_co
 # ─── Stock Impact Analysis Functions ────────────────────────────────────────────
 #
 # 取代 Sales Decline Detection (v1.5.1)。改以 Shop Stock = 0（缺貨）對 Sold Qty 的
-# 因果影響為核心，迴答「無貨就無銷售」。Shop Nature 優先級 Tourist > Mix > Non Tourist。
+# 因果影響為核心，回答「無貨就無銷售」。Shop Nature 優先級 Tourist > Mix > Non Tourist。
 
 # 三期 Stock→Sold 對應（同期）。每個 tuple: (期別標籤, Stock 欄位, Sold 欄位)
 _STOCK_SOLD_PERIODS = [
@@ -2965,7 +2965,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── 缺貨模式分類 ────────────────────────────────────────────────────────────
     pattern = np.full(len(df), "無缺貨", dtype=object)
-    # 恢復供貨：M-2 缺貨（或 M-2、M-1 都缺貨）但 CM 有貨 → 後期補迴
+    # 恢復供貨：M-2 缺貨（或 M-2、M-1 都缺貨）但 CM 有貨 → 後期補回
     recovered = (~oos_flags["CM"]) & (oos_flags["M-2"] | oos_flags["M-1"])
     # 間歇：僅 1 期缺貨（且非恢復供貨的 M-2/M-1 缺貨 → CM 有貨已涵蓋）
     intermittent = (oos_count == 1) & ~recovered
@@ -2990,7 +2990,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     for label, _stock_col, sold_col in _STOCK_SOLD_PERIODS:
         sold = _safe_numeric(df.get(sold_col, _safe_default_series(0, idx)))
         is_oos = oos_flags[label].values
-        # 缺貨當期纔算損失；損失 = max(0, 需求基準 − 當期實際銷售)
+        # 缺貨當期才算損失；損失 = max(0, 需求基準 − 當期實際銷售)
         loss_m2 = np.where(is_oos & (m2_sold.values > 0), np.maximum(0, m2_sold.values - sold.values), 0)
         loss_p90d = np.where(is_oos & (p90d.values > 0), np.maximum(0, p90d.values / 3.0 - sold.values), 0)
         loss_m2_max = np.maximum(loss_m2_max, loss_m2)
@@ -3003,8 +3003,8 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["Total Sales Loss (M-2)"] = loss_m2_sum.astype(int)
     df["Total Sales Loss (P90D)"] = loss_p90d_sum.astype(int)
 
-    # ── 影響判定：任一期缺貨且有需求證據，且隻計算 RF 店舖 ──────────────────────
-    # RP Type 正規化（沿用既有模式：strip + upper），隻認 "RF" 為有效店舖
+    # ── 影響判定：任一期缺貨且有需求證據，且只計算 RF 店舖 ──────────────────────
+    # RP Type 正規化（沿用既有模式：strip + upper），只認 "RF" 為有效店舖
     rp_type = (
         df.get("RP Type", _safe_default_series("", idx))
         .fillna("").astype(str).str.strip().str.upper()
@@ -3015,7 +3015,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["Is Stock Impacted"] = any_oos & has_demand & is_rf.values
 
     # ── Turnday 分級與 Mix 可釋放存貨（存貨分佈分析）──────────────────────────────
-    # Turnday (P90D Qty) 原值正規化：inf/NaN 代錶 P90D=0（無周轉意義）
+    # Turnday (P90D Qty) 原值正規化：inf/NaN 代表 P90D=0（無周轉意義）
     turnday_raw = df.get("Turnday (P90D Qty)", _safe_default_series(0, idx))
     turnday = pd.to_numeric(turnday_raw, errors="coerce")
     # 將 inf（P90D=0 但有存貨）與 NaN 設為 -1 旗標，方便後續分類
@@ -3023,7 +3023,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["Turnday (Days)"] = turnday_clean.where(turnday_clean >= 0, np.nan)
 
     # Mix 店舖 Turnday 分級（Mix 標準：保留 7-14 日）
-    # 正規化 Shop Nature（strip）並寫迴，確保後續精確比對一緻
+    # 正規化 Shop Nature（strip）並寫回，確保後續精確比對一致
     shop_nature_raw = df.get("Shop Nature", _safe_default_series("", idx))
     df["Shop Nature"] = shop_nature_raw.fillna("").astype(str).str.strip()
     shop_nature = df["Shop Nature"]
@@ -3104,7 +3104,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# 多維度彙總輸齣欄位（中文錶頭）
+# 多維度彙總輸出欄位（中文表頭）
 _STOCK_IMPACT_SUMMARY_COLS = [
     "缺貨行數", "涉及SKU數",
     "Tourist 缺貨行數", "Mix 缺貨行數", "Non Tourist 缺貨行數",
@@ -3113,7 +3113,7 @@ _STOCK_IMPACT_SUMMARY_COLS = [
 
 
 def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
-    """依 group_cols 彙總缺貨影響。隻統計 Is Stock Impacted = True 的列。
+    """依 group_cols 彙總缺貨影響。只統計 Is Stock Impacted = True 的列。
 
     排序優先級：Tourist 缺貨 → 缺貨行數（皆降序）。
     """
@@ -3176,9 +3176,9 @@ def _build_stock_impact_summary(raw: pd.DataFrame, group_cols: list[str]) -> pd.
 
 
 def _build_sku_info_lookup(raw: pd.DataFrame) -> pd.DataFrame:
-    """建立 SKU 級基本資訊查找錶（單一次 groupby，供多個 summary 函式共用）。
+    """建立 SKU 級基本資訊查找表（單一次 groupby，供多個 summary 函式共用）。
 
-    迴傳 DataFrame 每列一個 SKU，含 Brand / Buyer / SKU Desc / Launch Date /
+    回傳 DataFrame 每列一個 SKU，含 Brand / Buyer / SKU Desc / Launch Date /
     Is New SKU (3mo) / Vendor MC / Adj. MCH1 / Item Status / Item Class 等 first-value 欄位。
     """
     if "SKU" not in raw.columns:
@@ -3197,16 +3197,16 @@ def _build_sku_allocation_summary(raw: pd.DataFrame, sku_lookup: pd.DataFrame | 
     """SKU 級跨 Nature 調貨建議。
 
     針對同時存在於多種 Shop Nature 的 SKU：當 Tourist 店舖缺貨（CM Shop Stock=0）
-    但同 SKU 在 Non-Tourist / Mix 店舖仍有存貨時，列齣可調貨支援機會。
+    但同 SKU 在 Non-Tourist / Mix 店舖仍有存貨時，列出可調貨支援機會。
     排序：Tourist 缺貨損失 → 可調貨存貨量（降序）。
     
     Args:
-        sku_lookup: 預先建好的 SKU 基本資訊查找錶，為 None 時即時計算。
+        sku_lookup: 預先建好的 SKU 基本資訊查找表，為 None 時即時計算。
     """
     if "SKU" not in raw.columns or "Shop Nature" not in raw.columns:
         return pd.DataFrame()
 
-    # 先找齣同時齣現在 Tourist 與其他 Nature 的 SKU（嚮量化替代 apply+set）
+    # 先找出同時出現在 Tourist 與其他 Nature 的 SKU（向量化替代 apply+set）
     _nature_dedup = raw.dropna(subset=["Shop Nature"]).groupby("SKU")["Shop Nature"].agg("unique")
     _nature_sets = _nature_dedup.apply(lambda arr: set(arr))
     shared_skus = _nature_sets[_nature_sets.apply(lambda s: "Tourist" in s and len(s) >= 2)].index
@@ -3238,7 +3238,7 @@ def _build_sku_allocation_summary(raw: pd.DataFrame, sku_lookup: pd.DataFrame | 
     if tourist_oos.empty or other_stock.empty:
         return pd.DataFrame()
 
-    # 以 SKU + Brand 聚閤 Tourist 缺貨損失
+    # 以 SKU + Brand 聚合 Tourist 缺貨損失
     t_agg = (
         tourist_oos.groupby(["SKU"] + (["Brand"] if "Brand" in tourist_oos.columns else []), dropna=False)
         .agg(
@@ -3305,7 +3305,7 @@ def _build_sku_allocation_summary(raw: pd.DataFrame, sku_lookup: pd.DataFrame | 
         "Mix可調貨存貨件數", "Mix閒置店數", "Non Tourist可調貨存貨件數", "Non Tourist閒置店數",
         "可調貨總存貨件數",
     ]
-    # 排序須在 subset 之前（因排序鍵 Tourist損失_P90D 不列入輸齣）
+    # 排序須在 subset 之前（因排序鍵 Tourist損失_P90D 不列入輸出）
     merged = merged.sort_values(
         ["Tourist損失_P90D", "可調貨總存貨件數"], ascending=[False, False]
     ).reset_index(drop=True)
@@ -3318,13 +3318,13 @@ def _classify_d001_status(d001_cm: float) -> str:
     """依 D001 倉庫 CM 存貨分類缺貨源頭。
 
     - 「倉庫有貨」(D001 CM > 0): 補貨流程問題，貨在倉庫卻沒送到店
-    - 「源頭斷貨」(D001 CM = 0): 倉庫也斷貨，需上遊補貨
+    - 「源頭斷貨」(D001 CM = 0): 倉庫也斷貨，需上游補貨
     """
     return "倉庫有貨" if d001_cm > 0 else "源頭斷貨"
 
 
 def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | None = None) -> pd.DataFrame:
-    """by-SKU 缺貨診斷錶（Tourist + Mix + Non Tourist 缺貨 SKU）。
+    """by-SKU 缺貨診斷表（Tourist + Mix + Non Tourist 缺貨 SKU）。
 
     每列為一個缺貨 SKU，彙總：
     - Tourist / Mix / Non Tourist 各自缺貨店數與銷售
@@ -3332,15 +3332,15 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | Non
     - 店舖三期總存貨 (M-2/M-1/CM)
     排序：Tourist 缺貨店數 → Mix 缺貨店數 → Non Tourist 缺貨店數 → Tourist 損失(P90D)（皆降序）。
 
-    效能優化：原本 6 次獨立 groupby + 5 次 merge → 改為 2 次 groupby（SKU-level ＋ SKU×Nature-level）。
+    效能優化：原本 6 次独立 groupby + 5 次 merge → 改為 2 次 groupby（SKU-level ＋ SKU×Nature-level）。
 
     Args:
-        sku_lookup: 預先建好的 SKU 基本資訊查找錶，為 None 時即時計算。
+        sku_lookup: 預先建好的 SKU 基本資訊查找表，為 None 時即時計算。
     """
     if "SKU" not in raw.columns or "Shop Nature" not in raw.columns:
         return pd.DataFrame()
 
-    # 隻看 Tourist + Mix + Non Tourist 的缺貨行（CM Shop Stock=0 且有需求）
+    # 只看 Tourist + Mix + Non Tourist 的缺貨行（CM Shop Stock=0 且有需求）
     cm_stock_vec = _safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, raw.index)))
     focus_mask = (
         raw["Shop Nature"].isin(["Tourist", "Mix", "Non Tourist"])
@@ -3350,7 +3350,7 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | Non
     if not focus_mask.any():
         return pd.DataFrame()
 
-    # 預先建立 SKU 基本資訊查找錶（隻建一次，之後所有函式可重用）
+    # 預先建立 SKU 基本資訊查找表（只建一次，之後所有函式可重用）
     if sku_lookup is None:
         sku_lookup = _build_sku_info_lookup(raw)
 
@@ -3396,7 +3396,7 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | Non
         **{k: v for k, v in nat_agg_dict.items() if v[0] in focus.columns or has_site_code}
     ).reset_index()
 
-    # 將 Nature 展開為寬錶（pivot 比 merge 3 次快，避免重複欄位問題）
+    # 將 Nature 展開為寬表（pivot 比 merge 3 次快，避免重複欄位問題）
     merged = sku_agg.copy()
     for nat in _DIAG_NATURES:
         nat_cols = [c for c in [f"{nat}缺貨店數", f"{nat}損失_M2", f"{nat}損失_P90D",
@@ -3419,13 +3419,13 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | Non
     ndrf_per_sku = (
         raw_ndrf.groupby("SKU", dropna=False)
         .agg(
-            NDRF_ND行數=("_is_nd", "sum"),
-            NDRF_RF行數=("_is_rf", "sum"),
+            NDRF_ND行数=("_is_nd", "sum"),
+            NDRF_RF行数=("_is_rf", "sum"),
         )
         .reset_index()
     )
     merged = merged.merge(ndrf_per_sku, on="SKU", how="left")
-    for c in ["NDRF_ND行數", "NDRF_RF行數"]:
+    for c in ["NDRF_ND行数", "NDRF_RF行数"]:
         merged[c] = merged[c].fillna(0).astype(int)
 
     # 確保各 Nature 欄位存在（當 focus 無該 Nature 時補 0）
@@ -3455,7 +3455,7 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | Non
     if "Is New SKU (3mo)" in merged.columns:
         out_cols.append("Is New SKU (3mo)")
     out_cols += ["Brand", "Buyer",
-                "NDRF_ND行數", "NDRF_RF行數",
+                "NDRF_ND行数", "NDRF_RF行数",
                 "Tourist缺貨店數", "Tourist_CM銷售件數", "Tourist_P90D總量(90日)",
                 "Mix缺貨店數", "Mix_CM銷售件數", "Mix_P90D總量(90日)",
                 "Non Tourist缺貨店數", "Non Tourist_CM銷售件數", "Non Tourist_P90D總量(90日)",
@@ -3481,19 +3481,19 @@ _TURNDAY_BAND_ORDER = [
 
 def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: int = 300,
                                             sku_lookup: pd.DataFrame | None = None) -> dict:
-    """存貨分佈彙總 — 迴傳 dict 含 4 個 DataFrame。
+    """存貨分佈彙總 — 回傳 dict 含 4 個 DataFrame。
 
     Args:
         stock_threshold: 低存貨 SKU 門檻（D001 + Shop Stock 總和 < 此值視為低存貨，預設 300）。
-        sku_lookup: 預先建好的 SKU 基本資訊查找錶，為 None 時即時計算。
+        sku_lookup: 預先建好的 SKU 基本資訊查找表，為 None 時即時計算。
 
-    迴傳:
+    回傳:
         {
-            "mix_turnday": Mix Turnday 分級錶 (B1a),
-            "nt_turnday": Non Tourist Turnday 分級錶 (B1b),
-            "nature_compare": Nature 存貨對比錶 (B2),
+            "mix_turnday": Mix Turnday 分級表 (B1a),
+            "nt_turnday": Non Tourist Turnday 分級表 (B1b),
+            "nature_compare": Nature 存貨對比表 (B2),
             "imbalance_sku": 存貨失衡 SKU 清單 (B3, Tourist缺貨+其他過剩),
-            "low_stock_allocation": 低存貨 SKU 配置決策錶 (B4),
+            "low_stock_allocation": 低存貨 SKU 配置決策表 (B4),
             "transfer_priority": 可調貨優先分析 (B5, Tourist缺貨+同SKU在Mix/NT有可釋放件數),
         }
     """
@@ -3516,7 +3516,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
 
     # ── B1: Turnday 分級彙總（Mix + Non Tourist）─────────────────────────────────
     def _build_turnday_table(data, band_col, excess_col=None, label_prefix=""):
-        """建構單一 Nature 的 Turnday 分級錶。"""
+        """建構單一 Nature 的 Turnday 分級表。"""
         if data.empty or band_col not in data.columns:
             return pd.DataFrame()
         stock = _safe_numeric(data.get("Shop Stock Qty (CM)", _safe_default_series(0, data.index)))
@@ -3582,7 +3582,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
         tourist_oos = raw[(nature == "Tourist") & (cm_stock <= 0) & (p90d > 0)]
 
     # 其他 Nature 過剩存貨：Mix>14日（Mix Excess Stock>0）或 Non Tourist>14日（Non Tourist Excess Stock>0）
-    # 統一到相同 14 日標準，與 Turnday 分級邏輯一緻
+    # 統一到相同 14 日標準，與 Turnday 分級邏輯一致
     mix_excess_vec = _safe_numeric(raw.get("Mix Excess Stock", _safe_default_series(0, raw.index)))
     nt_excess_vec = _safe_numeric(raw.get("Non Tourist Excess Stock", _safe_default_series(0, raw.index)))
     other_over = raw[
@@ -3594,7 +3594,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
     ]
 
     if tourist_oos.empty or other_over.empty or "SKU" not in raw.columns:
-        result["imbalance_sku"] = pd.DataFrame()  # 無失衡 SKU 時迴傳空
+        result["imbalance_sku"] = pd.DataFrame()  # 無失衡 SKU 時回傳空
     else:
         # Tourist 缺貨損失（by SKU）
         t_loss = _safe_numeric(tourist_oos.get("Max Sales Loss (P90D)", _safe_default_series(0, tourist_oos.index)))
@@ -3681,14 +3681,14 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
         merged.attrs["annotation"] = (
             "【計算方式】\n"
             "Mix過剩存貨：Mix 店舖 Shop Stock (CM) > 0 且 Turnday > 14 日的過剩部分 "
-            "（超齣 P90D/90×14 標準的存貨總和）。\n"
+            "（超出 P90D/90×14 標準的存貨總和）。\n"
             "Non Tourist過剩存貨：Non Tourist 店舖 Shop Stock (CM) > 0 且 Turnday > 30 日的存貨總和。\n"
             "建議調貨量 = min(Tourist 缺貨店數對應的需求量, Mix過剩存貨 + Non Tourist過剩存貨)。"
         )
         result["imbalance_sku"] = merged
 
     # ── B4: 低存貨 SKU 配置決策（D001 + Shop Stock < 門檻）─────────────────────
-    # 找齣總可用存貨不足門檻的 SKU，分析是否該減少 Non Tourist RF 店舖。
+    # 找出總可用存貨不足門檻的 SKU，分析是否該減少 Non Tourist RF 店舖。
     # 同時統計 RF 店「無銷售有存貨」與 ND 店存貨（有/無銷售）的浪費情況。
     if "SKU" in raw.columns:
         d001_cm_col = "D001 Stock Qty (CM)" if "D001 Stock Qty (CM)" in raw.columns else None
@@ -3709,7 +3709,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
             low = low_df[low_df["SKU"].isin(low_skus)].copy()
             rp = low.get("RP Type", _safe_default_series("", low.index)).fillna("").astype(str).str.strip().str.upper()
 
-            # Tourist/Mix 缺貨且有需求（RF）— 代錶真的不夠貨
+            # Tourist/Mix 缺貨且有需求（RF）— 代表真的不夠貨
             impacted_mask = low.get("Is Stock Impacted", pd.Series([False] * len(low), index=low.index))
             t_oos = int(((low["Shop Nature"] == "Tourist") & (impacted_mask)).sum()) if "Shop Nature" in low.columns else 0
             m_oos = int(((low["Shop Nature"] == "Mix") & (impacted_mask)).sum()) if "Shop Nature" in low.columns else 0
@@ -3754,7 +3754,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
 def _build_transfer_priority_analysis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | None = None) -> dict:
     """可調貨優先分析：Tourist 缺貨行中，同 SKU 在 Mix/Non Tourist 有可釋放件數的行數及 SKU 明細。
 
-    迴傳:
+    回傳:
         {
             "summary": DataFrame with aggregate metrics (可調貨Tourist行數, 可調貨SKU數),
             "detail": DataFrame with per-SKU transfer priority details,
@@ -3879,10 +3879,10 @@ def _build_transfer_priority_analysis(raw: pd.DataFrame, sku_lookup: pd.DataFram
 
 
 def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300, sku_lookup: pd.DataFrame | None = None) -> pd.DataFrame:
-    """按 SKU 計算遊客/混閤/非遊客的每月銷量及存儲量分析。
+    """按 SKU 計算遊客/混合/非遊客的每月銷量及存儲量分析。
 
     每列為一個 SKU，彙總各 Nature 的月均銷售、當期庫存、店數等。
-    低存貨 SKU（D001 + Shop < threshold）排在前麵。
+    低存貨 SKU（D001 + Shop < threshold）排在前面。
 
     排序：低存貨優先 → Tourist RF 月均銷售降序。
 
@@ -3892,7 +3892,7 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300, s
     - 補充資訊欄位改用單次 merge 取代逐欄 merge
 
     Args:
-        sku_lookup: 預先建好的 SKU 基本資訊查找錶，為 None 時即時計算。
+        sku_lookup: 預先建好的 SKU 基本資訊查找表，為 None 時即時計算。
     """
     if raw.empty or "SKU" not in raw.columns or "Shop Nature" not in raw.columns:
         return pd.DataFrame()
@@ -3934,7 +3934,7 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300, s
         )
         .reset_index()
     )
-    # 使用共用 lookup 錶（單次 merge），取代原本 3 次獨立 groupby.merge
+    # 使用共用 lookup 表（單次 merge），取代原本 3 次獨立 groupby.merge
     if sku_lookup is None:
         sku_lookup = _build_sku_info_lookup(raw)
     info_cols = ["SKU"] + [c for c in ["Brand", "Buyer", "SKU Desc"] if c in sku_lookup.columns]
@@ -3944,7 +3944,7 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300, s
     sku_base["總可用存貨"] = sku_base["D001_庫存"] + sku_base["總店舖庫存"]
     sku_base["低存貨"] = sku_base["總可用存貨"] < stock_threshold
 
-    # SKU × Nature 級聚閤
+    # SKU × Nature 級聚合
     sku_nat = (
         work.groupby(["SKU", "_nature"], dropna=False, observed=True)
         .agg(
@@ -3958,7 +3958,7 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300, s
     )
     sku_nat["月均銷售"] = sku_nat["月均銷售"] / 3.0
 
-    # RF 月均銷售（隻計 RF 店）
+    # RF 月均銷售（只計 RF 店）
     work_rf = work[work["_rp"] == "RF"]
     if not work_rf.empty:
         sku_nat_rf = (
@@ -3971,7 +3971,7 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300, s
     else:
         sku_nat["RF月均銷售"] = 0.0
 
-    # 展開各 Nature 為寬錶
+    # 展開各 Nature 為寬表
     result = sku_base.copy()
     for nat in _NATURES:
         nat_data = sku_nat[sku_nat["_nature"] == nat].copy()
@@ -4119,7 +4119,7 @@ def transform_stock_impact(
     """Stock Impact Analysis 主流程。
 
     Args:
-        warehouse_only: 若 True（預設），隻分析 Supply Source = Warehouse 的列。
+        warehouse_only: 若 True（預設），只分析 Supply Source = Warehouse 的列。
         ref_date: Launch Date 計算 New SKU 的參考日期（預設今天，建議傳入 MTD 截止日期）。
     Returns:
         (summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, inv_distribution, sku_monthly_analysis, raw_df, warnings)
@@ -4147,12 +4147,12 @@ def transform_stock_impact(
     if df.empty:
         raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據")
 
-    # 預設隻分析 Warehouse SKU
+    # 預設只分析 Warehouse SKU
     if warehouse_only and "Supply Source" in df.columns:
         before = len(df)
         df = df[df["Supply Source"].astype(str).str.strip() == "Warehouse"].copy()
         if before > 0 and len(df) == 0:
-            warnings.append("勾選「隻分析 Warehouse SKU」但來源檔案無 Warehouse 列，已自動取消篩選")
+            warnings.append("勾選「只分析 Warehouse SKU」但來源檔案無 Warehouse 列，已自動取消篩選")
             df = _clean_dataframe(df_input, shop_natures=shop_natures)
 
     df["SKU"] = df["SKU"].apply(_safe_sku)
@@ -4179,7 +4179,7 @@ def transform_stock_impact(
         if _gc in raw.columns:
             raw[_gc] = raw[_gc].astype("category")
 
-    # 注意：stock_threshold 不再用於全域過濾，隻會在 low_stock_allocation（B4）
+    # 注意：stock_threshold 不再用於全域過濾，只會在 low_stock_allocation（B4）
     # 中內部使用，分析所有低存貨 SKU 的配置決策。
     if progress_callback:
         progress_callback(0.4, "建構多維度彙總中...")
@@ -4187,7 +4187,7 @@ def transform_stock_impact(
     # Site 層級已取消（v1.6.2）
     summary_site = pd.DataFrame()
 
-    # 平行化：同時計算 4 個維度的摘要錶（彼此獨立）
+    # 平行化：同時計算 4 個維度的摘要表（彼此獨立）
     _summary_tasks = {}
     if "Brand" in raw.columns:
         _summary_tasks["brand"] = ["Brand"]
@@ -4196,11 +4196,11 @@ def transform_stock_impact(
     if "Adj. MCH1" in raw.columns:
         _summary_tasks["category"] = ["Adj. MCH1"]
     else:
-        warnings.append("缺少「Adj. MCH1」欄位，無法產齣 By Category 分析")
+        warnings.append("缺少「Adj. MCH1」欄位，無法產出 By Category 分析")
     if "Item Class" in raw.columns:
         _summary_tasks["item_class"] = ["Item Class"]
     else:
-        warnings.append("缺少「Item Class」欄位，無法產齣 By Item Class 分析")
+        warnings.append("缺少「Item Class」欄位，無法產出 By Item Class 分析")
 
     if _summary_tasks:
         with ThreadPoolExecutor(max_workers=min(4, len(_summary_tasks))) as _executor:
@@ -4220,7 +4220,7 @@ def transform_stock_impact(
     if progress_callback:
         progress_callback(0.55, "建構 SKU 層級分析中...")
 
-    # 建立 SKU 基本資訊查找錶（供 4 個 SKU-level 函式共用，避免重複 groupby）
+    # 建立 SKU 基本資訊查找表（供 4 個 SKU-level 函式共用，避免重複 groupby）
     _sku_lookup = _build_sku_info_lookup(raw)
 
     # 平行化：同時計算 4 個 SKU-level 分析（彼此獨立，共用 _sku_lookup）
@@ -4360,13 +4360,13 @@ def _write_sku_allocation_sheet(ws, alloc_df, header_font, header_fill, thin_bor
                 cell.number_format = "#,##0"
 
     if progress_callback:
-        progress_callback(0.72, f"SKU 調貨錶寫入完成（{len(alloc_df)} SKU）")
+        progress_callback(0.72, f"SKU 調貨表寫入完成（{len(alloc_df)} SKU）")
 
     _auto_width(ws)
 
 
 def _write_sku_stock_diagnosis_sheet(ws, diag_df, header_font, header_fill, thin_border, progress_callback):
-    """寫入 by-SKU 缺貨診斷錶（Tourist+Mix 缺貨 SKU，含 D001 貨量與店舖貨量）。
+    """寫入 by-SKU 缺貨診斷表（Tourist+Mix 缺貨 SKU，含 D001 貨量與店舖貨量）。
 
     D001 狀態分類用顏色標示：「倉庫有貨」(補貨問題) 用橘色警示、「源頭斷貨」用灰色。
     """
@@ -4377,7 +4377,7 @@ def _write_sku_stock_diagnosis_sheet(ws, diag_df, header_font, header_fill, thin
         return
 
     headers = list(diag_df.columns)
-    # 找齣 D001 狀態欄的索引（用於著色）
+    # 找出 D001 狀態欄的索引（用於著色）
     d001_status_col_idx = headers.index("D001 狀態") + 1 if "D001 狀態" in headers else None
 
     for col_idx, h in enumerate(headers, 1):
@@ -4414,20 +4414,20 @@ def _write_sku_stock_diagnosis_sheet(ws, diag_df, header_font, header_fill, thin
                               f"寫入 SKU 缺貨診斷 ({row_idx-3}/{total_rows})...")
 
     if progress_callback:
-        progress_callback(0.759, f"SKU 缺貨診斷錶寫入完成（{len(diag_df)} SKU）")
+        progress_callback(0.759, f"SKU 缺貨診斷表寫入完成（{len(diag_df)} SKU）")
 
     _auto_width(ws)
 
 
 def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, header_fill, thin_border, progress_callback):
-    """寫入存貨分佈分析 sheet（3 個錶垂直排列）。
+    """寫入存貨分佈分析 sheet（3 個表垂直排列）。
 
     B1: Mix + Non Tourist Turnday 分級彙總
     B2: Nature 存貨對比
     B3: 存貨失衡 SKU 清單
     """
     ws.cell(row=1, column=1, value="Inventory Distribution — 存貨分佈分析").font = Font(bold=True, size=14, color="1E40AF")
-    ws.cell(row=2, column=1, value="重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積；Non Tourist/Mix 隻需保留 7-14 日 Turnday").font = Font(size=10, italic=True, color="6B7280")
+    ws.cell(row=2, column=1, value="重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積；Non Tourist/Mix 只需保留 7-14 日 Turnday").font = Font(size=10, italic=True, color="6B7280")
 
     current_row = 4
 
@@ -4516,7 +4516,7 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
             tp_detail, current_row,
         )
     else:
-        ws.cell(row=current_row, column=1, value="🔄 可調貨優先 SKU 清單：無符閤條件 SKU（所有Tourist缺貨SKU在Mix/NT均無可釋放存貨）").font = Font(size=11, color="1E40AF")
+        ws.cell(row=current_row, column=1, value="🔄 可調貨優先 SKU 清單：無符合條件 SKU（所有Tourist缺貨SKU在Mix/NT均無可釋放存貨）").font = Font(size=11, color="1E40AF")
         current_row += 3
 
     _auto_width(ws)
@@ -4527,7 +4527,7 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
 
     聚焦存貨錯配議題：
     - Tourist 高銷售店缺貨 vs Non Tourist/Mix 大量囤積
-    - Non Tourist/Mix 隻需保留 7-14 日 Turnday
+    - Non Tourist/Mix 只需保留 7-14 日 Turnday
     """
     impacted = raw_df[raw_df["Is Stock Impacted"]].copy()
     nature = raw_df.get("Shop Nature", pd.Series(dtype=object)).fillna("").astype(str)
@@ -4544,7 +4544,7 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
     # 曾缺貨 Tourist 行數（含已恢復，不限 CM 當期缺貨）
     tourist_oos_broader = int(((nature == "Tourist") & raw_df["Is Stock Impacted"]).sum()) if "Is Stock Impacted" in raw_df else 0
 
-    # Non Tourist 可釋放存貨件數（>14日標準，與 Mix 一緻）
+    # Non Tourist 可釋放存貨件數（>14日標準，與 Mix 一致）
     nt_excess_total = int(_safe_numeric(raw_df.get("Non Tourist Excess Stock", _safe_default_series(0, raw_df.index))).sum())
 
     # Mix 可釋放存貨件數（>14日標準，來自 Mix Excess Stock）
@@ -4584,7 +4584,7 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
             top_buyer_loss = int(top.get("Tourist 缺貨行數", 0))
 
     row1_metrics = [
-        ("⭐ Tourist 缺貨行數", tourist_oos_rows, "高銷售店無貨（隻計 RF）｜單位：行數", "DC2626"),
+        ("⭐ Tourist 缺貨行數", tourist_oos_rows, "高銷售店無貨（只計 RF）｜單位：行數", "DC2626"),
         ("Non Tourist 可釋存貨", nt_excess_total, "超過14日標準可釋放｜單位：件數", "F59E0B"),
         ("Mix 可釋放存貨", mix_excess_total, "超過14日標準可釋放｜單位：件數", "F97316"),
         ("存貨失衡 SKU 數", imbalance_count, "Tourist缺貨+其他過剩｜單位：SKU數", "EF4444"),
@@ -4655,13 +4655,13 @@ def generate_excel_stock_impact(
     header_font = Font(bold=True, color="FFFFFF", size=11)
     desc_font = Font(size=9, color="6B7280", italic=True)
 
-    # Sheet 1: RAW（隻輸齣分析相關欄位以節省記憶體）
+    # Sheet 1: RAW（只輸出分析相關欄位以節省記憶體）
     ws_raw = wb.active
     ws_raw.title = "RAW"
     _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.08, columns=_OOS_DETAIL_COLS)
 
     if progress_callback:
-        progress_callback(0.1, "建立缺貨影響明細工作錶...")
+        progress_callback(0.1, "建立缺貨影響明細工作表...")
 
     # Sheet 2: OOS Impact Detail
     ws_detail = wb.create_sheet(title="OOS Impact Detail")
@@ -4669,7 +4669,7 @@ def generate_excel_stock_impact(
 
     # Sheet 3: By Brand
     if progress_callback:
-        progress_callback(0.3, "建立 By Brand 分析工作錶...")
+        progress_callback(0.3, "建立 By Brand 分析工作表...")
     ws_brand = wb.create_sheet(title="By Brand")
     if not summary_brand.empty:
         _write_stock_impact_summary_sheet(ws_brand, summary_brand, "By Brand — 缺貨影響分析",
@@ -4679,7 +4679,7 @@ def generate_excel_stock_impact(
 
     # Sheet 4: By Buyer
     if progress_callback:
-        progress_callback(0.44, "建立 By Buyer 分析工作錶...")
+        progress_callback(0.44, "建立 By Buyer 分析工作表...")
     ws_buyer = wb.create_sheet(title="By Buyer")
     if not summary_buyer.empty:
         _write_stock_impact_summary_sheet(ws_buyer, summary_buyer, "By Buyer — 缺貨影響分析",
@@ -4689,7 +4689,7 @@ def generate_excel_stock_impact(
 
     # Sheet 5: By Category
     if progress_callback:
-        progress_callback(0.58, "建立 By Category 分析工作錶...")
+        progress_callback(0.58, "建立 By Category 分析工作表...")
     ws_category = wb.create_sheet(title="By Category")
     if not summary_category.empty:
         _write_stock_impact_summary_sheet(ws_category, summary_category, "By Category (Adj. MCH1) — 缺貨影響分析",
@@ -4699,7 +4699,7 @@ def generate_excel_stock_impact(
 
     # Sheet 6: By Item Class
     if progress_callback:
-        progress_callback(0.68, "建立 By Item Class 分析工作錶...")
+        progress_callback(0.68, "建立 By Item Class 分析工作表...")
     ws_item_class = wb.create_sheet(title="By Item Class")
     if not summary_item_class.empty:
         _write_stock_impact_summary_sheet(ws_item_class, summary_item_class, "By Item Class — 缺貨影響分析",
@@ -4709,7 +4709,7 @@ def generate_excel_stock_impact(
 
     # Sheet 6b: SKU Monthly Sales & Storage (按 SKU 月銷量與存儲量)
     if progress_callback:
-        progress_callback(0.69, "建立 SKU 月銷量和存儲量工作錶...")
+        progress_callback(0.69, "建立 SKU 月銷量和存儲量工作表...")
     ws_sku_monthly = wb.create_sheet(title="SKU Monthly Sales&Store")
     if sku_monthly_analysis is not None and not sku_monthly_analysis.empty:
         ws_sku_monthly.cell(row=1, column=1, value="SKU 月銷量和存儲量分析（按 Shop Nature）").font = Font(bold=True, size=12, color="1E40AF")
@@ -4740,19 +4740,19 @@ def generate_excel_stock_impact(
 
     # Sheet 7: SKU Stock Diagnosis (by-SKU 缺貨診斷, 含 D001 + 店舖貨量)
     if progress_callback:
-        progress_callback(0.70, "建立 by-SKU 缺貨診斷工作錶...")
+        progress_callback(0.70, "建立 by-SKU 缺貨診斷工作表...")
     ws_diag = wb.create_sheet(title="SKU Stock Diagnosis")
     _write_sku_stock_diagnosis_sheet(ws_diag, sku_diagnosis, header_font, header_fill, thin_border, progress_callback)
 
     # Sheet 8: Inventory Distribution (存貨分佈分析)
     if progress_callback:
-        progress_callback(0.76, "建立存貨分佈分析工作錶...")
+        progress_callback(0.76, "建立存貨分佈分析工作表...")
     ws_inv = wb.create_sheet(title="Inventory Distribution")
     _write_inventory_distribution_sheet(ws_inv, inv_distribution, header_font, header_fill, thin_border, progress_callback)
 
     # Sheet 9: Dashboard
     if progress_callback:
-        progress_callback(0.80, "建立缺貨影響分析摘要工作錶...")
+        progress_callback(0.80, "建立缺貨影響分析摘要工作表...")
     ws_dashboard = wb.create_sheet(title="Stock Impact Dashboard")
     _write_stock_impact_dashboard(ws_dashboard, raw_df, summary_buyer, inv_distribution,
                                   thin_border, desc_font, progress_callback)
@@ -4774,13 +4774,13 @@ def generate_excel_stock_impact(
 
 
 # ─── Stock Impact Analysis (Simplified) Functions ─────────────────────────────
-# 簡化版本：隻輸齣 RAW 和 SKU Monthly Sales&Store 兩個工作錶
+# 簡化版本：隻輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表
 # SKU Monthly Sales&Store 不分 Shop Nature，隻顯示 M-2, M-1, MTD 的 D001 存貨、店舖存貨和總銷售量
 
 def _build_sku_monthly_analysis_simplified(raw: pd.DataFrame, stock_threshold: int = 300) -> pd.DataFrame:
     """簡化版 SKU 月銷量和存儲量分析（同原版欄位，含新增不分 Nature 的週期存貨/銷售欄位）。
 
-    直接使用 `_build_sku_monthly_analysis` 的完整輸齣（已含補充資訊與週期欄位），
+    直接使用 `_build_sku_monthly_analysis` 的完整輸出（已含補充資訊與週期欄位），
     不需要額外計算。
     """
     if raw.empty or "SKU" not in raw.columns:
@@ -4793,7 +4793,7 @@ def generate_excel_stock_impact_simplified(
     progress_callback=None,
     sku_monthly_analysis: pd.DataFrame | None = None,
 ) -> BytesIO:
-    """簡化版 Excel 輸齣：隻輸齣 RAW 和 SKU Monthly Sales&Store 兩個工作錶。
+    """簡化版 Excel 輸出：隻輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表。
 
     SKU Monthly Sales&Store 保留原版所有欄位，並新增 M-2, M-1, MTD 的
     D001 存貨量、店舖總存貨量及店舖總銷售量（不分 Shop Nature）。
@@ -4816,7 +4816,7 @@ def generate_excel_stock_impact_simplified(
     _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.3, columns=_OOS_DETAIL_COLS)
 
     if progress_callback:
-        progress_callback(0.4, "建立 SKU Monthly Sales&Store 工作錶...")
+        progress_callback(0.4, "建立 SKU Monthly Sales&Store 工作表...")
 
     # Sheet 2: SKU Monthly Sales&Store
     ws_sku_monthly = wb.create_sheet(title="SKU Monthly Sales&Store")
