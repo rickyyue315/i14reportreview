@@ -278,3 +278,55 @@ def test_nd_categories_by_supply_source_x_status():
     assert int(total_row["Vendor - Normal"]) == 1
     # Transfer total = 5 + 3 only (Vendor row contributes 0, RF excluded).
     assert int(total_row["After new Safety Qty / ND can transfer out of QTY"]) == 8
+
+
+# ── Fix #7 ────────────────────────────────────────────────────────────────────
+
+def test_fix7_combined_nd_safety_forced_to_zero():
+    """ND items must have Recommend Safety Stock=0, Safety Qty Change=-adj_ss, rec col='0'."""
+    df = _df([
+        {"SKU": "1", "RP Type": "ND", "Shop Stock Status": "Normal",
+         "Adj. Safety Stock": 10, "Shop Monthly Sold Qty (P90D)": 4,
+         "Sold Qty (CM - MTD)": 2.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    assert out["Recommend Safety Stock"].tolist()[0] == 0
+    assert out["Safety Qty Change"].tolist()[0] == -10
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "0"
+
+
+def test_fix7_combined_p90d0_safety_forced_to_zero():
+    """P90D 0 Sales items must have Recommend Safety Stock=0, rec col='ND'."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 0,
+         "Sold Qty (CM - MTD)": 0.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    assert out["Recommend Safety Stock"].tolist()[0] == 0
+    assert out["Safety Qty Change"].tolist()[0] == -5
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "ND"
+
+
+def test_fix7_combined_non_nd_non_p90d0_unaffected():
+    """Normal/OOS rows (non-ND, non-P90D0) must retain existing calculation."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 10, "Shop Monthly Sold Qty (P90D)": 30,
+         "Sold Qty (CM - MTD)": 8.0},
+        {"SKU": "2", "Shop Stock Status": "OOS (0 Stock)", "RP Type": "RF",
+         "Adj. Safety Stock": 2, "Shop Monthly Sold Qty (P90D)": 10,
+         "Sold Qty (CM - MTD)": 0.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    # Both rows should have the normal combined calculation (positive values)
+    assert out["Recommend Safety Stock"].tolist()[0] > 0
+    assert out["Recommend Safety Stock"].tolist()[1] > 0
+    # "Recommendation of new Safety Qty / ND" must be blank (not ND/0)
+    assert out["Recommendation of new Safety Qty / ND"].tolist() == ["", ""]

@@ -373,6 +373,15 @@ def _clean_dataframe(df_input: pd.DataFrame, shop_natures: list[str] | None = No
 # ─── Safety Stock Review Functions ─────────────────────────────────────────────
 
 
+def _build_nd_rec_qty_nd(is_nd, is_p90d_0, n):
+    arr = np.full(n, "", dtype=object)
+    if is_p90d_0.any():
+        arr[is_p90d_0.values] = "ND"
+    if is_nd.any():
+        arr[is_nd.values] = "0"
+    return arr
+
+
 def _add_combined_recommendation_columns(
     df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode="increase_only"
 ):
@@ -442,9 +451,32 @@ def _add_combined_recommendation_columns(
         recommend_safety = z_values + delta
     else:
         recommend_safety = combined
+    # Override: ND items must have Safety Stock = 0 (ND = no replenishment)
+    # Override: Overstock (P90D 0 Sales) items must have Safety Stock = 0 and be recommended ND
+    rp_type = (
+        df.get("RP Type", _safe_default_series("", df.index))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+    is_nd = rp_type == "ND"
+    is_p90d_0 = status_col == "Overstock (P90D 0 Sales)"
+
+    if is_nd.any() | is_p90d_0.any():
+        recommend_safety = recommend_safety.copy()
+        delta = delta.copy()
+    if is_nd.any():
+        recommend_safety[is_nd.values] = 0
+        delta[is_nd.values] = -z_values[is_nd.values]
+    if is_p90d_0.any():
+        recommend_safety[is_p90d_0.values] = 0
+        delta[is_p90d_0.values] = -z_values[is_p90d_0.values]
+
     df["Recommend Safety Stock"] = recommend_safety
     df["Safety Qty Change"] = delta
 
+    df["Recommendation of new Safety Qty / ND"] = _build_nd_rec_qty_nd(is_nd, is_p90d_0, len(df))
     df["Buyer reply"] = ""
 
     return df
