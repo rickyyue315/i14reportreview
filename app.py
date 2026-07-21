@@ -195,7 +195,7 @@ with st.sidebar:
     於主頁面頂端選擇分析模式後，系統將自動切換對應的計算流程與輸出：
 
     **📦 Overstock Review**
-    - 篩選庫存過賸品項（P90D 零銷售 / 超過月均兩倍）
+    - 篩選庫存過剩品項（P90D 零銷售 / 超過月均兩倍）
     - 計算新 Safety Qty 與可轉出貨量
     - 輸出：RAW、Shop Stock Status、By Shop、分析摘要
 
@@ -241,7 +241,7 @@ with st.sidebar:
     - 預設只分析 Warehouse SKU，可切換納入 Vendor
 
     **📦 Stock Impact Analysis (簡化)**
-    - 簡化版缺貨銷售影響分析，隻輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表
+    - 簡化版缺貨銷售影響分析，只輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表
     - SKU Monthly Sales&Store **保留原版所有欄位**（含 Vendor MC/Adj. MCH1/Item Status/Launch Date/Item Class/Is New SKU），並 **新增** M-2, M-1 的 D001 存貨、店舖總存貨及 M-2, M-1, MTD 的店舖總銷售量（不分 Shop Nature，D001_MTD/ShopStock_MTD 已存在於原版不重複）
     - 適合快速查看各 SKU 三期存貨與銷售趨勢
     """)
@@ -278,7 +278,7 @@ with st.sidebar:
     
     st.markdown("### ⚙️ 核心計算規則")
     st.markdown("""
-    **Overstock Review** — 針對 `Shop Stock Status` 過濾以下庫存過賸條件：
+    **Overstock Review** — 針對 `Shop Stock Status` 過濾以下庫存過剩條件：
     1. **P90D 0 Sales** — 過去 90 天內零銷售
     2. **Overstock (>2*Monthly Qty & >2pcs)** — 庫存超過月均銷售兩倍且大於 2 件
 
@@ -1128,10 +1128,10 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Stock Impact Analysis (簡化)":
-        st.caption("📦 簡化版缺貨銷售影響分析 — 隻輸出 **RAW** 和 **SKU Monthly Sales&Store** 兩個工作表。SKU Monthly Sales&Store 保留原版所有欄位，再新增 M-2, M-1, MTD 的 D001 存貨量、店舖總存貨量及店舖總銷售量（不分 Shop Nature）。")
+        st.caption("📦 簡化版缺貨銷售影響分析 — 只輸出 **RAW** 和 **SKU Monthly Sales&Store** 兩個工作表。SKU Monthly Sales&Store 保留原版所有欄位，再新增 M-2, M-1, MTD 的 D001 存貨量、店舖總存貨量及店舖總銷售量（不分 Shop Nature）。")
 
         warehouse_only = st.checkbox(
-            "🏗️ 隻分析 Warehouse SKU（建議）",
+            "🏗️ 只分析 Warehouse SKU（建議）",
             value=True,
             help="Warehouse SKU 受 D001 倉庫補貨影響，缺貨分析最具意義。取消勾選可納入 Vendor SKU。"
         )

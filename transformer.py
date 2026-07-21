@@ -4774,8 +4774,8 @@ def generate_excel_stock_impact(
 
 
 # ─── Stock Impact Analysis (Simplified) Functions ─────────────────────────────
-# 簡化版本：隻輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表
-# SKU Monthly Sales&Store 不分 Shop Nature，隻顯示 M-2, M-1, MTD 的 D001 存貨、店舖存貨和總銷售量
+# 簡化版本：只輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表
+# SKU Monthly Sales&Store 不分 Shop Nature，只顯示 M-2, M-1, MTD 的 D001 存貨、店舖存貨和總銷售量
 
 def _build_sku_monthly_analysis_simplified(raw: pd.DataFrame, stock_threshold: int = 300) -> pd.DataFrame:
     """簡化版 SKU 月銷量和存儲量分析（同原版欄位，含新增不分 Nature 的週期存貨/銷售欄位）。
@@ -4793,7 +4793,7 @@ def generate_excel_stock_impact_simplified(
     progress_callback=None,
     sku_monthly_analysis: pd.DataFrame | None = None,
 ) -> BytesIO:
-    """簡化版 Excel 輸出：隻輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表。
+    """簡化版 Excel 輸出：只輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表。
 
     SKU Monthly Sales&Store 保留原版所有欄位，並新增 M-2, M-1, MTD 的
     D001 存貨量、店舖總存貨量及店舖總銷售量（不分 Shop Nature）。
