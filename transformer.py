@@ -4567,11 +4567,15 @@ def _build_low_stock_item_class_summary(sku_monthly_analysis: pd.DataFrame) -> p
     ic_col = "Item Class"
     if ic_col not in df.columns:
         return pd.DataFrame()
-    df[ic_col] = df[ic_col].astype(str).replace(["nan", "None", ""], "New SKU")
+    df[ic_col] = df[ic_col].apply(
+        lambda v: "New SKU" if pd.isna(v) or str(v).lower() in ("nan", "none", "nat", "") else str(v)
+    )
     counts = df.groupby(ic_col, dropna=False).agg(
         低存貨SKU隻數=("SKU", "nunique")
     ).reset_index()
-    counts[ic_col] = counts[ic_col].astype(str).replace(["nan", "None", "", "<NA>", "NaT"], "New SKU")
+    counts[ic_col] = counts[ic_col].apply(
+        lambda v: "New SKU" if pd.isna(v) or str(v).lower() in ("nan", "none", "nat", "") else str(v)
+    )
     all_cats = sorted([c for c in counts[ic_col].unique() if c not in ("New SKU", "總計")])
     all_cats += ["New SKU"] if "New SKU" in counts[ic_col].values else []
     all_cats += ["總計"]
