@@ -4570,7 +4570,12 @@ def _build_low_stock_item_class_summary(sku_monthly_analysis: pd.DataFrame) -> p
     df[ic_col] = df[ic_col].astype(str).replace(["nan", "None", ""], "New SKU")
     counts = df.groupby(ic_col, dropna=False).agg(
         低存貨SKU隻數=("SKU", "nunique")
-    ).reset_index().sort_values("低存貨SKU隻數", ascending=False)
+    ).reset_index()
+    all_cats = sorted([c for c in counts[ic_col].unique() if c not in ("New SKU", "總計")])
+    all_cats += ["New SKU"] if "New SKU" in counts[ic_col].values else []
+    all_cats += ["總計"]
+    counts[ic_col] = pd.Categorical(counts[ic_col], categories=all_cats, ordered=True)
+    counts = counts.sort_values(ic_col).reset_index(drop=True)
     total_val = int(counts["低存貨SKU隻數"].sum())
     total_row = pd.DataFrame({"Item Class": ["總計"], "低存貨SKU隻數": [total_val]})
     return pd.concat([counts, total_row], ignore_index=True)
