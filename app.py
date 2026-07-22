@@ -12,6 +12,7 @@ from transformer import (
     transform_nd, generate_excel_nd,
     transform_stock_impact, generate_excel_stock_impact,
     _build_sku_monthly_analysis_simplified, generate_excel_stock_impact_simplified,
+    _build_low_stock_item_class_summary,
     transform_ndrf_comparison, generate_excel_ndrf_comparison,
 )
 import time
@@ -1014,6 +1015,29 @@ if uploaded_file is not None:
                     <div class="metric-desc">任何一期曾缺貨的Tourist RF行數｜含已恢復供貨</div>
                 </div>
                 """, unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+            low_stock_total = 0
+            low_stock_item_class = pd.DataFrame()
+            if sku_monthly_analysis is not None and not sku_monthly_analysis.empty and "低存貨" in sku_monthly_analysis.columns:
+                low_stock_total = int(sku_monthly_analysis["低存貨"].sum())
+                low_stock_item_class = _build_low_stock_item_class_summary(sku_monthly_analysis)
+
+            r4_col1, r4_col2, r4_col3, r4_col4 = st.columns(4)
+            with r4_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #DC2626;">
+                    <div class="metric-title">🔴 低存貨 SKU 總數</div>
+                    <div class="metric-value" style="color: #DC2626;">{low_stock_total:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">個</span></div>
+                    <div class="metric-desc">D001+店舖存貨&lt;{stock_threshold}件｜單位：SKU數</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            if low_stock_item_class is not None and not low_stock_item_class.empty:
+                st.markdown("#### 🔴 低存貨 SKU 按 Item Class 分類")
+                st.dataframe(low_stock_item_class, width='stretch', hide_index=True)
+
             st.markdown('</div>', unsafe_allow_html=True)
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -1308,6 +1332,28 @@ if uploaded_file is not None:
                         <div class="metric-desc">任何一期曾缺貨的Tourist RF行數｜含已恢復供貨</div>
                     </div>
                     """, unsafe_allow_html=True)
+                st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+                low_stock_total_s = 0
+                low_stock_item_class_s = pd.DataFrame()
+                if sku_monthly_simp is not None and not sku_monthly_simp.empty and "低存貨" in sku_monthly_simp.columns:
+                    low_stock_total_s = int(sku_monthly_simp["低存貨"].sum())
+                    low_stock_item_class_s = _build_low_stock_item_class_summary(sku_monthly_simp)
+
+                r3_col1, r3_col2, r3_col3, r3_col4 = st.columns(4)
+                with r3_col1:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: #DC2626;">
+                        <div class="metric-title">🔴 低存貨 SKU 總數</div>
+                        <div class="metric-value" style="color: #DC2626;">{low_stock_total_s:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">個</span></div>
+                        <div class="metric-desc">D001+店舖存貨&lt;{stock_threshold}件｜單位：SKU數</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                if low_stock_item_class_s is not None and not low_stock_item_class_s.empty:
+                    st.markdown("#### 🔴 低存貨 SKU 按 Item Class 分類")
+                    st.dataframe(low_stock_item_class_s, width='stretch', hide_index=True)
+
                 st.markdown('</div>', unsafe_allow_html=True)
                 st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 

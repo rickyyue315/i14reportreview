@@ -704,7 +704,7 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
     _auto_width(ws)
 
 
-def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None, progress_pct=0.95, row3_metrics=None):
+def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None, progress_pct=0.95, row3_metrics=None, row4_metrics=None):
     ws.merge_cells("A1:D1")
     title_cell = ws.cell(row=1, column=1, value=title)
     title_cell.font = Font(bold=True, size=14, color="1E40AF")
@@ -713,6 +713,8 @@ def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc
     row_offsets = [(3, row1_metrics), (7, row2_metrics)]
     if row3_metrics:
         row_offsets.append((11, row3_metrics))
+    if row4_metrics:
+        row_offsets.append((15, row4_metrics))
 
     for row_offset, metrics in row_offsets:
         for i, (name, value, desc, color) in enumerate(metrics):
@@ -4554,7 +4556,27 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
     _auto_width(ws)
 
 
-def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, thin_border, desc_font, progress_callback):
+def _build_low_stock_item_class_summary(sku_monthly_analysis: pd.DataFrame) -> pd.DataFrame:
+    if sku_monthly_analysis is None or sku_monthly_analysis.empty:
+        return pd.DataFrame()
+    if "低存貨" not in sku_monthly_analysis.columns:
+        return pd.DataFrame()
+    df = sku_monthly_analysis[sku_monthly_analysis["低存貨"]].copy()
+    if df.empty:
+        return pd.DataFrame()
+    ic_col = "Item Class"
+    if ic_col not in df.columns:
+        return pd.DataFrame()
+    df[ic_col] = df[ic_col].astype(str).replace(["nan", "None", ""], "New SKU")
+    counts = df.groupby(ic_col, dropna=False).agg(
+        低存貨SKU隻數=("SKU", "nunique")
+    ).reset_index().sort_values("低存貨SKU隻數", ascending=False)
+    total_val = int(counts["低存貨SKU隻數"].sum())
+    total_row = pd.DataFrame({"Item Class": ["總計"], "低存貨SKU隻數": [total_val]})
+    return pd.concat([counts, total_row], ignore_index=True)
+
+
+def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, thin_border, desc_font, progress_callback, sku_monthly_analysis=None):
     """重做為「存貨分佈分析」焦點 Dashboard（v1.6.1）。
 
     聚焦存貨錯配議題：
@@ -4636,20 +4658,30 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
         ("🕐 曾缺貨Tourist行數(含已恢復)", tourist_oos_broader, "任何一期曾缺貨的Tourist RF行數｜含已恢復供貨", "6366F1"),
     ]
 
-    _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback, row3_metrics=row3_metrics)
+    low_stock_total = 0
+    low_stock_item_class = pd.DataFrame()
+    if sku_monthly_analysis is not None and not sku_monthly_analysis.empty and "低存貨" in sku_monthly_analysis.columns:
+        low_stock_total = int(sku_monthly_analysis["低存貨"].sum())
+        low_stock_item_class = _build_low_stock_item_class_summary(sku_monthly_analysis)
+
+    row4_metrics = [
+        ("🔴 低存貨 SKU 總數", low_stock_total, "D001+店舖存貨<300件｜單位：SKU數", "DC2626"),
+    ]
+
+    _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback, row3_metrics=row3_metrics, row4_metrics=row4_metrics)
 
     # Top 5 受影響 Brand（按 Tourist 缺貨）
     if summary_buyer is not None and not summary_buyer.empty and len(summary_buyer) > 1:
-        ws.cell(row=14, column=1, value="Top 5 受缺貨影響最嚴重的 Buyer（按 Tourist 缺貨排序）").font = Font(bold=True, size=12, color="1E40AF")
+        ws.cell(row=19, column=1, value="Top 5 受缺貨影響最嚴重的 Buyer（按 Tourist 缺貨排序）").font = Font(bold=True, size=12, color="1E40AF")
         top_buyers = summary_buyer[summary_buyer["Buyer"] != "總計"].head(5)
         for col_idx, h in enumerate(top_buyers.columns, 1):
-            cell = ws.cell(row=15, column=col_idx, value=h)
+            cell = ws.cell(row=20, column=col_idx, value=h)
             cell.font = Font(bold=True, size=10, color="FFFFFF")
             cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             cell.border = thin_border
         for row_idx, (_, row_data) in enumerate(top_buyers.iterrows()):
-            excel_row = 16 + row_idx
+            excel_row = 21 + row_idx
             for col_idx, h in enumerate(top_buyers.columns, 1):
                 val = row_data.get(h)
                 if pd.isna(val):
@@ -4659,6 +4691,34 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
                 cell.alignment = Alignment(horizontal="center", vertical="center")
                 if isinstance(val, (int, float)):
                     cell.number_format = "#,##0"
+
+    # 低存貨 SKU 按 Item Class 分類
+    table_start = 27
+    if low_stock_item_class is not None and not low_stock_item_class.empty:
+        ws.cell(row=table_start, column=1, value="🔴 低存貨 SKU 按 Item Class 分類").font = Font(bold=True, size=12, color="DC2626")
+        header_row = table_start + 1
+        for col_idx, h in enumerate(low_stock_item_class.columns, 1):
+            cell = ws.cell(row=header_row, column=col_idx, value=h)
+            cell.font = Font(bold=True, size=10, color="FFFFFF")
+            cell.fill = PatternFill(start_color="C0392B", end_color="C0392B", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+        for row_idx, (_, row_data) in enumerate(low_stock_item_class.iterrows()):
+            excel_row = header_row + 1 + row_idx
+            is_total = row_data.get("Item Class") == "總計"
+            for col_idx, h in enumerate(low_stock_item_class.columns, 1):
+                val = row_data.get(h)
+                if pd.isna(val):
+                    val = None
+                cell = ws.cell(row=excel_row, column=col_idx, value=val)
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                if isinstance(val, (int, float)):
+                    cell.number_format = "#,##0"
+                if is_total:
+                    cell.font = Font(bold=True)
+    else:
+        ws.cell(row=table_start, column=1, value="🔴 低存貨 SKU 按 Item Class 分類：無低存貨 SKU").font = Font(size=12, color="DC2626")
 
     _auto_width(ws)
 
@@ -4787,7 +4847,7 @@ def generate_excel_stock_impact(
         progress_callback(0.80, "建立缺貨影響分析摘要工作表...")
     ws_dashboard = wb.create_sheet(title="Stock Impact Dashboard")
     _write_stock_impact_dashboard(ws_dashboard, raw_df, summary_buyer, inv_distribution,
-                                  thin_border, desc_font, progress_callback)
+                                  thin_border, desc_font, progress_callback, sku_monthly_analysis=sku_monthly_analysis)
 
     if progress_callback:
         progress_callback(0.97, "正在儲存 Excel 檔案...")
@@ -4810,8 +4870,8 @@ def generate_excel_stock_impact(
 # SKU Monthly Sales&Store 不分 Shop Nature，只顯示 M-2, M-1, MTD 的 D001 存貨、店舖存貨和總銷售量
 
 
-def _write_stock_impact_dashboard_simplified(ws, raw_df, thin_border, desc_font, progress_callback):
-    """簡化版 Dashboard（8 個指標，不需要 inv_distribution / summary_buyer）。"""
+def _write_stock_impact_dashboard_simplified(ws, raw_df, thin_border, desc_font, progress_callback, sku_monthly_analysis=None):
+    """簡化版 Dashboard（含低存貨分析）。"""
     nature = raw_df.get("Shop Nature", pd.Series(dtype=object)).fillna("").astype(str)
     cm_stock = _safe_numeric(raw_df.get("Shop Stock Qty (CM)", _safe_default_series(0, raw_df.index)))
     turnday = pd.to_numeric(raw_df.get("Turnday (Days)", _safe_default_series(0, raw_df.index)), errors="coerce")
@@ -4855,7 +4915,45 @@ def _write_stock_impact_dashboard_simplified(ws, raw_df, thin_border, desc_font,
         ("🕐 曾缺貨Tourist行數(含已恢復)", tourist_oos_broader, "任何一期曾缺貨的Tourist RF行數｜含已恢復供貨", "6366F1"),
     ]
 
-    _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard - 簡化)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback)
+    low_stock_total = 0
+    low_stock_item_class = pd.DataFrame()
+    if sku_monthly_analysis is not None and not sku_monthly_analysis.empty and "低存貨" in sku_monthly_analysis.columns:
+        low_stock_total = int(sku_monthly_analysis["低存貨"].sum())
+        low_stock_item_class = _build_low_stock_item_class_summary(sku_monthly_analysis)
+
+    row3_metrics = [
+        ("🔴 低存貨 SKU 總數", low_stock_total, "D001+店舖存貨<300件｜單位：SKU數", "DC2626"),
+    ]
+
+    _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard - 簡化)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback, row3_metrics=row3_metrics)
+
+    # 低存貨 SKU 按 Item Class 分類
+    if low_stock_item_class is not None and not low_stock_item_class.empty:
+        ws.cell(row=15, column=1, value="🔴 低存貨 SKU 按 Item Class 分類").font = Font(bold=True, size=12, color="DC2626")
+        header_row = 16
+        for col_idx, h in enumerate(low_stock_item_class.columns, 1):
+            cell = ws.cell(row=header_row, column=col_idx, value=h)
+            cell.font = Font(bold=True, size=10, color="FFFFFF")
+            cell.fill = PatternFill(start_color="C0392B", end_color="C0392B", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+        for row_idx, (_, row_data) in enumerate(low_stock_item_class.iterrows()):
+            excel_row = header_row + 1 + row_idx
+            is_total = row_data.get("Item Class") == "總計"
+            for col_idx, h in enumerate(low_stock_item_class.columns, 1):
+                val = row_data.get(h)
+                if pd.isna(val):
+                    val = None
+                cell = ws.cell(row=excel_row, column=col_idx, value=val)
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                if isinstance(val, (int, float)):
+                    cell.number_format = "#,##0"
+                if is_total:
+                    cell.font = Font(bold=True)
+    else:
+        ws.cell(row=15, column=1, value="🔴 低存貨 SKU 按 Item Class 分類：無低存貨 SKU").font = Font(size=12, color="DC2626")
+
     _auto_width(ws)
 
 def _build_sku_monthly_analysis_simplified(raw: pd.DataFrame, stock_threshold: int = 300) -> pd.DataFrame:
@@ -4931,7 +5029,7 @@ def generate_excel_stock_impact_simplified(
     # Sheet 3: Stock Impact Dashboard
     ws_dashboard = wb.create_sheet(title="Stock Impact Dashboard")
     if "Is Stock Impacted" in raw_df.columns and not raw_df.empty:
-        _write_stock_impact_dashboard_simplified(ws_dashboard, raw_df, thin_border, desc_font, progress_callback)
+        _write_stock_impact_dashboard_simplified(ws_dashboard, raw_df, thin_border, desc_font, progress_callback, sku_monthly_analysis=sku_monthly_analysis)
     else:
         ws_dashboard.cell(row=1, column=1, value="無足夠數據生成 Dashboard").font = Font(size=12)
 

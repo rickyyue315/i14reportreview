@@ -5,12 +5,14 @@ v1.6.1: 升級為存貨分佈分析 — Mix Turnday 分級（7-14日標準）、
 """
 import warnings
 warnings.filterwarnings("ignore")
+import numpy as np
 import pandas as pd
 from io import BytesIO
 from transformer import (
     _add_stock_impact_columns, _build_stock_impact_summary,
     _build_sku_allocation_summary, _build_sku_stock_diagnosis,
     _build_inventory_distribution_summary, _classify_d001_status,
+    _build_low_stock_item_class_summary,
     transform_stock_impact, generate_excel_stock_impact,
 )
 
@@ -473,6 +475,66 @@ def test_generate_excel_stock_impact():
     print("OK generate_excel_stock_impact（9 sheets valid xlsx）")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Test: low_stock_item_class_summary
+# ──────────────────────────────────────────────────────────────────────────────
+def test_build_low_stock_item_class_summary():
+    # Normal case: mix of low-stock / non-low-stock, multiple Item Classes
+    df = pd.DataFrame({
+        "SKU": ["S1", "S2", "S3", "S4", "S5", "S6"],
+        "低存貨": [True, True, False, True, True, False],
+        "Item Class": ["Cream", "Lotion", "Cream", "Cream", None, "Lotion"],
+    })
+    out = _build_low_stock_item_class_summary(df)
+    assert not out.empty, "should return data for valid input"
+    assert list(out.columns) == ["Item Class", "低存貨SKU隻數"], f"unexpected columns: {out.columns}"
+    # Cream: S1, S4 → 2; Lotion: S2 → 1; New SKU: S5 → 1
+    cream_row = out[out["Item Class"] == "Cream"]
+    assert int(cream_row["低存貨SKU隻數"].iloc[0]) == 2, f"Cream expected 2, got {cream_row['低存貨SKU隻數'].iloc[0]}"
+    lotion_row = out[out["Item Class"] == "Lotion"]
+    assert int(lotion_row["低存貨SKU隻數"].iloc[0]) == 1
+    newsku_row = out[out["Item Class"] == "New SKU"]
+    assert int(newsku_row["低存貨SKU隻數"].iloc[0]) == 1
+    total_row = out[out["Item Class"] == "總計"]
+    assert int(total_row["低存貨SKU隻數"].iloc[0]) == 4, f"total expected 4, got {total_row['低存貨SKU隻數'].iloc[0]}"
+    # Sorted desc: Cream(2) first, then Lotion(1) or New SKU(1), then 總計 last
+    assert out.iloc[0]["Item Class"] == "Cream", f"first should be Cream, got {out.iloc[0]['Item Class']}"
+    assert out.iloc[-1]["Item Class"] == "總計", f"last should be 總計, got {out.iloc[-1]['Item Class']}"
+    print("OK _build_low_stock_item_class_summary - normal case")
+
+    # NaN Item Class → New SKU
+    df_nan = pd.DataFrame({
+        "SKU": ["X1", "X2"],
+        "低存貨": [True, True],
+        "Item Class": [np.nan, ""],
+    })
+    out_nan = _build_low_stock_item_class_summary(df_nan)
+    assert len(out_nan) == 2
+    assert out_nan.iloc[0]["Item Class"] == "New SKU"
+    assert int(out_nan[out_nan["Item Class"] == "總計"]["低存貨SKU隻數"].iloc[0]) == 2
+    print("OK _build_low_stock_item_class_summary - NaN/blank → New SKU")
+
+    # All non-low-stock
+    df_empty = pd.DataFrame({
+        "SKU": ["Y1", "Y2"],
+        "低存貨": [False, False],
+        "Item Class": ["Cream", "Lotion"],
+    })
+    assert _build_low_stock_item_class_summary(df_empty).empty
+    print("OK _build_low_stock_item_class_summary - no low stock → empty")
+
+    # Missing columns
+    assert _build_low_stock_item_class_summary(pd.DataFrame({"SKU": ["Z"]})).empty
+    print("OK _build_low_stock_item_class_summary - missing columns → empty")
+
+    # None/empty input
+    assert _build_low_stock_item_class_summary(None).empty
+    assert _build_low_stock_item_class_summary(pd.DataFrame()).empty
+    print("OK _build_low_stock_item_class_summary - None/empty → empty")
+
+    print("ALL _build_low_stock_item_class_summary TESTS PASSED")
+
+
 if __name__ == "__main__":
     test_oos_detection()
     test_sales_loss_calculation()
@@ -480,6 +542,7 @@ if __name__ == "__main__":
     test_build_stock_impact_summary()
     test_classify_d001_status()
     test_sku_stock_diagnosis()
+    test_build_low_stock_item_class_summary()
     test_transform_stock_impact()
     test_warehouse_filter()
     test_no_impacted_items()

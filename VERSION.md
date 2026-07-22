@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.7.8 (2026-07-22)
+
+- New: Stock Impact Dashboard & 簡化版 — 新增低存貨分析：🔴 低存貨 SKU 總數指標卡 + 按 Item Class 分類的低存貨 SKU 隻數表格（空白 Item Class 歸入「New SKU」）
+- Excel 完整版: Dashboard 新增第四排指標卡 + Item Class 分類表（在 Top 5 Buyer 之後）
+- Excel 簡化版: Dashboard 新增第三排指標卡 + Item Class 分類表
+- Streamlit: 兩個 Dashboard 模式均同步顯示低存貨指標卡與 Item Class 分類表
+
 ## v1.7.7 (2026-07-21)
 
 - 
