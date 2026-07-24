@@ -5155,6 +5155,14 @@ def _build_sku_soh_tier_summary(raw: pd.DataFrame) -> pd.DataFrame:
         )
         result[f"有賣VS有貨 ({p})"] = ratio
 
+    # 低存量標記 (< 1000 件)
+    cm_stock = pd.to_numeric(result.get("Total Stock Qty (CM)", pd.Series(0, index=result.index)), errors="coerce").fillna(0)
+    result["Low Stock (CM<1000)"] = np.where(cm_stock < 1000, "Y", "")
+
+    # 低有賣VS有貨率標記 (< 50%)
+    cm_ratio = pd.to_numeric(result.get("有賣VS有貨 (CM)", pd.Series(np.nan, index=result.index)), errors="coerce").fillna(0)
+    result["Low 有賣VS有貨 (CM<50%)"] = np.where(cm_ratio < 0.5, "Y", "")
+
     # 合併 tier 區塊
     for tp in tier_periods:
         result = result.merge(tp, on="SKU", how="left")
@@ -5164,9 +5172,11 @@ def _build_sku_soh_tier_summary(raw: pd.DataFrame) -> pd.DataFrame:
     if sort_col in result.columns:
         result = result.sort_values(sort_col, ascending=False).reset_index(drop=True)
 
-    # 欄位順序 (52 columns, matching Joseph)
+    # 欄位順序 (52+2 columns, matching Joseph + new marker columns)
     out = ["SKU", "SKU Desc", "Brand", "Buyer", "Item Class", "Status",
-           "Launch Date", "Is New SKU (3mo)", "Eff Price", "Price Tier"]
+           "Launch Date", "Is New SKU (3mo)",
+           "Low Stock (CM<1000)", "Low 有賣VS有貨 (CM<50%)",
+           "Eff Price", "Price Tier"]
     for p in ["M-2", "M-1", "CM"]:
         out.append(f"Total Stock Qty ({p})")
     for p in ["M-2", "M-1", "CM"]:
@@ -5210,8 +5220,10 @@ def _write_new_sheet(ws, df, header_font, header_fill, thin_border, progress_cal
 
     # 找出各特殊欄位的 1-based index
     launch_date_idx = None
-    stock_col_idxs = []   # 有貨店舖 (M-2/M-1/CM)
-    ratio_col_idxs = []   # 有賣VS有貨 (M-2/M-1/CM)
+    stock_col_idxs = []       # 有貨店舖 (M-2/M-1/CM)
+    ratio_col_idxs = []       # 有賣VS有貨 (M-2/M-1/CM)
+    total_stock_col_idxs = [] # Total Stock Qty (M-2/M-1/CM)
+    marker_col_idxs = []      # Low Stock / Low 有賣VS有貨 標記欄
     for i, c in enumerate(col_list, 1):
         if c == "Launch Date":
             launch_date_idx = i
@@ -5219,6 +5231,10 @@ def _write_new_sheet(ws, df, header_font, header_fill, thin_border, progress_cal
             stock_col_idxs.append(i)
         elif c.startswith("有賣VS有貨"):
             ratio_col_idxs.append(i)
+        elif c.startswith("Total Stock Qty"):
+            total_stock_col_idxs.append(i)
+        elif c in ("Low Stock (CM<1000)", "Low 有賣VS有貨 (CM<50%)"):
+            marker_col_idxs.append(i)
 
     # SOH tier merged row: find Sold Qty (CM - MTD) position
     sold_idx = None
@@ -5274,9 +5290,14 @@ def _write_new_sheet(ws, df, header_font, header_fill, thin_border, progress_cal
                 except (ValueError, TypeError):
                     cell.value = str(val)
 
+            elif col_idx in marker_col_idxs:
+                cell.number_format = "@"
             elif isinstance(val, float):
+                # Total Stock Qty: 整數格式（無 .00）
+                if col_idx in total_stock_col_idxs:
+                    cell.number_format = "#,##0"
                 # 有賣VS有貨: 百分比格式 + 條件格式
-                if col_idx in ratio_col_idxs:
+                elif col_idx in ratio_col_idxs:
                     cell.number_format = "0.0%"
                     if val < 0.3:
                         cell.fill = red_fill
