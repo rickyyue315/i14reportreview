@@ -5195,47 +5195,48 @@ def _build_sku_soh_tier_summary(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _write_new_sheet(ws, df, header_font, header_fill, thin_border, progress_callback):
-    """寫入 'New' sheet（Joseph 格式），含 merged headers for SOH tier blocks."""
+    """寫入 'New' sheet（Joseph 格式），含 merged headers for SOH tier blocks。
+
+    格式化：
+    - Launch Date: 轉為純文字（去除 .0）
+    - 有賣VS有貨: 百分比格式 + 條件格式（<30% 紅底白字粗體 / 30-50% 橘底 / 50-70% 淺黃底）
+    - 有貨店舖: >70 紅底白字粗體
+    """
     if df is None or df.empty:
         ws.cell(row=1, column=1, value="無 SOH Tier 分佈數據").font = Font(size=12)
         return
 
-    # 找出 SOH tier 區塊起始欄索引
     col_list = list(df.columns)
-    tier_blocks = []
-    for pname in ["M-2", "M-1", "CM"]:
-        start = None
-        for i, c in enumerate(col_list):
-            if c in _SOH_TIER_LABELS:
-                # check if this block prefix (only first tier label)
-                pass
-        # find first a 0 that is not already after another block
-    # simpler: hardcode the block positions based on known layout
-    # After Sold Qty (CM - MTD), there are 3 blocks of 9 columns each (a 0 .. 總計)
+
+    # 找出各特殊欄位的 1-based index
+    launch_date_idx = None
+    stock_col_idxs = []   # 有貨店舖 (M-2/M-1/CM)
+    ratio_col_idxs = []   # 有賣VS有貨 (M-2/M-1/CM)
+    for i, c in enumerate(col_list, 1):
+        if c == "Launch Date":
+            launch_date_idx = i
+        elif c.startswith("有貨店舖"):
+            stock_col_idxs.append(i)
+        elif c.startswith("有賣VS有貨"):
+            ratio_col_idxs.append(i)
+
+    # SOH tier merged row: find Sold Qty (CM - MTD) position
     sold_idx = None
     for i, c in enumerate(col_list):
         if c == "Sold Qty (CM - MTD)":
             sold_idx = i
             break
-    if sold_idx is None:
-        # fallback: no merged row
-        pass
 
     # Row 3: merged labels for SOH tier blocks
     block_width = len(_SOH_TIER_LABELS) + 1  # 9
     start_col = sold_idx + 2 if sold_idx is not None else (len(col_list) - 3 * block_width + 1)
     if start_col < 1:
         start_col = 1
-    # Write the numeric "第一間" tier block starting col (1-based)
     for bi, pname in enumerate(["M-2", "M-1", "CM"]):
-        if start_col + bi * block_width <= 0:
-            continue
         try:
             c1 = start_col + bi * block_width
             c2 = c1 + block_width - 1
-            c1l = get_column_letter(c1)
-            c2l = get_column_letter(c2)
-            ws.merge_cells(f"{c1l}3:{c2l}3")
+            ws.merge_cells(f"{get_column_letter(c1)}3:{get_column_letter(c2)}3")
             cell = ws.cell(row=3, column=c1, value=f"店舖SOH Tier ({pname})")
             cell.font = Font(bold=True, size=10, color="1E40AF")
             cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -5251,7 +5252,12 @@ def _write_new_sheet(ws, df, header_font, header_fill, thin_border, progress_cal
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = thin_border
 
-    # Data rows
+    # Conditional format fills
+    red_fill = PatternFill(start_color="DC2626", end_color="DC2626", fill_type="solid")
+    red_font = Font(bold=True, color="FFFFFF", size=11)
+    orange_fill = PatternFill(start_color="F97316", end_color="F97316", fill_type="solid")
+    yellow_fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
+
     total_rows = len(df)
     for row_idx, row_data in enumerate(df.itertuples(index=False), start=5):
         for col_idx, val in enumerate(row_data, 1):
@@ -5260,12 +5266,35 @@ def _write_new_sheet(ws, df, header_font, header_fill, thin_border, progress_cal
             cell = ws.cell(row=row_idx, column=col_idx, value=val)
             cell.border = thin_border
             cell.alignment = Alignment(horizontal="center", vertical="center")
-            if isinstance(val, float):
-                cell.number_format = "#,##0.00"
+
+            # Launch Date: 轉純文字（去 .0）
+            if col_idx == launch_date_idx and val is not None:
+                try:
+                    cell.value = str(int(float(val)))
+                except (ValueError, TypeError):
+                    cell.value = str(val)
+
+            elif isinstance(val, float):
+                # 有賣VS有貨: 百分比格式 + 條件格式
+                if col_idx in ratio_col_idxs:
+                    cell.number_format = "0.0%"
+                    if val < 0.3:
+                        cell.fill = red_fill
+                        cell.font = red_font
+                    elif val < 0.5:
+                        cell.fill = orange_fill
+                        cell.font = Font(bold=True, color="FFFFFF", size=11)
+                    elif val < 0.7:
+                        cell.fill = yellow_fill
+                else:
+                    cell.number_format = "#,##0.00"
             elif isinstance(val, int):
                 cell.number_format = "#,##0"
-            elif val is None:
-                pass
+                # 有貨店舖: >70 紅底白字粗體
+                if col_idx in stock_col_idxs and val > 70:
+                    cell.fill = red_fill
+                    cell.font = red_font
+
         if progress_callback and ((row_idx - 5) % 500 == 0 or row_idx - 4 == total_rows):
             progress_callback(0.55 + 0.25 * ((row_idx - 4) / max(total_rows, 1)),
                               f"寫入 New sheet ({row_idx-4}/{total_rows})...")
