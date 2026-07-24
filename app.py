@@ -12,7 +12,8 @@ from transformer import (
     transform_nd, generate_excel_nd,
     transform_stock_impact, generate_excel_stock_impact,
     _build_sku_monthly_analysis_simplified, generate_excel_stock_impact_simplified,
-    _build_low_stock_item_class_summary,
+    _build_low_stock_item_class_summary, _build_sku_soh_tier_summary,
+    _build_sell_through_band_summary,
     transform_ndrf_comparison, generate_excel_ndrf_comparison,
 )
 import time
@@ -358,7 +359,7 @@ MODE_KEYS = {
     "NDRF 月份對比": {"prefix": "ndrf_comp_", "processed": False, "comparison_by_shop": None, "adj_sst_pivot": None, "mch2_pivot": None, "raw_df": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
-    "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "excel_data": None, "warnings": []},
+    "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "sku_soh_summary": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -1200,7 +1201,8 @@ if uploaded_file is not None:
                     ref_date=mtd_date,
                 )
                 sku_monthly_simp = _build_sku_monthly_analysis_simplified(raw_df, stock_threshold=stock_threshold)
-                buf = generate_excel_stock_impact_simplified(raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_simp, stock_threshold=stock_threshold)
+                sku_soh_summary = _build_sku_soh_tier_summary(raw_df)
+                buf = generate_excel_stock_impact_simplified(raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_simp, stock_threshold=stock_threshold, sku_soh_summary=sku_soh_summary)
 
                 # 儲存 Dashboard 需要的精簡欄位（節省 ~90% 記憶體）
                 _slim_cols = ["Is Stock Impacted", "Shop Nature", "Shop Stock Qty (CM)",
@@ -1214,6 +1216,7 @@ if uploaded_file is not None:
 
                 st.session_state.stock_impact_simp_processed = True
                 st.session_state.stock_impact_simp_sku_monthly_analysis = sku_monthly_simp
+                st.session_state.stock_impact_simp_sku_soh_summary = sku_soh_summary
                 st.session_state.stock_impact_simp_excel_data = buf
                 st.session_state.stock_impact_simp_warnings = _warnings
             except Exception as e:
@@ -1340,6 +1343,20 @@ if uploaded_file is not None:
                     low_stock_total_s = int(sku_monthly_simp["低存貨"].sum())
                     low_stock_item_class_s = _build_low_stock_item_class_summary(sku_monthly_simp)
 
+                # 有賣VS有貨新指標（從 sku_soh_summary 計算）
+                cm_lt50_s = 0
+                cm_lt30_s = 0
+                cm_no_stock_s = 0
+                band_df_s = pd.DataFrame()
+                sku_soh = st.session_state.get("stock_impact_simp_sku_soh_summary")
+                if sku_soh is not None and not sku_soh.empty:
+                    cm_oh = pd.to_numeric(sku_soh.get("有貨店舖 (CM)", pd.Series(0)), errors="coerce").fillna(0)
+                    cm_ratio = pd.to_numeric(sku_soh.get("有賣VS有貨 (CM)", pd.Series(np.nan)), errors="coerce")
+                    cm_lt50_s = int(((cm_oh > 0) & (cm_ratio < 0.5)).sum())
+                    cm_lt30_s = int(((cm_oh > 0) & (cm_ratio < 0.3)).sum())
+                    cm_no_stock_s = int((cm_oh == 0).sum())
+                    band_df_s = _build_sell_through_band_summary(sku_soh)
+
                 r3_col1, r3_col2, r3_col3, r3_col4 = st.columns(4)
                 with r3_col1:
                     st.markdown(f"""
@@ -1349,6 +1366,35 @@ if uploaded_file is not None:
                         <div class="metric-desc">D001+店舖存貨&lt;{stock_threshold}件｜單位：SKU數</div>
                     </div>
                     """, unsafe_allow_html=True)
+                with r3_col2:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: #F97316;">
+                        <div class="metric-title">📉 CM 有賣/有貨&lt;50% SKU</div>
+                        <div class="metric-value" style="color: #F97316;">{cm_lt50_s:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">個</span></div>
+                        <div class="metric-desc">有貨店舖>0 且 有賣÷有貨&lt;50%｜單位：SKU數</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with r3_col3:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: #DC2626;">
+                        <div class="metric-title">🔻 CM 有賣/有貨&lt;30% SKU</div>
+                        <div class="metric-value" style="color: #DC2626;">{cm_lt30_s:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">個</span></div>
+                        <div class="metric-desc">有貨店舖>0 且 有賣÷有貨&lt;30%｜單位：SKU數</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with r3_col4:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: #6B7280;">
+                        <div class="metric-title">⬜ CM 完全無貨 SKU</div>
+                        <div class="metric-value" style="color: #6B7280;">{cm_no_stock_s:,}<span style="font-size:0.45em; font-weight:normal; margin-left:4px;">個</span></div>
+                        <div class="metric-desc">有貨店舖 (CM)=0｜單位：SKU數</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                # 有賣VS有貨比率分佈表
+                if band_df_s is not None and not band_df_s.empty:
+                    st.markdown("#### 📊 有賣VS有貨比率分佈（按 SKU 數）")
+                    st.dataframe(band_df_s, width='stretch', hide_index=True)
 
                 if low_stock_item_class_s is not None and not low_stock_item_class_s.empty:
                     st.markdown("#### 🔴 低存貨 SKU 按 Item Class 分類")

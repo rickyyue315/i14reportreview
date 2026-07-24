@@ -1,5 +1,14 @@
 # 版本記錄
 
+## v1.8.0 (2026-07-24)
+
+- New: 簡化版 Dashboard 新增有賣VS有貨指標 — CM <50% / <30% SKU 數卡 + CM 完全無貨 SKU 卡 + 三期（M-2/M-1/CM）比率區間分佈表（Excel + Streamlit）
+- New: `_build_sell_through_band_summary()` in transformer.py — 有賣VS有貨比率區間分佈表（<30%/30-50%/50-70%/≥70%/無貨，三期並排）
+- Fix: New sheet `Low 有賣VS有貨 (CM<50%)` 標記口徑 — 無貨 SKU（有貨店舖=0）唔再當 0% 標 Y，只標有貨且比率<50%（實測 21Jul 數據 Y 由 692 → 651）
+- Update: 簡化版 Excel + Streamlit Dashboard row3 擴充為 4 卡（低存貨 SKU 總數／<50%／<30%／完全無貨），Item Class 分類表下移
+- Update: `generate_excel_stock_impact_simplified()` 新增 `sku_soh_summary` 參數，避免重複 enrich
+- Update: `_write_stock_impact_dashboard_simplified()` 新增 `sku_soh_summary` 參數；分佈表放 row 15，Item Class 表移至分佈表之後
+
 ## v1.7.9 (2026-07-24)
 
 - Update: 簡化版 Excel 對齊 Joseph 格式 — RAW 擴充至 38 欄（Total Stock Qty/有貨店舖/有賣店舖/Eff Price/Price Tier/SOH Tier）

@@ -4987,8 +4987,8 @@ def generate_excel_stock_impact(
 # SKU Monthly Sales&Store 不分 Shop Nature，只顯示 M-2, M-1, MTD 的 D001 存貨、店舖存貨和總銷售量
 
 
-def _write_stock_impact_dashboard_simplified(ws, raw_df, thin_border, desc_font, progress_callback, sku_monthly_analysis=None, stock_threshold=1000):
-    """簡化版 Dashboard（含低存貨分析）。"""
+def _write_stock_impact_dashboard_simplified(ws, raw_df, thin_border, desc_font, progress_callback, sku_monthly_analysis=None, stock_threshold=1000, sku_soh_summary=None):
+    """簡化版 Dashboard（含低存貨分析 + 有賣VS有貨比率區間）。"""
     nature = raw_df.get("Shop Nature", pd.Series(dtype=object)).fillna("").astype(str)
     cm_stock = _safe_numeric(raw_df.get("Shop Stock Qty (CM)", _safe_default_series(0, raw_df.index)))
     turnday = pd.to_numeric(raw_df.get("Turnday (Days)", _safe_default_series(0, raw_df.index)), errors="coerce")
@@ -5038,16 +5038,61 @@ def _write_stock_impact_dashboard_simplified(ws, raw_df, thin_border, desc_font,
         low_stock_total = int(sku_monthly_analysis["低存貨"].sum())
         low_stock_item_class = _build_low_stock_item_class_summary(sku_monthly_analysis)
 
+    # 有賣VS有貨新指標（從 sku_soh_summary 計算）
+    cm_lt50 = 0
+    cm_lt30 = 0
+    cm_no_stock = 0
+    has_band_data = sku_soh_summary is not None and not sku_soh_summary.empty
+    if has_band_data:
+        cm_oh = pd.to_numeric(sku_soh_summary.get("有貨店舖 (CM)", pd.Series(0)), errors="coerce").fillna(0)
+        cm_ratio = pd.to_numeric(sku_soh_summary.get("有賣VS有貨 (CM)", pd.Series(np.nan)), errors="coerce")
+        cm_lt50 = int(((cm_oh > 0) & (cm_ratio < 0.5)).sum())
+        cm_lt30 = int(((cm_oh > 0) & (cm_ratio < 0.3)).sum())
+        cm_no_stock = int((cm_oh == 0).sum())
+
     row3_metrics = [
         ("🔴 低存貨 SKU 總數", low_stock_total, f"D001+店舖存貨<{stock_threshold}件｜單位：SKU數", "DC2626"),
+        ("📉 CM 有賣/有貨<50% SKU", cm_lt50, f"有貨店舖>0 且 有賣÷有貨<50%｜單位：SKU數", "F97316"),
+        ("🔻 CM 有賣/有貨<30% SKU", cm_lt30, "有貨店舖>0 且 有賣÷有貨<30%｜單位：SKU數", "DC2626"),
+        ("⬜ CM 完全無貨 SKU", cm_no_stock, "有貨店舖 (CM)=0｜單位：SKU數", "6B7280"),
     ]
 
     _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard - 簡化)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback, row3_metrics=row3_metrics)
 
-    # 低存貨 SKU 按 Item Class 分類
+    # 有賣VS有貨比率區間分佈表
+    if has_band_data:
+        band_df = _build_sell_through_band_summary(sku_soh_summary)
+        band_start = 15
+        ws.cell(row=band_start, column=1, value="📊 有賣VS有貨比率分佈（按 SKU 數）").font = Font(bold=True, size=12, color="1E40AF")
+        band_header_row = band_start + 1
+        for col_idx, h in enumerate(band_df.columns, 1):
+            cell = ws.cell(row=band_header_row, column=col_idx, value=h)
+            cell.font = Font(bold=True, size=10, color="FFFFFF")
+            cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+        for row_idx, (_, row_data) in enumerate(band_df.iterrows()):
+            excel_row = band_header_row + 1 + row_idx
+            is_total = row_data.get("有賣VS有貨比率區間") == "總計"
+            for col_idx, h in enumerate(band_df.columns, 1):
+                val = row_data.get(h)
+                if pd.isna(val):
+                    val = None
+                cell = ws.cell(row=excel_row, column=col_idx, value=val)
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                if isinstance(val, (int, float)):
+                    cell.number_format = "#,##0"
+                if is_total:
+                    cell.font = Font(bold=True)
+        item_class_start = band_header_row + 1 + len(band_df) + 1  # skip 1 blank row after band table
+    else:
+        item_class_start = 15
+
+    # 低存貨 SKU 按 Item Class 分類（已下移）
     if low_stock_item_class is not None and not low_stock_item_class.empty:
-        ws.cell(row=15, column=1, value="🔴 低存貨 SKU 按 Item Class 分類").font = Font(bold=True, size=12, color="DC2626")
-        header_row = 16
+        ws.cell(row=item_class_start, column=1, value="🔴 低存貨 SKU 按 Item Class 分類").font = Font(bold=True, size=12, color="DC2626")
+        header_row = item_class_start + 1
         for col_idx, h in enumerate(low_stock_item_class.columns, 1):
             cell = ws.cell(row=header_row, column=col_idx, value=h)
             cell.font = Font(bold=True, size=10, color="FFFFFF")
@@ -5069,7 +5114,7 @@ def _write_stock_impact_dashboard_simplified(ws, raw_df, thin_border, desc_font,
                 if is_total:
                     cell.font = Font(bold=True)
     else:
-        ws.cell(row=15, column=1, value="🔴 低存貨 SKU 按 Item Class 分類：無低存貨 SKU").font = Font(size=12, color="DC2626")
+        ws.cell(row=item_class_start, column=1, value="🔴 低存貨 SKU 按 Item Class 分類：無低存貨 SKU").font = Font(size=12, color="DC2626")
 
     _auto_width(ws)
 
@@ -5159,9 +5204,10 @@ def _build_sku_soh_tier_summary(raw: pd.DataFrame) -> pd.DataFrame:
     cm_stock = pd.to_numeric(result.get("Total Stock Qty (CM)", pd.Series(0, index=result.index)), errors="coerce").fillna(0)
     result["Low Stock (CM<1000)"] = np.where(cm_stock < 1000, "Y", "")
 
-    # 低有賣VS有貨率標記 (< 50%)
-    cm_ratio = pd.to_numeric(result.get("有賣VS有貨 (CM)", pd.Series(np.nan, index=result.index)), errors="coerce").fillna(0)
-    result["Low 有賣VS有貨 (CM<50%)"] = np.where(cm_ratio < 0.5, "Y", "")
+    # 低有賣VS有貨率標記 — 只標有貨（有貨店舖>0）且比率<50%嘅 SKU
+    on_hand_cm = pd.to_numeric(result.get("有貨店舖 (CM)", pd.Series(0, index=result.index)), errors="coerce").fillna(0)
+    cm_ratio = pd.to_numeric(result.get("有賣VS有貨 (CM)", pd.Series(np.nan, index=result.index)), errors="coerce")
+    result["Low 有賣VS有貨 (CM<50%)"] = np.where((on_hand_cm > 0) & (cm_ratio < 0.5), "Y", "")
 
     # 合併 tier 區塊
     for tp in tier_periods:
@@ -5202,6 +5248,48 @@ def _build_sku_soh_tier_summary(raw: pd.DataFrame) -> pd.DataFrame:
     result = result[out]
 
     return result
+
+
+def _build_sell_through_band_summary(sku_soh_summary: pd.DataFrame) -> pd.DataFrame:
+    """建立「有賣VS有貨比率區間分佈表」：三期 × 5 區間（含 無貨行 + 總計行）。
+
+    輸入 = _build_sku_soh_tier_summary 的輸出（New sheet df）。
+    回傳 6 行 × 4 欄 DataFrame：比率區間／三期各區間 SKU 數。
+    """
+    if sku_soh_summary.empty:
+        return pd.DataFrame()
+
+    required = []
+    for p in ["M-2", "M-1", "CM"]:
+        required.append(f"有貨店舖 ({p})")
+        required.append(f"有賣VS有貨 ({p})")
+    if not all(c in sku_soh_summary.columns for c in required):
+        return pd.DataFrame()
+
+    bands = [
+        ("<30%", lambda oh, r: (oh > 0) & (r < 0.3)),
+        ("30-50%", lambda oh, r: (oh > 0) & (r >= 0.3) & (r < 0.5)),
+        ("50-70%", lambda oh, r: (oh > 0) & (r >= 0.5) & (r < 0.7)),
+        (">=70%", lambda oh, r: (oh > 0) & (r >= 0.7)),
+        ("無貨（有貨=0）", lambda oh, r: oh == 0),
+    ]
+    periods = ["M-2", "M-1", "CM"]
+
+    rows = []
+    for label, mask_fn in bands:
+        row = {"有賣VS有貨比率區間": label}
+        for p in periods:
+            oh = pd.to_numeric(sku_soh_summary[f"有貨店舖 ({p})"], errors="coerce").fillna(0)
+            r = pd.to_numeric(sku_soh_summary[f"有賣VS有貨 ({p})"], errors="coerce")
+            row[f"SKU數 ({p})"] = int(mask_fn(oh, r).sum())
+        rows.append(row)
+
+    band_df = pd.DataFrame(rows)
+    total_row = {"有賣VS有貨比率區間": "總計"}
+    for p in periods:
+        total_row[f"SKU數 ({p})"] = band_df[f"SKU數 ({p})"].sum()
+    band_df = pd.concat([band_df, pd.DataFrame([total_row])], ignore_index=True)
+    return band_df
 
 
 def _write_new_sheet(ws, df, header_font, header_fill, thin_border, progress_callback):
@@ -5339,6 +5427,7 @@ def generate_excel_stock_impact_simplified(
     progress_callback=None,
     sku_monthly_analysis: pd.DataFrame | None = None,
     stock_threshold: int = 1000,
+    sku_soh_summary: pd.DataFrame | None = None,
 ) -> BytesIO:
     """簡化版 Excel 輸出：輸出 RAW（Joseph 擴充欄位）、SKU Monthly Sales&Store、New、Stock Impact Dashboard 四個工作表。"""
     wb = Workbook()
@@ -5399,7 +5488,10 @@ def generate_excel_stock_impact_simplified(
 
     # Sheet 3: New (SOH Tier 分佈，Joseph 格式)
     ws_new = wb.create_sheet(title="New")
-    new_df = _build_sku_soh_tier_summary(raw_df)
+    if sku_soh_summary is not None and not sku_soh_summary.empty:
+        new_df = sku_soh_summary
+    else:
+        new_df = _build_sku_soh_tier_summary(raw_df)
     _write_new_sheet(ws_new, new_df, header_font, header_fill, thin_border, progress_callback)
 
     if progress_callback:
@@ -5408,7 +5500,7 @@ def generate_excel_stock_impact_simplified(
     # Sheet 4: Stock Impact Dashboard
     ws_dashboard = wb.create_sheet(title="Stock Impact Dashboard")
     if "Is Stock Impacted" in raw_df.columns and not raw_df.empty:
-        _write_stock_impact_dashboard_simplified(ws_dashboard, raw_df, thin_border, desc_font, progress_callback, sku_monthly_analysis=sku_monthly_analysis, stock_threshold=stock_threshold)
+        _write_stock_impact_dashboard_simplified(ws_dashboard, raw_df, thin_border, desc_font, progress_callback, sku_monthly_analysis=sku_monthly_analysis, stock_threshold=stock_threshold, sku_soh_summary=new_df)
     else:
         ws_dashboard.cell(row=1, column=1, value="無足夠數據生成 Dashboard").font = Font(size=12)
 

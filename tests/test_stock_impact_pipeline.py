@@ -13,6 +13,8 @@ from transformer import (
     _build_sku_allocation_summary, _build_sku_stock_diagnosis,
     _build_inventory_distribution_summary, _classify_d001_status,
     _build_low_stock_item_class_summary,
+    _build_sku_soh_tier_summary, _build_sell_through_band_summary,
+    generate_excel_stock_impact_simplified,
     transform_stock_impact, generate_excel_stock_impact,
 )
 
@@ -535,6 +537,153 @@ def test_build_low_stock_item_class_summary():
     print("ALL _build_low_stock_item_class_summary TESTS PASSED")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Test 10: _build_sku_soh_tier_summary marker 修正（有貨>0 & <50% → Y 其餘 ""）
+# ──────────────────────────────────────────────────────────────────────────────
+def test_sku_soh_tier_summary_marker():
+    raw = pd.DataFrame({
+        "SKU": ["S1", "S1", "S2", "S2", "S3", "S3", "S4", "S4"],
+        "SKU Desc": ["Prod A", "Prod A", "Prod B", "Prod B", "Prod C", "Prod C", "Prod D", "Prod D"],
+        "Brand": ["A", "A", "A", "A", "B", "B", "B", "B"],
+        "Item Class": ["Cream", "Cream", "Lotion", "Lotion", "Cream", "Cream", "Lotion", "Lotion"],
+        "Shop Stock Qty (CM)": [5, 5, 3, 3, 0, 0, 10, 10],
+        "Sold Qty (CM - MTD)": [1, 1, 0, 0, 0, 0, 8, 8],
+        "Shop Monthly Sold Qty (P90D)": [10, 10, 10, 10, 5, 5, 10, 10],
+        "Shop Stock Qty (M-2)": [5, 5, 3, 3, 0, 0, 10, 10],
+        "Shop Stock Qty (M-1)": [5, 5, 3, 3, 0, 0, 10, 10],
+        "Sold Qty (M-2)": [1, 1, 0, 0, 0, 0, 8, 8],
+        "Sold Qty (M-1)": [1, 1, 0, 0, 0, 0, 8, 8],
+        "Supply Source": ["Warehouse", "Warehouse", "Warehouse", "Warehouse", "Warehouse", "Warehouse", "Warehouse", "Warehouse"],
+    }, dtype=object)
+    # Enrich 需要特定欄位，補上必要欄
+    raw["Shop Nature"] = "Tourist"
+    raw["RP Type"] = "RF"
+    raw["OOS Periods Count"] = 0
+    raw["OOS Pattern"] = "無缺貨"
+    raw["Is Stock Impacted"] = False
+    raw["Is OOS (M-2)"] = False
+    raw["Is OOS (M-1)"] = False
+    raw["Is OOS (CM)"] = False
+    raw["D001 Stock Qty (M-2)"] = 0
+    raw["D001 Stock Qty (M-1)"] = 0
+    raw["D001 Stock Qty (CM)"] = 0
+
+    new_df = _build_sku_soh_tier_summary(raw)
+    assert not new_df.empty, "should produce output"
+    marker_col = "Low 有賣VS有貨 (CM<50%)"
+    assert marker_col in new_df.columns, f"missing {marker_col}"
+
+    # S1: 有貨 2 間 >0，Sold=1/2間 → 有賣VS有貨=0.5(≥50%) → marker should be ""
+    s1 = new_df[new_df["SKU"].astype(str) == "S1"].iloc[0]
+    assert str(s1[marker_col]) == "", f"S1 (售罄率>=50%) should be '', got '{s1[marker_col]}'"
+    print(f"OK S1: 有貨 2 間、有賣 2 間 → 比率≥50% → marker=''")
+
+    # S2: 有貨 2 間 >0，Sold=0 (0%) → <50% → marker should be "Y"
+    s2 = new_df[new_df["SKU"].astype(str) == "S2"].iloc[0]
+    assert str(s2[marker_col]) == "Y", f"S2 (售罄率0%) should be 'Y', got '{s2[marker_col]}'"
+    print(f"OK S2: 有貨 2 間、有賣 0 間 → 比率=0% → marker='Y'")
+
+    # S3: 有貨=0 → ratio NaN → marker should be ""
+    s3 = new_df[new_df["SKU"].astype(str) == "S3"].iloc[0]
+    assert str(s3[marker_col]) == "", f"S3 (無貨) should be '', got '{s3[marker_col]}'"
+    print(f"OK S3: 有貨=0 間 → 比率空白 → marker=''")
+
+    # S4: 有貨 2 間，有賣 2 間 → 比率=1.0 (100%) ≥50% → marker should be ""
+    s4 = new_df[new_df["SKU"].astype(str) == "S4"].iloc[0]
+    assert str(s4[marker_col]) == "", f"S4 (售罄率100%) should be '', got '{s4[marker_col]}'"
+    print(f"OK S4: 有貨 2 間、有賣 2 間 → 比率=100% → marker=''")
+
+    print("OK _build_sku_soh_tier_summary marker（新口徑，有貨>0 & <50% → Y）")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test 11: _build_sell_through_band_summary
+# ──────────────────────────────────────────────────────────────────────────────
+def test_build_sell_through_band_summary():
+    raw = pd.DataFrame({
+        "SKU": ["S1", "S1", "S2", "S2", "S3", "S3"],
+        "SKU Desc": ["P1", "P1", "P2", "P2", "P3", "P3"],
+        "Brand": ["A", "A", "A", "A", "B", "B"],
+        "Item Class": ["Cream", "Cream", "Lotion", "Lotion", "Cream", "Cream"],
+        "Shop Stock Qty (CM)": [5, 5, 3, 3, 0, 0],
+        "Sold Qty (CM - MTD)": [1, 1, 0, 0, 0, 0],
+        "Shop Monthly Sold Qty (P90D)": [10, 10, 10, 10, 5, 5],
+        "Shop Stock Qty (M-2)": [5, 5, 3, 3, 0, 0],
+        "Shop Stock Qty (M-1)": [5, 5, 3, 3, 0, 0],
+        "Sold Qty (M-2)": [1, 1, 0, 0, 0, 0],
+        "Sold Qty (M-1)": [1, 1, 0, 0, 0, 0],
+        "Supply Source": ["Warehouse"] * 6,
+        "Shop Nature": ["Tourist"] * 6,
+        "RP Type": ["RF"] * 6,
+        "OOS Periods Count": [0] * 6,
+        "OOS Pattern": ["無缺貨"] * 6,
+        "Is Stock Impacted": [False] * 6,
+        "Is OOS (M-2)": [False] * 6,
+        "Is OOS (M-1)": [False] * 6,
+        "Is OOS (CM)": [False] * 6,
+        "D001 Stock Qty (M-2)": [0] * 6,
+        "D001 Stock Qty (M-1)": [0] * 6,
+        "D001 Stock Qty (CM)": [0] * 6,
+    }, dtype=object)
+    new_df = _build_sku_soh_tier_summary(raw)
+    band = _build_sell_through_band_summary(new_df)
+
+    assert not band.empty, "should produce band table"
+    expected_cols = ["有賣VS有貨比率區間", "SKU數 (M-2)", "SKU數 (M-1)", "SKU數 (CM)"]
+    assert list(band.columns) == expected_cols, f"cols mismatch: {list(band.columns)}"
+
+    # 總計 row 每期 = 3 (S1 + S2 + S3)
+    total = band[band["有賣VS有貨比率區間"] == "總計"]
+    assert len(total) == 1
+    for p in ["M-2", "M-1", "CM"]:
+        assert int(total[f"SKU數 ({p})"].iloc[0]) == 3, f"total {p} should be 3"
+
+    # 驗證各期無貨 row = 1 (S3)
+    no_stock_row = band[band["有賣VS有貨比率區間"] == "無貨（有貨=0）"]
+    assert len(no_stock_row) == 1
+    for p in ["M-2", "M-1", "CM"]:
+        assert int(no_stock_row[f"SKU數 ({p})"].iloc[0]) == 1, f"無貨 {p} should be 1"
+
+    # 空 input
+    assert _build_sell_through_band_summary(pd.DataFrame()).empty
+    assert _build_sell_through_band_summary(pd.DataFrame({"SKU": ["Z"]})).empty
+    print("OK _build_sell_through_band_summary（行/列/總計/空資料）")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test 12: 簡化版 Excel 生成 smoke test
+# ──────────────────────────────────────────────────────────────────────────────
+def test_generate_excel_stock_impact_simplified():
+    df = _df([
+        {"SKU": "1", "Shop Nature": "Tourist", "Shop Stock Qty (CM)": 0,
+         "Sold Qty (M-2)": 10.0, "Sold Qty (CM - MTD)": 2.0, "Shop Monthly Sold Qty (P90D)": 10.0},
+        {"SKU": "2", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 0,
+         "Sold Qty (M-2)": 20.0, "Sold Qty (CM - MTD)": 5.0, "Shop Monthly Sold Qty (P90D)": 15.0},
+    ])
+    _, _, _, _, _, _, _, _, sku_monthly, raw, _ = transform_stock_impact(df)
+    buf = generate_excel_stock_impact_simplified(raw, sku_monthly_analysis=sku_monthly)
+    assert isinstance(buf, BytesIO)
+    data = buf.getvalue()
+    assert len(data) > 100
+    assert data[:2] == b"PK", "should be valid xlsx"
+
+    import openpyxl
+    wb = openpyxl.load_workbook(BytesIO(data))
+    expected = ["RAW", "SKU Monthly Sales&Store", "New", "Stock Impact Dashboard"]
+    assert wb.sheetnames == expected, f"sheets mismatch: {wb.sheetnames}"
+
+    # Verify New sheet has marker column
+    ws_new = wb["New"]
+    header_row = [c.value for c in ws_new[4]]
+    assert "Low 有賣VS有貨 (CM<50%)" in header_row, f"missing marker col: {header_row}"
+
+    # Verify Dashboard sheet has title
+    ws_dash = wb["Stock Impact Dashboard"]
+    title = ws_dash.cell(row=1, column=1).value
+    assert title and "Stock Impact Dashboard" in str(title), f"unexpected title: {title}"
+    print("OK generate_excel_stock_impact_simplified（4 sheets, marker col present）")
+
+
 if __name__ == "__main__":
     test_oos_detection()
     test_sales_loss_calculation()
@@ -550,4 +699,7 @@ if __name__ == "__main__":
     test_mix_turnday_banding()
     test_inventory_distribution_summary()
     test_generate_excel_stock_impact()
+    test_sku_soh_tier_summary_marker()
+    test_build_sell_through_band_summary()
+    test_generate_excel_stock_impact_simplified()
     print("\nALL STOCK IMPACT VALIDATION TESTS PASSED")
