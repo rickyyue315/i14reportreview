@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.7.9 (2026-07-24)
+
+- Update: 簡化版 Excel 對齊 Joseph 格式 — RAW 擴充至 38 欄（Total Stock Qty/有貨店舖/有賣店舖/Eff Price/Price Tier/SOH Tier）
+- New: 簡化版新增「New」sheet（SKU 級 SOH Tier 分佈 + 有賣VS有貨比率），移除 NDRF Status 欄
+- Update: 低存貨門檻預設 300 → 1000（完整版 + 簡化版，使用者仍可在 UI 調整）
+- Update: Dashboard 低存貨卡文字改為動態顯示實際門檻
+- New: `_enrich_raw_joseph()`, `_build_sku_soh_tier_summary()`, `_write_new_sheet()` in transformer.py
+
 ## v1.7.8 (2026-07-22)
 
 - New: Stock Impact Dashboard & 簡化版 — 新增低存貨分析：🔴 低存貨 SKU 總數指標卡 + 按 Item Class 分類的低存貨 SKU 隻數表格（空白 Item Class 歸入「New SKU」）

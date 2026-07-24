@@ -778,7 +778,7 @@ if uploaded_file is not None:
 
         stock_threshold = st.number_input(
             "📦 低存貨門檻（只影響低存貨配置決策，不限制整體分析範圍）",
-            value=300,
+            value=1000,
             min_value=0,
             step=10,
             help="設定為 0 時不標記低存貨 SKU。\n"
@@ -813,7 +813,7 @@ if uploaded_file is not None:
                     stock_threshold=stock_threshold,
                     ref_date=mtd_date,
                 )
-                buf = generate_excel_stock_impact(summary_brand, summary_buyer, summary_category, summary_item_class, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_analysis)
+                buf = generate_excel_stock_impact(summary_brand, summary_buyer, summary_category, summary_item_class, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_analysis, stock_threshold=stock_threshold)
 
                 st.session_state.stock_impact_processed = True
                 st.session_state.stock_impact_summary_brand = summary_brand
@@ -1152,7 +1152,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Stock Impact Analysis (簡化)":
-        st.caption("📦 簡化版缺貨銷售影響分析 — 只輸出 **RAW** 和 **SKU Monthly Sales&Store** 兩個工作表。SKU Monthly Sales&Store 保留原版所有欄位，再新增 M-2, M-1, MTD 的 D001 存貨量、店舖總存貨量及店舖總銷售量（不分 Shop Nature）。")
+        st.caption("📦 簡化版缺貨銷售影響分析 — 輸出 **RAW**（含 Total Stock/SOH Tier 等擴充欄位）、**SKU Monthly Sales&Store**、**New**（店舖 SOH Tier 分佈）、**Stock Impact Dashboard** 四個工作表。")
 
         warehouse_only = st.checkbox(
             "🏗️ 只分析 Warehouse SKU（建議）",
@@ -1168,7 +1168,7 @@ if uploaded_file is not None:
 
         stock_threshold = st.number_input(
             "📦 低存貨門檻",
-            value=300,
+            value=1000,
             min_value=0,
             step=10,
             help="設定為 0 時不標記低存貨 SKU。"
@@ -1200,7 +1200,7 @@ if uploaded_file is not None:
                     ref_date=mtd_date,
                 )
                 sku_monthly_simp = _build_sku_monthly_analysis_simplified(raw_df, stock_threshold=stock_threshold)
-                buf = generate_excel_stock_impact_simplified(raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_simp)
+                buf = generate_excel_stock_impact_simplified(raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_simp, stock_threshold=stock_threshold)
 
                 # 儲存 Dashboard 需要的精簡欄位（節省 ~90% 記憶體）
                 _slim_cols = ["Is Stock Impacted", "Shop Nature", "Shop Stock Qty (CM)",

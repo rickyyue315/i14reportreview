@@ -3513,7 +3513,7 @@ _TURNDAY_BAND_ORDER = [
 ]
 
 
-def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: int = 300,
+def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: int = 1000,
                                             sku_lookup: pd.DataFrame | None = None) -> dict:
     """存貨分佈彙總 — 回傳 dict 含 4 個 DataFrame。
 
@@ -3912,7 +3912,7 @@ def _build_transfer_priority_analysis(raw: pd.DataFrame, sku_lookup: pd.DataFram
     return result
 
 
-def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 300, sku_lookup: pd.DataFrame | None = None) -> pd.DataFrame:
+def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 1000, sku_lookup: pd.DataFrame | None = None) -> pd.DataFrame:
     """按 SKU 計算遊客/混合/非遊客的每月銷量及存儲量分析。
 
     每列為一個 SKU，彙總各 Nature 的月均銷售、當期庫存、店數等。
@@ -4115,6 +4115,112 @@ _OOS_DETAIL_COLS = [
     "OOS Periods Count", "OOS Pattern",
 ]
 
+# 對齊 Joseph 檔的 RAW 欄位順序（38 欄，不含 NDRF Status，含 Total Stock 等擴充欄位）
+_JOSEPH_RAW_COLS = [
+    "Buyer", "Brand", "SKU", "SKU Desc", "Item Class", "Launch Date", "Is New SKU (3mo)",
+    "Site Code", "Shop Name", "OM",
+    "Shop Nature", "Supply Source",
+    "Total Stock Qty (M-2)", "Total Stock Qty (M-1)", "Total Stock Qty (CM)",
+    "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)", "Shop Stock Qty (CM)",
+    "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
+    "Shop Monthly Sold Qty (P90D)", "Is OOS (M-2)", "Is OOS (M-1)", "Is OOS (CM)",
+    "OOS Periods Count", "OOS Pattern",
+    "有貨店舖 (M-2)", "有貨店舖 (M-1)", "有貨店舖 (CM)",
+    "有賣店舖 (M-2)", "有賣店舖 (M-1)", "有賣店舖 (CM)",
+    "Eff Price", "Price Tier",
+    "SOH Tier (M-2)", "SOH Tier (M-1)", "SOH Tier (CM)",
+]
+
+# SOH Tier 邊界（左閉右開），Joseph 分級：a 0(=0), b 1, c 2, d 3-4, e 5-7, f 8-14, g 15-49, h 50+
+_SOH_TIER_BINS = [-1, 0, 1, 2, 4, 7, 14, 49, 10**9]
+_SOH_TIER_LABELS = ["a 0", "b 1", "c 2", "d 3-4", "e 5-7", "f 8-14", "g 15-49", "h 50+"]
+
+# Price Tier 邊界（下限值），Joseph 分級
+_PRICE_TIER_BOUNDS = [0, 100, 300, 500, 800, 1200]
+_PRICE_TIER_LABELS = ["a below 100", "b 100-300", "c 300-500", "d 500-800", "e 800-1200", "f 1200+"]
+
+
+def _soh_tier_label(qty: int | float) -> str | None:
+    """將 Shop Stock Qty 轉為 SOH tier 標籤（a 0 … h 50+），NaN/None → None。"""
+    if pd.isna(qty):
+        return None
+    qty = int(qty)
+    for i in range(len(_SOH_TIER_BINS) - 1):
+        if _SOH_TIER_BINS[i] < qty <= _SOH_TIER_BINS[i + 1]:
+            return _SOH_TIER_LABELS[i]
+    return _SOH_TIER_LABELS[-1]
+
+
+def _price_tier_label(eff_price: float) -> str | None:
+    """將 Eff Price 轉為 Price Tier 標籤，NaN → None。"""
+    if pd.isna(eff_price) or eff_price < 0:
+        return None
+    for i in range(len(_PRICE_TIER_BOUNDS) - 1):
+        lo = _PRICE_TIER_BOUNDS[i]
+        hi = _PRICE_TIER_BOUNDS[i + 1]
+        if lo <= eff_price < hi:
+            return _PRICE_TIER_LABELS[i]
+    return _PRICE_TIER_LABELS[-1]  # ≥1200 → f 1200+
+
+
+def _enrich_raw_joseph(raw: pd.DataFrame) -> pd.DataFrame:
+    """在 raw_df 上計算 Joseph 額外欄位的 copy（不修改原文）。"""
+    df = raw.copy()
+    idx = df.index
+
+    # 1. Total Stock Qty = D001 Stock Qty + groupby(SKU) sum of Shop Stock Qty
+    for period, d001_col, shop_col in [
+        ("M-2", "D001 Stock Qty (M-2)", "Shop Stock Qty (M-2)"),
+        ("M-1", "D001 Stock Qty (M-1)", "Shop Stock Qty (M-1)"),
+        ("CM", "D001 Stock Qty (CM)", "Shop Stock Qty (CM)"),
+    ]:
+        col = f"Total Stock Qty ({period})"
+        d001 = _safe_numeric(df.get(d001_col, _safe_default_series(0, idx)))
+        shop = _safe_numeric(df.get(shop_col, _safe_default_series(0, idx)))
+        sku_total = shop.groupby(df["SKU"], dropna=False).transform("sum")
+        df[col] = d001 + sku_total
+
+    # 2. 有貨店舖 / 有賣店舖（0/1 flag）
+    for period, shop_col, sold_col in [
+        ("M-2", "Shop Stock Qty (M-2)", "Sold Qty (M-2)"),
+        ("M-1", "Shop Stock Qty (M-1)", "Sold Qty (M-1)"),
+        ("CM", "Shop Stock Qty (CM)", "Sold Qty (CM - MTD)"),
+    ]:
+        shop = _safe_numeric(df.get(shop_col, _safe_default_series(0, idx)))
+        df[f"有貨店舖 ({period})"] = (shop > 0).astype(int)
+        sold = _safe_numeric(df.get(sold_col, _safe_default_series(0, idx)))
+        df[f"有賣店舖 ({period})"] = (sold > 0).astype(int)
+
+    # 3. Eff Price (SKU 級，merged 回每行)
+    ns2 = _safe_numeric(df.get("Net Sales (M-2)", _safe_default_series(0, idx)))
+    ns1 = _safe_numeric(df.get("Net Sales (M-1)", _safe_default_series(0, idx)))
+    nsm = _safe_numeric(df.get("Net Sales (CM - MTD)", _safe_default_series(0, idx)))
+    sq2 = _safe_numeric(df.get("Sold Qty (M-2)", _safe_default_series(0, idx)))
+    sq1 = _safe_numeric(df.get("Sold Qty (M-1)", _safe_default_series(0, idx)))
+    sqm = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0, idx)))
+    ep_data = pd.DataFrame({
+        "SKU": df["SKU"],
+        "_ns": ns2 + ns1 + nsm,
+        "_sq": sq2 + sq1 + sqm,
+    })
+    ep_agg = ep_data.groupby("SKU", dropna=False).agg(
+        _ns_sum=("_ns", "sum"), _sq_sum=("_sq", "sum"),
+    ).reset_index()
+    # 分母 0 → NaN
+    ep_agg["Eff Price"] = np.where(ep_agg["_sq_sum"] > 0, ep_agg["_ns_sum"] / ep_agg["_sq_sum"], np.nan)
+    df = df.merge(ep_agg[["SKU", "Eff Price"]], on="SKU", how="left")
+
+    # 4. Price Tier
+    df["Price Tier"] = df["Eff Price"].apply(_price_tier_label)
+
+    # 5. SOH Tier 逐期
+    for period in ["M-2", "M-1", "CM"]:
+        shop = _safe_numeric(df.get(f"Shop Stock Qty ({period})", _safe_default_series(0, idx)))
+        df[f"SOH Tier ({period})"] = shop.apply(_soh_tier_label)
+
+    return df
+
+
 
 
 # ── 平行化輔助 ──────────────────────────────────────────────────────────────────
@@ -4147,7 +4253,7 @@ def transform_stock_impact(
     progress_callback=None,
     shop_natures: list[str] | None = None,
     warehouse_only: bool = True,
-    stock_threshold: int = 300,
+    stock_threshold: int = 1000,
     ref_date: datetime.date | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict, list[str]]:
     """Stock Impact Analysis 主流程。
@@ -4576,7 +4682,7 @@ def _build_low_stock_item_class_summary(sku_monthly_analysis: pd.DataFrame) -> p
     counts[ic_col] = counts[ic_col].apply(
         lambda v: "New SKU" if pd.isna(v) or str(v).lower() in ("nan", "none", "nat", "") else str(v)
     )
-    all_cats = sorted([c for c in counts[ic_col].unique() if c not in ("New SKU", "總計")])
+    all_cats = sorted([str(c) for c in counts[ic_col].unique() if c not in ("New SKU", "總計")])
     all_cats += ["New SKU"] if "New SKU" in counts[ic_col].values else []
     all_cats += ["總計"]
     counts[ic_col] = pd.Categorical(counts[ic_col], categories=all_cats, ordered=True)
@@ -4586,7 +4692,7 @@ def _build_low_stock_item_class_summary(sku_monthly_analysis: pd.DataFrame) -> p
     return pd.concat([counts, total_row], ignore_index=True)
 
 
-def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, thin_border, desc_font, progress_callback, sku_monthly_analysis=None):
+def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, thin_border, desc_font, progress_callback, sku_monthly_analysis=None, stock_threshold=1000):
     """重做為「存貨分佈分析」焦點 Dashboard（v1.6.1）。
 
     聚焦存貨錯配議題：
@@ -4675,7 +4781,7 @@ def _write_stock_impact_dashboard(ws, raw_df, summary_buyer, inv_distribution, t
         low_stock_item_class = _build_low_stock_item_class_summary(sku_monthly_analysis)
 
     row4_metrics = [
-        ("🔴 低存貨 SKU 總數", low_stock_total, "D001+店舖存貨<300件｜單位：SKU數", "DC2626"),
+        ("🔴 低存貨 SKU 總數", low_stock_total, f"D001+店舖存貨<{stock_threshold}件｜單位：SKU數", "DC2626"),
     ]
 
     _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback, row3_metrics=row3_metrics, row4_metrics=row4_metrics)
@@ -4743,6 +4849,7 @@ def generate_excel_stock_impact(
     raw_df: pd.DataFrame,
     progress_callback=None,
     sku_monthly_analysis: pd.DataFrame | None = None,
+    stock_threshold: int = 1000,
 ) -> BytesIO:
     wb = Workbook()
 
@@ -4857,7 +4964,7 @@ def generate_excel_stock_impact(
         progress_callback(0.80, "建立缺貨影響分析摘要工作表...")
     ws_dashboard = wb.create_sheet(title="Stock Impact Dashboard")
     _write_stock_impact_dashboard(ws_dashboard, raw_df, summary_buyer, inv_distribution,
-                                  thin_border, desc_font, progress_callback, sku_monthly_analysis=sku_monthly_analysis)
+                                  thin_border, desc_font, progress_callback, sku_monthly_analysis=sku_monthly_analysis, stock_threshold=stock_threshold)
 
     if progress_callback:
         progress_callback(0.97, "正在儲存 Excel 檔案...")
@@ -4880,7 +4987,7 @@ def generate_excel_stock_impact(
 # SKU Monthly Sales&Store 不分 Shop Nature，只顯示 M-2, M-1, MTD 的 D001 存貨、店舖存貨和總銷售量
 
 
-def _write_stock_impact_dashboard_simplified(ws, raw_df, thin_border, desc_font, progress_callback, sku_monthly_analysis=None):
+def _write_stock_impact_dashboard_simplified(ws, raw_df, thin_border, desc_font, progress_callback, sku_monthly_analysis=None, stock_threshold=1000):
     """簡化版 Dashboard（含低存貨分析）。"""
     nature = raw_df.get("Shop Nature", pd.Series(dtype=object)).fillna("").astype(str)
     cm_stock = _safe_numeric(raw_df.get("Shop Stock Qty (CM)", _safe_default_series(0, raw_df.index)))
@@ -4932,7 +5039,7 @@ def _write_stock_impact_dashboard_simplified(ws, raw_df, thin_border, desc_font,
         low_stock_item_class = _build_low_stock_item_class_summary(sku_monthly_analysis)
 
     row3_metrics = [
-        ("🔴 低存貨 SKU 總數", low_stock_total, "D001+店舖存貨<300件｜單位：SKU數", "DC2626"),
+        ("🔴 低存貨 SKU 總數", low_stock_total, f"D001+店舖存貨<{stock_threshold}件｜單位：SKU數", "DC2626"),
     ]
 
     _write_metric_cards(ws, "缺貨銷售影響分析摘要 (Stock Impact Dashboard - 簡化)", row1_metrics, row2_metrics, thin_border, desc_font, progress_callback, row3_metrics=row3_metrics)
@@ -4966,7 +5073,207 @@ def _write_stock_impact_dashboard_simplified(ws, raw_df, thin_border, desc_font,
 
     _auto_width(ws)
 
-def _build_sku_monthly_analysis_simplified(raw: pd.DataFrame, stock_threshold: int = 300) -> pd.DataFrame:
+def _build_sku_soh_tier_summary(raw: pd.DataFrame) -> pd.DataFrame:
+    """建立 'New' sheet（Joseph 格式）：每 SKU 一行的 SOH Tier 分佈 + 有賣VS有貨比率。
+
+    回傳 DataFrame 含 52 欄，排序：Total Stock Qty (CM) 降序。
+    """
+    if raw.empty or "SKU" not in raw.columns:
+        return pd.DataFrame()
+
+    # 先 enrich 取得擴充欄位
+    df = _enrich_raw_joseph(raw)
+
+    # 基本資訊 lookup
+    sku_lookup = _build_sku_info_lookup(df)
+    base_cols = ["SKU"]
+    for c in ["SKU Desc", "Brand", "Buyer", "Item Class"]:
+        if c in sku_lookup.columns:
+            base_cols.append(c)
+    info = sku_lookup[base_cols].copy()
+    info["Status"] = sku_lookup.get("Item Status", "")
+    info["Launch Date"] = sku_lookup.get("Launch Date", "")
+    info["Is New SKU (3mo)"] = sku_lookup.get("Is New SKU (3mo)", "")
+
+    # SKU 級彙總
+    g = df.groupby("SKU", dropna=False)
+    # Eff Price / Price Tier / Total Stock Qty (first)
+    _first_cols = [c for c in ["Eff Price", "Price Tier"] if c in df.columns]
+    for p in ["M-2", "M-1", "CM"]:
+        c = f"Total Stock Qty ({p})"
+        if c in df.columns:
+            _first_cols.append(c)
+    sku_first = g[_first_cols].first().reset_index() if _first_cols else pd.DataFrame({"SKU": g.size().index})
+
+    # 有貨/有賣店舖 (sum of 0/1 flags)
+    stock_sold = {}
+    for p in ["M-2", "M-1", "CM"]:
+        stock_sold[f"有貨店舖 ({p})"] = (f"有貨店舖 ({p})", "sum")
+        stock_sold[f"有賣店舖 ({p})"] = (f"有賣店舖 ({p})", "sum")
+    ss_agg = g.agg(**stock_sold).reset_index()
+
+    # Sold Qty 加總
+    sold_cols = {}
+    for p in ["M-2", "M-1"]:
+        sold_cols[f"Sold Qty ({p})"] = (f"Sold Qty ({p})", "sum")
+    sold_cols["Sold Qty (CM - MTD)"] = ("Sold Qty (CM - MTD)", "sum")
+    sold_agg = g.agg(**sold_cols).reset_index()
+
+    # SOH Tier 各期分佈 (value_counts → 寬表)
+    tier_periods = []
+    for p in ["M-2", "M-1", "CM"]:
+        tier_col = f"SOH Tier ({p})"
+        if tier_col not in df.columns:
+            continue
+        # count rows per SKU per tier
+        vc = df.groupby(["SKU", tier_col], dropna=False).size().unstack(fill_value=0)
+        # ensure all tier labels present
+        for lbl in _SOH_TIER_LABELS:
+            if lbl not in vc.columns:
+                vc[lbl] = 0
+        vc = vc[_SOH_TIER_LABELS].copy()
+        vc.columns = [f"{lbl}" for lbl in _SOH_TIER_LABELS]
+        # add total
+        vc["總計"] = vc.sum(axis=1).astype(int)
+        vc = vc.reset_index()
+        vc.columns = ["SKU"] + list(_SOH_TIER_LABELS) + ["總計"]
+        tier_periods.append(vc)
+
+    # 合併
+    result = info.merge(sku_first, on="SKU", how="left")
+    result = result.merge(ss_agg, on="SKU", how="left")
+    result = result.merge(sold_agg, on="SKU", how="left")
+
+    # 有賣VS有貨比率 (cap 1, div/0 → NaN)
+    for p in ["M-2", "M-1", "CM"]:
+        on_hand = result.get(f"有貨店舖 ({p})", pd.Series(0, index=result.index))
+        sold = result.get(f"有賣店舖 ({p})", pd.Series(0, index=result.index))
+        ratio = np.where(
+            on_hand > 0,
+            np.minimum(sold / on_hand, 1.0),
+            np.nan,
+        )
+        result[f"有賣VS有貨 ({p})"] = ratio
+
+    # 合併 tier 區塊
+    for tp in tier_periods:
+        result = result.merge(tp, on="SKU", how="left")
+
+    # 排序
+    sort_col = "Total Stock Qty (CM)"
+    if sort_col in result.columns:
+        result = result.sort_values(sort_col, ascending=False).reset_index(drop=True)
+
+    # 欄位順序 (52 columns, matching Joseph)
+    out = ["SKU", "SKU Desc", "Brand", "Buyer", "Item Class", "Status",
+           "Launch Date", "Is New SKU (3mo)", "Eff Price", "Price Tier"]
+    for p in ["M-2", "M-1", "CM"]:
+        out.append(f"Total Stock Qty ({p})")
+    for p in ["M-2", "M-1", "CM"]:
+        out.append(f"有貨店舖 ({p})")
+    for p in ["M-2", "M-1", "CM"]:
+        out.append(f"有賣店舖 ({p})")
+    for p in ["M-2", "M-1", "CM"]:
+        out.append(f"有賣VS有貨 ({p})")
+    if "Sold Qty (M-2)" in result.columns:
+        out.append("Sold Qty (M-2)")
+    if "Sold Qty (M-1)" in result.columns:
+        out.append("Sold Qty (M-1)")
+    if "Sold Qty (CM - MTD)" in result.columns:
+        out.append("Sold Qty (CM - MTD)")
+    for p, pname in [("M-2", "M-2"), ("M-1", "M-1"), ("CM", "CM")]:
+        for lbl in _SOH_TIER_LABELS:
+            col = f"{lbl}"
+            if col in result.columns:
+                out.append(col)
+        out.append("總計")
+
+    out = [c for c in out if c in result.columns]
+    result = result[out]
+
+    return result
+
+
+def _write_new_sheet(ws, df, header_font, header_fill, thin_border, progress_callback):
+    """寫入 'New' sheet（Joseph 格式），含 merged headers for SOH tier blocks."""
+    if df is None or df.empty:
+        ws.cell(row=1, column=1, value="無 SOH Tier 分佈數據").font = Font(size=12)
+        return
+
+    # 找出 SOH tier 區塊起始欄索引
+    col_list = list(df.columns)
+    tier_blocks = []
+    for pname in ["M-2", "M-1", "CM"]:
+        start = None
+        for i, c in enumerate(col_list):
+            if c in _SOH_TIER_LABELS:
+                # check if this block prefix (only first tier label)
+                pass
+        # find first a 0 that is not already after another block
+    # simpler: hardcode the block positions based on known layout
+    # After Sold Qty (CM - MTD), there are 3 blocks of 9 columns each (a 0 .. 總計)
+    sold_idx = None
+    for i, c in enumerate(col_list):
+        if c == "Sold Qty (CM - MTD)":
+            sold_idx = i
+            break
+    if sold_idx is None:
+        # fallback: no merged row
+        pass
+
+    # Row 3: merged labels for SOH tier blocks
+    block_width = len(_SOH_TIER_LABELS) + 1  # 9
+    start_col = sold_idx + 2 if sold_idx is not None else (len(col_list) - 3 * block_width + 1)
+    if start_col < 1:
+        start_col = 1
+    # Write the numeric "第一間" tier block starting col (1-based)
+    for bi, pname in enumerate(["M-2", "M-1", "CM"]):
+        if start_col + bi * block_width <= 0:
+            continue
+        try:
+            c1 = start_col + bi * block_width
+            c2 = c1 + block_width - 1
+            c1l = get_column_letter(c1)
+            c2l = get_column_letter(c2)
+            ws.merge_cells(f"{c1l}3:{c2l}3")
+            cell = ws.cell(row=3, column=c1, value=f"店舖SOH Tier ({pname})")
+            cell.font = Font(bold=True, size=10, color="1E40AF")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+        except Exception:
+            pass
+
+    # Row 4: headers
+    for col_idx, h in enumerate(col_list, 1):
+        cell = ws.cell(row=4, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    # Data rows
+    total_rows = len(df)
+    for row_idx, row_data in enumerate(df.itertuples(index=False), start=5):
+        for col_idx, val in enumerate(row_data, 1):
+            if pd.isna(val):
+                val = None
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if isinstance(val, float):
+                cell.number_format = "#,##0.00"
+            elif isinstance(val, int):
+                cell.number_format = "#,##0"
+            elif val is None:
+                pass
+        if progress_callback and ((row_idx - 5) % 500 == 0 or row_idx - 4 == total_rows):
+            progress_callback(0.55 + 0.25 * ((row_idx - 4) / max(total_rows, 1)),
+                              f"寫入 New sheet ({row_idx-4}/{total_rows})...")
+
+    _auto_width(ws)
+
+
+def _build_sku_monthly_analysis_simplified(raw: pd.DataFrame, stock_threshold: int = 1000) -> pd.DataFrame:
     """簡化版 SKU 月銷量和存儲量分析（同原版欄位，含新增不分 Nature 的週期存貨/銷售欄位）。
 
     直接使用 `_build_sku_monthly_analysis` 的完整輸出（已含補充資訊與週期欄位），
@@ -4981,8 +5288,9 @@ def generate_excel_stock_impact_simplified(
     raw_df: pd.DataFrame,
     progress_callback=None,
     sku_monthly_analysis: pd.DataFrame | None = None,
+    stock_threshold: int = 1000,
 ) -> BytesIO:
-    """簡化版 Excel 輸出：輸出 RAW、SKU Monthly Sales&Store 及 Stock Impact Dashboard 三個工作表。"""
+    """簡化版 Excel 輸出：輸出 RAW（Joseph 擴充欄位）、SKU Monthly Sales&Store、New、Stock Impact Dashboard 四個工作表。"""
     wb = Workbook()
 
     if progress_callback:
@@ -4996,10 +5304,13 @@ def generate_excel_stock_impact_simplified(
     header_font = Font(bold=True, color="FFFFFF", size=11)
     desc_font = Font(size=9, color="6B7280", italic=True)
 
-    # Sheet 1: RAW
+    # 先 enrich raw (計算 Total Stock / 有貨有賣 / Eff Price / SOH Tier 等)
+    enriched = _enrich_raw_joseph(raw_df)
+
+    # Sheet 1: RAW (Joseph 擴充欄位順序)
     ws_raw = wb.active
     ws_raw.title = "RAW"
-    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.2, columns=_OOS_DETAIL_COLS)
+    _write_raw_sheet(ws_raw, enriched, progress_callback, progress_start=0.0, progress_end=0.2, columns=_JOSEPH_RAW_COLS)
 
     if progress_callback:
         progress_callback(0.25, "建立 SKU Monthly Sales&Store 工作表...")
@@ -5028,18 +5339,26 @@ def generate_excel_stock_impact_simplified(
                 elif isinstance(val, (int, float)) and val is not None:
                     cell.number_format = "#,##0"
             if progress_callback and (row_idx % 500 == 0 or row_idx - 4 == len(sku_monthly_analysis)):
-                progress_callback(0.3 + 0.3 * ((row_idx - 4) / max(len(sku_monthly_analysis), 1)), f"寫入 SKU 月銷量 ({row_idx-4}/{len(sku_monthly_analysis)})...")
+                progress_callback(0.2 + 0.35 * ((row_idx - 4) / max(len(sku_monthly_analysis), 1)), f"寫入 SKU 月銷量 ({row_idx-4}/{len(sku_monthly_analysis)})...")
         _auto_width(ws_sku_monthly)
     else:
         ws_sku_monthly.cell(row=1, column=1, value="無 SKU 月銷量/存儲量數據").font = Font(size=12)
 
     if progress_callback:
-        progress_callback(0.65, "建立 Stock Impact Dashboard 工作表...")
+        progress_callback(0.58, "建立 New sheet（SOH Tier 分佈）...")
 
-    # Sheet 3: Stock Impact Dashboard
+    # Sheet 3: New (SOH Tier 分佈，Joseph 格式)
+    ws_new = wb.create_sheet(title="New")
+    new_df = _build_sku_soh_tier_summary(raw_df)
+    _write_new_sheet(ws_new, new_df, header_font, header_fill, thin_border, progress_callback)
+
+    if progress_callback:
+        progress_callback(0.85, "建立 Stock Impact Dashboard 工作表...")
+
+    # Sheet 4: Stock Impact Dashboard
     ws_dashboard = wb.create_sheet(title="Stock Impact Dashboard")
     if "Is Stock Impacted" in raw_df.columns and not raw_df.empty:
-        _write_stock_impact_dashboard_simplified(ws_dashboard, raw_df, thin_border, desc_font, progress_callback, sku_monthly_analysis=sku_monthly_analysis)
+        _write_stock_impact_dashboard_simplified(ws_dashboard, raw_df, thin_border, desc_font, progress_callback, sku_monthly_analysis=sku_monthly_analysis, stock_threshold=stock_threshold)
     else:
         ws_dashboard.cell(row=1, column=1, value="無足夠數據生成 Dashboard").font = Font(size=12)
 
