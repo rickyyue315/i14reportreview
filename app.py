@@ -15,6 +15,7 @@ from transformer import (
     _build_low_stock_item_class_summary, _build_sku_soh_tier_summary,
     _build_sell_through_band_summary,
     transform_ndrf_comparison, generate_excel_ndrf_comparison,
+    transform_p90d_zero_sales, generate_excel_p90d_zero_sales,
 )
 import time
 import traceback
@@ -246,6 +247,11 @@ with st.sidebar:
     - 簡化版缺貨銷售影響分析，只輸出 RAW 和 SKU Monthly Sales&Store 兩個工作表
     - SKU Monthly Sales&Store **保留原版所有欄位**（含 Vendor MC/Adj. MCH1/Item Status/Launch Date/Item Class/Is New SKU），並 **新增** M-2, M-1 的 D001 存貨、店舖總存貨及 M-2, M-1, MTD 的店舖總銷售量（不分 Shop Nature，D001_MTD/ShopStock_MTD 已存在於原版不重複）
     - 適合快速查看各 SKU 三期存貨與銷售趨勢
+
+    **📉 Past 90 Days 0 Sales**
+    - 篩選「過去 90 日零銷售、但店舖仍有存貨（Shop Stock Qty LM 與 CM 皆 > 0）」的 SKU×Shop 記錄
+    - 移除所有 Value 及 D001 欄位，保留 SKU Desc / Shop Name
+    - 輸出：RAW、Summary by Shop、Shop SKU（頂部 Site 下拉篩選，快速查看指定店舖之 SKU）
     """)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -347,7 +353,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 5. 模式選擇器
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales"]
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0)
 
 # 6. 初始化 Session State (確保下載與重整時狀態持久化)
@@ -360,6 +366,7 @@ MODE_KEYS = {
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "sku_soh_summary": None, "excel_data": None, "warnings": []},
+    "Past 90 Days 0 Sales": {"prefix": "p90ds_", "processed": False, "summary_df": None, "raw_df": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -1622,6 +1629,18 @@ if uploaded_file is not None:
                     st.session_state.oos_categories = categories
                     st.session_state.oos_excel_data = buf
                     st.session_state.oos_warnings = _warnings
+                elif mode == "Past 90 Days 0 Sales":
+                    raw_df, summary_df, _warnings = transform_p90d_zero_sales(
+                        df_input,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                    )
+                    buf = generate_excel_p90d_zero_sales(raw_df, summary_df, progress_callback=_cb_excel)
+                    st.session_state.p90ds_processed = True
+                    st.session_state.p90ds_summary_df = summary_df
+                    st.session_state.p90ds_raw_df = raw_df
+                    st.session_state.p90ds_excel_data = buf
+                    st.session_state.p90ds_warnings = _warnings
             except Exception as e:
                 _prog2.empty()
                 _tb = traceback.format_exc()
@@ -2280,6 +2299,101 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載 Carry SKU 分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+            )
+
+        if mode == "Past 90 Days 0 Sales" and st.session_state.p90ds_processed:
+            summary_df = st.session_state.p90ds_summary_df
+            raw_df = st.session_state.p90ds_raw_df
+            excel_data = st.session_state.p90ds_excel_data
+
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+            st.markdown("### 📉 Past 90 Days 0 Sales 分析摘要")
+
+            _total_row = summary_df[summary_df["Site Code"] == "總計"] if summary_df is not None and not summary_df.empty else None
+            if _total_row is not None and not _total_row.empty:
+                _tr = _total_row.iloc[0]
+                total_skus = int(_tr.get("Past 90 Days 0 Sales SKU 數量", 0))
+                total_stock_lm = float(_tr.get("Shop Stock Qty (LM) 總數", 0))
+                total_stock_cm = float(_tr.get("Shop Stock Qty (CM) 總數", 0))
+            else:
+                total_skus = int(raw_df["SKU"].dropna().nunique()) if raw_df is not None and not raw_df.empty else 0
+                total_stock_lm = 0.0
+                total_stock_cm = 0.0
+            total_rows = len(raw_df) if raw_df is not None else 0
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ef4444;">
+                    <div class="metric-title">符合行數</div>
+                    <div class="metric-value" style="color: #ef4444;">{total_rows:,}</div>
+                    <div class="metric-desc">過去90日零銷售且店舖仍有存貨(LM/CM>0)</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #f59e0b;">
+                    <div class="metric-title">SKU 數 (去重)</div>
+                    <div class="metric-value" style="color: #f59e0b;">{total_skus:,}</div>
+                    <div class="metric-desc">符合條件的去重 SKU 總數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #3b82f6;">
+                    <div class="metric-title">店舖庫存 (LM)</div>
+                    <div class="metric-value" style="color: #3b82f6;">{total_stock_lm:,.0f}</div>
+                    <div class="metric-desc">Shop Stock Qty (LM) 總數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #10b981;">
+                    <div class="metric-title">店舖庫存 (CM)</div>
+                    <div class="metric-value" style="color: #10b981;">{total_stock_cm:,.0f}</div>
+                    <div class="metric-desc">Shop Stock Qty (CM) 總數</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            tab_raw, tab_shop, tab_skus = st.tabs(["RAW", "Summary by Shop", "Shop SKU"])
+            with tab_raw:
+                st.markdown("#### RAW 原始明細（前 50 筆）")
+                if raw_df is not None and not raw_df.empty:
+                    st.dataframe(raw_df.head(50), width='stretch')
+                    st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料")
+            with tab_shop:
+                st.markdown("#### 各店舖 Past 90 Days 0 Sales 彙總")
+                if summary_df is not None and not summary_df.empty:
+                    st.dataframe(summary_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_skus:
+                st.markdown("#### Shop SKU 頁明細（前 50 筆）")
+                st.markdown("匯出的 Excel『Shop SKU』工作表頂部提供 **Site 下拉篩選**，可即時檢視指定店舖的 SKU。")
+                if raw_df is not None and not raw_df.empty:
+                    st.dataframe(raw_df.head(50), width='stretch')
+                    st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 Past 90 Days 0 Sales_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載 Past 90 Days 0 Sales 分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

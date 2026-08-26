@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.8.1 (2026-08-26)
+
+- New: 新增「Past 90 Days 0 Sales」分析模式 — 篩選「過去 90 日零銷售且店舖仍有存貨（Shop Stock Qty LM 與 CM 皆 > 0）」之 SKU×Shop 記錄
+- New: `transform_p90d_zero_sales()`, `_build_p90d_zero_sales_by_shop_summary()`, `_p90d_raw_columns()`, `generate_excel_p90d_zero_sales()` in transformer.py
+- New: 輸出 3 個工作表 — RAW（移除所有 Value 及 D001 欄位，保留 SKU Desc/Shop Name）、Summary by Shop（各店去重 SKU 數 + LM/CM 店舖庫存總數 + 總計列）、Shop SKU（頂部 Site 下拉篩選，以 FILTER 動態陣列隨選擇更新）
+- New: Streamlit 新增模式選項、三頁結果表與下載按鈕、Sidebar 說明
+
 ## v1.8.0 (2026-07-24)
 
 - New: 簡化版 Dashboard 新增有賣VS有貨指標 — CM <50% / <30% SKU 數卡 + CM 完全無貨 SKU 卡 + 三期（M-2/M-1/CM）比率區間分佈表（Excel + Streamlit）
