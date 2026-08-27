@@ -1,5 +1,9 @@
 # 版本記錄
 
+## v1.8.2 (2026-08-27)
+
+- Fix: Past 90 Days 0 Sales 模式 Excel Shop SKU 頁開啟時被 Excel 修復移除公式 — FILTER 動態陣列公式加上 `_xlfn.` 前綴（Excel 檔格式中 2007 後新增函數必需），避免開啟時被當作未定義 UDF 而移除
+
 ## v1.8.1 (2026-08-26)
 
 - New: 新增「Past 90 Days 0 Sales」分析模式 — 篩選「過去 90 日零銷售且店舖仍有存貨（Shop Stock Qty LM 與 CM 皆 > 0）」之 SKU×Shop 記錄

@@ -171,7 +171,7 @@ def test_excel_sheets_and_site_dropdown():
     site_idx = headers.index("Site Code")
     site_letter = __import__("openpyxl").utils.get_column_letter(site_idx + 1)
     formula = ws_skus.cell(row=4, column=site_idx + 1).value
-    assert isinstance(formula, str) and formula.startswith("=IFERROR(FILTER(")
+    assert isinstance(formula, str) and formula.startswith("=IFERROR(_xlfn.FILTER(")
     assert f"RAW!${site_letter}$2" in formula
 
 

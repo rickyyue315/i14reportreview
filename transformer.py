@@ -5743,7 +5743,7 @@ def generate_excel_p90d_zero_sales(
         for col_idx in range(1, len(out_cols) + 1):
             col_letter = get_column_letter(col_idx)
             formula = (
-                f'=IFERROR(FILTER(RAW!${col_letter}$2:${col_letter}${last_raw_row}, '
+                f'=IFERROR(_xlfn.FILTER(RAW!${col_letter}$2:${col_letter}${last_raw_row}, '
                 f'IF($B$1="All Sites", RAW!${site_col_letter}$2:${site_col_letter}${last_raw_row}<>"", '
                 f'RAW!${site_col_letter}$2:${site_col_letter}${last_raw_row}=$B$1)), "")'
             )
