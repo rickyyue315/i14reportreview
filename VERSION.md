@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.8.5 (2026-08-28)
+
+- Fix: 「🧹 釋放記憶體」按鈕修復 — 過去刪除 session_state 後檔案仍掛在 file_uploader 上，st.rerun() 時會即時重新讀取整個 Excel，導致每按一次記憶體不減反增；現以更換 uploader widget key 徹底釋放已上傳檔案
+- Fix: 按鈕新增 `st.cache_data.clear()` — transformer 的 `_compute_raw_extra_columns` 模組級緩存過去無 TTL／無 max_entries（無限累積 DataFrame 拷貝）且按鈕從未清除
+- Fix: `_release_os_memory()` — gc 後呼叫 `malloc_trim` 將已釋放記憶體真正歸還作業系統（單靠 gc.collect() RSS 不會下降），令 Memory Usage 顯示如實反映
+- Update: transformer.py 緩存加上 `max_entries=4, ttl=3600`，限制長時間運行下的記憶體增長
+
 ## v1.8.4 (2026-08-28)
 
 - New: Zeabur 執行優化 — Dockerfile 移除 curl/apt 層，健康檢查改用 Python 內建模組（映像更細、構建更快）

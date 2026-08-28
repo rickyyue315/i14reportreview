@@ -166,7 +166,9 @@ def _compute_raw_extra_columns_impl(df: pd.DataFrame) -> pd.DataFrame:
 
 try:
     import streamlit as st
-    _compute_raw_extra_columns_impl = st.cache_data(_compute_raw_extra_columns_impl)
+    # 必須限制緩存大小與壽命 — 無 TTL/無 max_entries 時每次轉換都累積一份 DataFrame 拷貝，
+    # 長時間運行的容器記憶體會持續增長且「釋放記憶體」按鈕前的運行間隔內無法自動回收
+    _compute_raw_extra_columns_impl = st.cache_data(_compute_raw_extra_columns_impl, max_entries=4, ttl=3600)
 except ImportError:
     pass
 

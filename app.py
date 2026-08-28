@@ -35,6 +35,16 @@ def _process_rss_mb():
         pass
     return None
 
+def _release_os_memory():
+    """gc 後再呼叫 malloc_trim 將已釋放記憶體真正歸還作業系統。
+    單靠 gc.collect() 只會把物件還給 Python 堆，glibc 不會主動還頁給 OS，RSS 不會下降。"""
+    gc.collect()
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
 # 1. 設置網頁基本資訊
 st.set_page_config(
     page_title="I14 報表轉換與分析系統",
@@ -340,10 +350,15 @@ with st.sidebar:
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
     if st.button("🧹 釋放記憶體", type="secondary", use_container_width=True,
-                 help="清除所有快取資料與上傳的 Excel 檔案，釋放記憶體空間。清除後需重新上傳檔案。"):
+                 help="清除所有快取資料、st.cache_data 緩存並移除已上傳的 Excel 檔案，將記憶體歸還系統。清除後需重新上傳檔案。"):
         for _key in list(st.session_state.keys()):
             del st.session_state[_key]
-        gc.collect()
+        # 清除 st.cache_data 模組級緩存（如 transformer 的欄位計算緩存）
+        st.cache_data.clear()
+        # 更換 uploader 的 widget key 徹底釋放已上傳檔案 —
+        # 否則檔案仍掛在 uploader 上，重跑時會即時重新讀取整個 Excel，記憶體不減反增
+        st.session_state.uploader_reset = st.session_state.get("uploader_reset", 0) + 1
+        _release_os_memory()
         st.rerun()
 
     _rss = _process_rss_mb()
@@ -408,10 +423,11 @@ if prev_mode is not None and prev_mode != current_mode:
 st.session_state.mode = current_mode
 mode = current_mode
 
-# 8. 檔案上傳區域
+# 8. 檔案上傳區域（key 隨 uploader_reset 變化，「釋放記憶體」按鈕藉此徹底清除已上傳檔案）
 uploaded_file = st.file_uploader(
     "📂 上傳 By SKUxShop 原始 Excel 檔案 (.xlsx)",
     type=["xlsx"],
+    key=f"src_uploader_{st.session_state.get('uploader_reset', 0)}",
     help="支援標準 Excel (.xlsx) 格式，檔案上限 200MB，最佳化支援 5 萬行以上大數據處理"
 )
 
