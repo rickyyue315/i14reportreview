@@ -5642,11 +5642,13 @@ def transform_p90d_zero_sales(
     sold_m2 = _safe_numeric(df.get("Sold Qty (M-2)", _safe_default_series(0, df.index)))
     sold_m1 = _safe_numeric(df.get("Sold Qty (M-1)", _safe_default_series(0, df.index)))
     sold_mtd = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0, df.index)))
+    sold_p90d = _safe_numeric(df.get("Sold Qty (P90D)", _safe_default_series(0, df.index)))
     stock_lm = _safe_numeric(df.get("Shop Stock Qty (LM)", _safe_default_series(0, df.index)))
     stock_cm = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
 
     mask = (
         (sold_m2 <= 0) & (sold_m1 <= 0) & (sold_mtd <= 0)
+        & (sold_p90d <= 0)
         & (stock_lm > 0) & (stock_cm > 0)
     ).fillna(False)
 
@@ -5660,7 +5662,7 @@ def transform_p90d_zero_sales(
 
     warnings = []
     if raw.empty:
-        warnings.append("沒有符合「Past 90 Days 0 Sales（Sold Qty M-2/M-1/CM-MTD 皆 ≤ 0 且 Shop Stock Qty LM/CM 皆 > 0）」的資料。")
+        warnings.append("沒有符合「Past 90 Days 0 Sales（Sold Qty M-2/M-1/CM-MTD 與 Sold Qty (P90D) 皆 ≤ 0，且 Shop Stock Qty LM/CM 皆 > 0）」的資料。")
 
     if progress_callback:
         progress_callback(0.4, "完成資料轉換...")

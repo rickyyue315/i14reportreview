@@ -1,5 +1,9 @@
 # 版本記錄
 
+## v1.8.7 (2026-08-28)
+
+- Change: Past 90 Days 0 Sales 篩選定義新增條件 — Sold Qty (P90D) > 0 的記錄一律排除，避免「過去 90 天其實有銷售」造成混淆；無此欄位的輸入檔視同 0（維持原行為）
+
 ## v1.8.6 (2026-08-28)
 
 - Change: Past 90 Days 0 Sales 的 RAW 改為固定欄位白名單（23 欄）— Site Code / Shop Name / OM / Shop Nature / Brand / SKU / SKU Desc / Vendor MC / Item Status / Launch Date / Item Class / RP Type / Shop Stock Status / Safety Stock (現時) / Sold Qty (M-2) / Sold Qty (M-1) / Sold Qty (CM - MTD) / Sold Qty (P90D) / Shop Stock Qty (CM) / Shop Stock Qty (LM) / Excess Stock Qty / Shop On Order PO Qty (CM) / Buyer；輸入缺少選填欄位時自動略過不報錯

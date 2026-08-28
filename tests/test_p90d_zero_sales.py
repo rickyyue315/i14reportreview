@@ -1,6 +1,6 @@
-"""Validation tests for Past 90 Days 0 Sales mode (v1.8.6).
+"""Validation tests for Past 90 Days 0 Sales mode (v1.8.7).
 
-篩選：Sold Qty (M-2 / M-1 / CM - MTD) 皆 ≤ 0 且 Shop Stock Qty (LM) 與 (CM) 皆 > 0。
+篩選：Sold Qty (M-2 / M-1 / CM - MTD) 與 Sold Qty (P90D) 皆 ≤ 0，且 Shop Stock Qty (LM) 與 (CM) 皆 > 0。
 輸出兩頁：RAW（限定欄位白名單）、Summary by Shop。
 """
 import warnings
@@ -50,6 +50,7 @@ def test_filter_zero_sales_with_stock():
         {"SKU": 2, "Sold Qty (M-2)": 3.0},  # M-2 有銷售 → 排除
         {"SKU": 3, "Sold Qty (M-1)": 4.0},  # M-1 有銷售 → 排除
         {"SKU": 4, "Sold Qty (CM - MTD)": 2.0},  # CM 有銷售 → 排除
+        {"SKU": 7, "Sold Qty (P90D)": 5.0},  # P90D 有銷售 → 排除（避免混淆）
         {"SKU": 5, "Shop Stock Qty (LM)": 0.0},  # LM=0 → 排除
         {"SKU": 6, "Shop Stock Qty (CM)": 0.0},  # CM=0 → 排除
     ])
