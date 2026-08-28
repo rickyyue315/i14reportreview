@@ -1,5 +1,14 @@
 # 版本記錄
 
+## v1.8.4 (2026-08-28)
+
+- New: Zeabur 執行優化 — Dockerfile 移除 curl/apt 層，健康檢查改用 Python 內建模組（映像更細、構建更快）
+- New: 生產環境運行旗標 — `--server.fileWatcherType=none`（節省記憶體）、`--server.enableWebsocketCompression=false`（降低大數據表傳輸 CPU）、`--browser.gatherUsageStats=false`（停用遙測）
+- New: `PYTHONUNBUFFERED=1` — 日誌即時輸出到 Zeabur Logs
+- New: requirements.txt 固定版本（streamlit==1.51.0 / pandas==2.3.3 / numpy==2.3.4 / openpyxl==3.1.5），確保 Zeabur 構建可重現
+- New: Sidebar 底部新增 Memory Usage 顯示（讀取 /proc/self/status，僅 Linux 容器生效），方便監察 Zeabur 容器資源
+- Update: zeabur.yaml 運行命令與 Dockerfile 同步；README 擴充 Zeabur 部署機制與容量建議（≥1GB RAM）
+
 ## v1.8.3 (2026-08-28)
 
 - Update: Past 90 Days 0 Sales 定義更新 — Sold Qty (M-2) / (M-1) / (CM - MTD) 三期皆 ≤ 0（0 件或少於 0 件）且 Shop Stock Qty (LM) 與 (CM) 皆 > 0

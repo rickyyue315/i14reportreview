@@ -24,6 +24,17 @@ from openpyxl import load_workbook
 from io import BytesIO
 from version import __version__
 
+def _process_rss_mb():
+    """讀取目前行程的實體記憶體用量 (MB)。僅 Linux（如 Zeabur 容器）有效，其他平台回傳 None。"""
+    try:
+        with open("/proc/self/status", "r") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except Exception:
+        pass
+    return None
+
 # 1. 設置網頁基本資訊
 st.set_page_config(
     page_title="I14 報表轉換與分析系統",
@@ -335,9 +346,12 @@ with st.sidebar:
         gc.collect()
         st.rerun()
 
+    _rss = _process_rss_mb()
+    _mem_line = f'Memory Usage: {_rss:.0f} MB<br>' if _rss is not None else ''
     st.markdown(
         '<div style="color: #444455; font-size: 0.75rem; text-align: center; line-height: 1.5;">'
         f'I14 報表計算工具 v{__version__}<br>'
+        f'{_mem_line}'
         'Developed by Ricky Yue<br>'
         'Powered by Streamlit & Zeabur'
         '</div>',
