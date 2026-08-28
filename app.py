@@ -249,9 +249,9 @@ with st.sidebar:
     - 適合快速查看各 SKU 三期存貨與銷售趨勢
 
     **📉 Past 90 Days 0 Sales**
-    - 篩選「過去 90 日零銷售、但店舖仍有存貨（Shop Stock Qty LM 與 CM 皆 > 0）」的 SKU×Shop 記錄
+    - 篩選「過去 90 日零銷售（Sold Qty M-2 / M-1 / CM-MTD 皆 ≤ 0）、但店舖仍有存貨（Shop Stock Qty LM 與 CM 皆 > 0）」的 SKU×Shop 記錄
     - 移除所有 Value 及 D001 欄位，保留 SKU Desc / Shop Name
-    - 輸出：RAW、Summary by Shop、Shop SKU（頂部 Site 下拉篩選，快速查看指定店舖之 SKU）
+    - 輸出：RAW、Summary by Shop
     """)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -2332,7 +2332,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #ef4444;">
                     <div class="metric-title">符合行數</div>
                     <div class="metric-value" style="color: #ef4444;">{total_rows:,}</div>
-                    <div class="metric-desc">過去90日零銷售且店舖仍有存貨(LM/CM>0)</div>
+                    <div class="metric-desc">Sold Qty 三期(M-2/M-1/MTD)皆≤0 且庫存LM/CM>0</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
@@ -2364,7 +2364,7 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_raw, tab_shop, tab_skus = st.tabs(["RAW", "Summary by Shop", "Shop SKU"])
+            tab_raw, tab_shop = st.tabs(["RAW", "Summary by Shop"])
             with tab_raw:
                 st.markdown("#### RAW 原始明細（前 50 筆）")
                 if raw_df is not None and not raw_df.empty:
@@ -2376,14 +2376,6 @@ if uploaded_file is not None:
                 st.markdown("#### 各店舖 Past 90 Days 0 Sales 彙總")
                 if summary_df is not None and not summary_df.empty:
                     st.dataframe(summary_df, width='stretch', hide_index=True)
-                else:
-                    st.info("無符合資料")
-            with tab_skus:
-                st.markdown("#### Shop SKU 頁明細（前 50 筆）")
-                st.markdown("匯出的 Excel『Shop SKU』工作表頂部提供 **Site 下拉篩選**，可即時檢視指定店舖的 SKU。")
-                if raw_df is not None and not raw_df.empty:
-                    st.dataframe(raw_df.head(50), width='stretch')
-                    st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
                 else:
                     st.info("無符合資料")
 

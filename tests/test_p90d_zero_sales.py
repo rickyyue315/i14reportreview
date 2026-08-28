@@ -1,7 +1,7 @@
-"""Validation tests for Past 90 Days 0 Sales mode (v1.8.1).
+"""Validation tests for Past 90 Days 0 Sales mode (v1.8.3).
 
-篩選：Sold Qty (M-2 / M-1 / CM - MTD) 全為 0 且 Shop Stock Qty (LM) 與 (CM) 皆 > 0。
-輸出三頁：RAW（移除 Value / D001 欄）、Summary by Shop、Shop SKU（頂部 Site 下拉篩選）。
+篩選：Sold Qty (M-2 / M-1 / CM - MTD) 皆 ≤ 0 且 Shop Stock Qty (LM) 與 (CM) 皆 > 0。
+輸出兩頁：RAW（移除 Value / D001 欄）、Summary by Shop。
 """
 import warnings
 warnings.filterwarnings("ignore")
@@ -59,10 +59,13 @@ def test_filter_handles_nan_and_negative():
     df = _df([
         {"SKU": 1, "Sold Qty (M-2)": np.nan, "Shop Stock Qty (LM)": np.nan},  # sold NaN=0, stock NaN=0 → 排除
         {"SKU": 2, "Shop Stock Qty (CM)": -1.0},  # 負庫存視為 0 → 排除
-        {"SKU": 3, "Sold Qty (M-2)": -5.0, "Shop Stock Qty (LM)": 3.0, "Shop Stock Qty (CM)": 3.0},  # 負銷售=0 且庫存>0 → 符合
+        {"SKU": 3, "Sold Qty (M-2)": -5.0, "Shop Stock Qty (LM)": 3.0, "Shop Stock Qty (CM)": 3.0},  # 負銷售 ≤ 0 且庫存>0 → 符合
+        {"SKU": 4, "Sold Qty (M-1)": -2.0, "Sold Qty (CM - MTD)": -1.0,
+         "Shop Stock Qty (LM)": 4.0, "Shop Stock Qty (CM)": 4.0},  # 三期皆 ≤ 0（含負數）→ 符合
+        {"SKU": 5, "Sold Qty (CM - MTD)": 0.5, "Shop Stock Qty (LM)": 3.0, "Shop Stock Qty (CM)": 3.0},  # 正銷售 > 0 → 排除
     ])
     raw, _, _ = transform_p90d_zero_sales(df)
-    assert list(raw["SKU"]) == ["3"]
+    assert list(raw["SKU"]) == ["3", "4"]
 
 
 def test_missing_required_column_raises():
@@ -139,7 +142,7 @@ def test_summary_empty_input():
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. Excel 輸出結構
 # ──────────────────────────────────────────────────────────────────────────────
-def test_excel_sheets_and_site_dropdown():
+def test_excel_sheets_only_raw_and_summary():
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Item_Shop": "A-S01"},
         {"SKU": 2, "Site Code": "S02", "Item_Shop": "B-S02", "Buyer": "B2", "Brand": "B"},
@@ -147,42 +150,19 @@ def test_excel_sheets_and_site_dropdown():
     raw, summary, _ = transform_p90d_zero_sales(df)
     buf = generate_excel_p90d_zero_sales(raw, summary, None)
     wb = load_workbook(BytesIO(buf.getvalue()))
-    assert wb.sheetnames[:3] == ["RAW", "Summary by Shop", "Shop SKU"]
-    assert wb.sheetnames[-1] == "_SiteList"
-    assert wb["_SiteList"].sheet_state == "hidden"
-
-    ws_skus = wb["Shop SKU"]
-    # 頂部 Site 下拉：B1 應有 DataValidation
-    dvs = list(ws_skus.data_validations.dataValidation)
-    assert len(dvs) >= 1
-    assert dvs[0].type == "list"
-    validate_ranges = dvs[0].sqref
-    assert "B1" in str(validate_ranges)
-
-    # 隱藏 _SiteList 含 All Sites + 各 Site
-    ws_sites = wb["_SiteList"]
-    assert ws_sites.sheet_state == "hidden"
-    sites = [ws_sites.cell(row=i, column=1).value for i in range(1, 5)]
-    assert sites[0] == "All Sites"
-    assert "S01" in sites and "S02" in sites
-
-    # 資料列含 FILTER 公式
-    headers = [c.value for c in ws_skus[3]]
-    site_idx = headers.index("Site Code")
-    site_letter = __import__("openpyxl").utils.get_column_letter(site_idx + 1)
-    formula = ws_skus.cell(row=4, column=site_idx + 1).value
-    assert isinstance(formula, str) and formula.startswith("=IFERROR(_xlfn.FILTER(")
-    assert f"RAW!${site_letter}$2" in formula
+    assert wb.sheetnames == ["RAW", "Summary by Shop"]
+    assert "Shop SKU" not in wb.sheetnames
+    assert "_SiteList" not in wb.sheetnames
 
 
-def test_excel_empty_result_still_has_three_sheets():
+def test_excel_empty_result_still_has_two_sheets():
     df = _df([{"SKU": 1, "Sold Qty (M-2)": 9.0}])  # 全部排除
     raw, summary, warnings = transform_p90d_zero_sales(df)
     assert raw.empty
     assert len(warnings) == 1
     buf = generate_excel_p90d_zero_sales(raw, summary, None)
     wb = load_workbook(BytesIO(buf.getvalue()))
-    assert wb.sheetnames[:3] == ["RAW", "Summary by Shop", "Shop SKU"]
+    assert wb.sheetnames == ["RAW", "Summary by Shop"]
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -5609,14 +5609,14 @@ def transform_p90d_zero_sales(
         progress_callback(0.2, "解像 SKU Desc / Shop Name...")
     df = _compute_raw_extra_columns(df)
 
-    sold_m2 = _safe_numeric(df.get("Sold Qty (M-2)", _safe_default_series(0, df.index))).clip(lower=0)
-    sold_m1 = _safe_numeric(df.get("Sold Qty (M-1)", _safe_default_series(0, df.index))).clip(lower=0)
-    sold_mtd = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0, df.index))).clip(lower=0)
+    sold_m2 = _safe_numeric(df.get("Sold Qty (M-2)", _safe_default_series(0, df.index)))
+    sold_m1 = _safe_numeric(df.get("Sold Qty (M-1)", _safe_default_series(0, df.index)))
+    sold_mtd = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0, df.index)))
     stock_lm = _safe_numeric(df.get("Shop Stock Qty (LM)", _safe_default_series(0, df.index)))
     stock_cm = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
 
     mask = (
-        (sold_m2 == 0) & (sold_m1 == 0) & (sold_mtd == 0)
+        (sold_m2 <= 0) & (sold_m1 <= 0) & (sold_mtd <= 0)
         & (stock_lm > 0) & (stock_cm > 0)
     ).fillna(False)
 
@@ -5630,7 +5630,7 @@ def transform_p90d_zero_sales(
 
     warnings = []
     if raw.empty:
-        warnings.append("沒有符合「Past 90 Days 0 Sales（過去90日零銷售且店舖仍有存貨 LM/CM>0）」的資料。")
+        warnings.append("沒有符合「Past 90 Days 0 Sales（Sold Qty M-2/M-1/CM-MTD 皆 ≤ 0 且 Shop Stock Qty LM/CM 皆 > 0）」的資料。")
 
     if progress_callback:
         progress_callback(0.4, "完成資料轉換...")
@@ -5653,10 +5653,8 @@ def generate_excel_p90d_zero_sales(
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     bold_font = Font(bold=True, size=11)
-    desc_font = Font(size=9, color="6B7280", italic=True)
 
     out_cols = _p90d_raw_columns(raw if raw is not None else pd.DataFrame())
-    n_raw = len(raw) if raw is not None else 0
 
     # ── Sheet 1: RAW ──
     ws_raw = wb.active
@@ -5704,62 +5702,8 @@ def generate_excel_p90d_zero_sales(
         ws_summary.cell(row=2, column=1, value="無符合資料").font = Font(size=12)
     _auto_width(ws_summary)
 
-    # ── Sheet 3: Shop SKU（頂部 Site 下拉篩選）──
     if progress_callback:
-        progress_callback(0.72, "建立 Shop SKU 頁...")
-    ws_skus = wb.create_sheet(title="Shop SKU")
-
-    ws_sites = wb.create_sheet(title="_SiteList")
-    ws_sites.sheet_state = "hidden"
-    site_codes = []
-    if raw is not None and not raw.empty and "Site Code" in raw.columns:
-        site_codes = sorted(set(raw["Site Code"].fillna("").astype(str).str.strip()))
-    site_list = ["All Sites"] + [s for s in site_codes if s]
-    for i, s in enumerate(site_list, 1):
-        ws_sites.cell(row=i, column=1, value=s)
-
-    ws_skus.cell(row=1, column=1, value="選擇 Site").font = Font(bold=True)
-    dv_cell = ws_skus.cell(row=1, column=2, value="All Sites")
-    dv = DataValidation(type="list", formula1=f"=_SiteList!$A$2:$A${max(len(site_list), 2)}", allow_blank=True)
-    ws_skus.add_data_validation(dv)
-    dv.add(dv_cell)
-
-    ws_skus.cell(
-        row=2, column=1,
-        value="下拉選擇 Site Code（All Sites＝全店）。下方表格以 FILTER 動態陣列隨選擇更新（需 Excel 365/2021+）；舊版請改用 RAW 頁的 AutoFilter。",
-    ).font = desc_font
-
-    for col_idx, h in enumerate(out_cols, 1):
-        cell = ws_skus.cell(row=3, column=col_idx, value=h)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = thin_border
-
-    last_raw_row = 1 + n_raw
-    site_col_letter = get_column_letter(out_cols.index("Site Code") + 1) if "Site Code" in out_cols else None
-
-    if n_raw > 0 and site_col_letter is not None:
-        for col_idx in range(1, len(out_cols) + 1):
-            col_letter = get_column_letter(col_idx)
-            formula = (
-                f'=IFERROR(_xlfn.FILTER(RAW!${col_letter}$2:${col_letter}${last_raw_row}, '
-                f'IF($B$1="All Sites", RAW!${site_col_letter}$2:${site_col_letter}${last_raw_row}<>"", '
-                f'RAW!${site_col_letter}$2:${site_col_letter}${last_raw_row}=$B$1)), "")'
-            )
-            cell = ws_skus.cell(row=4, column=col_idx, value=formula)
-            cell.border = thin_border
-            cell.alignment = Alignment(vertical="center")
-    else:
-        ws_skus.cell(row=4, column=1, value="無符合資料").font = Font(size=12)
-
-    for col_idx in range(1, len(out_cols) + 1):
-        col_letter = get_column_letter(col_idx)
-        if col_letter in ws_raw.column_dimensions:
-            ws_skus.column_dimensions[col_letter].width = ws_raw.column_dimensions[col_letter].width
-
-    if progress_callback:
-        progress_callback(0.95, "正在儲存 Excel 檔案...")
+        progress_callback(0.9, "正在儲存 Excel 檔案...")
 
     gc.collect()
     buf = BytesIO()

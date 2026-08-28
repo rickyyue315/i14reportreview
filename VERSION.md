@@ -1,5 +1,11 @@
 # 版本記錄
 
+## v1.8.3 (2026-08-28)
+
+- Update: Past 90 Days 0 Sales 定義更新 — Sold Qty (M-2) / (M-1) / (CM - MTD) 三期皆 ≤ 0（0 件或少於 0 件）且 Shop Stock Qty (LM) 與 (CM) 皆 > 0
+- Remove: Past 90 Days 0 Sales 模式移除 Excel「Shop SKU」工作表（Site 下拉篩選頁無用）及隱藏的「_SiteList」頁 — 現在只輸出 RAW、Summary by Shop 兩頁
+- Update: Streamlit 對應移除 Shop SKU 分頁，Sidebar 說明與摘要卡文字同步新定義
+
 ## v1.8.2 (2026-08-27)
 
 - Fix: Past 90 Days 0 Sales 模式 Excel Shop SKU 頁開啟時被 Excel 修復移除公式 — FILTER 動態陣列公式加上 `_xlfn.` 前綴（Excel 檔格式中 2007 後新增函數必需），避免開啟時被當作未定義 UDF 而移除
