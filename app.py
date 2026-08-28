@@ -271,7 +271,7 @@ with st.sidebar:
 
     **📉 Past 90 Days 0 Sales**
     - 篩選「過去 90 日零銷售（Sold Qty M-2 / M-1 / CM-MTD 皆 ≤ 0）、但店舖仍有存貨（Shop Stock Qty LM 與 CM 皆 > 0）」的 SKU×Shop 記錄
-    - 移除所有 Value 及 D001 欄位，保留 SKU Desc / Shop Name
+    - RAW 只輸出 23 個指定欄位（Site Code / Shop Name / OM / Shop Nature / Brand / SKU / SKU Desc / Vendor MC / Item Status / Launch Date / Item Class / RP Type / Shop Stock Status / Safety Stock (現時) / Sold Qty M-2 / M-1 / CM-MTD / P90D / Shop Stock Qty CM / LM / Excess Stock Qty / Shop On Order PO Qty (CM) / Buyer）
     - 輸出：RAW、Summary by Shop
     """)
     

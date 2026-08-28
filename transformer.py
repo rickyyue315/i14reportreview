@@ -5534,10 +5534,38 @@ _P90D_ZERO_SALES_REQUIRED = [
 ]
 
 
+_P90D_RAW_OUTPUT_COLUMNS = [
+    "Site Code",
+    "Shop Name",
+    "OM",
+    "Shop Nature",
+    "Brand",
+    "SKU",
+    "SKU Desc",
+    "Vendor MC",
+    "Item Status",
+    "Launch Date",
+    "Item Class",
+    "RP Type",
+    "Shop Stock Status",
+    "Adj. Safety Stock",  # 顯示名稱: Safety Stock (現時)
+    "Sold Qty (M-2)",
+    "Sold Qty (M-1)",
+    "Sold Qty (CM - MTD)",
+    "Sold Qty (P90D)",
+    "Shop Stock Qty (CM)",
+    "Shop Stock Qty (LM)",
+    "Excess Stock Qty",
+    "Shop On Order PO Qty (CM)",
+    "Buyer",
+]
+
+
 def _p90d_raw_columns(raw: pd.DataFrame) -> list[str]:
-    """輸出欄位清單：重整順序後，移除所有含 D001 或 Value 的欄位。"""
+    """輸出欄位清單：限定 Past 90 Days 0 Sales RAW 只輸出指定欄位與順序。"""
     r = _reorder_raw_columns(_compute_raw_extra_columns(raw))
-    return [c for c in r.columns if "D001" not in c and "Value" not in c]
+    available = set(r.columns)
+    return [c for c in _P90D_RAW_OUTPUT_COLUMNS if _resolve_column_name(c, available) is not None]
 
 
 def _build_p90d_zero_sales_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:

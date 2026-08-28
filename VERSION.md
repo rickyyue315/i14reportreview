@@ -1,5 +1,10 @@
 # 版本記錄
 
+## v1.8.6 (2026-08-28)
+
+- Change: Past 90 Days 0 Sales 的 RAW 改為固定欄位白名單（23 欄）— Site Code / Shop Name / OM / Shop Nature / Brand / SKU / SKU Desc / Vendor MC / Item Status / Launch Date / Item Class / RP Type / Shop Stock Status / Safety Stock (現時) / Sold Qty (M-2) / Sold Qty (M-1) / Sold Qty (CM - MTD) / Sold Qty (P90D) / Shop Stock Qty (CM) / Shop Stock Qty (LM) / Excess Stock Qty / Shop On Order PO Qty (CM) / Buyer；輸入缺少選填欄位時自動略過不報錯
+- Update: 首頁模式說明同步新欄位定義
+
 ## v1.8.5 (2026-08-28)
 
 - Fix: 「🧹 釋放記憶體」按鈕修復 — 過去刪除 session_state 後檔案仍掛在 file_uploader 上，st.rerun() 時會即時重新讀取整個 Excel，導致每按一次記憶體不減反增；現以更換 uploader widget key 徹底釋放已上傳檔案

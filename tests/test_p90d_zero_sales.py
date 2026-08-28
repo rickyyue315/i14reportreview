@@ -1,7 +1,7 @@
-"""Validation tests for Past 90 Days 0 Sales mode (v1.8.3).
+"""Validation tests for Past 90 Days 0 Sales mode (v1.8.6).
 
 篩選：Sold Qty (M-2 / M-1 / CM - MTD) 皆 ≤ 0 且 Shop Stock Qty (LM) 與 (CM) 皆 > 0。
-輸出兩頁：RAW（移除 Value / D001 欄）、Summary by Shop。
+輸出兩頁：RAW（限定欄位白名單）、Summary by Shop。
 """
 import warnings
 warnings.filterwarnings("ignore")
@@ -19,8 +19,11 @@ from transformer import (
 BASE = {
     "Buyer": "B1", "Brand": "A", "SKU": 1, "SKU Desc": "Test Product",
     "Item_Shop": "Prod-S01-ShopHK", "Site Code": "S01", "OM": "OM1",
-    "Shop Stock Status": "Normal",
+    "Shop Nature": "Mix", "Vendor MC": "V1", "Item Status": "A",
+    "Launch Date": "2024-01-01", "Item Class": "C1", "RP Type": "RF",
+    "Shop Stock Status": "Normal", "Adj. Safety Stock": 3.0,
     "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0, "Sold Qty (CM - MTD)": 0.0,
+    "Sold Qty (P90D)": 0.0, "Excess Stock Qty": 2.0, "Shop On Order PO Qty (CM)": 0.0,
     "Shop Stock Qty (LM)": 5.0, "Shop Stock Qty (CM)": 5.0,
     "Shop Stock Value (LM)": 500.0, "Shop Stock Value (CM)": 500.0, "Excess Stock Value": 0.0,
     "D001 Stock Qty (LM)": 0.0, "D001 Stock Qty (CM)": 0.0, "D001 Net Stock Qty (CM)": 0.0,
@@ -80,14 +83,26 @@ def test_missing_required_column_raises():
 # ──────────────────────────────────────────────────────────────────────────────
 # 2. 欄位移除與 Desc./Shop Name 解像
 # ──────────────────────────────────────────────────────────────────────────────
-def test_p90d_raw_columns_excludes_d001_and_value():
+def test_p90d_raw_columns_whitelist():
     df = _df([{"SKU": 1}])
     cols = _p90d_raw_columns(df)
     assert not any(("D001" in c or "Value" in c) for c in cols)
-    # 關鍵欄位保留
-    for keep in ["SKU", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
-                 "Shop Stock Qty (LM)", "Shop Stock Qty (CM)", "Site Code", "Shop Name", "SKU Desc"]:
-        assert keep in cols, f"應保留欄位 {keep}"
+    # 只輸出白名單欄位，順序一致（Adj. Safety Stock 表頭顯示為 Safety Stock (現時)）
+    assert cols == [
+        "Site Code", "Shop Name", "OM", "Shop Nature", "Brand", "SKU", "SKU Desc",
+        "Vendor MC", "Item Status", "Launch Date", "Item Class", "RP Type",
+        "Shop Stock Status", "Adj. Safety Stock",
+        "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)", "Sold Qty (P90D)",
+        "Shop Stock Qty (CM)", "Shop Stock Qty (LM)",
+        "Excess Stock Qty", "Shop On Order PO Qty (CM)", "Buyer",
+    ]
+
+
+def test_p90d_raw_columns_skips_missing_optional():
+    # 輸入缺少選填欄位（如 Shop Nature / Adj. Safety Stock）時直接略過，不報錯
+    df = pd.DataFrame([{"SKU": 1, "Site Code": "S01", "Brand": "A", "Buyer": "B1"}])
+    cols = _p90d_raw_columns(df)
+    assert cols == ["Site Code", "Shop Name", "Brand", "SKU", "SKU Desc", "Buyer"]
 
 
 def test_raw_sheet_has_desc_and_no_d001_value():
