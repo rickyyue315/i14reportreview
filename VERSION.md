@@ -1,5 +1,9 @@
 # 版本記錄
 
+## v1.8.9 (2026-09-01)
+
+- Change: Safety Stock Review RAW 改為固定 32 欄白名單 — Brand / SKU / SKU Desc / Buyer / Adj. SST / Vendor MC / Item Status / Launch Date / Item Class / Site Code / Shop Name / OM / Shop Nature / RP Type / Safety Stock (現時) / Recommend Safety Stock / Safety Qty Change / Buyer reply / Shop Monthly Sold Qty (P90D) / Safety VS Monthly Sold Qty / Projected Monthly Sold Qty / Recommendation of new Safety Qty / ND / Overstock Cap (X) / OOS Floor (Y) / D001 Net Stock Qty (CM) / Shop Stock Qty (CM) / Sold Qty (P90D) / Turnday (P90D Qty) / Sold Qty (M-2) / Sold Qty (M-1) / Sold Qty (CM - MTD) / Supply Source；移除 Item_Shop、MCH2、Net Sales、Excess、PO 等欄位
+
 ## v1.8.7 (2026-08-28)
 
 - Change: Past 90 Days 0 Sales 篩選定義新增條件 — Sold Qty (P90D) > 0 的記錄一律排除，避免「過去 90 天其實有銷售」造成混淆；無此欄位的輸入檔視同 0（維持原行為）

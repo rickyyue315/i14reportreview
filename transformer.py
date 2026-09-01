@@ -78,6 +78,42 @@ RAW_COLUMN_ORDER_NAMES = [
 ]
 
 
+COMBINED_RAW_COLS = [
+    "Brand",
+    "SKU",
+    "SKU Desc",
+    "Buyer",
+    "Adj. SST",
+    "Vendor MC",
+    "Item Status",
+    "Launch Date",
+    "Item Class",
+    "Site Code",
+    "Shop Name",
+    "OM",
+    "Shop Nature",
+    "RP Type",
+    "Adj. Safety Stock",  # 表頭顯示為 Safety Stock (現時)
+    "Recommend Safety Stock",
+    "Safety Qty Change",
+    "Buyer reply",
+    "Shop Monthly Sold Qty (P90D)",
+    "Safety VS Monthly Sold Qty",
+    "Projected Monthly Sold Qty",
+    "Recommendation of new Safety Qty / ND",
+    "Overstock Cap (X)",
+    "OOS Floor (Y)",
+    "D001 Net Stock Qty (CM)",
+    "Shop Stock Qty (CM)",
+    "Sold Qty (P90D)",
+    "Turnday (P90D Qty)",
+    "Sold Qty (M-2)",
+    "Sold Qty (M-1)",
+    "Sold Qty (CM - MTD)",
+    "Supply Source",
+]
+
+
 def _resolve_column_name(name: str, available: set[str]) -> str | None:
     stripped = name.strip()
     for col in available:
@@ -766,7 +802,7 @@ def generate_excel_combined(
     ws_raw = wb.active
     ws_raw.title = "RAW"
 
-    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.15)
+    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.15, columns=COMBINED_RAW_COLS)
 
     if progress_callback:
         progress_callback(0.2, "建立摘要工作表...")
