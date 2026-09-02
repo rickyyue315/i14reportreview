@@ -1,5 +1,10 @@
 # 版本記錄
 
+## v1.8.15 (2026-09-02)
+
+- Update: Safety Stock Review「自定義 Shop Nature Rate」設定區加註解說明，解決用家不知如何選值的問題 — 頂部說明兩組倍率的角色與換算直覺（Overstock Rate 30% ≈ 保留 9 日銷售量；OOS Rate 50% ≈ 覆蓋 15 日）與建議值公式；新增「如何選擇合適數值」指引（減庫存 → 調低 Overstock Rate 需配「可加可減」、減缺貨 → 調高 OOS Rate、按補貨週期長短分配各 Nature 的值），並標注「只可增加」模式下 Overstock Rate 無壓縮效果的陷阱；六個 slider 的 help 同步補上換算日數與設定傾向
+- Update: Shop Nature 多選框說明補充 — Non Tourist 選項涵蓋「Other」類型（與倍率歸類一致）、部分選取會剔除其他類型、全取消會無資料
+
 ## v1.8.14 (2026-09-02)
 
 - New: Safety Stock Review「Recommendation of new Safety Qty / ND」的 ND 轉換建議依類別加註 — Adj. MCH1 = 02 - MAKE UP → **ND(02 - MAKE UP)**；Adj. SST 為 03 - Private Label 系（(1)Major / (2)Health）→ **ND(Private Label)**；兩者皆是 → **ND(Private Label - MAKE UP)**；比對以 strip + 小寫正規化，Private Label 用「03 - Private Label」前綴比對（涵蓋未來新增子類）；僅加註「ND」轉換建議，「0」列（本來已是 ND）與 New SKU 標記列不受影響；Adj. MCH1 / Adj. SST 缺欄位時維持純「ND」

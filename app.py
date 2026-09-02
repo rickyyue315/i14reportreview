@@ -556,34 +556,44 @@ if uploaded_file is not None:
             "🏷️ 選擇要處理的 Shop Nature 類型",
             options=SHOP_NATURE_OPTIONS,
             default=SHOP_NATURE_OPTIONS,
-            help="選擇要處理的店鋪性質。預設全選所有類型。"
+            help="選擇要處理的店鋪性質，預設全選。只處理部分類型時（如只選 Tourist），其他類型的列會從報表剔除。注意：Non Tourist 選項同時涵蓋 Shop Nature 為「Other」的店（與倍率邏輯一致，非 Tourist/Mix 一律按 Non Tourist 的 Rate 計算）；全部取消選取會導致無資料可處理。"
         )
 
         with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
-            st.markdown("**Overstock Rate** — 各 Shop Nature 庫存上限計算倍率。")
+            st.info(
+                "**倍率如何影響建議值**（建議 Safety Stock = max(OOS 底線 Y, 現有 Safety 若 ≤ Overstock 上限 X，否則 X)，計算結果最低 3 件）\n\n"
+                "- **Overstock Rate（庫存上限 X 的倍率）**：X = floor(P90D 月均銷售 × Rate)。Rate 30% ≈ 保留 9 日銷售量（30% × 30 日）；數值越低，建議上限越低，越積極壓縮庫存\n"
+                "- **OOS Rate（缺貨底線 Y 的倍率）**：Y = ceil(月銷預估 × Rate)。Rate 50% ≈ 覆蓋 15 日銷售；數值越高，缺貨保護越強\n\n"
+                "**如何選擇合適數值**\n\n"
+                "- 想整體減少庫存 → 調低 **Overstock Rate**（壓低上限，需配合「可加可減」模式才有減量效果）\n"
+                "- 想降低缺貨風險 → 調高 **OOS Rate**（抬高底線，「只可增加」模式下同樣生效）\n"
+                "- 補貨週期長的店（如 Non Tourist）需要較高緩衝 → Overstock Rate 較高；補貨頻密的店（如 Tourist）可較低\n"
+                "- ⚠️ 「只可增加」模式下建議值不會低於現有 Safety，Overstock Rate 實際上不產生壓縮效果；要壓縮庫存請選「可加可減」"
+            )
+            st.markdown("**Overstock Rate** — 各 Shop Nature 庫存上限計算倍率（月銷 × Rate = 建議值上限）。")
             col_os1, col_os2, col_os3 = st.columns(3)
             with col_os1:
                 os_rate_tourist = st.slider("Overstock Tourist Rate (%)", 0, 100, 30, 1, key="os_tourist_cb",
-                    help="Tourist 類型 Overstock 上限 = floor(Monthly Sold × Rate)")
+                    help="Tourist 類型 Overstock 上限 X = floor(P90D 月均銷售 × Rate)。30% ≈ 保留 9 日銷售量。補貨頻密、週轉快的店可設較低（更積極壓縮庫存）")
             with col_os2:
                 os_rate_mix = st.slider("Overstock Mix Rate (%)", 0, 100, 40, 1, key="os_mix_cb",
-                    help="Mix 類型 Overstock 上限 = floor(Monthly Sold × Rate)")
+                    help="Mix 類型 Overstock 上限 X = floor(P90D 月均銷售 × Rate)。40% ≈ 保留 12 日銷售量。")
             with col_os3:
                 os_rate_non_tourist = st.slider("Overstock Non Tourist Rate (%)", 0, 100, 50, 1, key="os_non_tourist_cb",
-                    help="Non Tourist 類型 Overstock 上限 = floor(Monthly Sold × Rate)")
+                    help="Non Tourist（及其他類型）Overstock 上限 X = floor(P90D 月均銷售 × Rate)。50% ≈ 保留 15 日銷售量。補貨週期長的店需要較高緩衝")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
-            st.markdown("**OOS Rate** — 各 Shop Nature OOS 底線計算倍率。")
+            st.markdown("**OOS Rate** — 各 Shop Nature OOS 底線計算倍率（月銷預估 × Rate = 建議值底線）。")
             col_oos1, col_oos2, col_oos3 = st.columns(3)
             with col_oos1:
                 oos_rate_tourist = st.slider("OOS Tourist Rate (%)", 0, 100, 50, 1, key="oos_tourist_cb",
-                    help="Tourist 類型 OOS 底線 = ceil(Projected Monthly × Rate)")
+                    help="Tourist 類型 OOS 底線 Y = ceil(月銷預估 × Rate)。50% ≈ 覆蓋半個月銷售。缺貨影響大的店可調高（保護更強）")
             with col_oos2:
                 oos_rate_mix = st.slider("OOS Mix Rate (%)", 0, 100, 50, 1, key="oos_mix_cb",
-                    help="Mix 類型 OOS 底線 = ceil(Projected Monthly × Rate)")
+                    help="Mix 類型 OOS 底線 Y = ceil(月銷預估 × Rate)。50% ≈ 覆蓋 15 日銷售。")
             with col_oos3:
                 oos_rate_non_tourist = st.slider("OOS Non Tourist Rate (%)", 0, 100, 50, 1, key="oos_non_tourist_cb",
-                    help="Non Tourist 類型 OOS 底線 = ceil(Projected Monthly × Rate)")
+                    help="Non Tourist（及其他類型）OOS 底線 Y = ceil(月銷預估 × Rate)。月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均（月初以 P90D 為主）")
 
             st.caption(f"Overstock → Tourist: **{os_rate_tourist}%** | Mix: **{os_rate_mix}%** | Non Tourist: **{os_rate_non_tourist}%**")
             st.caption(f"OOS → Tourist: **{oos_rate_tourist}%** | Mix: **{oos_rate_mix}%** | Non Tourist: **{oos_rate_non_tourist}%**")
