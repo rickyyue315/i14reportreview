@@ -686,6 +686,92 @@ def _build_combined_by_shop_summary(raw):
     return by_shop
 
 
+# ── SUMMARY sheet：兩大分類統計的固定顯示順序與說明 ──────────────────────────
+
+_CHANGE_CAT_DESC = {
+    "增加": "建議 Safety Stock 高於現時",
+    "減少": "建議 Safety Stock 低於現時（僅「可加可減」模式出現）",
+    "不變": "建議 Safety Stock 與現時相同",
+}
+
+_ND_REC_DISPLAY = {
+    "": "(空白) 維持 Safety Stock",
+    "New SKU (3 Month)": "New SKU (3 Month)",
+    "0": "0（已是 ND）",
+    "ND": "ND",
+    "ND(02 - MAKE UP)": "ND(02 - MAKE UP)",
+    "ND(Private Label)": "ND(Private Label)",
+    "ND(Private Label - MAKE UP)": "ND(Private Label - MAKE UP)",
+}
+
+_ND_REC_DESC = {
+    "": "無 ND 建議，按建議 Safety Stock 繼續運作",
+    "New SKU (3 Month)": "上市 90 天內新品，保留觀察、不套用歸零/ND",
+    "0": "RP Type 已是 ND，建議 Safety = 0",
+    "ND": "建議轉 ND 停補貨（P90D 0 Sales 舊品）",
+    "ND(02 - MAKE UP)": "建議轉 ND — Adj. MCH1 = 02 - MAKE UP",
+    "ND(Private Label)": "建議轉 ND — Adj. SST 屬 03 - Private Label 系",
+    "ND(Private Label - MAKE UP)": "建議轉 ND — MAKE UP + Private Label",
+}
+
+
+def _build_combined_classification_summary(raw):
+    """SUMMARY sheet 資料 — 兩張分類統計表：
+    ① Safety Qty Change 分類（增加 / 減少 / 不變）
+    ② Recommendation of new Safety Qty / ND 分類（空白 / New SKU / 0 / ND 系列）
+    每列統計 行數 與 SKU 數；同一 SKU 可跨分類出現（不同店舖），總計列的
+    SKU 數改用全表不重複 SKU 數，避免跨分類加總虛增。
+    """
+    sku = raw["SKU"] if "SKU" in raw.columns else _safe_default_series("", raw.index)
+    change = pd.to_numeric(raw.get("Safety Qty Change", _safe_default_series(0, raw.index)), errors="coerce").fillna(0)
+    change_cat = np.where(change > 0, "增加", np.where(change < 0, "減少", "不變"))
+    total_sku = int(sku.dropna().nunique())
+
+    change_rows = []
+    for label in ("增加", "減少", "不變"):
+        m = change_cat == label
+        change_rows.append({
+            "分類": label,
+            "行數": int(m.sum()),
+            "SKU 數": int(sku[m].dropna().nunique()),
+            "Safety Qty Change 合計": int(change[m].sum()),
+            "說明": _CHANGE_CAT_DESC[label],
+        })
+    change_rows.append({
+        "分類": "總計",
+        "行數": int(len(raw)),
+        "SKU 數": total_sku,
+        "Safety Qty Change 合計": int(change.sum()),
+        "說明": "SKU 數為全表不重複 SKU（同一 SKU 可跨分類）",
+    })
+    change_summary = pd.DataFrame(change_rows)
+
+    nd_rec = (
+        raw.get("Recommendation of new Safety Qty / ND", _safe_default_series("", raw.index))
+        .fillna("").astype(str)
+    )
+    known = list(_ND_REC_DISPLAY.keys())
+    present_order = known + sorted(v for v in nd_rec.unique() if v not in known)
+    nd_rows = []
+    for val in present_order:
+        m = (nd_rec == val).values
+        nd_rows.append({
+            "建議分類": _ND_REC_DISPLAY.get(val, val),
+            "行數": int(m.sum()),
+            "SKU 數": int(sku[m].dropna().nunique()),
+            "說明": _ND_REC_DESC.get(val, ""),
+        })
+    nd_rows.append({
+        "建議分類": "總計",
+        "行數": int(len(raw)),
+        "SKU 數": total_sku,
+        "說明": "SKU 數為全表不重複 SKU（同一 SKU 可跨分類）",
+    })
+    nd_summary = pd.DataFrame(nd_rows)
+
+    return change_summary, nd_summary
+
+
 def transform_combined(
     df_input: pd.DataFrame,
     progress_callback=None,
@@ -880,6 +966,57 @@ def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc
     _auto_width(ws)
 
 
+def _write_summary_sheet(ws, change_summary, nd_summary, thin_border):
+    """SUMMARY sheet — 兩個區塊：Safety Qty Change 分類 與 ND 建議分類 統計表."""
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    bold_font = Font(bold=True, size=11)
+    section_fill = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+    total_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+
+    ws.merge_cells("A1:E1")
+    title_cell = ws.cell(row=1, column=1, value="Safety Stock Review SUMMARY（分類統計）")
+    title_cell.font = Font(bold=True, size=14, color="1E40AF")
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    def _write_block(start_row, section_title, block):
+        cols = list(block.columns)
+        ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=len(cols))
+        sc = ws.cell(row=start_row, column=1, value=section_title)
+        sc.font = Font(bold=True, size=12, color="1E40AF")
+        sc.fill = section_fill
+        sc.alignment = Alignment(horizontal="left", vertical="center")
+
+        header_row = start_row + 1
+        for col_idx, h in enumerate(cols, 1):
+            cell = ws.cell(row=header_row, column=col_idx, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+
+        for r, row_data in enumerate(block.itertuples(index=False), header_row + 1):
+            is_total = row_data[0] == "總計"
+            for col_idx, v in enumerate(row_data, 1):
+                cell = ws.cell(row=r, column=col_idx, value=v)
+                cell.border = thin_border
+                if is_total:
+                    cell.font = bold_font
+                    cell.fill = total_fill
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    cell.number_format = "#,##0"
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                elif col_idx == 1:
+                    cell.alignment = Alignment(horizontal="left", vertical="center")
+                else:
+                    cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        return header_row + len(block) + 1
+
+    next_row = _write_block(3, "① Safety Qty Change 分類（增加 / 減少 / 不變）", change_summary)
+    _write_block(next_row + 1, "② Recommendation of new Safety Qty / ND 分類", nd_summary)
+    _auto_width(ws)
+
+
 def generate_excel_combined(
     summary_df: pd.DataFrame,
     raw_df: pd.DataFrame,
@@ -984,6 +1121,14 @@ def generate_excel_combined(
             progress_callback(0.7 + 0.15 * ((row_idx + 1) / max(len(by_shop_df), 1)), f"寫入 By Shop ({row_idx+1}/{len(by_shop_df)})...")
 
     _auto_width(ws_by_shop)
+
+    if progress_callback:
+        progress_callback(0.86, "建立 SUMMARY 工作表...")
+
+    # ── Sheet 4: SUMMARY（Safety Qty Change 分類 / ND 建議分類 統計）──
+    change_summary, nd_summary = _build_combined_classification_summary(raw_df)
+    ws_class_summary = wb.create_sheet(title="SUMMARY")
+    _write_summary_sheet(ws_class_summary, change_summary, nd_summary, thin_border)
 
     if progress_callback:
         progress_callback(0.88, "建立分析摘要工作表...")

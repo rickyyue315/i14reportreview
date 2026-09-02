@@ -800,3 +800,146 @@ def test_fix14_change_category_column_after_change():
     """RAW 白名單欄序：Safety Qty Change 分類 緊隨 Safety Qty Change."""
     from transformer import COMBINED_RAW_COLS
     assert COMBINED_RAW_COLS.index("Safety Qty Change 分類") == COMBINED_RAW_COLS.index("Safety Qty Change") + 1
+
+
+# ── Fix #15: SUMMARY sheet — Safety Qty Change 分類 / ND 建議分類 統計 ────────
+
+from transformer import _build_combined_classification_summary  # noqa: E402
+
+
+def test_fix15_change_summary_counts_and_totals():
+    """可加可減：增加 / 減少 / 不變 三類行數、SKU 數、Change 合計正確；
+    同一 SKU 跨分類時總計 SKU 數用全表 nunique（不虛增）."""
+    raw = _add_combined_recommendation_columns(
+        _df([
+            {"SKU": "1", "Site Code": "S01", "Shop Stock Status": "Normal", "RP Type": "RF",
+             "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+            {"SKU": "2", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+             "Adj. Safety Stock": 4, "Shop Monthly Sold Qty (P90D)": 0, "Sold Qty (CM - MTD)": 0.0,
+             "Launch Date": _launch_date(200)},
+            {"SKU": "3", "Shop Stock Status": "Normal", "RP Type": "ND",
+             "Adj. Safety Stock": 0, "Shop Monthly Sold Qty (P90D)": 6, "Sold Qty (CM - MTD)": 2.0},
+            {"SKU": "1", "Site Code": "S02", "Shop Stock Status": "Normal", "RP Type": "RF",
+             "Adj. Safety Stock": 3, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 0.0},
+        ]),
+        _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    change_sum, _ = _build_combined_classification_summary(raw)
+
+    def _row(label):
+        return change_sum[change_sum["分類"] == label].iloc[0]
+
+    assert _row("增加")["行數"] == 1 and _row("增加")["SKU 數"] == 1
+    assert _row("增加")["Safety Qty Change 合計"] == 2
+    assert _row("減少")["行數"] == 1 and _row("減少")["SKU 數"] == 1
+    assert _row("減少")["Safety Qty Change 合計"] == -4
+    assert _row("不變")["行數"] == 2 and _row("不變")["SKU 數"] == 2
+    assert _row("不變")["Safety Qty Change 合計"] == 0
+
+    total = change_sum[change_sum["分類"] == "總計"].iloc[0]
+    assert total["行數"] == 4
+    assert total["SKU 數"] == 3  # SKU "1" 跨 增加/不變 兩類，只計一次
+    assert total["Safety Qty Change 合計"] == -2
+
+
+def test_fix15_change_summary_increase_only_no_decrease():
+    """只可增加：減少 類行數恆為 0（列仍輸出，值為 0）."""
+    raw = _add_combined_recommendation_columns(
+        _df([
+            {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+             "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+            {"SKU": "2", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+             "Adj. Safety Stock": 4, "Shop Monthly Sold Qty (P90D)": 0, "Sold Qty (CM - MTD)": 0.0,
+             "Launch Date": _launch_date(200)},
+            {"SKU": "3", "Shop Stock Status": "Normal", "RP Type": "ND",
+             "Adj. Safety Stock": 9, "Shop Monthly Sold Qty (P90D)": 3, "Sold Qty (CM - MTD)": 0.0},
+        ]),
+        _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    change_sum, _ = _build_combined_classification_summary(raw)
+    dec = change_sum[change_sum["分類"] == "減少"].iloc[0]
+    assert dec["行數"] == 0 and dec["SKU 數"] == 0 and dec["Safety Qty Change 合計"] == 0
+    total = change_sum[change_sum["分類"] == "總計"].iloc[0]
+    assert total["行數"] == 3
+    assert total["Safety Qty Change 合計"] >= 0
+
+
+def test_fix15_nd_summary_all_categories():
+    """可加可減：ND 建議分類涵蓋 空白 / New SKU / 0 / ND / 三種加註，順序固定."""
+    raw = _add_combined_recommendation_columns(
+        _df([
+            {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF"},
+            {"SKU": "2", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+             "Shop Monthly Sold Qty (P90D)": 0, "Sold Qty (CM - MTD)": 0.0,
+             "Launch Date": _launch_date(10)},
+            {"SKU": "3", "Shop Stock Status": "Normal", "RP Type": "ND"},
+            {"SKU": "4", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+             "Shop Monthly Sold Qty (P90D)": 0, "Sold Qty (CM - MTD)": 0.0,
+             "Launch Date": _launch_date(200),
+             "Adj. MCH1": "02 - MAKE UP", "Adj. SST": "01 - Local"},
+            {"SKU": "5", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+             "Shop Monthly Sold Qty (P90D)": 0, "Sold Qty (CM - MTD)": 0.0,
+             "Launch Date": _launch_date(200),
+             "Adj. MCH1": "01 - SKIN CARE", "Adj. SST": "03 - Private Label - (1)Major"},
+            {"SKU": "6", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+             "Shop Monthly Sold Qty (P90D)": 0, "Sold Qty (CM - MTD)": 0.0,
+             "Launch Date": _launch_date(200),
+             "Adj. MCH1": "02 - MAKE UP", "Adj. SST": "03 - Private Label - (2)Health"},
+            {"SKU": "7", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+             "Shop Monthly Sold Qty (P90D)": 0, "Sold Qty (CM - MTD)": 0.0,
+             "Launch Date": _launch_date(200)},
+        ]),
+        _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    _, nd_sum = _build_combined_classification_summary(raw)
+
+    assert nd_sum["建議分類"].tolist() == [
+        "(空白) 維持 Safety Stock",
+        "New SKU (3 Month)",
+        "0（已是 ND）",
+        "ND",
+        "ND(02 - MAKE UP)",
+        "ND(Private Label)",
+        "ND(Private Label - MAKE UP)",
+        "總計",
+    ]
+    counts = dict(zip(nd_sum["建議分類"], nd_sum["行數"]))
+    assert all(counts[k] == 1 for k in counts if k != "總計")
+    assert counts["總計"] == 7
+    total = nd_sum[nd_sum["建議分類"] == "總計"].iloc[0]
+    assert total["SKU 數"] == 7
+
+
+def test_fix15_excel_contains_summary_sheet():
+    """輸出 Excel 含 SUMMARY sheet（位於 By Shop 之後），兩個區塊標題與表頭齊全."""
+    from io import BytesIO
+
+    import openpyxl
+    from transformer import transform_combined, generate_excel_combined
+
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF"},
+        {"SKU": "2", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Shop Monthly Sold Qty (P90D)": 0, "Sold Qty (CM - MTD)": 0.0,
+         "Launch Date": _launch_date(200)},
+        {"SKU": "3", "Shop Stock Status": "Normal", "RP Type": "ND"},
+    ])
+    s, r, c, _ = transform_combined(
+        df, rates_overstock=_RATES_O, rates_oos=_RATES_P,
+        mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    buf = generate_excel_combined(s, r, c)
+
+    wb = openpyxl.load_workbook(BytesIO(buf.getvalue()))
+    assert wb.sheetnames == ["RAW", "Shop Stock Status", "By Shop", "SUMMARY", "Safety Stock 數據分析摘要"]
+
+    ws = wb["SUMMARY"]
+    col_a = [ws.cell(row=i, column=1).value for i in range(1, ws.max_row + 1)]
+    assert "① Safety Qty Change 分類（增加 / 減少 / 不變）" in col_a
+    assert "② Recommendation of new Safety Qty / ND 分類" in col_a
+
+    all_values = [ws.cell(row=i, column=j).value
+                  for i in range(1, ws.max_row + 1) for j in range(1, ws.max_column + 1)]
+    for expected in ("行數", "SKU 數", "Safety Qty Change 合計", "增加", "減少", "不變",
+                     "ND", "0（已是 ND）", "(空白) 維持 Safety Stock", "總計"):
+        assert expected in all_values

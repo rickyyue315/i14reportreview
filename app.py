@@ -249,6 +249,7 @@ with st.sidebar:
     - 全面審查各 SKU×Shop 的安全庫存設定是否合理
     - 結合 Overstock Cap（庫存上限）與 OOS Floor（缺貨底線），雙向平衡調整 Safety Stock
     - 支援逐 Site 檢視、Overstock / OOS Rate 自訂、Safety 只增或加減模式
+    - 輸出：RAW、Shop Stock Status、By Shop、SUMMARY（Safety Qty Change 分類 / ND 建議分類統計）、分析摘要
 
     **📦 Stock Impact Analysis（缺貨銷售影響分析）**
     - 以 Shop Stock Qty = 0（缺貨）為核心，分析存貨對 Sold Qty 的因果影響（無貨就無銷售）
@@ -336,6 +337,7 @@ with st.sidebar:
      6. **New SKU 保護** — Launch Date 距今 90 天內（≈3 個月）的列排除「P90D 0 Sales → Safety=0/ND」override（新品未出單屬上架時間問題），改走正常 X/Y 計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)；Launch Date 缺失或無法解析時視為非新品
      7. **計算模式** — 「只可增加」：全表只有增加或保持原有 Safety，ND / P90D 0 Sales 的歸零+ND 退場建議不套用（ND 欄僅保留 New SKU 標記）；「可加可減」：允許減少並套用退場建議（ND 列 → 0；P90D 0 Sales 舊品 → ND 建議，並依 Adj. MCH1 / Adj. SST 加註：02 - MAKE UP → ND(02 - MAKE UP)、03 - Private Label 系 → ND(Private Label)、兩者皆是 → ND(Private Label - MAKE UP)）
      8. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
+     9. **SUMMARY 工作表** — 統計 Safety Qty Change 分類（增加 / 減少 / 不變）與 Recommendation of new Safety Qty / ND 分類（空白維持 / New SKU / 0 已是 ND / ND 系列加註）各行數與 SKU 數；總計列 SKU 數為全表不重複 SKU（同一 SKU 可跨分類）
 
      **📦 Stock Impact Analysis** — 缺貨銷售影響分析判別：
      1. **缺貨判定** = Shop Stock Qty = 0（嚴格標準，三期 M-2 / M-1 / CM 各自判定）

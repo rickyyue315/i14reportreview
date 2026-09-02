@@ -1,5 +1,10 @@
 # 版本記錄
 
+## v1.8.17 (2026-09-02)
+
+- New: Safety Stock Review 輸出 Excel 新增 **SUMMARY** 工作表（位於 By Shop 之後）— 兩個分類統計區塊：① Safety Qty Change 分類（增加 / 減少 / 不變）統計 行數 / SKU 數 / Safety Qty Change 合計；② Recommendation of new Safety Qty / ND 分類統計 行數 / SKU 數，固定順序涵蓋 (空白) 維持 Safety Stock、New SKU (3 Month)、0（已是 ND）、ND、ND(02 - MAKE UP)、ND(Private Label)、ND(Private Label - MAKE UP)，每類附中文說明；總計列 SKU 數採全表不重複 SKU（同一 SKU 可跨分類，避免加總虛增）；「只可增加」模式下減少類仍輸出但恆為 0
+- Update: Sidebar 分析模式說明與核心計算規則、README 同步；新增回歸測試 Fix #15（×4），共 82 項測試通過
+
 ## v1.8.16 (2026-09-02)
 
 - New: Safety Stock Review RAW 新增「Safety Qty Change 分類」欄（緊隨「Safety Qty Change」之後）— 按最終 Change 值分類：>0「增加」、<0「減少」、=0「不變」，方便直接篩選/樞紐；「只可增加」模式下不會出現「減少」；白名單增至 35 欄

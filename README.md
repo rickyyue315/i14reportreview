@@ -125,7 +125,8 @@ OOS Review 建議額外包含：
 7. **計算模式** — 「只可增加」：全表只有增加或保持原有 Safety，ND / P90D 0 Sales 的歸零+ND 退場建議不套用（ND 欄僅保留 New SKU 標記）；「可加可減」：允許減少並套用退場建議（ND 列 → 0；P90D 0 Sales 舊品 → ND 建議，並依 Adj. MCH1 / Adj. SST 加註：02 - MAKE UP → ND(02 - MAKE UP)、03 - Private Label 系 → ND(Private Label)、兩者皆是 → ND(Private Label - MAKE UP)）
 
 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因。
-輸出包含 RAW、Shop Stock Status、By Shop、Safety Stock 數據分析摘要共 4 個工作表。
+輸出包含 RAW、Shop Stock Status、By Shop、SUMMARY、Safety Stock 數據分析摘要共 5 個工作表。
+SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）與 Recommendation of new Safety Qty / ND 分類（空白維持 / New SKU / 0 已是 ND / ND 系列加註）的行數、SKU 數與調整量合計。
 
 ## Excel 輸出結構
 
@@ -134,6 +135,7 @@ OOS Review 建議額外包含：
 | RAW | 完整明細資料（含所有原始及計算欄位） |
 | Shop Stock Status | 採購人員 x 品牌之庫存異常交叉統計表 |
 | By Shop | 各店鋪層級之彙總分析 |
+| SUMMARY | 分類統計 — Safety Qty Change 分類（增加/減少/不變）與 ND 建議分類（僅 Safety Stock Review） |
 | 分析摘要 | 數據看板 — 關鍵指標總覽 |
 
 ## 版本
