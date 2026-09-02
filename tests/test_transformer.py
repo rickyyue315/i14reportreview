@@ -293,7 +293,7 @@ def test_fix7_combined_nd_safety_forced_to_zero():
          "Sold Qty (CM - MTD)": 2.0},
     ])
     out = _add_combined_recommendation_columns(
-        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
     )
     assert out["Recommend Safety Stock"].tolist()[0] == 0
     assert out["Safety Qty Change"].tolist()[0] == -10
@@ -308,7 +308,7 @@ def test_fix7_combined_p90d0_safety_forced_to_zero():
          "Sold Qty (CM - MTD)": 0.0},
     ])
     out = _add_combined_recommendation_columns(
-        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
     )
     assert out["Recommend Safety Stock"].tolist()[0] == 0
     assert out["Safety Qty Change"].tolist()[0] == -5
@@ -489,7 +489,7 @@ def test_fix10_old_sku_p90d0_still_forced_zero_nd():
          "Sold Qty (CM - MTD)": 0.0, "Launch Date": _launch_date(200)},
     ])
     out = _add_combined_recommendation_columns(
-        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
     )
     assert out["Recommend Safety Stock"].tolist()[0] == 0
     assert out["Safety Qty Change"].tolist()[0] == -5
@@ -519,7 +519,7 @@ def test_fix10_invalid_launch_date_treated_as_old_sku():
          "Sold Qty (CM - MTD)": 0.0, "Launch Date": "not-a-date"},
     ])
     out = _add_combined_recommendation_columns(
-        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
     )
     assert out["Recommend Safety Stock"].tolist()[0] == 0
     assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "ND"
@@ -610,3 +610,151 @@ def test_fix11_recommend_turnday_column_after_recommend_safety():
     """RAW 白名單欄序：Recommend Safety Stock Turnday 緊隨 Recommend Safety Stock."""
     from transformer import COMBINED_RAW_COLS
     assert COMBINED_RAW_COLS.index("Recommend Safety Stock Turnday") == COMBINED_RAW_COLS.index("Recommend Safety Stock") + 1
+
+
+# ── Fix #12: 只可增加模式 = 全表不得出現扣減 ────────────────────────────────
+# increase_only 下連 ND / P90D 0 Sales 的「歸零 + ND」退場 override 也不套用，
+# 一律保持原有 Safety；ND 欄僅保留 New SKU 資訊標記。退場建議只在可加可減出現。
+
+
+def test_fix12_increase_only_nd_row_keeps_current_safety():
+    """只可增加：ND 列保持原有 Safety（不歸零、無負數、無「0」建議）."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "ND",
+         "Adj. Safety Stock": 7, "Shop Monthly Sold Qty (P90D)": 10,
+         "Sold Qty (CM - MTD)": 8.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    assert out["Recommend Safety Stock"].tolist()[0] == 7
+    assert out["Safety Qty Change"].tolist()[0] == 0
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == ""
+
+
+def test_fix12_increase_only_p90d0_old_sku_keeps_current_safety():
+    """只可增加：P90D 0 Sales 舊品保持原有 Safety（不歸零、無 ND 建議）."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 0,
+         "Sold Qty (CM - MTD)": 0.0, "Launch Date": _launch_date(200)},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    assert out["Recommend Safety Stock"].tolist()[0] == 5
+    assert out["Safety Qty Change"].tolist()[0] == 0
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == ""
+
+
+def test_fix12_increase_only_new_sku_p90d0_row_kept_and_marked():
+    """只可增加：新品 P90D 0 Sales 保持原有 Safety 並標記 New SKU."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 0,
+         "Sold Qty (CM - MTD)": 0.0, "Launch Date": _launch_date(10)},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    assert out["Recommend Safety Stock"].tolist()[0] == 5
+    assert out["Safety Qty Change"].tolist()[0] == 0
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "New SKU (3 Month)"
+
+
+def test_fix12_increase_only_global_no_negative_change():
+    """只可增加：混合資料全表 Safety Qty Change >= 0 且 Recommend >= 現時."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+        {"SKU": "2", "Shop Stock Status": "Normal", "RP Type": "ND",
+         "Adj. Safety Stock": 9, "Shop Monthly Sold Qty (P90D)": 3, "Sold Qty (CM - MTD)": 0.0},
+        {"SKU": "3", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Adj. Safety Stock": 4, "Shop Monthly Sold Qty (P90D)": 0, "Sold Qty (CM - MTD)": 0.0,
+         "Launch Date": _launch_date(200)},
+        {"SKU": "4", "Shop Stock Status": "OOS (0 Stock)", "RP Type": "RF",
+         "Adj. Safety Stock": 2, "Shop Monthly Sold Qty (P90D)": 6, "Sold Qty (CM - MTD)": 2.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    assert (out["Safety Qty Change"] >= 0).all()
+    assert (out["Recommend Safety Stock"] >= out["Adj. Safety Stock"]).all()
+
+
+# ── Fix #13: ND 建議加註 MAKE UP / Private Label + RAW 加回 Adj. MCH1 ──────
+# 「ND」轉換建議（P90D 0 Sales 舊品）依 Adj. MCH1 / Adj. SST 加註：
+# 02 - MAKE UP → ND(02 - MAKE UP)；03 - Private Label 系 → ND(Private Label)；
+# 兩者皆是 → ND(Private Label - MAKE UP)。「0」列（已是 ND）不加註。
+
+
+def _p90d0_df(mch1, sst):
+    return _df([
+        {"SKU": "1", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 0,
+         "Sold Qty (CM - MTD)": 0.0, "Launch Date": _launch_date(200),
+         "Adj. MCH1": mch1, "Adj. SST": sst},
+    ])
+
+
+def test_fix13_nd_annotate_makeup_only():
+    out = _add_combined_recommendation_columns(
+        _p90d0_df("02 - MAKE UP", "01 - Local"), _RATES_O, _RATES_P,
+        mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "ND(02 - MAKE UP)"
+
+
+def test_fix13_nd_annotate_private_label_major_and_health():
+    for sst in ("03 - Private Label - (1)Major", "03 - Private Label - (2)Health"):
+        out = _add_combined_recommendation_columns(
+            _p90d0_df("01 - SKIN CARE", sst), _RATES_O, _RATES_P,
+            mtd_days=15, month_total_days=30, safety_mode="allow_both"
+        )
+        assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "ND(Private Label)"
+
+
+def test_fix13_nd_annotate_both_private_label_and_makeup():
+    out = _add_combined_recommendation_columns(
+        _p90d0_df("02 - MAKE UP", "03 - Private Label - (1)Major"), _RATES_O, _RATES_P,
+        mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "ND(Private Label - MAKE UP)"
+
+
+def test_fix13_nd_annotate_no_match_stays_plain_nd():
+    out = _add_combined_recommendation_columns(
+        _p90d0_df("03 - FRAGRANCE", "05 - Para-Prem(1)Major"), _RATES_O, _RATES_P,
+        mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "ND"
+
+
+def test_fix13_nd_row_zero_not_annotated():
+    """已是 ND 的列顯示「0」，即使 MAKE UP + Private Label 也不加註."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "ND",
+         "Adj. Safety Stock": 7, "Shop Monthly Sold Qty (P90D)": 10,
+         "Sold Qty (CM - MTD)": 8.0,
+         "Adj. MCH1": "02 - MAKE UP", "Adj. SST": "03 - Private Label - (1)Major"},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "0"
+
+
+def test_fix13_nd_annotate_missing_columns_falls_back():
+    """缺 Adj. MCH1 / Adj. SST 欄位時維持純「ND」建議."""
+    df = _p90d0_df("02 - MAKE UP", "03 - Private Label - (1)Major")
+    df = df.drop(columns=["Adj. MCH1", "Adj. SST"])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "ND"
+
+
+def test_fix13_combined_raw_whitelist_contains_adj_mch1():
+    from transformer import COMBINED_RAW_COLS
+    assert "Adj. MCH1" in COMBINED_RAW_COLS
+    assert COMBINED_RAW_COLS.index("Adj. MCH1") == COMBINED_RAW_COLS.index("Adj. SST") + 1

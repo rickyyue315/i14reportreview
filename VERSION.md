@@ -1,5 +1,15 @@
 # 版本記錄
 
+## v1.8.14 (2026-09-02)
+
+- New: Safety Stock Review「Recommendation of new Safety Qty / ND」的 ND 轉換建議依類別加註 — Adj. MCH1 = 02 - MAKE UP → **ND(02 - MAKE UP)**；Adj. SST 為 03 - Private Label 系（(1)Major / (2)Health）→ **ND(Private Label)**；兩者皆是 → **ND(Private Label - MAKE UP)**；比對以 strip + 小寫正規化，Private Label 用「03 - Private Label」前綴比對（涵蓋未來新增子類）；僅加註「ND」轉換建議，「0」列（本來已是 ND）與 New SKU 標記列不受影響；Adj. MCH1 / Adj. SST 缺欄位時維持純「ND」
+- Update: Safety Stock Review RAW 白名單加回「Adj. MCH1」欄位（緊隨 Adj. SST 之後，33 → 34 欄），方便 buyer 核對 MAKE UP 標示；新增回歸測試 Fix #13（×7），共 75 項測試通過
+
+## v1.8.13 (2026-09-02)
+
+- Change: Safety Stock Review「只可增加」模式語意收緊 — 全表不得出現任何扣減：ND 列與 P90D 0 Sales 舊品的「歸零 + ND」退場 override 改為只在「可加可減」模式套用；「只可增加」下這些列一律保持原有 Safety（Change = 0），ND 欄僅保留 New SKU (3 Month) 資訊標記。此前「只可增加」下一般列雖只增不減，但 ND / P90D 0 Sales 列仍會出現 Safety 歸零（Change = −Z）的扣減建議，與模式名稱矛盾
+- Update: Sidebar 模式說明、核心計算規則與 README 同步；新增回歸測試 Fix #12（×4：ND / P90D0 / 新品 / 全表無負數），4 個退場 override 測試改為鎖定「可加可減」模式，共 68 項測試通過
+
 ## v1.8.12 (2026-09-02)
 
 - New: Safety Stock Review RAW 新增「Recommend Safety Stock Turnday」欄位（緊隨「Recommend Safety Stock」之後）— 建議值的周轉日數 = Recommend Safety Stock ÷ (Shop Monthly Sold Qty (P90D) ÷ 30)，與來源「Turnday (P90D Qty)」同口徑（P90D 日均），用家可直接對比現時與建議的周轉日數（如建議後是否脫離 <7 Turnday 的 Potential OOS 區、落入 Mix 7-14 日標準帶）；P90D 月均 = 0 時留空（無周轉意義，來源為 inf），建議值 = 0 顯示 0（零覆蓋）；白名單增至 33 欄

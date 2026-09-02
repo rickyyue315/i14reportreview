@@ -84,6 +84,7 @@ COMBINED_RAW_COLS = [
     "SKU Desc",
     "Buyer",
     "Adj. SST",
+    "Adj. MCH1",
     "Vendor MC",
     "Item Status",
     "Launch Date",
@@ -445,6 +446,34 @@ def _build_nd_rec_qty_nd(is_nd, is_p90d_0, n):
     return arr
 
 
+def _annotate_nd_recommendation(nd_rec, df):
+    """為「ND」轉換建議依 Adj. MCH1 / Adj. SST 加註類別提示：
+    Adj. MCH1 = 02 - MAKE UP → ND(02 - MAKE UP)；
+    Adj. SST 為 03 - Private Label 系（(1)Major / (2)Health）→ ND(Private Label)；
+    兩者皆是 → ND(Private Label - MAKE UP)。
+    只加註「ND」轉換建議；「0」列（本來已是 ND）與空白列不動。
+    """
+    rec = np.asarray(nd_rec, dtype=object)
+    is_nd_suggest = rec == "ND"
+    if not is_nd_suggest.any():
+        return rec
+    mch1 = (
+        df.get("Adj. MCH1", _safe_default_series("", df.index))
+        .fillna("").astype(str).str.strip().str.lower()
+    )
+    sst = (
+        df.get("Adj. SST", _safe_default_series("", df.index))
+        .fillna("").astype(str).str.strip().str.lower()
+    )
+    is_makeup = (mch1 == "02 - make up").values
+    is_pl = sst.str.startswith("03 - private label").values
+    rec = rec.copy()
+    rec[is_nd_suggest & is_pl & is_makeup] = "ND(Private Label - MAKE UP)"
+    rec[is_nd_suggest & is_pl & ~is_makeup] = "ND(Private Label)"
+    rec[is_nd_suggest & ~is_pl & is_makeup] = "ND(02 - MAKE UP)"
+    return rec
+
+
 def _add_combined_recommendation_columns(
     df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode="increase_only"
 ):
@@ -515,9 +544,7 @@ def _add_combined_recommendation_columns(
 
     delta = combined - z_values
     if safety_mode == "increase_only":
-        # Only allow increases: clamp negative deltas to 0 and keep the recommended
-        # value consistent with that (no decrease applied), so Recommend == adj_ss
-        # whenever a row would otherwise be lowered.
+        # 只可增加：delta 鉗制 ≥ 0，一般調整列只增不減（保底）
         delta = delta.clip(min=0)
         recommend_safety = z_values + delta
     else:
@@ -548,15 +575,18 @@ def _add_combined_recommendation_columns(
         is_new_sku = np.zeros(len(df), dtype=bool)
     is_p90d_0_override = is_p90d_0 & ~is_new_sku
 
-    if is_nd.any() | is_p90d_0_override.any():
-        recommend_safety = recommend_safety.copy()
-        delta = delta.copy()
-    if is_nd.any():
-        recommend_safety[is_nd.values] = 0
-        delta[is_nd.values] = -z_values[is_nd.values]
-    if is_p90d_0_override.any():
-        recommend_safety[is_p90d_0_override.values] = 0
-        delta[is_p90d_0_override.values] = -z_values[is_p90d_0_override.values]
+    if safety_mode != "increase_only":
+        # 「可加可減」才套用退場 override —「只可增加」模式下任何列都不出現扣減：
+        # ND / P90D 0 Sales 列保持原有 Safety，退場決策留待可加可減模式
+        if is_nd.any() | is_p90d_0_override.any():
+            recommend_safety = recommend_safety.copy()
+            delta = delta.copy()
+        if is_nd.any():
+            recommend_safety[is_nd.values] = 0
+            delta[is_nd.values] = -z_values[is_nd.values]
+        if is_p90d_0_override.any():
+            recommend_safety[is_p90d_0_override.values] = 0
+            delta[is_p90d_0_override.values] = -z_values[is_p90d_0_override.values]
 
     df["Recommend Safety Stock"] = recommend_safety
     df["Safety Qty Change"] = delta
@@ -570,11 +600,19 @@ def _add_combined_recommendation_columns(
     rec_turnday[_monthly_pos] = recommend_safety[_monthly_pos] / (_monthly_arr[_monthly_pos] / 30.0)
     df["Recommend Safety Stock Turnday"] = np.round(rec_turnday, 1)
 
-    nd_rec = _build_nd_rec_qty_nd(is_nd, is_p90d_0_override, len(df))
-    # New SKU 標記：ND 列維持「0」（ND 規則不受新品保護影響），其餘新品列標記
-    if is_new_sku.any():
-        nd_rec = nd_rec.copy()
-        nd_rec[is_new_sku & ~is_nd.values] = "New SKU (3 Month)"
+    if safety_mode == "increase_only":
+        # 只可增加：無歸零 / ND 退場建議，ND 欄僅保留 New SKU 資訊標記
+        nd_rec = np.full(len(df), "", dtype=object)
+        if is_new_sku.any():
+            nd_rec[is_new_sku] = "New SKU (3 Month)"
+    else:
+        nd_rec = _build_nd_rec_qty_nd(is_nd, is_p90d_0_override, len(df))
+        # New SKU 標記：ND 列維持「0」（ND 規則不受新品保護影響），其餘新品列標記
+        if is_new_sku.any():
+            nd_rec = nd_rec.copy()
+            nd_rec[is_new_sku & ~is_nd.values] = "New SKU (3 Month)"
+        # ND 轉換建議依 Adj. MCH1 / Adj. SST 加註 MAKE UP / Private Label
+        nd_rec = _annotate_nd_recommendation(nd_rec, df)
     df["Recommendation of new Safety Qty / ND"] = nd_rec
     df["Buyer reply"] = ""
 
