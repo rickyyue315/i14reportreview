@@ -331,9 +331,10 @@ with st.sidebar:
      1. **Overstock Cap (X)** = floor(月均銷售 × Overstock Rate)，上限不超過現有 Adj. Safety Stock
      2. **OOS Floor (Y)** = ceil(月銷預估 × OOS Rate)，最低 3；月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均（加權混合，月初以 P90D 為主避免頭幾日外推失真，月尾收斂至 MTD；P90D 欄位缺失時退回純 MTD 線性外推）
      3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Adj. Safety Stock
-     4. **Safety Qty Change** = 建議 Safety Stock − Z（正數=增加、負數=減少、零=不變）
-     5. **New SKU 保護** — Launch Date 距今 90 天內（≈3 個月）的列排除「P90D 0 Sales → Safety=0/ND」override（新品未出單屬上架時間問題），改走正常 X/Y 計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)；ND 列仍維持 Safety=0 與「0」建議；Launch Date 缺失或無法解析時視為非新品
-     6. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
+     4. **Recommend Safety Stock Turnday** = 建議值 ÷ (P90D 月均 ÷ 30)，與來源「Turnday (P90D Qty)」同口徑（P90D 日均），可直接對比現時與建議的周轉日數；P90D 月均 = 0 時留空（無周轉意義），建議值 = 0 顯示 0（零覆蓋）
+     5. **Safety Qty Change** = 建議 Safety Stock − Z（正數=增加、負數=減少、零=不變）
+     6. **New SKU 保護** — Launch Date 距今 90 天內（≈3 個月）的列排除「P90D 0 Sales → Safety=0/ND」override（新品未出單屬上架時間問題），改走正常 X/Y 計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)；ND 列仍維持 Safety=0 與「0」建議；Launch Date 缺失或無法解析時視為非新品
+     7. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
 
      **📦 Stock Impact Analysis** — 缺貨銷售影響分析判別：
      1. **缺貨判定** = Shop Stock Qty = 0（嚴格標準，三期 M-2 / M-1 / CM 各自判定）

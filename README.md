@@ -119,8 +119,9 @@ OOS Review 建議額外包含：
 1. **Overstock Cap (X)** — 基於月均銷售與 Overstock Rate 計算庫存上限，上限不超過現有 Adj. Safety Stock
 2. **OOS Floor (Y)** — 基於月銷預估與 OOS Rate 計算缺貨底線，最低 3；月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均（加權混合：月初以穩定的 P90D 為主，避免頭幾日線性外推失真，月尾收斂至 MTD；P90D 缺值時退回純 MTD 線性外推）
 3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Adj. Safety Stock
-4. **Safety Qty Change** = 建議值 − Z（正數=增加、負數=減少、零=不變）
-5. **New SKU 保護** — Launch Date 距今 90 天內的列排除「P90D 0 Sales → Safety=0/ND」override，改走正常 X/Y 計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)（ND 列維持「0」；Launch Date 缺失或無法解析時視為非新品）
+4. **Recommend Safety Stock Turnday** — 建議值的周轉日數 = 建議值 ÷ (P90D 月均 ÷ 30)，與來源「Turnday (P90D Qty)」同口徑；P90D 月均 = 0 時留空
+5. **Safety Qty Change** = 建議值 − Z（正數=增加、負數=減少、零=不變）
+6. **New SKU 保護** — Launch Date 距今 90 天內的列排除「P90D 0 Sales → Safety=0/ND」override，改走正常 X/Y 計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)（ND 列維持「0」；Launch Date 缺失或無法解析時視為非新品）
 
 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因。
 輸出包含 RAW、Shop Stock Status、By Shop、Safety Stock 數據分析摘要共 4 個工作表。

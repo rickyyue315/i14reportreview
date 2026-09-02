@@ -1,5 +1,10 @@
 # 版本記錄
 
+## v1.8.12 (2026-09-02)
+
+- New: Safety Stock Review RAW 新增「Recommend Safety Stock Turnday」欄位（緊隨「Recommend Safety Stock」之後）— 建議值的周轉日數 = Recommend Safety Stock ÷ (Shop Monthly Sold Qty (P90D) ÷ 30)，與來源「Turnday (P90D Qty)」同口徑（P90D 日均），用家可直接對比現時與建議的周轉日數（如建議後是否脫離 <7 Turnday 的 Potential OOS 區、落入 Mix 7-14 日標準帶）；P90D 月均 = 0 時留空（無周轉意義，來源為 inf），建議值 = 0 顯示 0（零覆蓋）；白名單增至 33 欄
+- Update: Sidebar 核心計算規則與 README 同步；新增回歸測試 Fix #11（×5），共 64 項測試通過
+
 ## v1.8.11 (2026-09-02)
 
 - New: Safety Stock Review 新品保護 — Launch Date 距今 90 天內（≈3 個月）的列排除「P90D 0 Sales → Safety=0/ND」override（新品未出單屬上架時間問題，過去會被建議歸零並標 ND 判死），改走正常 X/Y 計算，並在「Recommendation of new Safety Qty / ND」欄標記 **New SKU (3 Month)**；RP Type=ND 列仍維持 Safety=0 與「0」建議（ND 規則優先於標記）；Launch Date 缺欄位、缺值或無法解析時視為非新品（維持原行為）。該欄位在 Safety Stock Review 為純輸出（summary 與 Excel 均不讀取），標記不影響任何計算；日期解析抽成共用 `_parse_launch_dates()` 與 Stock Impact 的 `_add_launch_info()` 一致

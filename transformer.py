@@ -95,6 +95,7 @@ COMBINED_RAW_COLS = [
     "RP Type",
     "Adj. Safety Stock",  # 表頭顯示為 Safety Stock (現時)
     "Recommend Safety Stock",
+    "Recommend Safety Stock Turnday",
     "Safety Qty Change",
     "Recommendation of new Safety Qty / ND",
     "Buyer reply",
@@ -559,6 +560,15 @@ def _add_combined_recommendation_columns(
 
     df["Recommend Safety Stock"] = recommend_safety
     df["Safety Qty Change"] = delta
+
+    # 建議 Safety Stock 的周轉日數，與來源「Turnday (P90D Qty)」同口徑（P90D 日均）：
+    # = Recommend Safety Stock ÷ (Shop Monthly Sold Qty (P90D) ÷ 30)。
+    # P90D 月均 = 0 時無周轉意義（來源為 inf），此處留空；Recommend = 0 顯示 0（零覆蓋）。
+    rec_turnday = np.full(len(df), np.nan)
+    _monthly_arr = monthly_sold.values
+    _monthly_pos = _monthly_arr > 0
+    rec_turnday[_monthly_pos] = recommend_safety[_monthly_pos] / (_monthly_arr[_monthly_pos] / 30.0)
+    df["Recommend Safety Stock Turnday"] = np.round(rec_turnday, 1)
 
     nd_rec = _build_nd_rec_qty_nd(is_nd, is_p90d_0_override, len(df))
     # New SKU 標記：ND 列維持「0」（ND 規則不受新品保護影響），其餘新品列標記

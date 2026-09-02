@@ -539,3 +539,74 @@ def test_fix10_new_sku_normal_rows_marked_but_calc_unchanged():
     assert out["Recommend Safety Stock"].tolist()[0] == 7
     assert out["Safety Qty Change"].tolist()[0] == 2
     assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "New SKU (3 Month)"
+
+
+# ── Fix #11: Recommend Safety Stock Turnday 欄位 ────────────────────────────
+# 與來源「Turnday (P90D Qty)」同口徑（P90D 日均）：
+# = Recommend Safety Stock ÷ (Shop Monthly Sold Qty (P90D) ÷ 30)；
+# P90D 月均 = 0 留空（無周轉意義），Recommend = 0 顯示 0。
+
+
+def test_fix11_recommend_turnday_calculation():
+    """建議值周轉日數 = Recommend ÷ (P90D月均 ÷ 30)."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 10,
+         "Sold Qty (CM - MTD)": 8.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    # Recommend=7（見 fix10 同組態）→ 7 ÷ (10/30) = 21.0
+    assert out["Recommend Safety Stock"].tolist()[0] == 7
+    assert out["Recommend Safety Stock Turnday"].tolist()[0] == 21.0
+
+
+def test_fix11_recommend_turnday_rounding():
+    """小數四捨五入至 1 位."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 99, "Shop Monthly Sold Qty (P90D)": 9,
+         "Sold Qty (CM - MTD)": 0.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    # X=floor(9*0.5)=4(cap99) ; projected=0+0.5*9=4.5 → Y=ceil(2.25)=3 ; Z=99>X → combined=max(3,4)=4
+    # 4 ÷ (9/30) = 13.333… → 13.3
+    assert out["Recommend Safety Stock"].tolist()[0] == 4
+    assert out["Safety Qty Change"].tolist()[0] == -95
+    assert out["Recommend Safety Stock Turnday"].tolist()[0] == 13.3
+
+
+def test_fix11_recommend_turnday_blank_when_no_p90d_sales():
+    """P90D 月均 = 0 → 無周轉意義，留空（NaN）."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 0,
+         "Sold Qty (CM - MTD)": 0.0, "Launch Date": _launch_date(200)},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    assert pd.isna(out["Recommend Safety Stock Turnday"].tolist()[0])
+
+
+def test_fix11_recommend_turnday_zero_for_nd_rows():
+    """ND 列 Recommend=0 → Turnday 0（零覆蓋），P90D 有銷售時."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "ND",
+         "Adj. Safety Stock": 7, "Shop Monthly Sold Qty (P90D)": 10,
+         "Sold Qty (CM - MTD)": 8.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    assert out["Recommend Safety Stock"].tolist()[0] == 0
+    assert out["Recommend Safety Stock Turnday"].tolist()[0] == 0.0
+
+
+def test_fix11_recommend_turnday_column_after_recommend_safety():
+    """RAW 白名單欄序：Recommend Safety Stock Turnday 緊隨 Recommend Safety Stock."""
+    from transformer import COMBINED_RAW_COLS
+    assert COMBINED_RAW_COLS.index("Recommend Safety Stock Turnday") == COMBINED_RAW_COLS.index("Recommend Safety Stock") + 1
