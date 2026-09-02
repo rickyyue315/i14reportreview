@@ -9,6 +9,8 @@ Each test targets one of the six calculation issues identified in code review:
   #6 Combined mtd_days=None crashes
 """
 
+import datetime
+
 import pandas as pd
 import pytest
 
@@ -452,3 +454,88 @@ def test_fix9_projected_missing_p90d_column_pure_linear():
         df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
     )
     assert out["Projected Monthly Sold Qty"].tolist()[0] == 12
+
+
+# ── Fix #10: New SKU（Launch Date 90 天內）保護 ─────────────────────────────
+# 新品未出單屬上架時間問題：排除「P90D 0 Sales → Safety=0/ND」override，
+# 改走正常 X/Y 計算，並於 ND 建議欄標記 New SKU (3 Month)（ND 列維持「0」）。
+
+
+def _launch_date(days_ago):
+    return (datetime.date.today() - datetime.timedelta(days=days_ago)).strftime("%Y/%m/%d")
+
+
+def test_fix10_new_sku_p90d0_excluded_from_override_and_marked():
+    """Launch Date 90 天內的 P90D 0 Sales 列不被強制 0/ND，走正常計算並標記."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 0,
+         "Sold Qty (CM - MTD)": 0.0, "Launch Date": _launch_date(10)},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    # 正常計算: X=clip(floor(0*0.5),3)=3(cap Z=5) ; Y=clip(ceil(0),3)=3 → combined=3
+    assert out["Recommend Safety Stock"].tolist()[0] == 3
+    assert out["Safety Qty Change"].tolist()[0] == -2
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "New SKU (3 Month)"
+
+
+def test_fix10_old_sku_p90d0_still_forced_zero_nd():
+    """Launch Date 超過 90 天的 P90D 0 Sales 列維持原 override：0 / ND."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 0,
+         "Sold Qty (CM - MTD)": 0.0, "Launch Date": _launch_date(200)},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    assert out["Recommend Safety Stock"].tolist()[0] == 0
+    assert out["Safety Qty Change"].tolist()[0] == -5
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "ND"
+
+
+def test_fix10_new_sku_nd_row_keeps_zero():
+    """ND 列即使為新品仍維持 Safety=0 與「0」建議（ND 規則優先於新品標記）."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "ND",
+         "Adj. Safety Stock": 7, "Shop Monthly Sold Qty (P90D)": 10,
+         "Sold Qty (CM - MTD)": 8.0, "Launch Date": _launch_date(10)},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    assert out["Recommend Safety Stock"].tolist()[0] == 0
+    assert out["Safety Qty Change"].tolist()[0] == -7
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "0"
+
+
+def test_fix10_invalid_launch_date_treated_as_old_sku():
+    """Launch Date 無法解析（或缺欄位）時視為非新品，維持原 override 行為."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 0,
+         "Sold Qty (CM - MTD)": 0.0, "Launch Date": "not-a-date"},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    assert out["Recommend Safety Stock"].tolist()[0] == 0
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "ND"
+
+
+def test_fix10_new_sku_normal_rows_marked_but_calc_unchanged():
+    """非 P90D0 的新品列同樣獲得標記，X/Y/建議值與舊邏輯一致."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 10,
+         "Sold Qty (CM - MTD)": 8.0, "Launch Date": _launch_date(10)},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    # X=floor(10*0.5)=5(cap5) ; projected=8+0.5*10=13 → Y=ceil(13*0.5)=7 ; Z=5<=X → combined=max(7,5)=7
+    assert out["Recommend Safety Stock"].tolist()[0] == 7
+    assert out["Safety Qty Change"].tolist()[0] == 2
+    assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "New SKU (3 Month)"

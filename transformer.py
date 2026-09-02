@@ -166,6 +166,20 @@ def _nature_rate_arr(shop_nature, default_rate, tourist_rate, mix_rate):
     return arr
 
 
+def _parse_launch_dates(launch_raw: pd.Series) -> pd.Series:
+    """Launch Date 原始字串 → datetime（自動推斷 + 常見格式重試，無法解析為 NaT）。"""
+    launch_dt = pd.to_datetime(launch_raw, errors="coerce")
+    if launch_dt.isna().any():
+        still_na = launch_dt.isna()
+        for fmt in ("%Y/%m/%d", "%d/%m/%Y", "%Y%m%d"):
+            if not still_na.any():
+                break
+            retry = pd.to_datetime(launch_raw[still_na], errors="coerce", format=fmt)
+            launch_dt[still_na] = retry
+            still_na = launch_dt.isna()
+    return launch_dt
+
+
 def _ensure_list(val):
     if not isinstance(val, list):
         return [val]
@@ -519,20 +533,39 @@ def _add_combined_recommendation_columns(
     is_nd = rp_type == "ND"
     is_p90d_0 = status_col == "Overstock (P90D 0 Sales)"
 
-    if is_nd.any() | is_p90d_0.any():
+    # 新品保護：Launch Date 距今 90 天內（≈3 個月）視為 New SKU。新品未出單是上架
+    # 時間問題而非滯銷證據，排除「P90D 0 Sales → Safety=0/ND」override，改走正常
+    # X/Y 計算；Launch Date 缺欄位、缺值或無法解析時一律視為非新品（維持原行為）。
+    if "Launch Date" in df.columns:
+        _launch_raw = df["Launch Date"].fillna("").astype(str).str.strip()
+        _launch_dt = _parse_launch_dates(_launch_raw)
+        is_new_sku = (
+            _launch_dt.notna()
+            & (_launch_dt >= pd.Timestamp(datetime.date.today()) - pd.Timedelta(days=90))
+        ).values
+    else:
+        is_new_sku = np.zeros(len(df), dtype=bool)
+    is_p90d_0_override = is_p90d_0 & ~is_new_sku
+
+    if is_nd.any() | is_p90d_0_override.any():
         recommend_safety = recommend_safety.copy()
         delta = delta.copy()
     if is_nd.any():
         recommend_safety[is_nd.values] = 0
         delta[is_nd.values] = -z_values[is_nd.values]
-    if is_p90d_0.any():
-        recommend_safety[is_p90d_0.values] = 0
-        delta[is_p90d_0.values] = -z_values[is_p90d_0.values]
+    if is_p90d_0_override.any():
+        recommend_safety[is_p90d_0_override.values] = 0
+        delta[is_p90d_0_override.values] = -z_values[is_p90d_0_override.values]
 
     df["Recommend Safety Stock"] = recommend_safety
     df["Safety Qty Change"] = delta
 
-    df["Recommendation of new Safety Qty / ND"] = _build_nd_rec_qty_nd(is_nd, is_p90d_0, len(df))
+    nd_rec = _build_nd_rec_qty_nd(is_nd, is_p90d_0_override, len(df))
+    # New SKU 標記：ND 列維持「0」（ND 規則不受新品保護影響），其餘新品列標記
+    if is_new_sku.any():
+        nd_rec = nd_rec.copy()
+        nd_rec[is_new_sku & ~is_nd.values] = "New SKU (3 Month)"
+    df["Recommendation of new Safety Qty / ND"] = nd_rec
     df["Buyer reply"] = ""
 
     return df
@@ -3009,17 +3042,7 @@ def _add_launch_info(df: pd.DataFrame, ref_date: datetime.date | None = None) ->
 
     df = df.copy()
     launch_raw = df["Launch Date"].fillna("").astype(str).str.strip()
-    # 嘗試自動推斷格式解析
-    launch_dt = pd.to_datetime(launch_raw, errors="coerce")
-    # 若有 NaN（可能是較少見格式），再嘗試顯式格式
-    if launch_dt.isna().any():
-        still_na = launch_dt.isna()
-        for fmt in ("%Y/%m/%d", "%d/%m/%Y", "%Y%m%d"):
-            if not still_na.any():
-                break
-            retry = pd.to_datetime(launch_raw[still_na], errors="coerce", format=fmt)
-            launch_dt[still_na] = retry
-            still_na = launch_dt.isna()
+    launch_dt = _parse_launch_dates(launch_raw)
 
     # 3個月內（約 90 天）視為 New SKU
     cutoff = pd.Timestamp(ref_date) - pd.Timedelta(days=90)

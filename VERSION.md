@@ -1,5 +1,10 @@
 # 版本記錄
 
+## v1.8.11 (2026-09-02)
+
+- New: Safety Stock Review 新品保護 — Launch Date 距今 90 天內（≈3 個月）的列排除「P90D 0 Sales → Safety=0/ND」override（新品未出單屬上架時間問題，過去會被建議歸零並標 ND 判死），改走正常 X/Y 計算，並在「Recommendation of new Safety Qty / ND」欄標記 **New SKU (3 Month)**；RP Type=ND 列仍維持 Safety=0 與「0」建議（ND 規則優先於標記）；Launch Date 缺欄位、缺值或無法解析時視為非新品（維持原行為）。該欄位在 Safety Stock Review 為純輸出（summary 與 Excel 均不讀取），標記不影響任何計算；日期解析抽成共用 `_parse_launch_dates()` 與 Stock Impact 的 `_add_launch_info()` 一致
+- Update: Sidebar 核心計算規則與 README 同步新品保護說明；新增回歸測試 Fix #10（×5），共 59 項測試通過
+
 ## v1.8.10 (2026-09-02)
 
 - Fix: Shop Nature 倍率對應改為精確比對 — 舊版 `str.contains("tourist")` 會把「Non Tourist」誤套 Tourist 倍率（Non Tourist 店 Overstock 上限被 30% 而非 50% 計算），同時 Shop Nature 篩選選「Non Tourist」時實際會排除 Non Tourist 列、誤留 Other 列；修正範圍含 Safety Stock Review（Overstock Cap / OOS Floor）、Overstock Review、OOS Review 與 `_clean_dataframe` 共 5 處，新增共用 `_nature_rate_arr()`
