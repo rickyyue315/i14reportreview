@@ -758,3 +758,45 @@ def test_fix13_combined_raw_whitelist_contains_adj_mch1():
     from transformer import COMBINED_RAW_COLS
     assert "Adj. MCH1" in COMBINED_RAW_COLS
     assert COMBINED_RAW_COLS.index("Adj. MCH1") == COMBINED_RAW_COLS.index("Adj. SST") + 1
+
+
+# ── Fix #14: Safety Qty Change 分類欄（增加 / 減少 / 不變）──────────────────
+
+
+def test_fix14_change_category_allow_both_all_three():
+    """可加可減：同一批資料可出現 增加 / 減少 / 不變 三種分類."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+        {"SKU": "2", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Adj. Safety Stock": 4, "Shop Monthly Sold Qty (P90D)": 0, "Sold Qty (CM - MTD)": 0.0,
+         "Launch Date": _launch_date(200)},
+        {"SKU": "3", "Shop Stock Status": "Normal", "RP Type": "ND",
+         "Adj. Safety Stock": 0, "Shop Monthly Sold Qty (P90D)": 6, "Sold Qty (CM - MTD)": 2.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    assert out["Safety Qty Change 分類"].tolist() == ["增加", "減少", "不變"]
+
+
+def test_fix14_change_category_increase_only_never_decrease():
+    """只可增加：分類只會是 增加 / 不變."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+        {"SKU": "2", "Shop Stock Status": "Normal", "RP Type": "ND",
+         "Adj. Safety Stock": 9, "Shop Monthly Sold Qty (P90D)": 3, "Sold Qty (CM - MTD)": 0.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    cats = out["Safety Qty Change 分類"].tolist()
+    assert cats == ["增加", "不變"]
+    assert "減少" not in cats
+
+
+def test_fix14_change_category_column_after_change():
+    """RAW 白名單欄序：Safety Qty Change 分類 緊隨 Safety Qty Change."""
+    from transformer import COMBINED_RAW_COLS
+    assert COMBINED_RAW_COLS.index("Safety Qty Change 分類") == COMBINED_RAW_COLS.index("Safety Qty Change") + 1

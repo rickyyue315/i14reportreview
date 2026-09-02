@@ -1,5 +1,10 @@
 # 版本記錄
 
+## v1.8.16 (2026-09-02)
+
+- New: Safety Stock Review RAW 新增「Safety Qty Change 分類」欄（緊隨「Safety Qty Change」之後）— 按最終 Change 值分類：>0「增加」、<0「減少」、=0「不變」，方便直接篩選/樞紐；「只可增加」模式下不會出現「減少」；白名單增至 35 欄
+- Update: Sidebar 核心計算規則同步；新增回歸測試 Fix #14（×3），共 78 項測試通過
+
 ## v1.8.15 (2026-09-02)
 
 - Update: Safety Stock Review「自定義 Shop Nature Rate」設定區加註解說明，解決用家不知如何選值的問題 — 頂部說明兩組倍率的角色與換算直覺（Overstock Rate 30% ≈ 保留 9 日銷售量；OOS Rate 50% ≈ 覆蓋 15 日）與建議值公式；新增「如何選擇合適數值」指引（減庫存 → 調低 Overstock Rate 需配「可加可減」、減缺貨 → 調高 OOS Rate、按補貨週期長短分配各 Nature 的值），並標注「只可增加」模式下 Overstock Rate 無壓縮效果的陷阱；六個 slider 的 help 同步補上換算日數與設定傾向

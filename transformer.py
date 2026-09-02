@@ -98,6 +98,7 @@ COMBINED_RAW_COLS = [
     "Recommend Safety Stock",
     "Recommend Safety Stock Turnday",
     "Safety Qty Change",
+    "Safety Qty Change 分類",
     "Recommendation of new Safety Qty / ND",
     "Buyer reply",
     "Shop Monthly Sold Qty (P90D)",
@@ -590,6 +591,9 @@ def _add_combined_recommendation_columns(
 
     df["Recommend Safety Stock"] = recommend_safety
     df["Safety Qty Change"] = delta
+
+    # Safety Qty Change 分類（增加 / 減少 / 不變）—「只可增加」模式下不會出現「減少」
+    df["Safety Qty Change 分類"] = np.where(delta > 0, "增加", np.where(delta < 0, "減少", "不變"))
 
     # 建議 Safety Stock 的周轉日數，與來源「Turnday (P90D Qty)」同口徑（P90D 日均）：
     # = Recommend Safety Stock ÷ (Shop Monthly Sold Qty (P90D) ÷ 30)。
