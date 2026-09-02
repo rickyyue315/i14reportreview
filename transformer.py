@@ -96,11 +96,11 @@ COMBINED_RAW_COLS = [
     "Adj. Safety Stock",  # 表頭顯示為 Safety Stock (現時)
     "Recommend Safety Stock",
     "Safety Qty Change",
+    "Recommendation of new Safety Qty / ND",
     "Buyer reply",
     "Shop Monthly Sold Qty (P90D)",
     "Safety VS Monthly Sold Qty",
     "Projected Monthly Sold Qty",
-    "Recommendation of new Safety Qty / ND",
     "Overstock Cap (X)",
     "OOS Floor (Y)",
     "D001 Net Stock Qty (CM)",
@@ -155,6 +155,15 @@ def _safe_default_series(value, index):
     if len(index) == 0:
         return pd.Series(dtype='object')
     return pd.Series(value, index=index)
+
+
+def _nature_rate_arr(shop_nature, default_rate, tourist_rate, mix_rate):
+    # Shop Nature → 每列 rate。必須精確比對：'Non Tourist' 含 'tourist' 子字串，
+    # 用 contains 會把 Non Tourist 誤套 Tourist 倍率；其餘值（如 'Other'）歸 default。
+    arr = np.full(len(shop_nature), default_rate)
+    arr[shop_nature == "tourist"] = tourist_rate
+    arr[shop_nature == "mix"] = mix_rate
+    return arr
 
 
 def _ensure_list(val):
@@ -334,9 +343,7 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
         _default_rate = _rates.get("default", 0.50)
         _tourist_rate = _rates.get("tourist", 0.30)
         _mix_rate = _rates.get("mix", 0.40)
-        rate = np.full(len(df), _default_rate)
-        rate[shop_nature.str.contains("tourist", na=False)] = _tourist_rate
-        rate[shop_nature.str.contains("mix", na=False)] = _mix_rate
+        rate = _nature_rate_arr(shop_nature, _default_rate, _tourist_rate, _mix_rate)
         # Shop Monthly Sold Qty (P90D) 已是月均（P90D 總量 ÷ 3），直接乘 rate
         rec_2x = np.floor(monthly_sold[cond_overstock_2x] * rate[cond_overstock_2x]).clip(lower=3).astype(int)
         # If new safety qty > Adj. Safety Stock, cap at Adj. Safety Stock
@@ -398,13 +405,15 @@ def _clean_dataframe(df_input: pd.DataFrame, shop_natures: list[str] | None = No
         sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()
         mask = _safe_default_series(False, df.index)
         if "Tourist" in shop_natures:
-            mask |= sn_col.str.contains("tourist", na=False)
+            # 精確比對：'Non Tourist' 含 'tourist' 子字串，contains 會把 Non Tourist 誤當 Tourist
+            mask |= sn_col == "tourist"
         if "Mix" in shop_natures:
-            mask |= sn_col.str.contains("mix", na=False)
+            mask |= sn_col == "mix"
         if "Non Tourist" in shop_natures:
-            is_tourist_or_mix = sn_col.str.contains("tourist|mix", na=False, regex=True)
-            is_filled = sn_col.notna() & (sn_col.str.strip() != "")
-            mask |= is_filled & ~is_tourist_or_mix
+            # 非 Tourist/Mix 的其他值（如 'Other'）隨 Non Tourist 一併保留，
+            # 與倍率邏輯一致（非 tourist/mix 一律套 default 倍率）
+            is_tourist_or_mix = (sn_col == "tourist") | (sn_col == "mix")
+            mask |= (sn_col != "") & ~is_tourist_or_mix
         df = df[mask]
     return df
 
@@ -445,18 +454,28 @@ def _add_combined_recommendation_columns(
     _os_tourist = rates_overstock.get("tourist", 0.30)
     _os_mix = rates_overstock.get("mix", 0.40)
 
-    os_rate_arr = np.full(len(df), _os_default)
-    os_rate_arr[shop_nature.str.contains("tourist", na=False)] = _os_tourist
-    os_rate_arr[shop_nature.str.contains("mix", na=False)] = _os_mix
+    os_rate_arr = _nature_rate_arr(shop_nature, _os_default, _os_tourist, _os_mix)
 
     # X is the upper bound for "how much safety stock is reasonable"; it applies to
     # every row (so the combined recommendation = max(Y, Z if Z <= X else X) is well
     # defined per row), independent of whether any row currently has Overstock status.
     x_values = _compute_x(monthly_sold.values, os_rate_arr, adj_ss.values)
 
-    # OOS floor Y
+    # OOS floor Y — Projected 月銷售採加權混合：
+    #   w = mtd_days / month_total_days
+    #   Projected = w × MTD線性外推 + (1−w) × P90D月均 = sold_qty + (1−w) × P90D月均
+    # （月初 w 小，以穩定的 P90D 為主，避免頭幾日外推失真；月尾收斂至 MTD 實績）
+    # Shop Monthly Sold Qty (P90D) 已是月均（Past 90 Days ÷ 90 × 30），直接使用；
+    # 欄位整個缺失或個別列缺值（NaN）時，該列退回純 MTD 線性外推。
     if mtd_days and mtd_days > 0:
-        projected = (sold_qty / mtd_days) * month_total_days
+        w = mtd_days / month_total_days
+        linear = (sold_qty / mtd_days) * month_total_days
+        if "Shop Monthly Sold Qty (P90D)" in df.columns:
+            p90d_raw = pd.to_numeric(df["Shop Monthly Sold Qty (P90D)"], errors="coerce")
+            projected = sold_qty + (1.0 - w) * p90d_raw.fillna(0.0)
+            projected = projected.where(p90d_raw.notna(), linear)
+        else:
+            projected = linear
     else:
         projected = _safe_default_series(0.0, df.index)
 
@@ -466,9 +485,7 @@ def _add_combined_recommendation_columns(
     _oos_tourist = rates_oos.get("tourist", 0.50)
     _oos_mix = rates_oos.get("mix", 0.50)
 
-    oos_rate_arr = np.full(len(df), _oos_default)
-    oos_rate_arr[shop_nature.str.contains("tourist", na=False)] = _oos_tourist
-    oos_rate_arr[shop_nature.str.contains("mix", na=False)] = _oos_mix
+    oos_rate_arr = _nature_rate_arr(shop_nature, _oos_default, _oos_tourist, _oos_mix)
 
     y_values = np.ceil(projected.values * oos_rate_arr).clip(min=3).astype(int)
 
@@ -1707,9 +1724,7 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
     _tourist_rate = rates.get("tourist", 0.50)
     _mix_rate = rates.get("mix", 0.50)
 
-    rate_arr = np.full(len(df), _default_rate)
-    rate_arr[shop_nature.str.contains("tourist", na=False)] = _tourist_rate
-    rate_arr[shop_nature.str.contains("mix", na=False)] = _mix_rate
+    rate_arr = _nature_rate_arr(shop_nature, _default_rate, _tourist_rate, _mix_rate)
 
     is_rf = (rp_type == "RF")
     is_nd = (rp_type == "ND")

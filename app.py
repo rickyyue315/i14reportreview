@@ -329,7 +329,7 @@ with st.sidebar:
 
      **🔒 Safety Stock Review** — 全面審查 Safety Stock 設定，計算平衡建議值：
      1. **Overstock Cap (X)** = floor(月均銷售 × Overstock Rate)，上限不超過現有 Adj. Safety Stock
-     2. **OOS Floor (Y)** = ceil(MTD 預估月銷售 × OOS Rate)，最低 3
+     2. **OOS Floor (Y)** = ceil(月銷預估 × OOS Rate)，最低 3；月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均（加權混合，月初以 P90D 為主避免頭幾日外推失真，月尾收斂至 MTD；P90D 欄位缺失時退回純 MTD 線性外推）
      3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Adj. Safety Stock
      4. **Safety Qty Change** = 建議 Safety Stock − Z（正數=增加、負數=減少、零=不變）
      5. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
@@ -539,7 +539,12 @@ if uploaded_file is not None:
         )
         mtd_days = mtd_date.day
         month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
-        st.caption(f"MTD: {mtd_days}日，當月共 {month_total_days} 日")
+        _w_pct = round(mtd_days / month_total_days * 100)
+        st.caption(
+            f"MTD: {mtd_days}日，當月共 {month_total_days} 日。"
+            f"月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均（P90D 權重 {100 - _w_pct}%／MTD 權重 {_w_pct}%，"
+            "月初以穩定的 P90D 為主，隨月份推進收斂至 MTD）"
+        )
 
         st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 

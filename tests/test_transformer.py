@@ -17,6 +17,7 @@ from transformer import (
     _add_recommendation_columns,
     _add_oos_recommendation_columns,
     _add_nd_recommendation_columns,
+    _clean_dataframe,
     transform_nd,
     transform_carry,
     _build_carry_dashboard,
@@ -330,3 +331,124 @@ def test_fix7_combined_non_nd_non_p90d0_unaffected():
     assert out["Recommend Safety Stock"].tolist()[1] > 0
     # "Recommendation of new Safety Qty / ND" must be blank (not ND/0)
     assert out["Recommendation of new Safety Qty / ND"].tolist() == ["", ""]
+
+
+# ── Fix #8: Shop Nature 倍率精確比對 ─────────────────────────────────────────
+# 「Non Tourist」含 'tourist' 子字串，舊版用 str.contains 會把 Non Tourist 誤套
+# Tourist 倍率；此組測試鎖定精確比對行為。
+
+_NATURES = ["Tourist", "Non Tourist", "Mix", "Other"]
+
+
+def _nature_df(natures):
+    return _df([
+        {"SKU": str(i), "Shop Nature": n,
+         "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 999, "Shop Monthly Sold Qty (P90D)": 100,
+         "Sold Qty (CM - MTD)": 10.0}
+        for i, n in enumerate(natures)
+    ])
+
+
+def test_fix8_combined_overstock_cap_non_tourist_uses_default_rate():
+    """Overstock Cap (X): Non Tourist 必須用 default(Non Tourist) 倍率，非 Tourist 倍率."""
+    out = _add_combined_recommendation_columns(
+        _nature_df(_NATURES), _RATES_O, _RATES_P, mtd_days=15, month_total_days=30,
+        safety_mode="allow_both"
+    )
+    # X = floor(100 * rate): Tourist 30 / Non Tourist 50 / Mix 40 / Other 50
+    assert out["Overstock Cap (X)"].tolist() == [30, 50, 40, 50]
+
+
+def test_fix8_combined_oos_floor_non_tourist_uses_default_rate():
+    """OOS Floor (Y): Non Tourist 必須用 default 倍率（用互異倍率區別）."""
+    rates_oos = {"default": 0.2, "tourist": 0.6, "mix": 0.4}
+    out = _add_combined_recommendation_columns(
+        _nature_df(_NATURES), _RATES_O, rates_oos, mtd_days=15, month_total_days=30,
+        safety_mode="allow_both"
+    )
+    # Projected（混合）= 10 + 0.5*100 = 60 ; Y = ceil(60*rate): Tourist 36 / Non Tourist 12 / Mix 24 / Other 12
+    assert out["OOS Floor (Y)"].tolist() == [36, 12, 24, 12]
+
+
+def test_fix8_oos_review_rate_non_tourist_uses_default_rate():
+    """OOS Review 建議值同樣必須精確比對 Shop Nature."""
+    rates = {"default": 0.2, "tourist": 0.6, "mix": 0.4}
+    df = _df([
+        {"SKU": str(i), "Shop Nature": n, "RP Type": "RF",
+         "Adj. Safety Stock": 999, "Sold Qty (CM - MTD)": 10.0}
+        for i, n in enumerate(_NATURES)
+    ])
+    out = _add_oos_recommendation_columns(
+        df, rates, mtd_days=15, month_total_days=30,
+        safety_mode="allow_both", oos_calc_mode="mtd"
+    )
+    # Projected = 20 ; rec = ceil(20*rate): Tourist 12 / Non Tourist 4 / Mix 8 / Other 4
+    assert out["Recommendation of new Safety Qty"].tolist() == [12, 4, 8, 4]
+
+
+def test_fix8_clean_dataframe_shop_nature_exact_filter():
+    """Shop Nature 篩選必須精確比對：選 Tourist 不應帶入 Non Tourist 列."""
+    df = _nature_df(_NATURES + [""])  # 加一列空白 Shop Nature
+
+    only_tourist = _clean_dataframe(df, shop_natures=["Tourist"])
+    assert only_tourist["Shop Nature"].str.lower().tolist() == ["tourist"]
+
+    only_non_tourist = _clean_dataframe(df, shop_natures=["Non Tourist"])
+    # Non Tourist + Other（非 Tourist/Mix 之值隨 Non Tourist 保留，空白除外）
+    assert sorted(only_non_tourist["Shop Nature"].str.lower().tolist()) == ["non tourist", "other"]
+
+    all_selected = _clean_dataframe(df, shop_natures=["Tourist", "Mix", "Non Tourist"])
+    assert sorted(all_selected["Shop Nature"].str.lower().tolist()) == ["mix", "non tourist", "other", "tourist"]
+
+
+# ── Fix #9: Projected 月銷售加權混合（方案 B）────────────────────────────────
+# Projected = MTD實績 + 剩餘日數 × P90D月均（= w×MTD線性外推 + (1−w)×P90D），
+# P90D 已是月均（Past 90 Days ÷ 90 × 30）直接使用；月初避免頭幾日外推失真。
+
+def test_fix9_projected_blend_early_month_prefers_p90d():
+    """月初 MTD 只有 2 日時以 P90D 為主，而非 2 日線性外推."""
+    df = _df([
+        {"SKU": "1", "Sold Qty (CM - MTD)": 10.0, "Shop Monthly Sold Qty (P90D)": 30},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=2, month_total_days=30, safety_mode="allow_both"
+    )
+    # Projected = 10 + (28/30)*30 = 38（純線性外推會是 150）
+    assert out["Projected Monthly Sold Qty"].tolist()[0] == 38
+    # Y = ceil(38*0.5) = 19（純線性外推會是 75）
+    assert out["OOS Floor (Y)"].tolist()[0] == 19
+
+
+def test_fix9_projected_blend_converges_to_mtd_at_month_end():
+    """月尾（MTD 日數 = 當月日數）收斂至 MTD 實績，P90D 權重歸零."""
+    df = _df([
+        {"SKU": "1", "Sold Qty (CM - MTD)": 8.0, "Shop Monthly Sold Qty (P90D)": 100},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=30, month_total_days=30, safety_mode="allow_both"
+    )
+    assert out["Projected Monthly Sold Qty"].tolist()[0] == 8
+
+
+def test_fix9_projected_blend_nan_p90d_row_falls_back_to_linear():
+    """個別列 P90D 為 NaN 時，該列退回純 MTD 線性外推，其他列正常混合."""
+    df = _df([
+        {"SKU": "1", "Sold Qty (CM - MTD)": 6.0, "Shop Monthly Sold Qty (P90D)": 15},
+        {"SKU": "2", "Sold Qty (CM - MTD)": 6.0, "Shop Monthly Sold Qty (P90D)": None},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    # Row1: 6 + 0.5*15 = 13.5 → ceil 14 ; Row2 NaN → 純線性 6/15*30 = 12
+    assert out["Projected Monthly Sold Qty"].tolist() == [14, 12]
+
+
+def test_fix9_projected_missing_p90d_column_pure_linear():
+    """整個 P90D 欄位缺失時維持舊行為：純 MTD 線性外推."""
+    df = _df([{"SKU": "1", "Sold Qty (CM - MTD)": 6.0, "Shop Monthly Sold Qty (P90D)": 999}])
+    df = df.drop(columns=["Shop Monthly Sold Qty (P90D)"])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    assert out["Projected Monthly Sold Qty"].tolist()[0] == 12

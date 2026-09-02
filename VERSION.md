@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.8.10 (2026-09-02)
+
+- Fix: Shop Nature 倍率對應改為精確比對 — 舊版 `str.contains("tourist")` 會把「Non Tourist」誤套 Tourist 倍率（Non Tourist 店 Overstock 上限被 30% 而非 50% 計算），同時 Shop Nature 篩選選「Non Tourist」時實際會排除 Non Tourist 列、誤留 Other 列；修正範圍含 Safety Stock Review（Overstock Cap / OOS Floor）、Overstock Review、OOS Review 與 `_clean_dataframe` 共 5 處，新增共用 `_nature_rate_arr()`
+- Change: Safety Stock Review 的月銷預估（Projected Monthly Sold Qty）改為加權混合 — 舊版以 MTD 線性外推（MTD Sold ÷ MTD日數 × 當月日數），月初只有頭幾日數據時嚴重失真且 increase_only 模式下高估永不回落；新公式 = MTD 實績 + 剩餘日數 × P90D 月均（等價 w×MTD外推 + (1−w)×P90D，w = MTD日數/當月日數；P90D 已是月均直接使用），月初以穩定的 P90D 為主、月尾收斂至 MTD；P90D 欄位缺失或個別列缺值時退回純 MTD 線性外推（舊行為）。OOS Review 不受影響（維持 mtd / p90d 手動切換）
+- Update: Safety Stock Review RAW 欄序調整 —「Recommendation of new Safety Qty / ND」移至「Safety Qty Change」與「Buyer reply」之間（原本在「Projected Monthly Sold Qty」之後）
+- Update: Sidebar 設定、核心計算規則與 README 同步新公式說明；新增回歸測試 Fix #8（倍率精確比對 ×4）與 Fix #9（混合預估 ×4），共 54 項測試通過
+
 ## v1.8.9 (2026-09-01)
 
 - Change: Safety Stock Review RAW 改為固定 32 欄白名單 — Brand / SKU / SKU Desc / Buyer / Adj. SST / Vendor MC / Item Status / Launch Date / Item Class / Site Code / Shop Name / OM / Shop Nature / RP Type / Safety Stock (現時) / Recommend Safety Stock / Safety Qty Change / Buyer reply / Shop Monthly Sold Qty (P90D) / Safety VS Monthly Sold Qty / Projected Monthly Sold Qty / Recommendation of new Safety Qty / ND / Overstock Cap (X) / OOS Floor (Y) / D001 Net Stock Qty (CM) / Shop Stock Qty (CM) / Sold Qty (P90D) / Turnday (P90D Qty) / Sold Qty (M-2) / Sold Qty (M-1) / Sold Qty (CM - MTD) / Supply Source；移除 Item_Shop、MCH2、Net Sales、Excess、PO 等欄位
