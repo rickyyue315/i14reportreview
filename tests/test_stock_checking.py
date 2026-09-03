@@ -23,6 +23,7 @@ BASE = {
     "Buyer": "B1", "Brand": "A", "SKU": 1, "SKU Desc": "Test Product",
     "Item_Shop": "Prod-S01-ShopHK", "Site Code": "S01", "OM": "OM1",
     "Shop Nature": "Tourist", "Vendor MC": "V1", "Item Status": "A",
+    "Adj. SST": "SST1",
     "Launch Date": "2024-01-01", "Item Class": "C1", "RP Type": "RF",
     "Shop Stock Status": "Normal", "Adj. Safety Stock": 3.0,
     "Sold Qty (P90D)": 90.0, "Excess Stock Qty": 2.0,
@@ -331,14 +332,24 @@ def test_summary_one_row_per_sku_and_nature_sums():
     row300 = summary[summary["SKU"] == "300"].iloc[0]
     assert row300["Brand"] == "B2"
     assert row300["D001 Net Stock Qty (CM)"] == 10.0
-    assert row300["Tourist 加總 - Shop Stock Qty (CM)"] == 47.0
-    assert row300["Tourist 加總 - Shop Monthly Sold Qty (P90D)"] == 120.0
-    # TurnDay = 47 / 120 × 30.5
-    assert abs(row300["Tourist TurnDay"] - round(47.0 / 120.0 * 30.5, 2)) < 0.01
-    assert row300["Mix 加總 - Shop Stock Qty (CM)"] == 25.0
-    assert row300["Non Tourist 加總 - Shop Stock Qty (CM)"] == 50.0  # 20 + 30
-    assert row300["Non Tourist 加總 - Shop Monthly Sold Qty (P90D)"] == 80.0  # 30 + 50
+    assert row300["Tourist 加總 - Shop Stock Qty (CM)"] == 47
+    assert row300["Tourist 加總 - Shop Monthly Sold Qty (P90D)"] == 120
+    # TurnDay 取整：47 / 120 × 30.5 = 11.95 → 12
+    assert row300["Tourist TurnDay"] == 12
+    assert row300["Mix 加總 - Shop Stock Qty (CM)"] == 25
+    assert row300["Non Tourist 加總 - Shop Stock Qty (CM)"] == 50  # 20 + 30
+    assert row300["Non Tourist 加總 - Shop Monthly Sold Qty (P90D)"] == 80  # 30 + 50
     assert "由Tourist 店舖預計調出數量" not in summary.columns
+    # Buyer / Adj. SST 在 SKU Desc 之後（同 SKU 首個非空值）
+    assert list(summary.columns).index("Buyer") == list(summary.columns).index("SKU Desc") + 1
+    assert list(summary.columns).index("Adj. SST") == list(summary.columns).index("SKU Desc") + 2
+    assert row300["Buyer"] == "B1"
+    assert row300["Adj. SST"] == "SST1"
+    # 佔比：庫存合計 122、月銷合計 240
+    assert abs(row300["Tourist 加總 - Shop Stock Qty (CM) %"] - round(47 / 122, 4)) < 1e-9
+    assert abs(row300["Tourist 加總 - Shop Monthly Sold Qty (P90D) %"] - 0.5) < 1e-9
+    assert abs(row300["Mix 加總 - Shop Stock Qty (CM) %"] - round(25 / 122, 4)) < 1e-9
+    assert abs(row300["Non Tourist 加總 - Shop Monthly Sold Qty (P90D) %"] - round(80 / 240, 4)) < 1e-9
 
 
 def test_summary_transfer_prompt_and_transfer_out_sums():
@@ -396,9 +407,26 @@ def test_generate_excel():
     assert wb.sheetnames == ["Summary", "RAW", "調貨分析摘要"]
     ws = wb["Summary"]
     headers = [c.value for c in next(ws.iter_rows(min_row=5, max_row=5))]
-    for col in ["Brand", "SKU", "強制調貨提示", "由Non Tourist 店舖預計調出數量", "由Mix 店舖預計調出數量"]:
+    for col in ["Brand", "SKU", "Buyer", "Adj. SST", "強制調貨提示",
+                "由Non Tourist 店舖預計調出數量", "由Mix 店舖預計調出數量"]:
         assert col in headers
+    # Buyer / Adj. SST 緊隨 SKU Desc 之後
+    assert headers.index("Buyer") == headers.index("SKU Desc") + 1
+    assert headers.index("Adj. SST") == headers.index("SKU Desc") + 2
+    # 共 25 欄；Q-V 為佔比欄（%），其餘數值欄取整
+    assert len(headers) == 25
     assert ws.max_row >= 6
+    wb2 = load_workbook(buf, data_only=False)
+    ws2 = wb2["Summary"]
+    # H,I 加總取整格式；J TurnDay 為 ROUND 活公式；Q 佔比為 % 格式
+    assert ws2.cell(row=6, column=8).number_format == "#,##0"
+    assert ws2.cell(row=6, column=9).number_format == "#,##0"
+    assert str(ws2.cell(row=6, column=10).value).startswith("=ROUND(")
+    assert ws2.cell(row=6, column=10).number_format == "#,##0"
+    assert ws2.cell(row=6, column=17).number_format == "0.00%"
+    # 群組標題
+    assert ws2.cell(row=3, column=8).value == "Shop Nature"
+    assert ws2.cell(row=3, column=17).value == "各 Nature 佔比 (%)"
     ws_raw = wb["RAW"]
     raw_headers = [c.value for c in next(ws_raw.iter_rows(min_row=1, max_row=1))]
     for col in ["需要調貨", "調入需求量 (補到14日)", "實際調入量", "可轉出貨量 (Non Tourist)", "調貨來源 (Site Code)"]:

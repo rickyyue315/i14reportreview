@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.9.6 (2026-09-03)
+
+- New: Stock Checking Summary 在 SKU Desc 後新增 **Buyer、Adj. SST** 欄（同 SKU 取首個非空值；共 25 欄 A-Y）
+- Change: Summary 除佔比 (%) 外一律取整 — 加總庫存/月銷 `#,##0`（月銷四捨五入）、TurnDay 改活公式 `=ROUND(加總庫存/加總月銷*30.5,0)`（`#,##0`，月銷 0 留空）；summary DataFrame 同步取整，佔比維持 0-1 小數（Excel `0.00%`）
+- Style: Summary 可讀性優化 — 文字欄靠左、數值置中、間隔列淺灰底紋、表頭列高（3/4/5 列）+ 自動換行、合併儲存格完整邊框、空白 TurnDay 保留邊框網格；凍結表頭 + 自動篩選維持
+- Update: tests/test_stock_checking.py 更新（TurnDay 取整、Buyer/Adj. SST 位置、佔比值、Excel 格式/公式/群組標題斷言），共 103 項測試通過
+
 ## v1.9.5 (2026-09-03)
 
 - New: Stock Checking Summary 新增 **各 Nature 佔比 (%)**（6 欄）— 每個 SKU 按 Shop Nature 計算「加總 - Shop Stock Qty (CM)」佔比與「加總 - Shop Monthly Sold Qty (P90D)」佔比分母 = Tourist + Mix + Non Tourist 三者合計（合計 0 留空）；summary DataFrame 存 0-1 小數，Excel 以活公式 `=IF(合計=0,"",該Nature加總/合計)` + `0.00%` 格式顯示
