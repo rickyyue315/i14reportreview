@@ -6423,12 +6423,64 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None):
     _auto_width(ws)
 
 
+def _stock_checking_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
+    """Stock Checking Dashboard 指標（與 Streamlit Transfer Analysis Dashboard 同口徑）。
+
+    回傳 (row1_metrics, row2_metrics)，供 _write_metric_cards 使用。
+    stats 缺失時（舊呼叫相容）直接由 raw 匯總。
+    """
+    total_rows = len(raw) if raw is not None else 0
+    if stats is None:
+        stats = {}
+    need_col = raw.get("需要調貨", pd.Series(dtype=object)) if raw is not None else pd.Series(dtype=object)
+    need_mask = (need_col.astype(str) == "是")
+    need_rows = int(stats.get("need_rows", int(need_mask.sum())))
+    if "need_skus" in stats:
+        need_skus = int(stats["need_skus"])
+    elif raw is not None and "SKU" in raw.columns and need_mask.any():
+        need_skus = int(raw.loc[need_mask, "SKU"].nunique())
+    else:
+        need_skus = 0
+    demand_col = "調入需求量 (補到14日)"
+    actual_col = "實際調入量"
+    gap_col = "調入缺口"
+    out_col = "轉出量"
+    total_demand = int(stats.get("total_demand", int(_safe_numeric(raw.get(demand_col, _safe_default_series(0, raw.index))).sum()) if raw is not None else 0))
+    total_actual = int(stats.get("total_actual", int(_safe_numeric(raw.get(actual_col, _safe_default_series(0, raw.index))).sum()) if raw is not None else 0))
+    total_gap = int(stats.get("total_gap", int(_safe_numeric(raw.get(gap_col, _safe_default_series(0, raw.index))).sum()) if raw is not None else 0))
+    if "nt_transfer" in stats and "mix_transfer" in stats:
+        nt_transfer = int(stats["nt_transfer"])
+        mix_transfer = int(stats["mix_transfer"])
+    elif raw is not None and "Shop Nature" in raw.columns and out_col in raw.columns:
+        _out = _safe_numeric(raw.get(out_col, _safe_default_series(0, raw.index)))
+        nt_transfer = int(_out[raw["Shop Nature"] == "Non Tourist"].sum())
+        mix_transfer = int(_out[raw["Shop Nature"] == "Mix"].sum())
+    else:
+        nt_transfer = int(stats.get("nt_transfer", 0))
+        mix_transfer = int(stats.get("mix_transfer", 0))
+
+    row1_metrics = [
+        ("需要調貨列數", need_rows, "Tourist 加總 TurnDay & D001 皆低於門檻的 SKU", "EF4444"),
+        ("需調貨 SKU 數", need_skus, "符合條件的去重 SKU 總數", "F59E0B"),
+        ("調入需求量", total_demand, "補到 14 日周轉的總需求（件）", "3B82F6"),
+        ("實際調入量", total_actual, "NT 優先、Mix 補足後的總調入（件）", "10B981"),
+    ]
+    row2_metrics = [
+        ("Non Tourist 轉出量", nt_transfer, "優先由 Non Tourist 鋪轉出（件）", "8B5CF6"),
+        ("Mix 轉出量", mix_transfer, "NT 不足時由 Mix 鋪補足（件）", "06B6D4"),
+        ("無法足額缺口", total_gap, "來源可轉出量不足的缺口（件）", "F97316"),
+        ("總明細行數", total_rows, "RAW 完整明細總行數", "64748B"),
+    ]
+    return row1_metrics, row2_metrics
+
+
 def generate_excel_stock_checking(
     raw: pd.DataFrame,
     summary: pd.DataFrame | None = None,
+    stats: dict | None = None,
     progress_callback=None,
 ) -> BytesIO:
-    """Stock Checking 輸出：Summary（SKU 級彙總）+ RAW（原始欄位 + 調貨計算欄位）。"""
+    """Stock Checking 輸出：Summary（SKU 級彙總）+ RAW（原始欄位 + 調貨計算欄位）+ 調貨分析摘要（Dashboard）。"""
     wb = Workbook()
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
@@ -6440,7 +6492,21 @@ def generate_excel_stock_checking(
     if progress_callback:
         progress_callback(0.35, "建立 RAW...")
     ws_raw = wb.create_sheet(title="RAW")
-    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.35, progress_end=0.9)
+    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.35, progress_end=0.85)
+
+    if progress_callback:
+        progress_callback(0.88, "建立調貨分析摘要工作表...")
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    desc_font = Font(size=9, color="6B7280", italic=True)
+    ws_dashboard = wb.create_sheet(title="調貨分析摘要")
+    row1_metrics, row2_metrics = _stock_checking_dashboard_metrics(raw, stats)
+    _write_metric_cards(
+        ws_dashboard, "調貨分析摘要 (Transfer Analysis Dashboard)",
+        row1_metrics, row2_metrics, thin_border, desc_font, progress_callback,
+    )
 
     if progress_callback:
         progress_callback(0.95, "正在儲存 Excel 檔案...")

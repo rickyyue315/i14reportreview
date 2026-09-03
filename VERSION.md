@@ -1,6 +1,10 @@
 # 版本記錄
 
-## v1.9.3 (2026-09-03)
+## v1.9.4 (2026-09-03)
+
+- New: Stock Checking 輸出新增 **調貨分析摘要** 工作表（Dashboard，主題色指標卡，與 Streamlit Transfer Analysis Dashboard 同口徑）— 兩排共 8 卡：需要調貨列數 / 需調貨 SKU 數 / 調入需求量 / 實際調入量 / Non Tourist 轉出量 / Mix 轉出量 / 無法足額缺口 / 總明細行數；沿用 `_write_metric_cards()` 格局（其餘模式的「分析摘要」工作表同式）
+- Change: `generate_excel_stock_checking()` 新增 `stats` 參數（由 `transform_stock_checking()` 回傳的統計直傳；缺省時由 RAW 匯總，舊呼叫相容）；工作表順序為 Summary → RAW → 調貨分析摘要
+- Update: app.py 傳入 `_stats`、Sidebar 說明與核心計算規則同步；tests/test_stock_checking.py 更新 Excel 期望（×2：三表結構 + Dashboard 指標值校對），共 103 項測試通過
 
 - Change: Stock Checking 新增供應端門檻（SKU 級）— 該 SKU 的 Mix 加總 TurnDay 與 Non Tourist 加總 TurnDay **皆低於門檻**（UI 可調，預設 14 日）時，理論上無貨可調，整個 SKU **無須標示「需要調貨」**；此前只檢查 Tourist 加總 TurnDay 與 D001
 - Change: 單一 Nature 的 SKU 級加總 TurnDay < 門檻時，該 Nature 視為無貨可調 — 其店列「可轉出貨量」歸零、不參與調出分配（即使個別店有 14 日超額）；「無銷售但有存貨」的店不受影響（加總月銷 0 → TurnDay 無限 → 視為可釋放）

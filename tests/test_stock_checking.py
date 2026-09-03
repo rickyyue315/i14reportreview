@@ -393,7 +393,7 @@ def test_generate_excel():
     buf = generate_excel_stock_checking(raw, summary)
     assert isinstance(buf, BytesIO)
     wb = load_workbook(buf, read_only=True)
-    assert wb.sheetnames == ["Summary", "RAW"]
+    assert wb.sheetnames == ["Summary", "RAW", "調貨分析摘要"]
     ws = wb["Summary"]
     headers = [c.value for c in next(ws.iter_rows(min_row=5, max_row=5))]
     for col in ["Brand", "SKU", "強制調貨提示", "由Non Tourist 店舖預計調出數量", "由Mix 店舖預計調出數量"]:
@@ -403,3 +403,45 @@ def test_generate_excel():
     raw_headers = [c.value for c in next(ws_raw.iter_rows(min_row=1, max_row=1))]
     for col in ["需要調貨", "調入需求量 (補到14日)", "實際調入量", "可轉出貨量 (Non Tourist)", "調貨來源 (Site Code)"]:
         assert col in raw_headers
+    ws_dash = wb["調貨分析摘要"]
+    title = ws_dash.cell(row=1, column=1).value
+    assert title and "Transfer Analysis Dashboard" in str(title)
+    r1 = [ws_dash.cell(row=3, column=c).value for c in range(1, 5)]
+    r2 = [ws_dash.cell(row=7, column=c).value for c in range(1, 5)]
+    for label in ["需要調貨列數", "需調貨 SKU 數", "調入需求量", "實際調入量"]:
+        assert label in r1
+    for label in ["Non Tourist 轉出量", "Mix 轉出量", "無法足額缺口", "總明細行數"]:
+        assert label in r2
+
+
+def test_generate_excel_dashboard_matches_stats_no_stats_arg():
+    # 不傳 stats 時，Dashboard 指標由 raw 匯總（與有 stats 時一致）
+    df = _df([
+        {"SKU": 100, "Site Code": "T01", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
+         "Shop Monthly Sold Qty (P90D)": 120.0,
+         "Turnday (P90D Qty)": 10.0, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 100, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Shop Monthly Sold Qty (P90D)": 30.0, "Shop Stock Qty (CM)": 30.0},
+    ])
+    raw, summary, stats, _ = transform_stock_checking(df)
+    buf_no_stats = generate_excel_stock_checking(raw, summary)
+    buf_with_stats = generate_excel_stock_checking(raw, summary, stats)
+    for buf in (buf_no_stats, buf_with_stats):
+        wb = load_workbook(buf, read_only=True)
+        ws = wb["調貨分析摘要"]
+        vals = {
+            ws.cell(row=3, column=c).value: ws.cell(row=4, column=c).value
+            for c in range(1, 5)
+        } | {
+            ws.cell(row=7, column=c).value: ws.cell(row=8, column=c).value
+            for c in range(1, 5)
+        }
+        assert vals["需要調貨列數"] == stats["need_rows"]
+        assert vals["需調貨 SKU 數"] == stats["need_skus"]
+        assert vals["調入需求量"] == stats["total_demand"]
+        assert vals["實際調入量"] == stats["total_actual"]
+        assert vals["Non Tourist 轉出量"] == stats["nt_transfer"]
+        assert vals["Mix 轉出量"] == stats["mix_transfer"]
+        assert vals["無法足額缺口"] == stats["total_gap"]
+        assert vals["總明細行數"] == len(raw)

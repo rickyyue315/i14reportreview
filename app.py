@@ -282,7 +282,7 @@ with st.sidebar:
     - 調入需求量 = 補到 14 日周轉：ceil(P90D 日均 × 14) − 現有店舖庫存
     - Mix / Non Tourist 鋪可轉出貨量 = 超過 14 日周轉的部分（無銷售但有存貨全數可釋放，RF 與 ND 店皆可）
     - 分配優先性：同一 SKU 的調貨需求先由 Non Tourist 鋪轉出，不足再由 Mix 鋪補足
-    - 輸出：Summary（SKU 彙總：各 Nature 庫存/月銷加總、TurnDay、強制調貨提示、NT/Mix 預計調出量）+ RAW（原始欄位 + 調貨標示、調入需求量、實際調入量、調入缺口、可轉出貨量、轉出量、調貨來源）
+    - 輸出：Summary（SKU 彙總：各 Nature 庫存/月銷加總、TurnDay、強制調貨提示、NT/Mix 預計調出量）+ RAW（原始欄位 + 調貨標示、調入需求量、實際調入量、調入缺口、可轉出貨量、轉出量、調貨來源）+ 調貨分析摘要（Dashboard：8 項指標卡）
     """)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -363,7 +363,8 @@ with st.sidebar:
       2. **調入需求量** = ceil(P90D / 90 × 14) − Shop Stock Qty (CM)（P90D = Sold Qty (P90D)，90 日總量換算日均 × 14 日）；只為已標示「需要調貨」的 SKU 計算，個別 Tourist 店需求 ≤ 0 不標示
       3. **可轉出貨量（Mix / Non Tourist 來源店）** = max(0, Shop Stock Qty (CM) − P90D / 90 × 14)；「無銷售但有存貨」全數可釋放；RP Type 為 RF 與 ND 的店皆可作為來源；該 Nature 的 SKU 級加總 TurnDay < 門檻時視為無貨可調（可轉出量歸零）
       4. **分配優先** = 按 SKU 彙總調入需求，Non Tourist 店可轉出量優先，不足部分由 Mix 店補足；需求列按需求量大→小依序分配
-      5. **輸出** = Summary（SKU 級彙總：各 Nature 庫存/月銷加總、TurnDay = 加總庫存 ÷ 加總月銷 × 30.5、強制調貨提示、由 NT/Mix 店舖預計調出數量）+ RAW 完整明細（原始欄位全部保留），RAW 新增：需要調貨 / 調入需求量 (補到14日) / 實際調入量 / 調入缺口 / 可轉出貨量 (Mix) / 可轉出貨量 (Non Tourist) / 轉出量 / 調貨來源 (Site Code)
+       5. **輸出** = Summary（SKU 級彙總：各 Nature 庫存/月銷加總、TurnDay = 加總庫存 ÷ 加總月銷 × 30.5、強制調貨提示、由 NT/Mix 店舖預計調出數量）+ RAW 完整明細（原始欄位全部保留），RAW 新增：需要調貨 / 調入需求量 (補到14日) / 實際調入量 / 調入缺口 / 可轉出貨量 (Mix) / 可轉出貨量 (Non Tourist) / 轉出量 / 調貨來源 (Site Code) + 調貨分析摘要（Dashboard：需要調貨列數 / 需調貨 SKU 數 / 調入需求量 / 實際調入量 / NT 轉出量 / Mix 轉出量 / 無法足額缺口 / 總明細行數）
+
 
       所有模式均自動生成採購與品牌的交叉匯總樞紐分析表。
     """)
@@ -1740,7 +1741,7 @@ if uploaded_file is not None:
                         d001_threshold=int(d001_threshold),
                         progress_callback=_cb_transform,
                     )
-                    buf = generate_excel_stock_checking(raw_df, summary_df, progress_callback=_cb_excel)
+                    buf = generate_excel_stock_checking(raw_df, summary_df, _stats, progress_callback=_cb_excel)
                     st.session_state.stock_chk_processed = True
                     st.session_state.stock_chk_summary_df = summary_df
                     st.session_state.stock_chk_raw_df = raw_df
