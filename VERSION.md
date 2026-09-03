@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.9.3 (2026-09-03)
+
+- Change: Stock Checking 新增供應端門檻（SKU 級）— 該 SKU 的 Mix 加總 TurnDay 與 Non Tourist 加總 TurnDay **皆低於門檻**（UI 可調，預設 14 日）時，理論上無貨可調，整個 SKU **無須標示「需要調貨」**；此前只檢查 Tourist 加總 TurnDay 與 D001
+- Change: 單一 Nature 的 SKU 級加總 TurnDay < 門檻時，該 Nature 視為無貨可調 — 其店列「可轉出貨量」歸零、不參與調出分配（即使個別店有 14 日超額）；「無銷售但有存貨」的店不受影響（加總月銷 0 → TurnDay 無限 → 視為可釋放）
+- New: RAW 新增「Mix 加總 TurnDay」「Non Tourist 加總 TurnDay」欄（SKU 級，與 Summary 同值），連同「Tourist 加總 TurnDay」方便核對標示與供應判定
+- Update: Sidebar 說明、核心計算規則、README 同步；tests/test_stock_checking.py 新增供應門檻測試（×2：兩 Nature 皆低於門檻不標示 / 單一 Nature 低於門檻被歸零另一 Nature 正常調出），共 102 項測試通過
+
 ## v1.9.2 (2026-09-03)
 
 - Change: Stock Checking 觸發條件改為 **SKU 級判定** — 以 Summary 同口徑的「Tourist 加總 TurnDay」（各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5）< 門檻（UI 可調，預設 14 日）且 D001 Net Stock Qty (CM) < 門檻（UI 可調，預設 100 件），**同時符合才標示「需要調貨」**；此前以每列 Turnday (P90D Qty) 個別判定，會出現「個別店 TurnDay 低但該 SKU Tourist 加總 TurnDay 達標（無須調貨）」卻被標示的情況

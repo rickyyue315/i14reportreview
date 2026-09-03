@@ -103,6 +103,56 @@ def test_turnday_invalid_flag_not_trigger():
     assert (raw["需要調貨"] == "").all()
 
 
+def test_both_sources_below_threshold_no_flag():
+    # Mix 加總 TurnDay = 25/61×30.5 = 12.5 < 14、NT 加總 = 25/61×30.5 = 12.5 < 14
+    # → 理論上無貨可調，即使 Tourist 加總 TurnDay 5 < 14 且 D001 < 100 亦不標示
+    # Mix/NT 個別店有 14 日超額（20 − 14 = 6）但被 Nature 級門檻歸零
+    df = _df([
+        {"SKU": 600, "Site Code": "TA", "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Turnday (P90D Qty)": 5.0, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 600, "Site Code": "MA", "Shop Nature": "Mix",
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Shop Stock Qty (CM)": 20.0},
+        {"SKU": 600, "Site Code": "MB", "Shop Nature": "Mix",
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Shop Stock Qty (CM)": 5.0},
+        {"SKU": 600, "Site Code": "NA", "Shop Nature": "Non Tourist",
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Shop Stock Qty (CM)": 20.0},
+        {"SKU": 600, "Site Code": "NB", "Shop Nature": "Non Tourist",
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Shop Stock Qty (CM)": 5.0},
+    ])
+    raw, _, stats, _ = transform_stock_checking(df)
+    assert stats["need_rows"] == 0
+    assert (raw["需要調貨"] == "").all()
+    assert (raw["可轉出貨量 (Mix)"] == 0).all()
+    assert (raw["可轉出貨量 (Non Tourist)"] == 0).all()
+    assert (raw["Mix 加總 TurnDay"] == 12.5).all()
+    assert (raw["Non Tourist 加總 TurnDay"] == 12.5).all()
+
+
+def test_single_source_below_threshold_gated_other_donates():
+    # Mix 加總 TurnDay 12.5 < 14 → Mix 可轉出量歸零（個別店超額 6 件也不調出）
+    # NT 加總 TurnDay 30 ≥ 14 → 正常供應；Tourist 需求 9 全由 NT 調出
+    df = _df([
+        {"SKU": 700, "Site Code": "TA", "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
+         "Shop Monthly Sold Qty (P90D)": 120.0,
+         "Turnday (P90D Qty)": 10.0, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 700, "Site Code": "MA", "Shop Nature": "Mix",
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Shop Stock Qty (CM)": 20.0},
+        {"SKU": 700, "Site Code": "MB", "Shop Nature": "Mix",
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Shop Stock Qty (CM)": 5.0},
+        {"SKU": 700, "Site Code": "NA", "Shop Nature": "Non Tourist",
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Shop Stock Qty (CM)": 30.0},
+    ])
+    raw, _, stats, _ = transform_stock_checking(df)
+    assert stats["need_rows"] == 1
+    assert int(stats["nt_transfer"]) == 9
+    assert int(stats["mix_transfer"]) == 0
+    mix_rows = raw[raw["Shop Nature"] == "Mix"]
+    assert (mix_rows["可轉出貨量 (Mix)"] == 0).all()
+    assert (mix_rows["轉出量"] == 0).all()
+    nt_row = raw[raw["Site Code"] == "NA"].iloc[0]
+    assert int(nt_row["轉出量"]) == 9
+
+
 def test_demand_positive_required():
     # 庫存已達 14 日理想存量 → 需求 = 0 → 不觸發
     df = _df([

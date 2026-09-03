@@ -6034,6 +6034,8 @@ def _stock_checking_new_columns(raw: pd.DataFrame) -> list[str]:
     """Stock Checking 新增的計算欄位清單（存在才輸出，供測試與 Excel 使用）。"""
     cols = [
         "Tourist 加總 TurnDay",
+        "Mix 加總 TurnDay",
+        "Non Tourist 加總 TurnDay",
         "需要調貨",
         "調入需求量 (補到14日)",
         "實際調入量",
@@ -6140,12 +6142,13 @@ def transform_stock_checking(
 
     - 觸發條件（同時符合才標示）：該 SKU 的「Tourist 加總 TurnDay」
       （= 各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5，與 Summary 同口徑）
-      < Turnday 門檻，且 D001 < 門檻。加總 TurnDay ≥ 門檻的 SKU 一律無須調貨。
+      < Turnday 門檻，且 D001 < 門檻，且 Mix / Non Tourist 至少一個 Nature 的加總 TurnDay ≥ 門檻（有貨可調）。
+      加總 TurnDay ≥ 門檻的 SKU 一律無須調貨；Mix 與 Non Tourist 加總 TurnDay 皆低於門檻時視為無貨可調，不標示。
     - 需求端：已標示 SKU 的 Tourist 店列，補到 14 日周轉的需求 > 0
       → 標示「需要調貨」，調入需求量 = ceil(P90D / 90 × 14) − Shop Stock Qty (CM)；RAW 只為已標示 SKU 計算調貨數量。
     - 供應端：Mix / Non Tourist 店列的可轉出貨量（14 日超額標準，與 Stock Impact 模式一致）：
       可轉出 = max(0, Shop Stock Qty (CM) − P90D / 90 × 14)；「無銷售但有存貨」全數可釋放。
-      RP Type 為 RF 與 ND 皆可作為來源。
+      該 Nature 的 SKU 級加總 TurnDay < 門檻時，該 Nature 視為無貨可調（可轉出量歸零）。RP Type 為 RF 與 ND 皆可作為來源。
     - 分配：按 SKU 彙總需求，Non Tourist 店優先，不足再由 Mix 店補足；需求列按需求量大→小依序分配。
     """
     if progress_callback:
@@ -6195,27 +6198,37 @@ def transform_stock_checking(
     no_sale_has_stock = (sold_val <= 0) & (cm_stock_val > 0)
     ideal_14d = sold_val / 90.0 * 14
 
-    # ── SKU 級 Tourist 加總 TurnDay（與 Summary 同口徑：加總庫存 ÷ 加總月銷 × 30.5）──
+    # ── SKU 級各 Nature 加總 TurnDay（與 Summary 同口徑：加總庫存 ÷ 加總月銷 × 30.5）──
     if _resolve_column_name("Shop Monthly Sold Qty (P90D)", avail) is not None:
         msold_monthly = _safe_numeric(df["Shop Monthly Sold Qty (P90D)"])
     else:
         # 缺月銷欄位時以 Sold Qty (P90D) 換算（P90D 為 90 日總量 → 月銷 = /90 × 30.5）
         msold_monthly = sold_p90d / 90.0 * 30.5
-        warnings.append("來源檔案缺少「Shop Monthly Sold Qty (P90D)」，Tourist 加總 TurnDay 改以 Sold Qty (P90D) 換算。")
+        warnings.append("來源檔案缺少「Shop Monthly Sold Qty (P90D)」，加總 TurnDay 改以 Sold Qty (P90D) 換算。")
     msold_val = msold_monthly.to_numpy(dtype=float)
-    t_stock_s = pd.Series(np.where(is_tourist, cm_stock_val, 0.0), index=df.index)
-    t_msold_s = pd.Series(np.where(is_tourist, msold_val, 0.0), index=df.index)
     sku_key = df["SKU"] if "SKU" in df.columns else _safe_default_series(None, idx)
-    agg_stock = t_stock_s.groupby(sku_key).transform("sum")
-    agg_msold = t_msold_s.groupby(sku_key).transform("sum")
-    with np.errstate(divide="ignore", invalid="ignore"):
-        sku_tourist_turnday = np.where(agg_msold.to_numpy() > 0,
-                                       agg_stock.to_numpy() / agg_msold.to_numpy() * 30.5,
-                                       np.inf)
-    df["Tourist 加總 TurnDay"] = np.round(np.where(np.isfinite(sku_tourist_turnday), sku_tourist_turnday, np.nan), 2)
 
-    mix_excess = np.where(is_mix, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0)
-    nt_excess = np.where(is_nt, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0)
+    def _sku_nature_turnday(nature_mask: np.ndarray) -> np.ndarray:
+        s_stock = pd.Series(np.where(nature_mask, cm_stock_val, 0.0), index=df.index)
+        s_msold = pd.Series(np.where(nature_mask, msold_val, 0.0), index=df.index)
+        agg_stock = s_stock.groupby(sku_key).transform("sum")
+        agg_msold = s_msold.groupby(sku_key).transform("sum")
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(agg_msold.to_numpy() > 0,
+                            agg_stock.to_numpy() / agg_msold.to_numpy() * 30.5,
+                            np.inf)
+
+    sku_tourist_turnday = _sku_nature_turnday(is_tourist)
+    sku_mix_turnday = _sku_nature_turnday(is_mix)
+    sku_nt_turnday = _sku_nature_turnday(is_nt)
+    for label, td in (("Tourist", sku_tourist_turnday), ("Mix", sku_mix_turnday), ("Non Tourist", sku_nt_turnday)):
+        df[f"{label} 加總 TurnDay"] = np.round(np.where(np.isfinite(td), td, np.nan), 2)
+
+    # 供應門檻：Nature 加總 TurnDay < 門檻 → 該 Nature 理論上無貨可調，可轉出量歸零
+    mix_pool_ok = sku_mix_turnday >= turnday_threshold   # inf（無銷售）→ 有存貨可釋放
+    nt_pool_ok = sku_nt_turnday >= turnday_threshold
+    mix_excess = np.where(mix_pool_ok, np.where(is_mix, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0), 0)
+    nt_excess = np.where(nt_pool_ok, np.where(is_nt, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0), 0)
     df["可轉出貨量 (Mix)"] = mix_excess.astype(int)
     df["可轉出貨量 (Non Tourist)"] = nt_excess.astype(int)
 
@@ -6224,9 +6237,10 @@ def transform_stock_checking(
     ttd_np = pd.Series(sku_tourist_turnday, index=df.index).to_numpy(dtype=float)
     need_mask = (
         is_tourist
-        & (ttd_np < turnday_threshold)   # 加總 TurnDay ≥ 門檻（含月銷 0 → inf、NaN）→ 無須調貨
+        & (ttd_np < turnday_threshold)   # Tourist 加總 TurnDay ≥ 門檻（含月銷 0 → inf、NaN）→ 無須調貨
         & (d001_np < d001_threshold)
         & (demand > 0)
+        & (mix_pool_ok | nt_pool_ok)     # Mix 與 Non Tourist 加總 TurnDay 皆低於門檻 → 無貨可調，不標示
     )
     need_series = pd.Series(need_mask, index=df.index)
 
