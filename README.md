@@ -20,7 +20,10 @@
 ## 系統架構
 
 ```
-├── app.py              # Streamlit 主應用程式
+├── app.py              # 導航入口（頁面設定、共用 CSS、多頁導航）
+├── views/
+│   ├── analyzer_page.py    # 分析工具主頁（上傳、模式、執行、看板）
+│   └── usage_page.py       # 使用說明頁（各模式說明與核心計算規則）
 ├── transformer.py      # 資料轉換、計算與 Excel 產生邏輯
 ├── version.py          # 版本號
 ├── requirements.txt    # Python 依賴
