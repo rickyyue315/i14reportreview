@@ -1,17 +1,18 @@
 # I14 報表轉換與分析系統
 
-自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）與 **Safety Stock Review**（安全庫存審查）五種模式。
+自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**Safety Stock Review**（安全庫存審查）與 **Safety Stock x NetStock Review**（調貨反饋 Safety 混合）等多種模式。
 
 ## 功能概述
 
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / Safety Stock Review / Stock Checking |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / Safety Stock Review / Stock Checking / Safety Stock x NetStock Review |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
 | Stock Checking 分析 | D001 倉庫少貨且 Tourist 鋪 Turnday < 門檻 → 標示調貨需求，從 Mix / Non Tourist 鋪分配可轉出貨量（Non Tourist 優先） |
+| Safety Stock x NetStock | 同一次執行 Safety Stock Review + Stock Checking，調貨結果反饋為 Safety 診斷（調貨後庫存 / Safety 缺口 / 調貨後 TurnDay），不改寫 Recommend Safety Stock |
 | 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式、調貨門檻 |
 | 視覺化看板 | 即時顯示統計指標與交叉分析表 |
 | Excel 導出 | 一鍵下載含 RAW、Shop Stock Status、By Shop、分析摘要之美化報表 |
@@ -144,6 +145,23 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 - **RAW** — 原始欄位全部保留並新增：Tourist / Mix / Non Tourist 加總 TurnDay / 需要調貨 / 調入需求量 (補到14日) / 實際調入量 / 調入缺口 / 可轉出貨量 (Mix) / 可轉出貨量 (Non Tourist) / 轉出量 / 調貨來源 (Site Code)
 - **調貨分析摘要** — Dashboard 指標卡（與 Streamlit 看板同口徑）：需要調貨列數 / 需調貨 SKU 數 / 調入需求量 / 實際調入量 / Non Tourist 轉出量 / Mix 轉出量 / 無法足額缺口 / 總明細行數
 
+### Safety Stock x NetStock Review（調貨反饋 Safety 混合）
+
+在同一次執行中合併 **Safety Stock Review** 與 **Stock Checking** 兩套既有引擎；調貨結果只做「反饋診斷」，**不修改** Recommend Safety Stock：
+
+1. **Safety 段** — 與 Safety Stock Review 完全同公式（Overstock Cap (X) × OOS Floor (Y) → 建議 Safety Stock；只可增加 / 可加可減；New SKU 保護；ND 加註），MTD 日期與 Overstock / OOS Rate 全數可調
+2. **調貨段** — 與 Stock Checking 完全同規則：SKU 級 Tourist 加總 TurnDay < 門檻（預設 14）且 D001 < 門檻（預設 100）且有貨可調 → 標示需要調貨；補到 14 日周轉，Non Tourist 優先再由 Mix 補足（目標日數固定 14）
+3. **反饋欄位**（不改 Safety 建議，只標記缺口）：
+   - `調貨後庫存 = Shop Stock Qty (CM) + 實際調入量 − 轉出量`
+   - `調貨前 Safety 缺口 = max(0, Recommend Safety Stock − 原始庫存)`
+   - `調貨後 Safety 缺口 = max(0, Recommend Safety Stock − 調貨後庫存)`（正值 = 調貨後仍不足）
+   - `調貨後 TurnDay = 調貨後庫存 ÷ Shop Monthly Sold Qty (P90D) × 30.5`（月銷 0 留空）
+4. **Shop Nature** — 固定保留三種；Other / 空白 / 大小寫差異一律正規化為 Non Tourist（映射列數列入 warning）；不做母體篩選 — 調貨供需需要同時看到 Tourist 需求與 Mix/Non Tourist 來源
+5. **輸入檢核** — 混合必要欄位嚴格檢核：基礎四欄 + Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D) / Sold Qty (CM - MTD)，缺任一即停止；欄名前後空格自動正規化；Shop Stock Qty (CM) 必須為整數件數（小數即拒絕）；D001 逐列以 Net → Stock 回補（空白視為 0），月銷單列空白以 Sold Qty (P90D) 換算，兩者皆列 warning
+6. **RAW 稽核欄位** — 新增 `D001 Effective Stock Qty (CM)`（實際採用的 D001 值）與原始 D001 Stock，以便核查 fallback
+
+輸出包含 **8 個工作表**：RAW（共用；Safety 白名單 + 調貨欄位 + 反饋欄位）、Shop Stock Status、By Shop、SUMMARY、Safety Stock 數據分析摘要、Summary（調貨）、調貨分析摘要、Hybrid Summary（調貨反饋 Safety，SKU 級調貨前後庫存與 Safety 缺口對照）。
+
 ## Excel 輸出結構
 
 | 工作表 | 說明 |
@@ -151,8 +169,11 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 | RAW | 完整明細資料（含所有原始及計算欄位） |
 | Shop Stock Status | 採購人員 x 品牌之庫存異常交叉統計表 |
 | By Shop | 各店鋪層級之彙總分析 |
-| SUMMARY | 分類統計 — Safety Qty Change 分類（增加/減少/不變）與 ND 建議分類（僅 Safety Stock Review） |
+| SUMMARY | 分類統計 — Safety Qty Change 分類（增加/減少/不變）與 ND 建議分類（Safety Stock Review 及混合模式） |
 | 分析摘要 | 數據看板 — 關鍵指標總覽 |
+| Summary | SKU 級調貨彙總 — 庫存/月銷加總、TurnDay、佔比、調貨提示（Stock Checking 為「Summary」；混合模式因與「SUMMARY」大小寫衝突命名為「調貨 Summary」） |
+| 調貨分析摘要 | 調貨 Dashboard — 需求/調入/轉出/缺口（Stock Checking 及混合模式） |
+| Hybrid Summary | 調貨反饋 Safety 對照（僅混合模式）：SKU 級調貨前後庫存與 Safety 缺口、改善件數 |
 
 ## 版本
 

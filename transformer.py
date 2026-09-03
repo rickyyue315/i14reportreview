@@ -5241,6 +5241,672 @@ def generate_excel_stock_impact(
                                   thin_border, desc_font, progress_callback, sku_monthly_analysis=sku_monthly_analysis, stock_threshold=stock_threshold)
 
     if progress_callback:
+        progress_callback(0.95, "正在儲存 Excel 檔案...")
+
+    gc.collect()
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    if progress_callback:
+        progress_callback(1.0, "完成!")
+
+    return buf
+
+
+# ─── Safety Stock x NetStock Review (調貨反饋 Safety 混合) Functions ──────────
+
+
+_HYBRID_REQUIRED = [
+    "Buyer", "Brand", "SKU", "Shop Stock Status",
+    "Shop Nature", "Site Code", "Shop Stock Qty (CM)",
+    "Sold Qty (P90D)", "Adj. Safety Stock",
+    "Shop Monthly Sold Qty (P90D)", "Sold Qty (CM - MTD)",
+]
+
+# RAW 白名單：Safety Stock 白名單 + Stock Checking 調貨欄位 + 調貨反饋欄位
+# （Recommend Safety Stock Turnday 已在 COMBINED_RAW_COLS，不重複）
+_HYBRID_RAW_COLS = COMBINED_RAW_COLS + [
+    "Tourist 加總 TurnDay",
+    "Mix 加總 TurnDay",
+    "Non Tourist 加總 TurnDay",
+    "需要調貨",
+    "調入需求量 (補到14日)",
+    "實際調入量",
+    "調入缺口",
+    "可轉出貨量 (Mix)",
+    "可轉出貨量 (Non Tourist)",
+    "轉出量",
+    "調貨來源 (Site Code)",
+    "調貨後庫存",
+    "調貨前 Safety 缺口",
+    "調貨後 Safety 缺口",
+    "調貨後 TurnDay",
+    "D001 Effective Stock Qty (CM)",
+    "D001 Stock Qty (CM)",
+]
+
+_HYBRID_SUMMARY_COLUMNS = [
+    "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST",
+    "需調貨 Tourist 列數",
+    "調入需求量", "實際調入量",
+    "Non Tourist 轉出量", "Mix 轉出量",
+    "調貨前庫存", "調貨後庫存",
+    "調貨前 Safety 缺口", "調貨後 Safety 缺口",
+    "改善件數", "仍有缺口",
+]
+
+
+def validate_hybrid_input(df_input: pd.DataFrame) -> list[str]:
+    """混合模式必要欄位（含基礎四欄）：缺任一即回報，由呼叫方 raise。"""
+    avail = set(df_input.columns)
+    return [name for name in _HYBRID_REQUIRED if _resolve_column_name(name, avail) is None]
+
+
+def _canonicalize_hybrid_columns(df_input: pd.DataFrame) -> pd.DataFrame:
+    """混合模式入口：將所有字串欄名 strip 後統一運算（只偵測不改名的情況，
+    例如「Buyer 」帶前後空格時先通過驗證、後續取值卻 KeyError）。"""
+    df = df_input.copy()
+    mapping: dict[str, str] = {}
+    counts: dict[str, int] = {}
+    for col in df.columns:
+        if isinstance(col, str):
+            new = col.strip()
+            if new:
+                mapping[col] = new
+                counts[new] = counts.get(new, 0) + 1
+    dup = [k for k, v in counts.items() if v > 1]
+    if dup:
+        raise ValueError(f"欄位名稱去空白後重複: {', '.join(dup)}")
+    if mapping:
+        df = df.rename(columns=mapping)
+    return df
+
+
+def _normalize_hybrid_nature(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Shop Nature 正規化（混合模式固定規則）：
+    strip + 小寫後 Tourist→Tourist、Mix→Mix；其餘一律（含 Other、空白、大小寫差異）→ Non Tourist。
+    回傳 (已正規化 df, 被映射的非標準列數)——映射列數只計「無法辨識」的值
+    （小寫去除空白後不在 tourist / mix / non tourist 三者內，如 Other、空白、未知值）。
+    """
+    df = df.copy()
+    raw = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    low = raw.str.lower()
+    standard = low.isin(["tourist", "mix", "non tourist"])
+    mapped = int((~standard).sum())
+    out = pd.Series(
+        np.select([low == "mix", low == "tourist"], ["Mix", "Tourist"], default="Non Tourist"),
+        index=df.index,
+    )
+    df["Shop Nature"] = out
+    return df, mapped
+
+
+def _hybrid_build_safety_summary(raw: pd.DataFrame) -> pd.DataFrame:
+    """Buyer×Brand×SKU 的 Safety 分類彙總（與 transform_combined 同口徑）：
+    Overstock / OOS / Balanced (Safety Adjusted) 分類行數 + Safety Qty Change 統計 + 總計列。
+    在同一 raw 上操作副本，不改動 raw。
+    """
+    df = raw.copy()
+    status_col = df["Shop Stock Status"].fillna("")
+    safety_change = pd.to_numeric(df.get("Safety Qty Change", _safe_default_series(0, df.index)), errors="coerce").fillna(0)
+    categories = ["Overstock", "OOS", "Balanced (Safety Adjusted)"]
+    group_cols = ["Buyer", "Brand", "SKU", "SKU Desc"]
+
+    overstock_mask = status_col.str.startswith("Overstock", na=False)
+    oos_mask = (status_col == "OOS (0 Stock)") | (status_col == "Potential OOS (<7 Turnday)")
+    balanced_mask = (safety_change != 0) & ~overstock_mask & ~oos_mask
+
+    df["_is_overstock"] = overstock_mask.astype(int)
+    df["_is_oos"] = oos_mask.astype(int)
+    df["_is_balanced"] = balanced_mask.astype(int)
+    df["_is_inc"] = (safety_change > 0).astype(int)
+    df["_is_dec"] = (safety_change < 0).astype(int)
+    df["_is_unchanged"] = (safety_change == 0).astype(int)
+
+    summary = (
+        df.groupby(group_cols, observed=True)
+        .agg(
+            Overstock=("_is_overstock", "sum"),
+            OOS=("_is_oos", "sum"),
+            **{"Balanced (Safety Adjusted)": ("_is_balanced", "sum")},
+            **{"Safety Qty Change": ("Safety Qty Change", "sum")},
+            **{"增加Safety Qty的店舖數量": ("_is_inc", "sum")},
+            **{"減少Safety Qty的店舖數量": ("_is_dec", "sum")},
+            **{"Safety Qty不變的店舖數量": ("_is_unchanged", "sum")},
+        )
+        .fillna(0).astype(int).reset_index()
+    )
+    summary["SKU"] = summary["SKU"].apply(_safe_sku)
+    summary["總計"] = summary[categories].sum(axis=1)
+
+    buyer_order = summary.groupby("Buyer")["總計"].sum().sort_values(ascending=False).index.tolist()
+    summary["_buyer_key"] = summary["Buyer"].map({b: i for i, b in enumerate(buyer_order)})
+    summary = summary.sort_values(["_buyer_key", "Brand", "SKU"], ascending=[True, True, True]).drop(columns=["_buyer_key"]).reset_index(drop=True)
+
+    total_cat = int(summary["總計"].sum())
+    total_row = pd.DataFrame(
+        {
+            "Buyer": ["總計"],
+            "Brand": [None],
+            "SKU": [None],
+            **{cat: [int(summary[cat].sum())] for cat in categories},
+            "總計": [total_cat],
+            "Safety Qty Change": [int(summary["Safety Qty Change"].sum())],
+            "增加Safety Qty的店舖數量": [int(summary["增加Safety Qty的店舖數量"].sum())],
+            "減少Safety Qty的店舖數量": [int(summary["減少Safety Qty的店舖數量"].sum())],
+            "Safety Qty不變的店舖數量": [int(summary["Safety Qty不變的店舖數量"].sum())],
+        }
+    )
+    summary = pd.concat([summary, total_row], ignore_index=True)
+    return summary
+
+
+def _build_hybrid_summary(raw: pd.DataFrame) -> pd.DataFrame:
+    """Hybrid Summary（調貨反饋 Safety）：每 SKU 一列 —
+    需調貨 Tourist 列數 / 調入需求 / 實際調入 / NT、Mix 轉出量 / 調貨前後庫存加總 /
+    調貨前後 Safety 缺口合計 / 改善件數（前 − 後）/ 仍有缺口提示。
+    """
+    if raw is None or raw.empty:
+        return pd.DataFrame()
+    df = raw.copy()
+    df["_sku"] = df["SKU"]
+    df = df[df["_sku"].notna()]
+    if df.empty:
+        return pd.DataFrame()
+    df["_nature"] = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    df["_need"] = df.get("需要調貨", _safe_default_series("", df.index)).astype(str) == "是"
+    df["_transfer"] = _safe_numeric(df.get("轉出量", _safe_default_series(0, df.index)))
+    df["_stock"] = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
+    df["_stock_after"] = _safe_numeric(df.get("調貨後庫存", _safe_default_series(0, df.index)))
+    df["_gap_before"] = _safe_numeric(df.get("調貨前 Safety 缺口", _safe_default_series(0, df.index)))
+    df["_gap_after"] = _safe_numeric(df.get("調貨後 Safety 缺口", _safe_default_series(0, df.index)))
+    df["_demand"] = _safe_numeric(df.get("調入需求量 (補到14日)", _safe_default_series(0, df.index)))
+    df["_actual"] = _safe_numeric(df.get("實際調入量", _safe_default_series(0, df.index)))
+
+    def _first_text(series):
+        s = series.dropna().astype(str).str.strip()
+        s = s[s != ""]
+        return s.iloc[0] if len(s) else ""
+
+    sku_rows = {}
+    for sku, g in df.groupby("_sku", sort=False):
+        gap_before = int(g["_gap_before"].sum())
+        gap_after = int(g["_gap_after"].sum())
+        sku_rows[sku] = {
+            "SKU": sku,
+            "Brand": _first_text(g.get("Brand", _safe_default_series("", g.index))),
+            "需調貨 Tourist 列數": int(g["_need"].sum()),
+            "調入需求量": int(g["_demand"].sum()),
+            "實際調入量": int(g["_actual"].sum()),
+            "Non Tourist 轉出量": int(g.loc[g["_nature"] == "Non Tourist", "_transfer"].sum()),
+            "Mix 轉出量": int(g.loc[g["_nature"] == "Mix", "_transfer"].sum()),
+            "調貨前庫存": int(g["_stock"].sum()),
+            "調貨後庫存": int(g["_stock_after"].sum()),
+            "調貨前 Safety 缺口": gap_before,
+            "調貨後 Safety 缺口": gap_after,
+            "改善件數": gap_before - gap_after,
+            "仍有缺口": "是" if gap_after > 0 else "",
+        }
+    summary = pd.DataFrame(list(sku_rows.values()))
+    for key in ("SKU Desc", "Buyer", "Adj. SST"):
+        if key in raw.columns:
+            reprs = {}
+            for sku, g in df.groupby("_sku", sort=False):
+                reprs[sku] = _first_text(g[key].fillna("").astype(str))
+            summary[key] = summary["SKU"].map(reprs).fillna("")
+    summary = summary.sort_values(["Brand", "SKU"], kind="stable").reset_index(drop=True)
+    ordered = [c for c in _HYBRID_SUMMARY_COLUMNS if c in summary.columns]
+    trailing = [c for c in summary.columns if c not in ordered]
+    return summary[ordered + trailing]
+
+
+def transform_hybrid(
+    df_input: pd.DataFrame,
+    rates_overstock: dict | None = None,
+    rates_oos: dict | None = None,
+    mtd_days: int | None = None,
+    month_total_days: int | None = None,
+    safety_mode: str = "increase_only",
+    turnday_threshold: int = 14,
+    d001_threshold: int = 100,
+    progress_callback=None,
+):
+    """Safety Stock x NetStock Review 核心轉換。
+
+    同一次執行：
+    - Safety 段：沿用 `_add_combined_recommendation_columns`（與 Safety Stock Review 同公式），
+      只計算建議、不因調貨改寫 Recommend Safety Stock。
+    - 調貨段：沿用現行 Stock Checking 規則（SKU 級加總 TurnDay、Nature 供應門檻、
+      14 日需求/可轉出、NT 優先→Mix 補足、需求量大→小）。
+    - 反饋段：調貨後庫存 = 原始 + 實際調入 − 轉出；調貨前/後 Safety 缺口 =
+      max(0, Recommend Safety Stock − 庫存)；調貨後 TurnDay = 調貨後庫存 ÷ 月銷 × 30.5。
+    """
+    missing = validate_hybrid_input(df_input)
+    if missing:
+        raise ValueError(f"缺少混合模式必要欄位: {', '.join(missing)}")
+    df_input = _canonicalize_hybrid_columns(df_input)
+    if rates_overstock is None:
+        rates_overstock = {"default": 0.50, "tourist": 0.30, "mix": 0.40}
+    if rates_oos is None:
+        rates_oos = {"default": 0.50, "tourist": 0.50, "mix": 0.50}
+    if progress_callback:
+        progress_callback(0.05, "驗證通過")
+    warnings: list[str] = []
+
+    df = _clean_dataframe(df_input, shop_natures=None, progress_callback=progress_callback)
+    if df.empty:
+        raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
+
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+    # SKU Desc 缺失或全欄空白時亦補正（既有空白欄位會讓摘要 groupby 失效）
+    if "SKU Desc" not in df.columns or df["SKU Desc"].fillna("").astype(str).str.strip().eq("").all():
+        df = _compute_raw_extra_columns(df)
+
+    if progress_callback:
+        progress_callback(0.12, "正規化 Shop Nature...")
+    df, mapped_other = _normalize_hybrid_nature(df)
+    if mapped_other:
+        warnings.append(f"有 {mapped_other} 列 Shop Nature 無法辨識（Other / 空白 / 其他非標準值），已正規化為 Non Tourist。")
+
+    idx = df.index
+    nature = df["Shop Nature"]
+
+    sold_p90d = _safe_numeric(df.get("Sold Qty (P90D)", _safe_default_series(0, idx)))
+
+    # 庫存量必須為整數（件數）；空白視為 0，小數直接拒絕避免取整後守恆失真
+    cm_stock_raw = pd.to_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(np.nan, idx)), errors="coerce")
+    nonint = cm_stock_raw.notna() & (cm_stock_raw != np.floor(cm_stock_raw))
+    if nonint.any():
+        raise ValueError("「Shop Stock Qty (CM)」必須為整數件數，發現小數值，請修正來源資料後再執行。")
+    cm_stock = cm_stock_raw.fillna(0.0)
+    df["Shop Stock Qty (CM)"] = cm_stock
+
+    # 月銷：單列空白逐列以 Sold Qty (P90D) ÷ 90 × 30.5 換算（避免加總 TurnDay 誤判為 inf）
+    msold_raw = pd.to_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(np.nan, idx)), errors="coerce")
+    n_ms_blank = int(msold_raw.isna().sum())
+    if n_ms_blank:
+        warnings.append(f"有 {n_ms_blank} 列「Shop Monthly Sold Qty (P90D)」空白，已逐列以 Sold Qty (P90D) ÷ 90 × 30.5 換算月銷。")
+    msold_eff = msold_raw.where(msold_raw.notna(), sold_p90d / 90.0 * 30.5)
+    df["Shop Monthly Sold Qty (P90D)"] = msold_eff
+
+    # D001：逐列 Net 優先、Stock 回補（兩者皆空白視為 0），並保留 Effective 欄位供 RAW 稽核
+    avail_now = set(df.columns)
+    net_d001_col = _resolve_column_name("D001 Net Stock Qty (CM)", avail_now)
+    stock_d001_col = _resolve_column_name("D001 Stock Qty (CM)", avail_now)
+    if net_d001_col is None:
+        if stock_d001_col is not None:
+            warnings.append("來源檔案缺少「D001 Net Stock Qty (CM)」，D001 以「D001 Stock Qty (CM)」取代。")
+        else:
+            warnings.append("來源檔案缺少「D001 Net Stock Qty (CM)」與「D001 Stock Qty (CM)」，D001 一律視為 0（D001 低於門檻的判定將全數成立）。")
+    net_d001_s = pd.to_numeric(df.get(net_d001_col, _safe_default_series(np.nan, idx)), errors="coerce") if net_d001_col else _safe_default_series(np.nan, idx)
+    stock_d001_s = pd.to_numeric(df.get(stock_d001_col, _safe_default_series(np.nan, idx)), errors="coerce") if stock_d001_col else _safe_default_series(np.nan, idx)
+    n_d001_blank = int(net_d001_s.isna().sum()) if net_d001_col else 0
+    if n_d001_blank:
+        warnings.append(f"有 {n_d001_blank} 列「D001 Net Stock Qty (CM)」空白，已逐列改用「D001 Stock Qty (CM)」回補（兩者皆空白視為 0）。")
+    eff_d001 = net_d001_s.where(net_d001_s.notna(), stock_d001_s).fillna(0.0)
+    df["D001 Effective Stock Qty (CM)"] = eff_d001.astype(int)
+
+    is_mix = (nature == "Mix").to_numpy()
+    is_nt = (nature == "Non Tourist").to_numpy()
+    is_tourist = (nature == "Tourist").to_numpy()
+    cm_stock_val = cm_stock.to_numpy(dtype=float)
+    sold_val = sold_p90d.to_numpy(dtype=float)
+    msold_val = msold_eff.to_numpy(dtype=float)
+    no_sale_has_stock = (sold_val <= 0) & (cm_stock_val > 0)
+    ideal_14d = sold_val / 90.0 * 14
+
+    sku_key = df["SKU"]
+
+    def _sku_nature_turnday(nature_mask):
+        s_stock = pd.Series(np.where(nature_mask, cm_stock_val, 0.0), index=idx)
+        s_msold = pd.Series(np.where(nature_mask, msold_val, 0.0), index=idx)
+        agg_stock = s_stock.groupby(sku_key).transform("sum")
+        agg_msold = s_msold.groupby(sku_key).transform("sum")
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(agg_msold.to_numpy() > 0, agg_stock.to_numpy() / agg_msold.to_numpy() * 30.5, np.inf)
+
+    sku_tourist_turnday = _sku_nature_turnday(is_tourist)
+    sku_mix_turnday = _sku_nature_turnday(is_mix)
+    sku_nt_turnday = _sku_nature_turnday(is_nt)
+    for label, td in (("Tourist", sku_tourist_turnday), ("Mix", sku_mix_turnday), ("Non Tourist", sku_nt_turnday)):
+        df[f"{label} 加總 TurnDay"] = np.round(np.where(np.isfinite(td), td, np.nan), 2)
+
+    mix_pool_ok = sku_mix_turnday >= turnday_threshold
+    nt_pool_ok = sku_nt_turnday >= turnday_threshold
+    mix_excess = np.where(mix_pool_ok, np.where(is_mix, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0), 0)
+    nt_excess = np.where(nt_pool_ok, np.where(is_nt, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0), 0)
+    df["可轉出貨量 (Mix)"] = mix_excess.astype(int)
+    df["可轉出貨量 (Non Tourist)"] = nt_excess.astype(int)
+
+    demand = np.maximum(0, np.ceil(ideal_14d) - cm_stock_val)
+    d001_np = eff_d001.to_numpy(dtype=float)
+    ttd_np = pd.Series(sku_tourist_turnday, index=idx).to_numpy(dtype=float)
+    need_mask = (
+        is_tourist
+        & (ttd_np < turnday_threshold)
+        & (d001_np < d001_threshold)
+        & (demand > 0)
+        & (mix_pool_ok | nt_pool_ok)
+    )
+    need_series = pd.Series(need_mask, index=idx)
+
+    df["需要調貨"] = np.where(need_mask, "是", "")
+    df["調入需求量 (補到14日)"] = np.where(need_mask, demand, 0).astype(int)
+    df["實際調入量"] = 0
+    df["調入缺口"] = 0
+    df["轉出量"] = 0
+    df["調貨來源 (Site Code)"] = ""
+
+    actual_np = np.zeros(len(df), dtype=int)
+    donate_np = np.zeros(len(df), dtype=int)
+    if need_mask.any():
+        site_arr = df.get("Site Code", _safe_default_series("", idx)).fillna("").astype(str).str.strip().to_numpy(dtype=object)
+        sku_arr = df["SKU"].to_numpy(dtype=object)
+        nt_avail = df["可轉出貨量 (Non Tourist)"].to_numpy(dtype=float).copy()
+        mix_avail = df["可轉出貨量 (Mix)"].to_numpy(dtype=float).copy()
+        demand_np = demand.copy()
+        gap_np = np.zeros(len(df), dtype=int)
+        desc_np = np.full(len(df), "", dtype=object)
+
+        need_sku_set = set(sku_arr[need_mask])
+        for sku in need_sku_set:
+            sku_mask = sku_arr == sku
+            need_rows = np.nonzero(sku_mask & need_mask)[0]
+            nt_src = [int(p) for p in np.nonzero(sku_mask & (nt_avail > 0))[0]]
+            mix_src = [int(p) for p in np.nonzero(sku_mask & (mix_avail > 0))[0]]
+            order = np.argsort(-demand_np[need_rows], kind="stable")
+            remain_nt = {int(p): float(nt_avail[p]) for p in nt_src}
+            remain_mix = {int(p): float(mix_avail[p]) for p in mix_src}
+            for n in order:
+                row_pos = int(need_rows[n])
+                rem = float(demand_np[row_pos])
+                parts: list[str] = []
+                donated_actual = 0
+                for pool, _label in ((remain_nt, "Non Tourist"), (remain_mix, "Mix")):
+                    for spos in list(pool.keys()):
+                        if rem <= 0:
+                            break
+                        avail_n = pool[spos]
+                        take = min(rem, avail_n)
+                        if take > 0:
+                            pool[spos] -= take
+                            rem -= take
+                            donate_np[spos] += int(take)
+                            donated_actual += int(take)
+                            parts.append(f"{site_arr[spos]}:{int(take)}")
+                    if rem <= 0:
+                        break
+                actual_np[row_pos] = donated_actual
+                gap_np[row_pos] = int(rem)
+                desc_np[row_pos] = "; ".join(parts)
+
+        df["實際調入量"] = actual_np
+        df["調入缺口"] = gap_np
+        df["轉出量"] = donate_np
+        df["調貨來源 (Site Code)"] = desc_np
+
+    if not need_mask.any():
+        warnings.append("沒有符合調貨條件的 Tourist SKU（加總 TurnDay < 門檻 且 D001 < 門檻 且補到 14 日周轉的需求 > 0 且有貨可調）。")
+
+    if progress_callback:
+        progress_callback(0.4, "計算 Safety 建議...")
+    raw = _add_combined_recommendation_columns(
+        df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode=safety_mode
+    )
+
+    # ── 調貨反饋欄位（不修改 Safety 建議）──
+    rec_safety = _safe_numeric(raw.get("Recommend Safety Stock", _safe_default_series(0, raw.index)))
+    rec_safety_val = rec_safety.to_numpy(dtype=float)
+    stock_after = cm_stock_val + actual_np - donate_np
+    gap_before = np.maximum(0, rec_safety_val - cm_stock_val)
+    gap_after = np.maximum(0, rec_safety_val - stock_after)
+    raw["調貨後庫存"] = stock_after.astype(int)
+    raw["調貨前 Safety 缺口"] = gap_before.astype(int)
+    raw["調貨後 Safety 缺口"] = gap_after.astype(int)
+    td_after = np.full(len(raw), np.nan)
+    ms_pos = msold_val > 0
+    td_after[ms_pos] = stock_after[ms_pos] / msold_val[ms_pos] * 30.5
+    raw["調貨後 TurnDay"] = np.round(td_after, 1)
+
+    if progress_callback:
+        progress_callback(0.55, "建立 Summary...")
+    safety_summary = _hybrid_build_safety_summary(raw)
+    sc_summary = _build_stock_checking_summary(raw)
+    hybrid_summary = _build_hybrid_summary(raw)
+
+    stats = {
+        "need_rows": int(need_series.sum()),
+        "need_skus": int(raw.loc[need_series, "SKU"].nunique()) if need_series.any() else 0,
+        "total_demand": int(raw.loc[need_series, "調入需求量 (補到14日)"].sum()) if need_series.any() else 0,
+        "total_actual": int(raw["實際調入量"].sum()),
+        "total_gap": int(raw["調入缺口"].sum()),
+        "nt_transfer": int(raw.loc[raw["Shop Nature"] == "Non Tourist", "轉出量"].sum()),
+        "mix_transfer": int(raw.loc[raw["Shop Nature"] == "Mix", "轉出量"].sum()),
+        "mapped_other_rows": int(mapped_other),
+        "safety_gap_before": int(gap_before.sum()),
+        "safety_gap_after": int(gap_after.sum()),
+        "safety_gap_improved": int((gap_before - gap_after).sum()),
+        "gap_skus_after": int(raw.loc[raw["調貨後 Safety 缺口"] > 0, "SKU"].nunique()) if (raw["調貨後 Safety 缺口"] > 0).any() else 0,
+    }
+
+    if progress_callback:
+        progress_callback(0.7, "轉換完成")
+
+    return raw, safety_summary, sc_summary, hybrid_summary, stats, warnings
+
+
+def _write_hybrid_summary_sheet(ws, summary: pd.DataFrame, progress_callback=None,
+                                progress_start: float = 0.85, progress_end: float = 0.96):
+    """Hybrid Summary（調貨反饋 Safety）工作表：每 SKU 一列前後對照。
+    progress 區間必須落在對應 generate_excel_* 的下一階段區間內，避免進度倒退。"""
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    band_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    _text_keys = ["Brand", "SKU Desc", "Buyer", "Adj. SST"]
+    _center_text_keys = ["SKU", "仍有缺口"]
+
+    headers = list(summary.columns)
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+        cell.border = thin_border
+    ws.row_dimensions[1].height = 30
+
+    if summary is None or summary.empty:
+        ws.cell(row=2, column=1, value="無符合資料").font = Font(size=12)
+        _auto_width(ws)
+        return
+
+    total = len(summary)
+    for r_idx, (_, row) in enumerate(summary.iterrows()):
+        excel_row = r_idx + 2
+        is_band = (r_idx % 2 == 1)
+        for col_idx, h in enumerate(headers, 1):
+            val = row.get(h)
+            cell = ws.cell(row=excel_row, column=col_idx, value=None if pd.isna(val) else val)
+            cell.border = thin_border
+            if h in _text_keys:
+                cell.alignment = left_wrap
+            else:
+                cell.alignment = center
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and h not in _text_keys:
+                cell.number_format = "#,##0"
+            if is_band:
+                cell.fill = band_fill
+        if progress_callback and (r_idx % 200 == 0 or r_idx == total - 1):
+            p = progress_start + (progress_end - progress_start) * ((r_idx + 1) / max(total, 1))
+            progress_callback(p, f"寫入 Hybrid Summary ({r_idx+1}/{total})...")
+
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{1 + total}"
+    _auto_width(ws)
+
+
+def generate_excel_hybrid(
+    raw: pd.DataFrame,
+    safety_summary: pd.DataFrame,
+    sc_summary: pd.DataFrame,
+    hybrid_summary: pd.DataFrame,
+    stats: dict | None = None,
+    categories: list[str] | None = None,
+    progress_callback=None,
+) -> BytesIO:
+    """Safety Stock x NetStock Review 輸出（8 工作表，順序固定）：
+    RAW / Shop Stock Status / By Shop / SUMMARY / Safety Stock 數據分析摘要 /
+    Summary（調貨）/ 調貨分析摘要 / Hybrid Summary（調貨反饋 Safety）。
+    """
+    if categories is None:
+        categories = ["Overstock", "OOS", "Balanced (Safety Adjusted)"]
+    wb = Workbook()
+    if progress_callback:
+        progress_callback(0.0, "建立 Excel 結構...")
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    bold_font = Font(bold=True, size=11)
+    desc_font = Font(size=9, color="6B7280", italic=True)
+
+    # ── Sheet 1: RAW（共用白名單）──
+    ws_raw = wb.active
+    ws_raw.title = "RAW"
+    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.0, progress_end=0.18, columns=_HYBRID_RAW_COLS)
+
+    if progress_callback:
+        progress_callback(0.2, "建立 Safety 彙總 (Shop Stock Status)...")
+
+    # ── Sheet 2: Shop Stock Status ──
+    ws_summary = wb.create_sheet(title="Shop Stock Status")
+    headers = ["Buyer", "Brand", "SKU", "SKU Desc"] + categories + ["總計", "Safety Qty Change", "增加Safety Qty的店舖數量", "減少Safety Qty的店舖數量", "Safety Qty不變的店舖數量"]
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws_summary.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+
+    for row_idx, row_data in safety_summary.iterrows():
+        excel_row = 2 + row_idx
+        is_total = row_data["Buyer"] == "總計"
+        for col_idx, h in enumerate(headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws_summary.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_total:
+                cell.font = bold_font
+            if isinstance(val, (int, float)) and col_idx >= 4 and h != "SKU":
+                cell.number_format = "#,##0"
+    _auto_width(ws_summary)
+
+    if progress_callback:
+        progress_callback(0.3, "建立 By Shop...")
+
+    # ── Sheet 3: By Shop ──
+    by_shop_df = _build_combined_by_shop_summary(raw)
+    ws_by_shop = wb.create_sheet(title="By Shop")
+    by_shop_headers = [
+        "Site Code", "Shop Name", "OM",
+        "Overstock_SKU數量", "OOS_SKU數量",
+        "需增加Safety_SKU數量", "需減少Safety_SKU數量",
+        "安全庫存調整總量", "Combined_SKU總數",
+    ]
+    for col_idx, h in enumerate(by_shop_headers, 1):
+        cell = ws_by_shop.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+    for row_idx, row_data in by_shop_df.iterrows():
+        excel_row = row_idx + 2
+        is_total = row_data.get("Site Code") == "總計"
+        for col_idx, h in enumerate(by_shop_headers, 1):
+            val = row_data.get(h)
+            if pd.isna(val):
+                val = None
+            cell = ws_by_shop.cell(row=excel_row, column=col_idx, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_total:
+                cell.font = bold_font
+            if isinstance(val, (int, float)) and col_idx >= 4:
+                cell.number_format = "#,##0"
+    _auto_width(ws_by_shop)
+
+    if progress_callback:
+        progress_callback(0.38, "建立 SUMMARY...")
+
+    # ── Sheet 4: SUMMARY ──
+    change_summary, nd_summary = _build_combined_classification_summary(raw)
+    ws_class_summary = wb.create_sheet(title="SUMMARY")
+    _write_summary_sheet(ws_class_summary, change_summary, nd_summary, thin_border)
+
+    if progress_callback:
+        progress_callback(0.44, "建立 Safety Stock 數據分析摘要...")
+
+    # ── Sheet 5: Safety Stock 數據分析摘要 ──
+    ws_dashboard_safety = wb.create_sheet(title="Safety Stock 數據分析摘要")
+    _total_row = safety_summary[safety_summary["Buyer"] == "總計"]
+    if _total_row.empty:
+        raise ValueError("摘要資料中未找到總計列，無法生成分析看板")
+    total_combined = int(_total_row["總計"].values[0])
+    total_buyers = len(safety_summary[safety_summary["Buyer"] != "總計"]["Buyer"].dropna().unique())
+    total_brands = len(safety_summary[safety_summary["Buyer"] != "總計"]["Brand"].dropna().unique())
+    total_skus = raw["SKU"].dropna().nunique()
+    cat_overstock = int(_total_row[categories[0]].values[0]) if categories[0] in _total_row.columns else 0
+    cat_oos = int(_total_row[categories[1]].values[0]) if categories[1] in _total_row.columns else 0
+    cat_balanced = int(_total_row[categories[2]].values[0]) if categories[2] in _total_row.columns else 0
+    safety_change_total = int(pd.to_numeric(raw.get("Safety Qty Change", _safe_default_series(0, raw.index)), errors="coerce").fillna(0).sum())
+    row1_safety = [
+        ("總 Safety Stock 審查行數", total_combined, "所有 Safety Stock 審查之總計行數", "EF4444"),
+        ("影響採購人員數 (Buyers)", total_buyers, "位採購人員名下有需審查品項", "3B82F6"),
+        ("影響品牌總數 (Brands)", total_brands, "個品牌包含需審查商品", "8B5CF6"),
+        ("影響SKU總數", total_skus, "個包含需審查商品(SKUs)", "10B981"),
+    ]
+    row2_safety = [
+        ("Overstock 分類行數", cat_overstock, "庫存過剩分類行數", "F59E0B"),
+        ("OOS 分類行數", cat_oos, "缺貨分類行數", "EC4899"),
+        ("Safety 調整行數", cat_balanced, "Balanced (Safety Adjusted) 行數", "06B6D4"),
+        ("Safety 調整總量", safety_change_total, "Safety Qty Change 總和", "8B5CF6"),
+    ]
+    _write_metric_cards(ws_dashboard_safety, "Safety Stock 數據分析摘要 (Safety Stock Analysis Dashboard)", row1_safety, row2_safety, thin_border, desc_font, progress_callback, progress_pct=0.52)
+
+    if progress_callback:
+        progress_callback(0.55, "建立調貨 Summary...")
+
+    # ── Sheet 6: Summary（調貨 SKU 級彙總；名稱避開「SUMMARY」的大小寫衝突）──
+    ws_summary_sc = wb.create_sheet(title="調貨 Summary")
+    _write_stock_checking_summary_sheet(ws_summary_sc, sc_summary, progress_callback, progress_start=0.55, progress_end=0.70)
+
+    if progress_callback:
+        progress_callback(0.7, "建立調貨分析摘要...")
+
+    # ── Sheet 7: 調貨分析摘要 ──
+    ws_dashboard_sc = wb.create_sheet(title="調貨分析摘要")
+    row1_sc, row2_sc = _stock_checking_dashboard_metrics(raw, stats)
+    _write_metric_cards(ws_dashboard_sc, "調貨分析摘要 (Transfer Analysis Dashboard)", row1_sc, row2_sc, thin_border, desc_font, progress_callback, progress_pct=0.82)
+
+    if progress_callback:
+        progress_callback(0.85, "建立 Hybrid Summary...")
+
+    # ── Sheet 8: Hybrid Summary（調貨反饋 Safety）──
+    ws_hybrid = wb.create_sheet(title="Hybrid Summary（調貨反饋 Safety）")
+    _write_hybrid_summary_sheet(ws_hybrid, hybrid_summary, progress_callback)
+
+    if progress_callback:
         progress_callback(0.97, "正在儲存 Excel 檔案...")
 
     gc.collect()
@@ -6361,7 +7027,7 @@ _STOCK_CHECKING_SUMMARY_SHEET_HEADERS = [
 ]
 
 
-def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None):
+def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30):
     """Summary 工作表：SKU 級彙總（雙列表頭模仿 By SKUxShop_Stock Checking_Output 樞紐佈局）。
 
     欄位配置（A-Y，共 25 欄）：
@@ -6506,8 +7172,8 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None):
             if is_band:
                 cell.fill = band_fill
         if progress_callback and (r_idx % 200 == 0 or r_idx == total - 1):
-            progress_callback(0.05 + 0.25 * ((r_idx + 1) / max(total, 1)),
-                              f"寫入 Summary ({r_idx+1}/{total})...")
+            p = progress_start + (progress_end - progress_start) * ((r_idx + 1) / max(total, 1))
+            progress_callback(p, f"寫入 Summary ({r_idx+1}/{total})...")
 
     last_row = 5 + total
     ws.auto_filter.ref = f"A5:{get_column_letter(n_cols)}{last_row}"

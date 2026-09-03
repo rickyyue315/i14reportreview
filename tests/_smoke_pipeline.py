@@ -1,6 +1,10 @@
 """End-to-end smoke test: every review mode's transform + generate_excel must complete."""
+import pathlib
+import sys
 import warnings
+
 warnings.filterwarnings("ignore")
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import pandas as pd
 
 from transformer import (
@@ -9,6 +13,7 @@ from transformer import (
     transform_carry, generate_excel_carry,
     transform_combined, generate_excel_combined,
     transform_stock_impact, generate_excel_stock_impact,
+    transform_hybrid, generate_excel_hybrid,
 )
 
 BASE = {
@@ -20,6 +25,7 @@ BASE = {
     "Shop Stock Status": "Normal",
     "Adj. Safety Stock": 5,
     "Shop Monthly Sold Qty (P90D)": 10,
+    "Sold Qty (P90D)": 60,
     "Sold Qty (CM - MTD)": 8.0,
     "Shop Nature": "Local",
     "RP Type": "RF",
@@ -78,6 +84,14 @@ def main():
                                         mtd_days=15, month_total_days=30, safety_mode=mode)
         generate_excel_combined(s, r, c)
         print("OK Safety Stock (%s)  | rows=%d warnings=%d" % (mode, len(s), len(w)))
+
+    # ── Safety Stock x NetStock Review (both modes) ──
+    for mode in ("increase_only", "allow_both"):
+        r, s_sum, sc_sum, h_sum, h_stats, h_w = transform_hybrid(
+            df, rates_overstock=ro, rates_oos=po, mtd_days=15, month_total_days=30, safety_mode=mode,
+        )
+        generate_excel_hybrid(r, s_sum, sc_sum, h_sum, h_stats)
+        print("OK Hybrid (%s)       | rows=%d need=%d warnings=%d" % (mode, len(r), h_stats["need_rows"], len(h_w)))
 
     # ── Stock Impact Analysis ──
     _, si_brand, si_buyer, si_cat, _, si_alloc, si_diag, si_inv, si_mly, si_raw, si_warns = transform_stock_impact(

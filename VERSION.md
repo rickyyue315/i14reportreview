@@ -1,5 +1,28 @@
 # 版本記錄
 
+## v1.10.1 (2026-09-03)
+
+- Fix: 混合模式入檔欄名統一 canonicalize（strip 前後空白，「偵測通過但取值 KeyError」不再發生；去空白後重複欄名明確報錯）
+- Fix: D001 改為逐列有效值（`D001 Effective Stock Qty (CM)` = Net 優先、Stock 回補、空白視為 0，附 warning）；RAW 新增 Effective / D001 Stock 稽核欄位
+- Fix: Shop Monthly Sold Qty (P90D) 單列空白改以 Sold Qty (P90D) ÷ 90 × 30.5 逐列換算（修復加總 TurnDay 誤判 inf 而不觸發調貨），並列 warning
+- Fix: Shop Stock Qty (CM) 要求整數件數，小數值 fail-closed 明確報錯（避免 astype(int) 造成守恆失真）
+- Fix: Hybrid UI Dashboard 補足 20 卡（Safety 8 + 調貨 8 + 反饋 4：含影響 Buyers/Brands、Overstock/OOS/調整行數、需要調貨列數、總明細行數）；「改善件數」改名「Safety 缺口改善量」並支援負值紅字顯示
+- Fix: Excel 生成 progress bar 全程單調不倒退（`_write_stock_checking_summary_sheet` 區間參數化）
+- Fix: SKU Desc 欄存在但全空白時以 Item_Shop 補正，摘要 groupby 不塌陷
+- Fix: tests/_smoke_pipeline.py 可直接 `python tests/_smoke_pipeline.py` 執行（self 加入 repo root 至 path）
+- Update: tests/test_hybrid_mode.py 新增回歸測試 ×8（header canonicalization、D001/monthly 逐列 fallback、整數檢核、SKU Desc 補正、progress 單調、RAW Effective 欄位）；共 131 項測試通過
+
+## v1.10.0 (2026-09-03)
+
+- New: 新增「Safety Stock x NetStock Review」混合模式 — 同一次執行 Safety Stock Review + Stock Checking，調貨結果只反饋為 Safety 診斷（不改寫 Recommend Safety Stock）
+- New: `transform_hybrid()`、`generate_excel_hybrid()`、`validate_hybrid_input()`、`_normalize_hybrid_nature()`、`_hybrid_build_safety_summary()`、`_build_hybrid_summary()`、`_write_hybrid_summary_sheet()` in transformer.py
+- New: 反饋欄位 — 調貨後庫存 = Shop Stock Qty (CM) + 實際調入量 − 轉出量；調貨前/後 Safety 缺口 = max(0, Recommend Safety Stock − 庫存)；調貨後 TurnDay = 調貨後庫存 ÷ Shop Monthly Sold Qty (P90D) × 30.5（月銷 0 留空）
+- New: 參數合併兩模式 — MTD 日期、Overstock/OOS Rate（Tourist/Mix/Non Tourist）、Safety Qty 模式（只可增加/可加可減）、Tourist 加總 TurnDay 門檻（預設 14）、D001 門檻（預設 100）；調貨目標固定 14 日
+- New: Shop Nature 固定三種；Other/空白/大小寫差異一律正規化為 Non Tourist（映射列數列入 warning）；混合必要欄位（基礎四欄 + Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D) / Sold Qty (CM - MTD)）嚴格檢核；D001 沿用 Net→Stock fallback
+- New: Excel 8 工作表 — RAW / Shop Stock Status / By Shop / SUMMARY / Safety Stock 數據分析摘要 / Summary（調貨）/ 調貨分析摘要 / Hybrid Summary（調貨反饋 Safety）
+- Update: Streamlit 新增模式分支（指標卡 ×3 排 + 4 tabs + 下載，檔名 I14 Safety Stock x NetStock Review_<時間戳>.xlsx）；Sidebar 說明與核心計算規則同步
+- Update: tests/test_hybrid_mode.py 新增（×20：輸入檢核、等價性、反饋公式、Nature 正規化、D001 fallback、Hybrid/Safety Summary、Excel 契約）；_smoke_pipeline.py 新增 hybrid 項目；共 123 項測試通過
+
 ## v1.9.6 (2026-09-03)
 
 - New: Stock Checking Summary 在 SKU Desc 後新增 **Buyer、Adj. SST** 欄（同 SKU 取首個非空值；共 25 欄 A-Y）
