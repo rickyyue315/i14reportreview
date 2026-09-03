@@ -6066,6 +6066,9 @@ _STOCK_CHECKING_SUMMARY_COLUMNS = [
     "Tourist 加總 - Shop Stock Qty (CM)", "Tourist 加總 - Shop Monthly Sold Qty (P90D)", "Tourist TurnDay",
     "Mix 加總 - Shop Stock Qty (CM)", "Mix 加總 - Shop Monthly Sold Qty (P90D)", "Mix TurnDay",
     "Non Tourist 加總 - Shop Stock Qty (CM)", "Non Tourist 加總 - Shop Monthly Sold Qty (P90D)", "Non Tourist TurnDay",
+    "Tourist 加總 - Shop Stock Qty (CM) %", "Tourist 加總 - Shop Monthly Sold Qty (P90D) %",
+    "Mix 加總 - Shop Stock Qty (CM) %", "Mix 加總 - Shop Monthly Sold Qty (P90D) %",
+    "Non Tourist 加總 - Shop Stock Qty (CM) %", "Non Tourist 加總 - Shop Monthly Sold Qty (P90D) %",
     "強制調貨提示", "由Non Tourist 店舖預計調出數量", "由Mix 店舖預計調出數量",
 ]
 
@@ -6076,6 +6079,8 @@ def _build_stock_checking_summary(raw: pd.DataFrame) -> pd.DataFrame:
     - 每個 SKU 一列：Brand / SKU / SKU Desc / Supply Source / D001 Net Stock Qty (CM)
     - 各 Shop Nature（Tourist / Mix / Non Tourist）加總 Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)，
       TurnDay = 加總庫存 ÷ 加總月銷 × 30.5（月銷為 0 時留空）
+    - 各 Nature 佔比 (%)：該 Nature 加總 ÷ 三個 Nature 加總合計（0-1 小數，Excel 以 0.00% 顯示；
+      合計為 0 時留空；僅計 Tourist / Mix / Non Tourist 精確比對，其他值不計入分子分母）
     - 強制調貨提示：該 SKU 有任何 Tourist 店列被標示「需要調貨」時顯示「需要調貨」
     - 由 Non Tourist / Mix 店舖預計調出數量 = 該 SKU 對應 Nature 來源店的「轉出量」加總
     """
@@ -6111,15 +6116,28 @@ def _build_stock_checking_summary(raw: pd.DataFrame) -> pd.DataFrame:
         if "D001 Net Stock Qty (CM)" in g.columns:
             d001 = g["D001 Net Stock Qty (CM)"].dropna()
             row["D001 Net Stock Qty (CM)"] = d001.iloc[0] if len(d001) else None
+        _sums: dict[str, tuple[float, float]] = {}
         for nat in ("Tourist", "Mix", "Non Tourist"):
             gn = g[g["_nature"] == nat]
             stock_sum = float(gn["_stock"].sum())
             msold_sum = float(gn["_msold"].sum())
+            _sums[nat] = (stock_sum, msold_sum)
             row[f"{nat} 加總 - Shop Stock Qty (CM)"] = stock_sum
             row[f"{nat} 加總 - Shop Monthly Sold Qty (P90D)"] = msold_sum
             row[f"{nat} TurnDay"] = round(stock_sum / msold_sum * 30.5, 2) if msold_sum > 0 else None
             if nat != "Tourist":
                 row[f"由{nat} 店舖預計調出數量"] = int(gn["_transfer"].sum())
+        # 各 Nature 佔比（分母 = 三個 Nature 加總合計；合計為 0 留空）
+        _total_stock = sum(v[0] for v in _sums.values())
+        _total_msold = sum(v[1] for v in _sums.values())
+        for nat in ("Tourist", "Mix", "Non Tourist"):
+            stock_sum, msold_sum = _sums[nat]
+            row[f"{nat} 加總 - Shop Stock Qty (CM) %"] = (
+                round(stock_sum / _total_stock, 4) if _total_stock > 0 else None
+            )
+            row[f"{nat} 加總 - Shop Monthly Sold Qty (P90D) %"] = (
+                round(msold_sum / _total_msold, 4) if _total_msold > 0 else None
+            )
         row["強制調貨提示"] = "需要調貨" if bool(g["_need"].any()) else ""
         rows.append(row)
 
@@ -6329,34 +6347,56 @@ _STOCK_CHECKING_SUMMARY_SHEET_HEADERS = [
     "加總 - Shop Stock Qty (CM)", "加總 - Shop Monthly Sold Qty (P90D)", "TurnDay",
     "加總 - Shop Stock Qty (CM)", "加總 - Shop Monthly Sold Qty (P90D)", "TurnDay",
     "加總 - Shop Stock Qty (CM)", "加總 - Shop Monthly Sold Qty (P90D)", "TurnDay",
+    "加總 - Shop Stock Qty (CM) %", "加總 - Shop Monthly Sold Qty (P90D) %",
+    "加總 - Shop Stock Qty (CM) %", "加總 - Shop Monthly Sold Qty (P90D) %",
+    "加總 - Shop Stock Qty (CM) %", "加總 - Shop Monthly Sold Qty (P90D) %",
     "強制調貨提示", "由Non Tourist 店舖預計調出數量", "由Mix 店舖預計調出數量",
 ]
 
 
 def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None):
-    """Summary 工作表：SKU 級彙總（雙列表頭模仿 By SKUxShop_Stock Checking_Output 樞紐佈局）。"""
+    """Summary 工作表：SKU 級彙總（雙列表頭模仿 By SKUxShop_Stock Checking_Output 樞紐佈局）。
+
+    欄位配置（A-W，共 23 欄）：
+    - A-E：Brand / SKU / SKU Desc / Supply Source / D001（維持不變）
+    - F-N：各 Nature 加總庫存 / 加總月銷 / TurnDay（維持不變，F-N 欄位號不動）
+    - O-T：各 Nature 佔比 (%) = 該 Nature 加總 ÷ 三 Nature 合計（活公式，0.00% 顯示；合計 0 留空）
+    - U-W：強制調貨提示 / 由NT 調出 / 由Mix 調出（由原 O-Q 右移）
+    """
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
     )
     header_fill = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
     nature_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    pct_fill = PatternFill(start_color="70AD47", end_color="70AD47", fill_type="solid")
     header_font = Font(bold=True, size=11)
     nature_font = Font(bold=True, size=11, color="FFFFFF")
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    # Row 3: Shop Nature 群組標籤
+    # Row 3: Shop Nature 群組標籤（F-N 維持）+ 佔比群組（O-T 新增）
     ws.merge_cells("F3:N3")
     c = ws.cell(row=3, column=6, value="Shop Nature")
     c.font = header_font
     c.alignment = center
+    ws.merge_cells("O3:T3")
+    c2 = ws.cell(row=3, column=15, value="各 Nature 佔比 (%)")
+    c2.font = header_font
+    c2.alignment = center
 
-    # Row 4: 各 Nature 標籤（橫向合併 3 欄）
+    # Row 4: 各 Nature 標籤 — 加總區（橫向合併 3 欄）+ 佔比區（橫向合併 2 欄）
     for col_start, label in ((6, "Tourist"), (9, "Mix"), (12, "Non Tourist")):
         ws.merge_cells(start_row=4, start_column=col_start, end_row=4, end_column=col_start + 2)
         cell = ws.cell(row=4, column=col_start, value=label)
         cell.font = nature_font
         cell.fill = nature_fill
+        cell.alignment = center
+        cell.border = thin_border
+    for col_start, label in ((15, "Tourist"), (17, "Mix"), (19, "Non Tourist")):
+        ws.merge_cells(start_row=4, start_column=col_start, end_row=4, end_column=col_start + 1)
+        cell = ws.cell(row=4, column=col_start, value=label)
+        cell.font = nature_font
+        cell.fill = pct_fill
         cell.alignment = center
         cell.border = thin_border
 
@@ -6402,12 +6442,30 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None):
                                value=f"={s_letter}{excel_row}/{m_letter}{excel_row}*30.5")
                 c_td.number_format = "#,##0.00"
                 c_td.border = thin_border
-        # O-Q：提示與調出量
+        # O-T：各 Nature 佔比 (%) 活公式（分母 = 三 Nature 合計；合計 0 留空）
+        # 庫存合計 = F+I+L；月銷合計 = G+J+M（欄位號固定，F-N 維持不變）
+        _stock_total = f"(F{excel_row}+I{excel_row}+L{excel_row})"
+        _sold_total = f"(G{excel_row}+J{excel_row}+M{excel_row})"
+        for col_idx, num_letter, denom in (
+            (15, "F", _stock_total),   # Tourist 庫存 %
+            (16, "G", _sold_total),    # Tourist 月銷 %
+            (17, "I", _stock_total),   # Mix 庫存 %
+            (18, "J", _sold_total),    # Mix 月銷 %
+            (19, "L", _stock_total),   # Non Tourist 庫存 %
+            (20, "M", _sold_total),    # Non Tourist 月銷 %
+        ):
+            denom_bare = denom.strip("()")
+            c_pct = ws.cell(row=excel_row, column=col_idx,
+                            value=f'=IF({denom_bare}=0,"",{num_letter}{excel_row}/{denom})')
+            c_pct.number_format = "0.00%"
+            c_pct.border = thin_border
+            c_pct.alignment = center
+        # U-W：提示與調出量（由原 O-Q 右移）
         tip = row.get("強制調貨提示", "")
-        cell = ws.cell(row=excel_row, column=15, value=tip if tip else None)
+        cell = ws.cell(row=excel_row, column=21, value=tip if tip else None)
         cell.border = thin_border
         cell.alignment = center
-        for col_idx, key in ((16, "由Non Tourist 店舖預計調出數量"), (17, "由Mix 店舖預計調出數量")):
+        for col_idx, key in ((22, "由Non Tourist 店舖預計調出數量"), (23, "由Mix 店舖預計調出數量")):
             val = row.get(key, 0)
             cell = ws.cell(row=excel_row, column=col_idx,
                            value=int(val) if pd.notna(val) else None)

@@ -1,5 +1,11 @@
 # 版本記錄
 
+## v1.9.5 (2026-09-03)
+
+- New: Stock Checking Summary 新增 **各 Nature 佔比 (%)**（6 欄）— 每個 SKU 按 Shop Nature 計算「加總 - Shop Stock Qty (CM)」佔比與「加總 - Shop Monthly Sold Qty (P90D)」佔比分母 = Tourist + Mix + Non Tourist 三者合計（合計 0 留空）；summary DataFrame 存 0-1 小數，Excel 以活公式 `=IF(合計=0,"",該Nature加總/合計)` + `0.00%` 格式顯示
+- Change: Summary 工作表由 17 欄擴至 23 欄 — F-N（加總/TurnDay，欄位號不動）+ O-T（佔比，綠色群組標題「各 Nature 佔比 (%)」）+ U-W（強制調貨提示/調出量，由原 O-Q 右移）；Streamlit Summary 分頁同步顯示
+- Update: tests 全數通過（103 項）
+
 ## v1.9.4 (2026-09-03)
 
 - New: Stock Checking 輸出新增 **調貨分析摘要** 工作表（Dashboard，主題色指標卡，與 Streamlit Transfer Analysis Dashboard 同口徑）— 兩排共 8 卡：需要調貨列數 / 需調貨 SKU 數 / 調入需求量 / 實際調入量 / Non Tourist 轉出量 / Mix 轉出量 / 無法足額缺口 / 總明細行數；沿用 `_write_metric_cards()` 格局（其餘模式的「分析摘要」工作表同式）
