@@ -1,5 +1,17 @@
 # 版本記錄
 
+## v1.9.0 (2026-09-03)
+
+- New: 新增「Stock Checking（調貨檢查）」分析模式 — D001 倉庫少貨且遊客區（Tourist）店舖缺貨時的檢查：上傳 By SKUxShop_Stock Checking 檔案，計算 Tourist 鋪調貨需求並從 Mix / Non Tourist 鋪分配可轉出貨量（Non Tourist 優先）
+- New: `transform_stock_checking()`、`generate_excel_stock_checking()`（單一 RAW 工作表）、`_stock_checking_new_columns()` in transformer.py
+- New: 觸發條件 — Tourist 店 SKU 的 Turnday (P90D Qty) ≥ 0 且 < 門檻（UI 可調，預設 14 日）且 D001 Net Stock Qty (CM) < 門檻（UI 可調，預設 100 件）且需求 > 0 → 標示「需要調貨」
+- New: 調入需求量 = 補到 14 日周轉（ceil(P90D / 90 × 14) − Shop Stock Qty (CM)）；來源可轉出量 = 14 日超額（max(0, 庫存 − P90D/90 × 14)，無銷售有存貨全數可釋放）；RP Type RF 與 ND 店皆可作為來源
+- New: 分配規則 — 按 SKU 彙總需求，Non Tourist 店優先轉出，不足由 Mix 店補足；需求量大→小依序分配
+- New: RAW 新增欄位 — 需要調貨 / 調入需求量 (補到14日) / 實際調入量 / 調入缺口 / 可轉出貨量 (Mix) / 可轉出貨量 (Non Tourist) / 轉出量 / 調貨來源 (Site Code)
+- New: D001 欄位容錯 — 優先 D001 Net Stock Qty (CM)，退用 D001 Stock Qty (CM)，兩者皆缺視為 0 並發 warning
+- New: Streamlit 新增模式選項、Turnday / D001 門檻參數、調貨分析摘要 dashboard、RAW 預覽與下載（檔名 By SKUxShop_Stock Checking_Output_<時間戳>.xlsx）
+- New: 新增 tests/test_stock_checking.py（×13），涵蓋觸發條件、需求量、NT 優先 / Mix 補足分配、無銷售全釋放、ND 來源店、自訂門檻、D001 容錯與 Excel 輸出
+
 ## v1.8.17 (2026-09-02)
 
 - New: Safety Stock Review 輸出 Excel 新增 **SUMMARY** 工作表（位於 By Shop 之後）— 兩個分類統計區塊：① Safety Qty Change 分類（增加 / 減少 / 不變）統計 行數 / SKU 數 / Safety Qty Change 合計；② Recommendation of new Safety Qty / ND 分類統計 行數 / SKU 數，固定順序涵蓋 (空白) 維持 Safety Stock、New SKU (3 Month)、0（已是 ND）、ND、ND(02 - MAKE UP)、ND(Private Label)、ND(Private Label - MAKE UP)，每類附中文說明；總計列 SKU 數採全表不重複 SKU（同一 SKU 可跨分類，避免加總虛增）；「只可增加」模式下減少類仍輸出但恆為 0

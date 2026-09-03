@@ -6018,3 +6018,229 @@ def generate_excel_p90d_zero_sales(
 
     return buf
 
+
+# ─── Stock Checking (調貨檢查) Functions ───────────────────────────────────────
+
+
+_STOCK_CHECKING_REQUIRED = [
+    "Shop Nature",
+    "Sold Qty (P90D)",
+    "Shop Stock Qty (CM)",
+    "Site Code",
+]
+
+
+def _stock_checking_new_columns(raw: pd.DataFrame) -> list[str]:
+    """Stock Checking 新增的計算欄位清單（存在才輸出，供測試與 Excel 使用）。"""
+    cols = [
+        "需要調貨",
+        "調入需求量 (補到14日)",
+        "實際調入量",
+        "調入缺口",
+        "可轉出貨量 (Mix)",
+        "可轉出貨量 (Non Tourist)",
+        "轉出量",
+        "調貨來源 (Site Code)",
+    ]
+    avail = set(raw.columns)
+    return [c for c in cols if _resolve_column_name(c, avail) is not None]
+
+
+def _stock_checking_stats_empty() -> dict:
+    return {
+        "need_rows": 0,
+        "need_skus": 0,
+        "total_demand": 0,
+        "total_actual": 0,
+        "total_gap": 0,
+        "nt_transfer": 0,
+        "mix_transfer": 0,
+    }
+
+
+def transform_stock_checking(
+    df_input: pd.DataFrame,
+    turnday_threshold: int = 14,
+    d001_threshold: int = 100,
+    progress_callback=None,
+):
+    """Stock Checking（調貨檢查）核心轉換。
+
+    D001 倉庫少貨（低於門檻）且遊客區（Tourist）店舖缺貨（Turnday 低於門檻）時的檢查：
+
+    - 需求端：Tourist 店列，Turnday (P90D Qty) ∈ [0, 門檻) 且 D001 < 門檻 且 補到 14 日周轉的需求 > 0
+      → 標示「需要調貨」，調入需求量 = ceil(P90D / 90 × 14) − Shop Stock Qty (CM)。
+    - 供應端：Mix / Non Tourist 店列的可轉出貨量（14 日超額標準，與 Stock Impact 模式一致）：
+      可轉出 = max(0, Shop Stock Qty (CM) − P90D / 90 × 14)；「無銷售但有存貨」全數可釋放。
+      RP Type 為 RF 與 ND 皆可作為來源。
+    - 分配：按 SKU 彙總需求，Non Tourist 店優先，不足再由 Mix 店補足；需求列按需求量大→小依序分配。
+    """
+    if progress_callback:
+        progress_callback(0.0, "驗證輸入資料...")
+    validate_input(df_input)
+    avail = set(df_input.columns)
+    missing = [name for name in _STOCK_CHECKING_REQUIRED if _resolve_column_name(name, avail) is None]
+    if missing:
+        raise ValueError(f"缺少必需欄位: {', '.join(missing)}")
+
+    if progress_callback:
+        progress_callback(0.1, "清理資料中...")
+    df = _clean_dataframe(df_input, shop_natures=None, progress_callback=progress_callback)
+
+    if progress_callback:
+        progress_callback(0.2, "解像 SKU Desc / Shop Name...")
+    df = _compute_raw_extra_columns(df)
+
+    idx = df.index
+    warnings: list[str] = []
+
+    # ── 欄位正規化 ──────────────────────────────────────────────────────────
+    df["Shop Nature"] = df.get("Shop Nature", _safe_default_series("", idx)).fillna("").astype(str).str.strip()
+    nature = df["Shop Nature"]
+    if "SKU" in df.columns:
+        df["SKU"] = df["SKU"].apply(_safe_sku)
+
+    # D001：優先 D001 Net Stock Qty (CM)，退用 D001 Stock Qty (CM)，兩者皆缺視為 0
+    d001_col = None
+    for cand in ("D001 Net Stock Qty (CM)", "D001 Stock Qty (CM)"):
+        if _resolve_column_name(cand, avail):
+            d001_col = cand
+            break
+    if d001_col is None:
+        warnings.append("來源檔案缺少「D001 Net Stock Qty (CM)」與「D001 Stock Qty (CM)」，D001 一律視為 0（D001 低於門檻的判定將全數成立）。")
+    d001_cm = _safe_numeric(df.get(d001_col, _safe_default_series(0, idx)) if d001_col else _safe_default_series(0, idx))
+
+    sold_p90d = _safe_numeric(df.get("Sold Qty (P90D)", _safe_default_series(0, idx)))
+    cm_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, idx)))
+
+    # Turnday 正規化（沿用 Stock Impact 慣例：inf / NaN → -1 旗標，負值無意義）
+    turnday_raw = pd.to_numeric(df.get("Turnday (P90D Qty)", _safe_default_series(np.nan, idx)), errors="coerce")
+    turnday = turnday_raw.replace([np.inf, -np.inf], np.nan).fillna(-1).astype(float)
+
+    # ── 每列計算欄位 ────────────────────────────────────────────────────────
+    is_mix = (nature == "Mix").to_numpy()
+    is_nt = (nature == "Non Tourist").to_numpy()
+    is_tourist = (nature == "Tourist").to_numpy()
+    cm_stock_val = cm_stock.to_numpy(dtype=float)
+    sold_val = sold_p90d.to_numpy(dtype=float)
+    no_sale_has_stock = (sold_val <= 0) & (cm_stock_val > 0)
+    ideal_14d = sold_val / 90.0 * 14
+
+    mix_excess = np.where(is_mix, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0)
+    nt_excess = np.where(is_nt, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0)
+    df["可轉出貨量 (Mix)"] = mix_excess.astype(int)
+    df["可轉出貨量 (Non Tourist)"] = nt_excess.astype(int)
+
+    demand = np.maximum(0, np.ceil(ideal_14d) - cm_stock_val)
+    d001_np = d001_cm.to_numpy(dtype=float)
+    turnday_np = turnday.to_numpy(dtype=float)
+    need_mask = (
+        is_tourist
+        & (turnday_np >= 0)
+        & (turnday_np < turnday_threshold)
+        & (d001_np < d001_threshold)
+        & (demand > 0)
+    )
+    need_series = pd.Series(need_mask, index=df.index)
+
+    df["需要調貨"] = np.where(need_mask, "是", "")
+    df["調入需求量 (補到14日)"] = np.where(need_mask, demand, 0).astype(int)
+    df["實際調入量"] = 0
+    df["調入缺口"] = 0
+    df["轉出量"] = 0
+    df["調貨來源 (Site Code)"] = ""
+
+    # ── 跨店調貨分配（按 SKU：Non Tourist 優先 → Mix 補足）───────────────────
+    if need_mask.any():
+        site_arr = df.get("Site Code", _safe_default_series("", idx)).fillna("").astype(str).str.strip().to_numpy(dtype=object)
+        sku_arr = df["SKU"].to_numpy(dtype=object)
+        nt_avail = df["可轉出貨量 (Non Tourist)"].to_numpy(dtype=float).copy()
+        mix_avail = df["可轉出貨量 (Mix)"].to_numpy(dtype=float).copy()
+        demand_np = demand.copy()
+        donate_np = np.zeros(len(df), dtype=int)
+        actual_np = np.zeros(len(df), dtype=int)
+        gap_np = np.zeros(len(df), dtype=int)
+        desc_np = np.full(len(df), "", dtype=object)
+
+        need_sku_set = set(sku_arr[need_mask])
+        for sku in need_sku_set:
+            sku_mask = sku_arr == sku
+            need_rows = np.nonzero(sku_mask & need_mask)[0]
+            nt_src = [int(p) for p in np.nonzero(sku_mask & (nt_avail > 0))[0]]
+            mix_src = [int(p) for p in np.nonzero(sku_mask & (mix_avail > 0))[0]]
+            order = np.argsort(-demand_np[need_rows], kind="stable")
+            remain_nt = {int(p): float(nt_avail[p]) for p in nt_src}
+            remain_mix = {int(p): float(mix_avail[p]) for p in mix_src}
+            for n in order:
+                row_pos = int(need_rows[n])
+                rem = float(demand_np[row_pos])
+                parts: list[str] = []
+                donated_actual = 0
+                for pool, _label in ((remain_nt, "Non Tourist"), (remain_mix, "Mix")):
+                    for spos in list(pool.keys()):
+                        if rem <= 0:
+                            break
+                        avail = pool[spos]
+                        take = min(rem, avail)
+                        if take > 0:
+                            pool[spos] -= take
+                            rem -= take
+                            donate_np[spos] += int(take)
+                            donated_actual += int(take)
+                            parts.append(f"{site_arr[spos]}:{int(take)}")
+                    if rem <= 0:
+                        break
+                actual_np[row_pos] = donated_actual
+                gap_np[row_pos] = int(rem)
+                desc_np[row_pos] = "; ".join(parts)
+
+        df["實際調入量"] = actual_np
+        df["調入缺口"] = gap_np
+        df["轉出量"] = donate_np
+        df["調貨來源 (Site Code)"] = desc_np
+
+    # ── 統計 ────────────────────────────────────────────────────────────────
+    stats = {
+        "need_rows": int(need_series.sum()),
+        "need_skus": int(df.loc[need_series, "SKU"].nunique()) if need_series.any() else 0,
+        "total_demand": int(df.loc[need_series, "調入需求量 (補到14日)"].sum()) if need_series.any() else 0,
+        "total_actual": int(df["實際調入量"].sum()),
+        "total_gap": int(df["調入缺口"].sum()),
+        "nt_transfer": int(df.loc[df["Shop Nature"] == "Non Tourist", "轉出量"].sum()),
+        "mix_transfer": int(df.loc[df["Shop Nature"] == "Mix", "轉出量"].sum()),
+    }
+
+    if not need_mask.any():
+        warnings.append("沒有符合調貨條件的 Tourist SKU（Turnday < 門檻 且 D001 < 門檻 且補到 14 日周轉的需求 > 0）。")
+
+    if progress_callback:
+        progress_callback(0.4, "完成資料轉換...")
+    return df, stats, warnings
+
+
+def generate_excel_stock_checking(
+    raw: pd.DataFrame,
+    progress_callback=None,
+) -> BytesIO:
+    """Stock Checking 輸出：單一 RAW 工作表（原始欄位 + 調貨計算欄位）。"""
+    wb = Workbook()
+    if progress_callback:
+        progress_callback(0.0, "建立 Excel 結構...")
+
+    ws_raw = wb.active
+    ws_raw.title = "RAW"
+    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.0, progress_end=0.9)
+
+    if progress_callback:
+        progress_callback(0.95, "正在儲存 Excel 檔案...")
+
+    gc.collect()
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    if progress_callback:
+        progress_callback(1.0, "完成!")
+
+    return buf
+
