@@ -281,7 +281,7 @@ with st.sidebar:
     - 調入需求量 = 補到 14 日周轉：ceil(P90D 日均 × 14) − 現有店舖庫存
     - Mix / Non Tourist 鋪可轉出貨量 = 超過 14 日周轉的部分（無銷售但有存貨全數可釋放，RF 與 ND 店皆可）
     - 分配優先性：同一 SKU 的調貨需求先由 Non Tourist 鋪轉出，不足再由 Mix 鋪補足
-    - 輸出：RAW（原始欄位 + 調貨標示、調入需求量、實際調入量、調入缺口、可轉出貨量、轉出量、調貨來源）
+    - 輸出：Summary（SKU 彙總：各 Nature 庫存/月銷加總、TurnDay、強制調貨提示、NT/Mix 預計調出量）+ RAW（原始欄位 + 調貨標示、調入需求量、實際調入量、調入缺口、可轉出貨量、轉出量、調貨來源）
     """)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -362,7 +362,7 @@ with st.sidebar:
       2. **調入需求量** = ceil(P90D / 90 × 14) − Shop Stock Qty (CM)（P90D = Sold Qty (P90D)，90 日總量換算日均 × 14 日）
       3. **可轉出貨量（Mix / Non Tourist 來源店）** = max(0, Shop Stock Qty (CM) − P90D / 90 × 14)；「無銷售但有存貨」全數可釋放；RP Type 為 RF 與 ND 的店皆可作為來源
       4. **分配優先** = 按 SKU 彙總調入需求，Non Tourist 店可轉出量優先，不足部分由 Mix 店補足；需求列按需求量大→小依序分配
-      5. **輸出** = RAW 完整明細（原始欄位全部保留），新增：需要調貨 / 調入需求量 (補到14日) / 實際調入量 / 調入缺口 / 可轉出貨量 (Mix) / 可轉出貨量 (Non Tourist) / 轉出量 / 調貨來源 (Site Code)
+      5. **輸出** = Summary（SKU 級彙總：各 Nature 庫存/月銷加總、TurnDay = 加總庫存 ÷ 加總月銷 × 30.5、強制調貨提示、由 NT/Mix 店舖預計調出數量）+ RAW 完整明細（原始欄位全部保留），RAW 新增：需要調貨 / 調入需求量 (補到14日) / 實際調入量 / 調入缺口 / 可轉出貨量 (Mix) / 可轉出貨量 (Non Tourist) / 轉出量 / 調貨來源 (Site Code)
 
       所有模式均自動生成採購與品牌的交叉匯總樞紐分析表。
     """)
@@ -416,7 +416,7 @@ MODE_KEYS = {
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "sku_soh_summary": None, "excel_data": None, "warnings": []},
     "Past 90 Days 0 Sales": {"prefix": "p90ds_", "processed": False, "summary_df": None, "raw_df": None, "excel_data": None, "warnings": []},
-    "Stock Checking": {"prefix": "stock_chk_", "processed": False, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
+    "Stock Checking": {"prefix": "stock_chk_", "processed": False, "summary_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -1732,14 +1732,15 @@ if uploaded_file is not None:
                     st.session_state.p90ds_excel_data = buf
                     st.session_state.p90ds_warnings = _warnings
                 elif mode == "Stock Checking":
-                    raw_df, _stats, _warnings = transform_stock_checking(
+                    raw_df, summary_df, _stats, _warnings = transform_stock_checking(
                         df_input,
                         turnday_threshold=int(turnday_threshold),
                         d001_threshold=int(d001_threshold),
                         progress_callback=_cb_transform,
                     )
-                    buf = generate_excel_stock_checking(raw_df, progress_callback=_cb_excel)
+                    buf = generate_excel_stock_checking(raw_df, summary_df, progress_callback=_cb_excel)
                     st.session_state.stock_chk_processed = True
+                    st.session_state.stock_chk_summary_df = summary_df
                     st.session_state.stock_chk_raw_df = raw_df
                     st.session_state.stock_chk_stats = _stats
                     st.session_state.stock_chk_excel_data = buf
@@ -2498,6 +2499,7 @@ if uploaded_file is not None:
 
         if mode == "Stock Checking" and st.session_state.stock_chk_processed:
             raw_df = st.session_state.stock_chk_raw_df
+            summary_df = st.session_state.stock_chk_summary_df
             stats = st.session_state.stock_chk_stats
             excel_data = st.session_state.stock_chk_excel_data
 
@@ -2588,8 +2590,16 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_raw = st.tabs(["RAW 完整明細"])
-            with tab_raw[0]:
+            tab_sum, tab_raw = st.tabs(["📊 Summary (SKU 彙總)", "RAW 完整明細"])
+            with tab_sum:
+                st.markdown("#### SKU 級 Summary：各 Shop Nature 庫存/月銷加總與 TurnDay、調貨提示與調出量")
+                st.markdown("即為 Excel 導出檔中「Summary」工作表之即時數據（TurnDay = 加總庫存 ÷ 加總月銷 × 30.5）：")
+                if summary_df is not None and not summary_df.empty:
+                    st.dataframe(summary_df, width='stretch', hide_index=True)
+                    st.caption(f"共 {len(summary_df):,} 個 SKU（按 Brand / SKU 排序）。")
+                else:
+                    st.info("無符合資料")
+            with tab_raw:
                 st.markdown("#### RAW 原始資料（調貨計算欄位已附於每一列）")
                 _display = raw_df.copy()
                 _new_cols = ["需要調貨", "調入需求量 (補到14日)", "實際調入量", "調入缺口",

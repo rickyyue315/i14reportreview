@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.9.1 (2026-09-03)
+
+- New: Stock Checking 輸出新增 **Summary** 工作表（參考 By SKUxShop_Stock Checking_Output 樞紐佈局，置於 RAW 之前）— 每 SKU 一列（按 Brand / SKU 排序）：Brand / SKU / SKU Desc / Supply Source / D001 Net Stock Qty (CM)；各 Shop Nature（Tourist / Mix / Non Tourist）加總 Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)，TurnDay 以活公式 = 加總庫存 ÷ 加總月銷 × 30.5（月銷 0 時留空）；強制調貨提示（該 SKU 有 Tourist 店需要調貨時標示「需要調貨」）；由 Non Tourist / Mix 店舖預計調出數量 = 該 SKU 對應 Nature 來源店「轉出量」加總；凍結表頭 + 自動篩選
+- New: `transform_stock_checking()` 改為回傳 `(raw, summary, stats, warnings)`；`_build_stock_checking_summary()`、`_write_stock_checking_summary_sheet()` in transformer.py；`generate_excel_stock_checking()` 新增 summary 參數
+- New: Streamlit Stock Checking 結果新增「Summary (SKU 彙總)」分頁（Excel Summary 即時數據）
+- Update: tests/test_stock_checking.py 新增 Summary 測試（×3：每 SKU 一列與 Nature 加總 / 提示與調出量彙總 / 排序），共 98 項測試通過
+- Update: Sidebar 說明與 README 同步 Summary 輸出結構
+
 ## v1.9.0 (2026-09-03)
 
 - New: 新增「Stock Checking（調貨檢查）」分析模式 — D001 倉庫少貨且遊客區（Tourist）店舖缺貨時的檢查：上傳 By SKUxShop_Stock Checking 檔案，計算 Tourist 鋪調貨需求並從 Mix / Non Tourist 鋪分配可轉出貨量（Non Tourist 優先）
