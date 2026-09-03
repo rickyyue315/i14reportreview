@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.9.2 (2026-09-03)
+
+- Change: Stock Checking 觸發條件改為 **SKU 級判定** — 以 Summary 同口徑的「Tourist 加總 TurnDay」（各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5）< 門檻（UI 可調，預設 14 日）且 D001 Net Stock Qty (CM) < 門檻（UI 可調，預設 100 件），**同時符合才標示「需要調貨」**；此前以每列 Turnday (P90D Qty) 個別判定，會出現「個別店 TurnDay 低但該 SKU Tourist 加總 TurnDay 達標（無須調貨）」卻被標示的情況
+- Change: 加總 TurnDay ≥ 門檻的 SKU 一律無須調貨；只有已標示 SKU 才在 RAW 計算調入需求量 / 實際調入量 / 調入缺口與來源分配（個別 Tourist 店補到 14 日周轉的需求 > 0 才標示）
+- New: RAW 新增「Tourist 加總 TurnDay」欄（SKU 級，與 Summary 同值），方便核對標示原因；缺「Shop Monthly Sold Qty (P90D)」欄位時以 Sold Qty (P90D) / 90 × 30.5 換算並發 warning
+- Update: Sidebar 說明、核心計算規則、README 同步；tests/test_stock_checking.py 更新觸發條件測試並新增加總 TurnDay 判定測試（多 Tourist 店合併判定 / 個別店低但加總達標不標示），共 100 項測試通過
+
 ## v1.9.1 (2026-09-03)
 
 - New: Stock Checking 輸出新增 **Summary** 工作表（參考 By SKUxShop_Stock Checking_Output 樞紐佈局，置於 RAW 之前）— 每 SKU 一列（按 Brand / SKU 排序）：Brand / SKU / SKU Desc / Supply Source / D001 Net Stock Qty (CM)；各 Shop Nature（Tourist / Mix / Non Tourist）加總 Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)，TurnDay 以活公式 = 加總庫存 ÷ 加總月銷 × 30.5（月銷 0 時留空）；強制調貨提示（該 SKU 有 Tourist 店需要調貨時標示「需要調貨」）；由 Non Tourist / Mix 店舖預計調出數量 = 該 SKU 對應 Nature 來源店「轉出量」加總；凍結表頭 + 自動篩選

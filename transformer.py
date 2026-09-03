@@ -6033,6 +6033,7 @@ _STOCK_CHECKING_REQUIRED = [
 def _stock_checking_new_columns(raw: pd.DataFrame) -> list[str]:
     """Stock Checking 新增的計算欄位清單（存在才輸出，供測試與 Excel 使用）。"""
     cols = [
+        "Tourist 加總 TurnDay",
         "需要調貨",
         "調入需求量 (補到14日)",
         "實際調入量",
@@ -6135,10 +6136,13 @@ def transform_stock_checking(
 ):
     """Stock Checking（調貨檢查）核心轉換。
 
-    D001 倉庫少貨（低於門檻）且遊客區（Tourist）店舖缺貨（Turnday 低於門檻）時的檢查：
+    D001 倉庫少貨（低於門檻）且遊客區（Tourist）店舖缺貨時的檢查（SKU 級判定）：
 
-    - 需求端：Tourist 店列，Turnday (P90D Qty) ∈ [0, 門檻) 且 D001 < 門檻 且 補到 14 日周轉的需求 > 0
-      → 標示「需要調貨」，調入需求量 = ceil(P90D / 90 × 14) − Shop Stock Qty (CM)。
+    - 觸發條件（同時符合才標示）：該 SKU 的「Tourist 加總 TurnDay」
+      （= 各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5，與 Summary 同口徑）
+      < Turnday 門檻，且 D001 < 門檻。加總 TurnDay ≥ 門檻的 SKU 一律無須調貨。
+    - 需求端：已標示 SKU 的 Tourist 店列，補到 14 日周轉的需求 > 0
+      → 標示「需要調貨」，調入需求量 = ceil(P90D / 90 × 14) − Shop Stock Qty (CM)；RAW 只為已標示 SKU 計算調貨數量。
     - 供應端：Mix / Non Tourist 店列的可轉出貨量（14 日超額標準，與 Stock Impact 模式一致）：
       可轉出 = max(0, Shop Stock Qty (CM) − P90D / 90 × 14)；「無銷售但有存貨」全數可釋放。
       RP Type 為 RF 與 ND 皆可作為來源。
@@ -6182,10 +6186,6 @@ def transform_stock_checking(
     sold_p90d = _safe_numeric(df.get("Sold Qty (P90D)", _safe_default_series(0, idx)))
     cm_stock = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, idx)))
 
-    # Turnday 正規化（沿用 Stock Impact 慣例：inf / NaN → -1 旗標，負值無意義）
-    turnday_raw = pd.to_numeric(df.get("Turnday (P90D Qty)", _safe_default_series(np.nan, idx)), errors="coerce")
-    turnday = turnday_raw.replace([np.inf, -np.inf], np.nan).fillna(-1).astype(float)
-
     # ── 每列計算欄位 ────────────────────────────────────────────────────────
     is_mix = (nature == "Mix").to_numpy()
     is_nt = (nature == "Non Tourist").to_numpy()
@@ -6195,6 +6195,25 @@ def transform_stock_checking(
     no_sale_has_stock = (sold_val <= 0) & (cm_stock_val > 0)
     ideal_14d = sold_val / 90.0 * 14
 
+    # ── SKU 級 Tourist 加總 TurnDay（與 Summary 同口徑：加總庫存 ÷ 加總月銷 × 30.5）──
+    if _resolve_column_name("Shop Monthly Sold Qty (P90D)", avail) is not None:
+        msold_monthly = _safe_numeric(df["Shop Monthly Sold Qty (P90D)"])
+    else:
+        # 缺月銷欄位時以 Sold Qty (P90D) 換算（P90D 為 90 日總量 → 月銷 = /90 × 30.5）
+        msold_monthly = sold_p90d / 90.0 * 30.5
+        warnings.append("來源檔案缺少「Shop Monthly Sold Qty (P90D)」，Tourist 加總 TurnDay 改以 Sold Qty (P90D) 換算。")
+    msold_val = msold_monthly.to_numpy(dtype=float)
+    t_stock_s = pd.Series(np.where(is_tourist, cm_stock_val, 0.0), index=df.index)
+    t_msold_s = pd.Series(np.where(is_tourist, msold_val, 0.0), index=df.index)
+    sku_key = df["SKU"] if "SKU" in df.columns else _safe_default_series(None, idx)
+    agg_stock = t_stock_s.groupby(sku_key).transform("sum")
+    agg_msold = t_msold_s.groupby(sku_key).transform("sum")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sku_tourist_turnday = np.where(agg_msold.to_numpy() > 0,
+                                       agg_stock.to_numpy() / agg_msold.to_numpy() * 30.5,
+                                       np.inf)
+    df["Tourist 加總 TurnDay"] = np.round(np.where(np.isfinite(sku_tourist_turnday), sku_tourist_turnday, np.nan), 2)
+
     mix_excess = np.where(is_mix, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0)
     nt_excess = np.where(is_nt, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0)
     df["可轉出貨量 (Mix)"] = mix_excess.astype(int)
@@ -6202,11 +6221,10 @@ def transform_stock_checking(
 
     demand = np.maximum(0, np.ceil(ideal_14d) - cm_stock_val)
     d001_np = d001_cm.to_numpy(dtype=float)
-    turnday_np = turnday.to_numpy(dtype=float)
+    ttd_np = pd.Series(sku_tourist_turnday, index=df.index).to_numpy(dtype=float)
     need_mask = (
         is_tourist
-        & (turnday_np >= 0)
-        & (turnday_np < turnday_threshold)
+        & (ttd_np < turnday_threshold)   # 加總 TurnDay ≥ 門檻（含月銷 0 → inf、NaN）→ 無須調貨
         & (d001_np < d001_threshold)
         & (demand > 0)
     )

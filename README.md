@@ -133,7 +133,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 
 上傳 `By SKUxShop_Stock Checking_<日期>.xlsx`（D001 倉庫少貨且遊客區店舖缺貨時的檢查），計算 Tourist 鋪 SKU 的調貨需求，並從 Mix / Non Tourist 鋪分配可轉出貨量：
 
-1. **觸發條件** — Tourist 店列，Turnday (P90D Qty) ≥ 0 且 < 門檻（預設 14 日，UI 可調）且 D001 Net Stock Qty (CM) < 門檻（預設 100 件，UI 可調）且調入需求 > 0 → 標示「需要調貨」
+1. **觸發條件（SKU 級，同時符合才標示）** — 該 SKU 的「Tourist 加總 TurnDay」（各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5，與 Summary 同口徑）< 門檻（預設 14 日，UI 可調），且 D001 Net Stock Qty (CM) < 門檻（預設 100 件，UI 可調）；加總 TurnDay ≥ 門檻的 SKU 一律無須調貨，只有已標示 SKU 才在 RAW 計算調貨數量（個別 Tourist 店補到 14 日周轉的需求 > 0）
 2. **調入需求量** = ceil(P90D / 90 × 14) − Shop Stock Qty (CM)，補到 14 日周轉
 3. **可轉出貨量（來源店）** = max(0, Shop Stock Qty (CM) − P90D / 90 × 14)；「無銷售但有存貨」全數可釋放；RP Type 為 RF 與 ND 的店皆可作為來源
 4. **分配** — 按 SKU 彙總需求，Non Tourist 店優先轉出，不足由 Mix 店補足；需求量大→小依序分配
@@ -141,7 +141,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 輸出包含 Summary 與 RAW 兩個工作表：
 
 - **Summary** — SKU 級彙總（每 SKU 一列，按 Brand / SKU 排序）：各 Shop Nature（Tourist / Mix / Non Tourist）加總 Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)、TurnDay = 加總庫存 ÷ 加總月銷 × 30.5、強制調貨提示（該 SKU 有 Tourist 店需要調貨時標示）、由 Non Tourist / Mix 店舖預計調出數量
-- **RAW** — 原始欄位全部保留並新增：需要調貨 / 調入需求量 (補到14日) / 實際調入量 / 調入缺口 / 可轉出貨量 (Mix) / 可轉出貨量 (Non Tourist) / 轉出量 / 調貨來源 (Site Code)
+- **RAW** — 原始欄位全部保留並新增：Tourist 加總 TurnDay / 需要調貨 / 調入需求量 (補到14日) / 實際調入量 / 調入缺口 / 可轉出貨量 (Mix) / 可轉出貨量 (Non Tourist) / 轉出量 / 調貨來源 (Site Code)
 
 ## Excel 輸出結構
 

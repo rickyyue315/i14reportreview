@@ -46,9 +46,11 @@ def _df(rows):
 # 1. 觸發條件
 # ──────────────────────────────────────────────────────────────────────────────
 def test_trigger_condition():
+    # 無 Shop Monthly Sold Qty (P90D) 欄位 → 以 P90D/90×30.5 換算月銷
+    # P90D=90 → 月銷 30.5 → Tourist 加總 TurnDay = 庫存加總 / 30.5 × 30.5 = 庫存加總
     df = _df([
-        {"SKU": 1, "Site Code": "S01", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},  # 符合
-        {"SKU": 2, "Site Code": "S02", "Turnday (P90D Qty)": 14.0, "D001 Net Stock Qty (CM)": 99.0},  # Turnday = 門檻 → 不觸發
+        {"SKU": 1, "Site Code": "S01", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},  # 符合（TurnDay 5 < 14，D001 99 < 100）
+        {"SKU": 2, "Site Code": "S02", "Shop Stock Qty (CM)": 14.0, "D001 Net Stock Qty (CM)": 99.0},  # 加總 TurnDay = 14（門檻邊界）→ 不觸發
         {"SKU": 3, "Site Code": "S03", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 100.0},  # D001 = 門檻 → 不觸發
         {"SKU": 4, "Site Code": "S04", "Shop Nature": "Mix"},  # 非 Tourist → 不觸發
         {"SKU": 5, "Site Code": "S05", "Shop Nature": "Non Tourist"},  # 非 Tourist → 不觸發
@@ -58,6 +60,36 @@ def test_trigger_condition():
     assert list(raw.loc[raw["需要調貨"] == "是", "SKU"]) == ["1"]
     assert stats["need_rows"] == 1
     assert stats["need_skus"] == 1
+
+
+def test_aggregate_tourist_turnday_gates_trigger():
+    # 多間 Tourist 店合併判定：加總 TurnDay = 加總庫存 ÷ 加總月銷 × 30.5
+    # 店 A 個別 TurnDay = 10 < 14，但兩店加總 30/61×30.5 = 15 ≥ 14 → 整個 SKU 無須調貨
+    df = _df([
+        {"SKU": 500, "Site Code": "TA", "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 10.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Turnday (P90D Qty)": 10.0, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 500, "Site Code": "TB", "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 20.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Turnday (P90D Qty)": 20.0, "D001 Net Stock Qty (CM)": 10.0},
+    ])
+    raw, _, stats, _ = transform_stock_checking(df)
+    assert stats["need_rows"] == 0
+    assert (raw["需要調貨"] == "").all()
+    assert (raw["Tourist 加總 TurnDay"] == 15.0).all()
+
+
+def test_aggregate_tourist_turnday_below_threshold_flags_all_short_rows():
+    # 加總 TurnDay = 10/61×30.5 = 5 < 14 且 D001 < 100 → 兩間缺貨 Tourist 店均標示
+    df = _df([
+        {"SKU": 501, "Site Code": "TA", "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Turnday (P90D Qty)": 5.0, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 501, "Site Code": "TB", "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Turnday (P90D Qty)": 5.0, "D001 Net Stock Qty (CM)": 10.0},
+    ])
+    raw, _, stats, _ = transform_stock_checking(df)
+    assert stats["need_rows"] == 2
+    assert stats["need_skus"] == 1
+    assert (raw.loc[raw["Shop Nature"] == "Tourist", "需要調貨"] == "是").all()
+    assert (raw["調入需求量 (補到14日)"] == 9).all()
 
 
 def test_turnday_invalid_flag_not_trigger():
@@ -192,13 +224,14 @@ def test_nd_source_shop_participates():
 # 4. 自訂門檻、欄位容錯
 # ──────────────────────────────────────────────────────────────────────────────
 def test_custom_thresholds():
+    # 預設月銷 30.5（無 Shop Monthly Sold Qty 欄位時由 P90D 換算）→ 加總 TurnDay = 庫存 = 5
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Turnday (P90D Qty)": 15.0, "D001 Net Stock Qty (CM)": 200.0},
     ])
     raw, _, stats, _ = transform_stock_checking(df, turnday_threshold=20, d001_threshold=250)
     assert stats["need_rows"] == 1
-    raw2, _, stats2, _ = transform_stock_checking(df, turnday_threshold=14, d001_threshold=250)
-    assert stats2["need_rows"] == 0
+    raw2, _, stats2, _ = transform_stock_checking(df, turnday_threshold=3, d001_threshold=250)
+    assert stats2["need_rows"] == 0  # 加總 TurnDay 5 ≥ 3 → 無須調貨
 
 
 def test_d001_column_fallback():

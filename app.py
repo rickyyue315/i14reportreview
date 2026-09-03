@@ -277,7 +277,7 @@ with st.sidebar:
     - 輸出：RAW、Summary by Shop
 
     **🔄 Stock Checking（調貨檢查）**
-    - 觸發條件：Tourist 店 SKU 的 Turnday < 14 日（UI 可調）**且** D001 Net Stock Qty (CM) < 100 件（UI 可調）→ 標示「需要調貨」
+    - 觸發條件：該 SKU 的 **Tourist 加總 TurnDay**（各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5，與 Summary 同口徑）< 14 日（UI 可調）**且** D001 Net Stock Qty (CM) < 100 件（UI 可調）→ 標示「需要調貨」；加總 TurnDay ≥ 門檻一律無須調貨
     - 調入需求量 = 補到 14 日周轉：ceil(P90D 日均 × 14) − 現有店舖庫存
     - Mix / Non Tourist 鋪可轉出貨量 = 超過 14 日周轉的部分（無銷售但有存貨全數可釋放，RF 與 ND 店皆可）
     - 分配優先性：同一 SKU 的調貨需求先由 Non Tourist 鋪轉出，不足再由 Mix 鋪補足
@@ -358,8 +358,8 @@ with st.sidebar:
      8. 預設只分析 Warehouse SKU；支援多維度彙總：By Site / Brand / Buyer / Category (Adj. MCH1)
 
      **🔄 Stock Checking（調貨檢查）— Tourist 缺貨、Mix/NT 調撥計算：
-      1. **觸發條件** = Tourist 店列，Turnday (P90D Qty) ≥ 0 且 < 門檻（預設 14 日，UI 可調），且 D001 Net Stock Qty (CM) < 門檻（預設 100 件，UI 可調），且補到 14 日周轉的調入需求 > 0
-      2. **調入需求量** = ceil(P90D / 90 × 14) − Shop Stock Qty (CM)（P90D = Sold Qty (P90D)，90 日總量換算日均 × 14 日）
+      1. **觸發條件（SKU 級，同時符合才標示）** = 該 SKU 的「Tourist 加總 TurnDay」（各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5，與 Summary 同口徑）< 門檻（預設 14 日，UI 可調），且 D001 Net Stock Qty (CM) < 門檻（預設 100 件，UI 可調）；加總 TurnDay ≥ 門檻的 SKU 一律無須調貨
+      2. **調入需求量** = ceil(P90D / 90 × 14) − Shop Stock Qty (CM)（P90D = Sold Qty (P90D)，90 日總量換算日均 × 14 日）；只為已標示「需要調貨」的 SKU 計算，個別 Tourist 店需求 ≤ 0 不標示
       3. **可轉出貨量（Mix / Non Tourist 來源店）** = max(0, Shop Stock Qty (CM) − P90D / 90 × 14)；「無銷售但有存貨」全數可釋放；RP Type 為 RF 與 ND 的店皆可作為來源
       4. **分配優先** = 按 SKU 彙總調入需求，Non Tourist 店可轉出量優先，不足部分由 Mix 店補足；需求列按需求量大→小依序分配
       5. **輸出** = Summary（SKU 級彙總：各 Nature 庫存/月銷加總、TurnDay = 加總庫存 ÷ 加總月銷 × 30.5、強制調貨提示、由 NT/Mix 店舖預計調出數量）+ RAW 完整明細（原始欄位全部保留），RAW 新增：需要調貨 / 調入需求量 (補到14日) / 實際調入量 / 調入缺口 / 可轉出貨量 (Mix) / 可轉出貨量 (Non Tourist) / 轉出量 / 調貨來源 (Site Code)
@@ -1550,19 +1550,20 @@ if uploaded_file is not None:
             sc_top = st.columns(2)
             with sc_top[0]:
                 turnday_threshold = st.number_input(
-                    "🔁 Turnday 門檻 (日)",
+                    "🔁 Tourist 加總 TurnDay 門檻 (日)",
                     min_value=1, max_value=365, value=14, step=1,
-                    help="Tourist 店 SKU 的 Turnday (P90D Qty) 低於此值時，才列入調貨候選。"
+                    help="該 SKU 所有 Tourist 店的庫存加總 ÷ 月銷加總 × 30.5（與 Summary 同口徑）低於此值時，才列入調貨候選。"
                 )
             with sc_top[1]:
                 d001_threshold = st.number_input(
                     "🏭 D001 庫存門檻 (件)",
                     min_value=0, max_value=1000000, value=100, step=10,
-                    help="當 D001 Net Stock Qty (CM) 低於此值且 Turnday 低於門檻時，才標示需要調貨。"
+                    help="當 D001 Net Stock Qty (CM) 低於此值且 Tourist 加總 TurnDay 低於門檻時，才標示需要調貨。"
                 )
             st.caption(
-                f"🔄 觸發條件：Tourist 店 SKU 的 Turnday < **{int(turnday_threshold)} 日** "
-                f"且 D001 Net Stock < **{int(d001_threshold)} 件**。"
+                f"🔄 觸發條件（同時符合）：該 SKU 的 **Tourist 加總 TurnDay < {int(turnday_threshold)} 日** "
+                f"且 **D001 Net Stock < {int(d001_threshold)} 件**。"
+                "加總 TurnDay ≥ 門檻的 SKU 一律無須調貨；只有已標示 SKU 的 RAW 才計算調貨數量。"
                 "調入需求補到 14 日周轉；來源優先 Non Tourist 鋪，再由 Mix 鋪補足（RF 與 ND 店皆可轉出）。"
             )
 
@@ -2505,7 +2506,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 🔄 Stock Checking 調貨分析摘要 (Transfer Analysis Dashboard)")
-            st.caption("Tourist 店 SKU：Turnday < 門檻 且 D001 < 門檻 → 標示需要調貨；調入需求補到 14 日周轉，來源優先 Non Tourist 鋪再由 Mix 鋪補足。")
+            st.caption("SKU 級判定：Tourist 加總 TurnDay（各 Tourist 店庫存加總 ÷ 月銷加總 × 30.5）< 門檻 且 D001 < 門檻 → 標示需要調貨；調入需求補到 14 日周轉，來源優先 Non Tourist 鋪再由 Mix 鋪補足。")
 
             total_rows = len(raw_df) if raw_df is not None else 0
             need_rows = int(stats.get("need_rows", 0)) if stats else 0
@@ -2522,7 +2523,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #ef4444;">
                     <div class="metric-title">需要調貨列數</div>
                     <div class="metric-value" style="color: #ef4444;">{need_rows:,}</div>
-                    <div class="metric-desc">Turnday &amp; D001 皆低於門檻的 Tourist SKU</div>
+                    <div class="metric-desc">Tourist 加總 TurnDay &amp; D001 皆低於門檻的 SKU</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
@@ -2602,7 +2603,7 @@ if uploaded_file is not None:
             with tab_raw:
                 st.markdown("#### RAW 原始資料（調貨計算欄位已附於每一列）")
                 _display = raw_df.copy()
-                _new_cols = ["需要調貨", "調入需求量 (補到14日)", "實際調入量", "調入缺口",
+                _new_cols = ["Tourist 加總 TurnDay", "需要調貨", "調入需求量 (補到14日)", "實際調入量", "調入缺口",
                              "可轉出貨量 (Mix)", "可轉出貨量 (Non Tourist)", "轉出量", "調貨來源 (Site Code)"]
                 _avail_new = [c for c in _new_cols if c in _display.columns]
                 _base = [c for c in ["Shop Nature", "Site Code", "Shop Name", "SKU", "SKU Desc",
