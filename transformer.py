@@ -5410,6 +5410,105 @@ def _build_hybrid_diagnosis(raw: pd.DataFrame, variant: str = "free") -> pd.Data
     return df[ordered].reset_index(drop=True)
 
 
+# 簡易調貨明細欄序（一列一筆「來源店舖 → 接收店舖」調貨；欄名屬新契約，未經要求不得改動）
+_HYBRID_TRANSFER_DETAIL_COLUMNS = [
+    "Brand", "SKU", "SKU Desc",
+    "Target Site Code(接收店舖)", "Target Shop Name", "Target OM",
+    "Supply Site Code(調貨來源)", "Supply Shop Name", "Supply OM",
+    "調貨數量",
+]
+
+
+def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> pd.DataFrame:
+    """簡易調貨明細：只收錄「需要調貨=是」且實際有調入的列，把調貨來源字串
+    （如「HB30:2; HB49:3」）逐段拆行，一列一筆來源店→接收店調貨。
+    variant="om" 時改用同OM調貨欄位；同一接收列同一來源店重複出現時合併加總。
+    來源店名稱／OM 以 RAW 全量建立 Site Code 查找表補回，查不到留空。"""
+    cols = _HYBRID_TRANSFER_DETAIL_COLUMNS
+    if raw is None or raw.empty or "需要調貨" not in raw.columns:
+        return pd.DataFrame(columns=cols)
+    if variant == "om":
+        src_col, qty_col = "調貨來源 (同OM)", "實際調入量 (同OM)"
+    else:
+        src_col, qty_col = "調貨來源 (Site Code)", "實際調入量"
+    if src_col not in raw.columns or qty_col not in raw.columns:
+        return pd.DataFrame(columns=cols)
+
+    need = raw["需要調貨"].fillna("").astype(str).str.strip() == "是"
+    src = raw[src_col].fillna("").astype(str).str.strip()
+    qty_actual = _safe_numeric(raw[qty_col])
+    sel = raw[need & (src != "") & (qty_actual > 0)]
+    if sel.empty:
+        return pd.DataFrame(columns=cols)
+
+    site_all = raw.get("Site Code", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
+    if "Shop Name" in raw.columns:
+        name_all = raw["Shop Name"].fillna("").astype(str).str.strip()
+    elif "Item_Shop" in raw.columns:
+        name_all = pd.Series(
+            [_extract_shop_name(raw["Item_Shop"].iloc[i], site_all.iloc[i]) for i in range(len(raw))],
+            index=raw.index,
+        )
+    else:
+        name_all = _safe_default_series("", raw.index)
+    om_all = raw.get("OM", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
+
+    name_map: dict[str, str] = {}
+    om_map: dict[str, str] = {}
+    for site_v, name_v, om_v in zip(site_all.to_numpy(), name_all.to_numpy(), om_all.to_numpy()):
+        if site_v == "":
+            continue
+        if name_v and site_v not in name_map:
+            name_map[site_v] = str(name_v)
+        if om_v and site_v not in om_map:
+            om_map[site_v] = str(om_v)
+
+    rows = []
+    for idx_pos, row in sel.iterrows():
+        site_v = str(row.get("Site Code", "")).strip()
+        target_name = str(row.get("Shop Name", "")).strip() if "Shop Name" in sel.columns else ""
+        if not target_name:
+            target_name = name_map.get(site_v, "")
+        target_om = str(row.get("OM", "")).strip() or om_map.get(site_v, "")
+        per_supply: dict[str, int] = {}
+        for part in str(row[src_col]).split(";"):
+            part = part.strip()
+            if not part:
+                continue
+            supply_site, sep, qty_text = part.rpartition(":")
+            if not sep:
+                continue
+            supply_site = supply_site.strip()
+            try:
+                qty_n = int(float(qty_text.strip()))
+            except ValueError:
+                continue
+            if not supply_site or qty_n <= 0:
+                continue
+            per_supply[supply_site] = per_supply.get(supply_site, 0) + qty_n
+        for supply_site, qty_n in per_supply.items():
+            rows.append({
+                "Brand": row.get("Brand", ""),
+                "SKU": row.get("SKU", ""),
+                "SKU Desc": row.get("SKU Desc", ""),
+                "Target Site Code(接收店舖)": site_v,
+                "Target Shop Name": target_name,
+                "Target OM": target_om,
+                "Supply Site Code(調貨來源)": supply_site,
+                "Supply Shop Name": name_map.get(supply_site, ""),
+                "Supply OM": om_map.get(supply_site, ""),
+                "調貨數量": qty_n,
+            })
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    out = pd.DataFrame(rows, columns=cols)
+    out = out.sort_values(
+        ["Brand", "SKU", "Target Site Code(接收店舖)", "Supply Site Code(調貨來源)"],
+        kind="stable",
+    ).reset_index(drop=True)
+    return out
+
+
 def _hybrid_diag_summary_columns() -> list[str]:
     cols = ["Safety Review"]
     for n in _HYBRID_DIAG_NATURES:
@@ -5985,6 +6084,59 @@ def _write_hybrid_diagnosis_sheet(ws, diagnosis: pd.DataFrame, progress_callback
     _auto_width(ws)
 
 
+def _write_hybrid_transfer_detail_sheet(ws, detail: pd.DataFrame, progress_callback=None,
+                                        progress_start: float = 0.90, progress_end: float = 0.94):
+    """簡易調貨明細工作表：一列一筆來源店→接收店調貨（來源字串已拆行）。
+    progress 區間必須落在 generate_excel_hybrid 的下一階段區間內，避免進度倒退。"""
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    band_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    _text_keys = ["Brand", "SKU Desc",
+                  "Target Site Code(接收店舖)", "Target Shop Name",
+                  "Supply Site Code(調貨來源)", "Supply Shop Name"]
+
+    headers = list(_HYBRID_TRANSFER_DETAIL_COLUMNS)
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+        cell.border = thin_border
+    ws.row_dimensions[1].height = 30
+
+    if detail is None or detail.empty:
+        ws.cell(row=2, column=1, value="無符合資料").font = Font(size=12)
+        _auto_width(ws)
+        return
+
+    total = len(detail)
+    for r_idx, (_, row) in enumerate(detail.iterrows()):
+        excel_row = r_idx + 2
+        is_band = (r_idx % 2 == 1)
+        for col_idx, h in enumerate(headers, 1):
+            val = row.get(h)
+            cell = ws.cell(row=excel_row, column=col_idx, value=None if pd.isna(val) else val)
+            cell.border = thin_border
+            cell.alignment = left_wrap if h in _text_keys else center
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and h not in _text_keys:
+                cell.number_format = "#,##0"
+            if is_band:
+                cell.fill = band_fill
+        if progress_callback and (r_idx % 200 == 0 or r_idx == total - 1):
+            p = progress_start + (progress_end - progress_start) * ((r_idx + 1) / max(total, 1))
+            progress_callback(p, f"寫入簡易調貨明細 ({r_idx+1}/{total})...")
+
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{1 + total}"
+    _auto_width(ws)
+
+
 def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None,
                                      raw: pd.DataFrame, thin_border, desc_font,
                                      progress_callback=None):
@@ -6089,13 +6241,14 @@ def generate_excel_hybrid(
     stats: dict | None = None,
     progress_callback=None,
 ) -> BytesIO:
-    """Safety Stock x NetStock Review 輸出（5 工作表，順序固定）：
+    """Safety Stock x NetStock Review 輸出（7 工作表，順序固定）：
     RAW（重新排列欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄；含不限OM與同OM兩套調貨結果；
     雙向時另含「可轉出貨量 (Tourist)」）/
     Summary（SKU 級彙總：各 Nature 加總/TurnDay/佔比、強制調貨提示、存貨偏重提示；雙向時另加 AA 欄
     「由Tourist 店舖預計調出數量」）/
     調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) /
- Review 摘要（指標卡 4 排（雙向時 5 排）+ Safety Review × Shop Nature 交叉表）。
+ Review 摘要（指標卡 4 排（雙向時 5 排）+ Safety Review × Shop Nature 交叉表）/
+    簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)（一列一筆來源店→接收店調貨，來源字串已拆行）。
     雙向與否由 RAW 是否含「可轉出貨量 (Tourist)」欄推定。
     """
     if diagnosis is None:
@@ -6151,7 +6304,27 @@ def generate_excel_hybrid(
     _write_hybrid_diag_summary_sheet(ws_sum, diag_summary, stats, raw, thin_border, desc_font, progress_callback)
 
     if progress_callback:
-        progress_callback(0.95, "正在儲存 Excel 檔案...")
+        progress_callback(0.90, "建立簡易調貨明細 (不限OM)...")
+
+    # ── Sheet 6: 簡易調貨明細（不限OM）──
+    ws_detail = wb.create_sheet(title="簡易調貨明細 (不限OM)")
+    _write_hybrid_transfer_detail_sheet(
+        ws_detail, _build_hybrid_transfer_detail(raw, variant="free"),
+        progress_callback, progress_start=0.90, progress_end=0.93,
+    )
+
+    if progress_callback:
+        progress_callback(0.93, "建立簡易調貨明細 (同OM)...")
+
+    # ── Sheet 7: 簡易調貨明細（同OM）──
+    ws_detail_om = wb.create_sheet(title="簡易調貨明細 (同OM)")
+    _write_hybrid_transfer_detail_sheet(
+        ws_detail_om, _build_hybrid_transfer_detail(raw, variant="om"),
+        progress_callback, progress_start=0.93, progress_end=0.95,
+    )
+
+    if progress_callback:
+        progress_callback(0.96, "正在儲存 Excel 檔案...")
 
     gc.collect()
     buf = BytesIO()

@@ -19,7 +19,7 @@ from transformer import (
     transform_stock_checking, generate_excel_stock_checking,
     _stock_checking_raw_display_columns,
     transform_hybrid, generate_excel_hybrid, _hybrid_dashboard_metrics,
-    _hybrid_raw_display_columns,
+    _hybrid_raw_display_columns, _build_hybrid_transfer_detail,
 )
 import time
 import traceback
@@ -702,11 +702,12 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_diag, tab_diag_om, tab_sc, tab_cross, tab_raw = st.tabs([
+            tab_diag, tab_diag_om, tab_sc, tab_cross, tab_detail, tab_raw = st.tabs([
                 "🧭 調貨 Review Safety Stock（不限OM）",
                 "🔗 調貨 Review Safety Stock（同OM）",
                 "📋 Summary（SKU 存貨偏重）",
                 "📊 Review 摘要（Review × Shop Nature）",
+                "🧾 簡易調貨明細",
                 "📄 RAW 完整明細",
             ])
             with tab_diag:
@@ -741,6 +742,20 @@ if uploaded_file is not None:
                     st.dataframe(diag_summary, width='stretch', hide_index=True)
                 else:
                     st.info("無符合資料")
+            with tab_detail:
+                st.markdown("#### 簡易調貨明細（一列一筆來源店→接收店調貨；來源如 HB30:2; HB49:3 會拆成兩行）")
+                _dv = st.radio(
+                    "調貨方式", ["不限OM", "同OM"], horizontal=True, key="hy_detail_variant",
+                    help="不限OM：來源固定 Non Tourist → Mix → Tourist 依序分配；"
+                         "同OM：來源店須與接收店同 OM。Safety Review 與建議調整不受 OM 限制影響。"
+                )
+                _detail_df = _build_hybrid_transfer_detail(raw_df, variant="om" if _dv == "同OM" else "free")
+                if not _detail_df.empty:
+                    st.dataframe(_detail_df, width='stretch', hide_index=True)
+                    st.caption(f"共 {len(_detail_df):,} 列（只收錄實際有調入的列，調貨數量按來源店逐行拆分）；"
+                               "兩套結果另見下載 Excel 的「簡易調貨明細 (不限OM)／(同OM)」工作表。")
+                else:
+                    st.info("無實際調貨資料")
             with tab_raw:
                 st.markdown("#### RAW 原始資料（Review 欄位已附於每一列；不顯示 Item_Shop 與 Value 金額欄）")
                 _display_cols = [c for c in _hybrid_raw_display_columns(raw_df) if c in raw_df.columns]

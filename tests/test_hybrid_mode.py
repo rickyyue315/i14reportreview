@@ -8,7 +8,7 @@
 - 調貨分兩變體：不限OM（契約欄位）與同OM（來源店與需求店同 OM，欄位加「(同OM)」後綴）；
   OM 限制只影響分配，Safety Review 與建議調整兩變體相同
 - Shop Nature：Other/空白/大小寫差異一律正規化為 Non Tourist
-- 輸出 4 工作表：RAW / 調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) / Review 摘要
+- 輸出 7 工作表：RAW / Summary / 調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) / Review 摘要 / 簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)
 """
 import warnings
 warnings.filterwarnings("ignore")
@@ -25,6 +25,8 @@ from transformer import (
     _hybrid_stats_from_raw,
     _hybrid_raw_display_columns,
     _HYBRID_DIAG_COLUMNS,
+    _HYBRID_TRANSFER_DETAIL_COLUMNS,
+    _build_hybrid_transfer_detail,
 )
 
 BASE = {
@@ -468,7 +470,7 @@ def test_no_candidates_warns_but_completes():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 9. Excel 契約（4 工作表）
+# 9. Excel 契約（7 工作表）
 # ──────────────────────────────────────────────────────────────────────────────
 def test_generate_excel_sheets_and_headers():
     raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, _ = transform_hybrid(_df(_SCENARIO_A))
@@ -476,6 +478,7 @@ def test_generate_excel_sheets_and_headers():
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
         "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "Review 摘要",
+        "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]
     raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
     for col in ["事件類型", "Safety Review", "14日周轉所需量", "建議 Safety 設定值",
@@ -902,6 +905,7 @@ def test_bidir_excel_headers_and_dashboard_rows():
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
         "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "Review 摘要",
+        "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]
     raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
     assert "可轉出貨量 (Tourist)" in raw_headers
@@ -921,3 +925,124 @@ def test_bidir_excel_headers_and_dashboard_rows():
     assert ws.cell(row=19, column=2).value == "Tourist 轉出量 (同OM)"
     assert ws.cell(row=23, column=1).value == "Safety Review × Shop Nature 交叉表"
     assert ws.cell(row=24, column=1).value == "Safety Review"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 13. 簡易調貨明細（一列一筆來源店→接收店，來源字串拆行；v1.15.0）
+# ──────────────────────────────────────────────────────────────────────────────
+# 多來源場景（SKU 820）：T21 (Ivy) 需求 20；NT N21 (Max) 可轉出 6；Mix M21 (Ivy) 可轉出 11
+# 不限OM → 來源「N21:6; M21:11」（拆 2 行、缺口 3）；同OM → N21 異 OM 排除，只剩「M21:11」
+_SCENARIO_MULTI = [
+    {"SKU": 820, "Site Code": "T21", "OM": "Ivy", "Item_Shop": "Prod-T21-ShopT",
+     "Shop Nature": "Tourist", "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 36.0,
+     "Shop Monthly Sold Qty (P90D)": 120.0, "Adj. Safety Stock": 30,
+     "D001 Net Stock Qty (CM)": 10.0},
+    {"SKU": 820, "Site Code": "N21", "OM": "Max", "Item_Shop": "Prod-N21-ShopN",
+     "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 20.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 30},
+    {"SKU": 820, "Site Code": "M21", "OM": "Ivy", "Item_Shop": "Prod-M21-ShopM",
+     "Shop Nature": "Mix", "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 25.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 14},
+]
+
+# 無貨可調場景（SKU 830）：NT 池剛過門檻但超額為 0 → 需要調貨=是、來源空、只有缺口
+_SCENARIO_NO_SUPPLY = [
+    {"SKU": 830, "Site Code": "T31", "Item_Shop": "Prod-T31-ShopT",
+     "Shop Nature": "Tourist", "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
+     "Shop Monthly Sold Qty (P90D)": 120.0, "Adj. Safety Stock": 30,
+     "D001 Net Stock Qty (CM)": 10.0},
+    {"SKU": 830, "Site Code": "N31", "Item_Shop": "Prod-N31-ShopN",
+     "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 14.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 30},
+]
+
+
+def test_detail_columns_and_row_splitting():
+    raw, *_ = transform_hybrid(_df(_SCENARIO_MULTI))
+    assert _get(raw, "T21", "調貨來源 (Site Code)") == "N21:6; M21:11"
+    det = _build_hybrid_transfer_detail(raw)
+    assert list(det.columns) == _HYBRID_TRANSFER_DETAIL_COLUMNS
+    assert len(det) == 2
+    assert int(det["調貨數量"].sum()) == int(_get(raw, "T21", "實際調入量")) == 17
+    r0 = det.iloc[0]  # 按 Supply Site Code 排序：M21 先於 N21
+    assert r0["Supply Site Code(調貨來源)"] == "M21" and int(r0["調貨數量"]) == 11
+    assert r0["Target Site Code(接收店舖)"] == "T21"
+    assert r0["Target Shop Name"] == "ShopT" and r0["Target OM"] == "Ivy"
+    assert r0["Supply Shop Name"] == "ShopM" and r0["Supply OM"] == "Ivy"
+    r1 = det.iloc[1]
+    assert r1["Supply Site Code(調貨來源)"] == "N21" and int(r1["調貨數量"]) == 6
+    assert r1["Supply Shop Name"] == "ShopN" and r1["Supply OM"] == "Max"
+    assert det["Brand"].eq("A").all() and det["SKU"].astype(str).eq("820").all()
+    assert det["SKU Desc"].eq("Test Product").all()
+
+
+def test_detail_om_variant():
+    raw, *_ = transform_hybrid(_df(_SCENARIO_MULTI))
+    assert _get(raw, "T21", "調貨來源 (同OM)") == "M21:11"
+    det_om = _build_hybrid_transfer_detail(raw, variant="om")
+    assert len(det_om) == 1
+    r = det_om.iloc[0]
+    assert r["Supply Site Code(調貨來源)"] == "M21" and r["Supply OM"] == "Ivy"
+    assert int(r["調貨數量"]) == int(_get(raw, "T21", "實際調入量 (同OM)")) == 11
+
+
+def test_detail_gap_only_excluded():
+    raw, *_ = transform_hybrid(_df(_SCENARIO_NO_SUPPLY))
+    assert _get(raw, "T31", "需要調貨") == "是"
+    assert _get(raw, "T31", "調貨來源 (Site Code)") == ""
+    assert int(_get(raw, "T31", "調入缺口")) == 9
+    det = _build_hybrid_transfer_detail(raw)
+    assert det.empty and list(det.columns) == _HYBRID_TRANSFER_DETAIL_COLUMNS
+
+
+def test_detail_merges_duplicate_supply_site():
+    raw = pd.DataFrame([{
+        "Brand": "A", "SKU": 900, "SKU Desc": "X", "Site Code": "T01",
+        "Shop Name": "接收店", "OM": "Ivy", "需要調貨": "是",
+        "調貨來源 (Site Code)": "HB30:2; HB30:3; HB49:4", "實際調入量": 9,
+    }])
+    det = _build_hybrid_transfer_detail(raw)
+    assert len(det) == 2
+    hb30 = det[det["Supply Site Code(調貨來源)"] == "HB30"]
+    assert int(hb30.iloc[0]["調貨數量"]) == 5  # 重複段合併加總
+    assert hb30.iloc[0]["Supply Shop Name"] == "" and hb30.iloc[0]["Supply OM"] == ""
+    assert det.iloc[0]["Target Shop Name"] == "接收店"
+
+
+def test_detail_empty_inputs():
+    assert list(_build_hybrid_transfer_detail(None).columns) == _HYBRID_TRANSFER_DETAIL_COLUMNS
+    assert _build_hybrid_transfer_detail(pd.DataFrame()).empty
+    assert _build_hybrid_transfer_detail(pd.DataFrame([{"Brand": "A", "SKU": 1}])).empty
+
+
+def test_detail_bidirectional_tourist_supply():
+    raw, *_ = transform_hybrid(_df(_BIDIR_B1), bidirectional=True)
+    det = _build_hybrid_transfer_detail(raw)
+    assert len(det) == 1
+    r = det.iloc[0]
+    assert r["Target Site Code(接收店舖)"] == "M01"
+    assert r["Supply Site Code(調貨來源)"] == "T01"
+    assert int(r["調貨數量"]) == 9
+
+
+def test_detail_excel_sheets():
+    raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, _ = transform_hybrid(_df(_SCENARIO_MULTI))
+    buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
+    wb = load_workbook(buf)
+    ws = wb["簡易調貨明細 (不限OM)"]
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    assert headers == _HYBRID_TRANSFER_DETAIL_COLUMNS
+    assert ws.freeze_panes == "A2"
+    assert ws.auto_filter.ref == "A1:J3"
+    assert ws.cell(row=2, column=10).number_format == "#,##0"
+    assert int(ws.cell(row=2, column=10).value) == 11  # M21:11（排序後首行）
+    ws_om = wb["簡易調貨明細 (同OM)"]
+    assert ws_om.auto_filter.ref == "A1:J2"
+    assert int(ws_om.cell(row=2, column=10).value) == 11
+    # 無實際調貨 → 兩表寫「無符合資料」
+    raw2, sc2, d2, d2o, c2, s2, _ = transform_hybrid(_df(_SCENARIO_NO_SUPPLY))
+    buf2 = generate_excel_hybrid(raw2, sc2, d2, d2o, c2, s2)
+    wb2 = load_workbook(buf2)
+    assert wb2.sheetnames[-2:] == ["簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)"]
+    assert wb2["簡易調貨明細 (不限OM)"].cell(row=2, column=1).value == "無符合資料"
+    assert wb2["簡易調貨明細 (同OM)"].cell(row=2, column=1).value == "無符合資料"

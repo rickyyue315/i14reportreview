@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.15.0 (2026-09-04)
+
+- New: Safety Stock x NetStock Review 新增「🧾 簡易調貨明細」— 結果頁新 tab（置於 Review 摘要與 RAW 之間，radio 切換**不限OM／同OM**），下載 Excel 同步新增「簡易調貨明細 (不限OM)／(同OM)」兩個工作表（共 7 表，附於最後，既有 5 表零變動）
+- New: 簡易版一列一筆「來源店舖 → 接收店舖」調貨，欄位固定 `Brand / SKU / SKU Desc / Target Site Code(接收店舖) / Target Shop Name / Target OM / Supply Site Code(調貨來源) / Supply Shop Name / Supply OM / 調貨數量`；調貨來源字串（如「HB30:2; HB49:3」）按分號逐段拆行，同一接收列同一來源店重複出現時合併加總；只收錄「需要調貨=是」且實際有調入（實際調入量 > 0）的列，無貨可調的缺口列不進簡易版；來源店 Shop Name／OM 以 RAW 全量 Site Code 查找表補回（查不到留空）；按 Brand / SKU / 接收店 / 來源店排序；凍結表頭 + 自動篩選；無資料時顯示「無符合資料」
+- Update: `transformer.py` 新增 `_HYBRID_TRANSFER_DETAIL_COLUMNS`、`_build_hybrid_transfer_detail(raw, variant)`、`_write_hybrid_transfer_detail_sheet()`；`generate_excel_hybrid()` 簽名不變、末尾追加兩表（progress 區間 0.90–0.95）
+- Update: tests/test_hybrid_mode.py Excel 契約更新為 7 工作表 ×2，新增簡易版測試 ×7（拆行與 10 欄契約、同OM變體、缺口列排除、重複來源合併、空輸入、雙向來源、Excel 兩表格式）；共 175 項測試通過
+- Update: README／使用說明頁同步（簡易調貨明細 tab 與兩工作表說明）
+
 ## v1.14.3 (2026-09-04)
 
 - Change: Stock Checking 的 Summary 出現存貨偏重數值時，同步以**醒目橘底（FFC000）加粗體**加強顯示（與 Safety Stock x NetStock Review 同式）——Excel「Summary」工作表的「存貨偏重提示」欄（Z）與偏重 Nature 的庫存佔比欄（Q/S/U）底色；Streamlit「📊 Summary (SKU 彙總)」分頁以 `_style_inventory_skew()` Styler 同步高亮（`generate_excel_stock_checking()` 傳 `highlight_skew=True`）
