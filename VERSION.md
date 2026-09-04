@@ -1,5 +1,27 @@
 # 版本記錄
 
+## v1.17.0 (2026-09-04)
+
+Safety Stock x NetStock Review：**Safety 設定不再跟隨存貨（調貨）周轉天數**，改為按 Shop Nature 的可調基準天數。
+
+- New: Safety Review 基準由固定 14 日改為**按 Nature 的「Safety 基準周轉天數」** — 結果頁左側新增三個輸入（🧳 Tourist／🔀 Mix／🏪 Non Tourist，範圍 7–10 日），預設 **Tourist 7 / Mix 9 / Non Tourist 10**；`Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 的基準天數)`
+- New: **調貨段完全不受影響** — `調入需求量 (補到14日)`、`實際調入量`、`調入缺口`、`轉出量`、`可轉出貨量 (Mix/Non Tourist/Tourist)`、`調貨後庫存`、`調貨後 TurnDay` 及其同OM變體一律沿用 14 日口徑（測試 `test_transfers_unchanged_by_safety_days` 逐欄比較預設與 14/14/14 兩種設定，要求完全相同）
+- Change: **欄位改名（破壞性）** — `14日周轉所需量` → `Safety 周轉所需量`（數值已非固定 14 日）；影響 RAW、兩個「調貨 Review Safety Stock」主表、Review 摘要三個統計區塊與相關測試
+- New: RAW 與主表新增 **`Safety 基準天數`** 欄（逐列回顯實際採用的 Nature 基準，供導出檔稽核，並讓 stats 回退路徑可還原基準）；主表由 24 欄改為 25 欄
+- Update: `transform_hybrid()` 新增 `safety_days` 參數（**位於 `progress_callback` 之前、以關鍵字傳入**；回傳仍為 7 元組）；新增 `_hybrid_safety_days()`（未知 Nature／非數值／非正數一律退回預設，不拋錯）、`_hybrid_safety_days_label()`、`_hybrid_safety_days_from_raw()` 與 `_HYBRID_SAFETY_DAYS_DEFAULT`／`_MIN`／`_MAX`／`_HYBRID_SAFETY_LINE_COLUMN`／`_HYBRID_SAFETY_DAYS_COLUMN` 常數；`generate_excel_hybrid()` 簽名不變
+- Update: 指標卡第 3 排說明與「Review 摘要」工作表標題改為顯示實際採用的基準（如「…｜Safety 基準 Tourist 7 日 / Mix 9 日 / Non Tourist 10 日」）；指標卡文字不再內嵌日數，維持 `stats` 有無時輸出一致
+- Update: tests/test_hybrid_mode.py — 既有的 Review 數值測試改傳 `safety_days=_SD14`（三個 Nature 統一 14 日＝v1.16.0 口徑，數值斷言原樣保留）；欄名斷言全域改名；新增第 15 節 ×7（預設值與範圍、正規化無效輸入、Nature 基準逐列判定與 不足/過高/正常 反轉、**調貨欄位不受 safety_days 影響**、基準回顯與回退還原、主表 25 欄契約、Excel 標題含基準）；共 193 項測試通過
+- Update: README／使用說明頁同步（模式說明、Review 基準規則第 3 點、輸出欄序與工作表結構表）
+
+## v1.16.0 (2026-09-04)
+
+- New: Safety Stock x NetStock Review 的「Review 摘要」新增 **② Safety 調整方向分類** — 以有調貨事件的店舖×SKU 列為母體（與 ① Safety Review × Shop Nature 交叉表相同），按「Safety 建議調整量」正負分 增加／減少／不變，各列 列數、SKU 數、Safety 建議調整量合計，末列「總計」（SKU 數不重複計算，合計為淨調整量）；四捨五入後為 0 的列歸「不變」；正常情況下三類列數即等於 stats 的 under_rows／over_rows／normal_rows
+- New: 同時新增 **③ Safety 調整明細（SKU 級彙總）** — 每個有事件的 SKU 一列：`Brand / SKU / SKU Desc / Buyer / Review 列數 / 需增加店舖數 / 需減少店舖數 / 設定正常店舖數 / 現有 Safety 設定合計（調整列）/ 建議 Safety 設定合計（調整列）/ 淨調整量`；三個店舖數按 Site Code 不重複計算，兩個合計只累加「Safety 設定不足＋過高」列，淨調整量為該 SKU 各列「Safety 建議調整量」加總；只有「設定正常」列的 SKU 仍納入（淨調整量 0）；按 Brand / SKU 排序
+- Update: 兩個統計**延伸在同一「Review 摘要」工作表**（① 交叉表下方，依序 ② ③，各區塊隔一空白列）與 Streamlit「📊 Review 摘要（Safety 調整統計）」分頁（原標籤「Review 摘要（Review × Shop Nature）」因內容已擴展而改名）；Excel 仍 7 個工作表、結果頁仍 6 個分頁，① 交叉表與指標卡的列位置零變動
+- Update: Safety 建議不受 OM 限制與「允許雙向調貨」影響，故 ②③ 為 不限OM／同OM 共用的一份統計；`transform_hybrid()` 回傳與 `generate_excel_hybrid()` 簽名**皆不變**（②③ 由 RAW 即時彙算），新增 `_build_hybrid_safety_change_summary()`、`_build_hybrid_safety_sku_detail()`、`_hybrid_safety_event_frame()`、`_write_hybrid_summary_block()`（三個區塊共用樣式：合併標題、4472C4 表頭、總計列粗體灰底、數字 #,##0）與 `_HYBRID_SAFETY_CHANGE_*`／`_HYBRID_SAFETY_SKU_COLUMNS` 契約常數
+- Update: tests/test_hybrid_mode.py 新增第 14 節「Safety 調整統計」測試 ×11（分類表與 stats 等價 ×2、明細欄序契約與分組、逐列加總對帳、店舖數按 Site Code 不重複、與 OM 限制無關、雙向母體對齊交叉表、空輸入、Excel 區塊位置（單向 ② 於第 27 列／雙向於第 31 列）、空母體僅寫「無符合資料」）；共 186 項測試通過
+- Update: README／使用說明頁同步（模式說明、輸出規則第 12 點、Excel 輸出結構表）
+
 ## v1.15.0 (2026-09-04)
 
 - New: Safety Stock x NetStock Review 新增「🧾 簡易調貨明細」— 結果頁新 tab（置於 Review 摘要與 RAW 之間，radio 切換**不限OM／同OM**），下載 Excel 同步新增「簡易調貨明細 (不限OM)／(同OM)」兩個工作表（共 7 表，附於最後，既有 5 表零變動）

@@ -5266,7 +5266,7 @@ _HYBRID_REQUIRED = [
     "Shop Monthly Sold Qty (P90D)",
 ]
 
-# ── 調貨事件 Review（14 日周轉線基準）──
+# ── 調貨事件 Review（Safety 基準天數按 Nature；調貨段仍為 14 日）──
 _HYBRID_EVENT_NEED_IN = "需要調入"
 _HYBRID_EVENT_DONATED = "實際轉出"
 _HYBRID_EVENT_DONOR = "可轉出未使用"
@@ -5281,11 +5281,57 @@ _HYBRID_DIAG_ORDER = [
 _HYBRID_EVENT_ORDER = {_HYBRID_EVENT_NEED_IN: 0, _HYBRID_EVENT_DONATED: 1, _HYBRID_EVENT_DONOR: 2}
 _HYBRID_DIAG_NATURES = ["Tourist", "Mix", "Non Tourist"]
 
+# ── Safety 基準周轉天數（Review 線；與調貨段的 14 日線分開，Safety 不跟隨存貨周轉）──
+_HYBRID_SAFETY_DAYS_DEFAULT = {"Tourist": 7, "Mix": 9, "Non Tourist": 10}
+_HYBRID_SAFETY_DAYS_MIN = 7
+_HYBRID_SAFETY_DAYS_MAX = 10
+# Review 欄名（改自「14日周轉所需量」；數值隨所屬 Nature 的基準天數而變）
+_HYBRID_SAFETY_LINE_COLUMN = "Safety 周轉所需量"
+# 每列實際採用的基準天數（Echo 自參數，供導出檔稽核與回退彙總）
+_HYBRID_SAFETY_DAYS_COLUMN = "Safety 基準天數"
+
+
+def _hybrid_safety_days(safety_days: dict | None = None) -> dict[str, int]:
+    """Safety 基準天數 — 以預設（Tourist 7 / Mix 9 / Non Tourist 10）為底，覆寫傳入值；
+    未知 Nature、非數值或非正整數的項目一律忽略（退回預設）。"""
+    days = dict(_HYBRID_SAFETY_DAYS_DEFAULT)
+    for key, val in (safety_days or {}).items():
+        name = str(key).strip()
+        if name not in days:
+            continue
+        try:
+            n = int(val)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            days[name] = n
+    return days
+
+
+def _hybrid_safety_days_label(days: dict[str, int]) -> str:
+    """基準天數的文字描述（供指標卡說明、warning 與 UI 使用）。"""
+    return " / ".join(f"{n} {int(days[n])} 日" for n in _HYBRID_DIAG_NATURES)
+
+# ── Safety 調整統計（欄名屬新契約，未經要求不得改動）──
+_HYBRID_SAFETY_CHANGE_COLUMNS = ["分類", "列數", "SKU 數", "Safety 建議調整量合計", "說明"]
+_HYBRID_SAFETY_CHANGE_ORDER = ["增加", "減少", "不變"]
+_HYBRID_SAFETY_CHANGE_DESC = {
+    "增加": "建議 Safety 設定值高於現有設定（Safety 設定不足）",
+    "減少": "建議 Safety 設定值低於現有設定（Safety 設定過高）",
+    "不變": "設定正常或四捨五入後無需調整（缺貨／過剩非 Safety 設定因素）",
+}
+_HYBRID_SAFETY_CHANGE_TOTAL_DESC = "SKU 數為全表不重複 SKU（同一 SKU 可跨分類）；合計為淨調整量"
+_HYBRID_SAFETY_SKU_COLUMNS = [
+    "Brand", "SKU", "SKU Desc", "Buyer",
+    "Review 列數", "需增加店舖數", "需減少店舖數", "設定正常店舖數",
+    "現有 Safety 設定合計（調整列）", "建議 Safety 設定合計（調整列）", "淨調整量",
+]
+
 # 「調貨 Review Safety Stock」主表欄序（店舖×SKU 逐列；RAW 則輸出全部欄位 + Review 欄）
 _HYBRID_DIAG_COLUMNS = [
     "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Site Code", "OM", "Shop Nature",
     "事件類型", "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)",
-    "14日周轉所需量", "Adj. Safety Stock", "Safety Review",
+    _HYBRID_SAFETY_DAYS_COLUMN, _HYBRID_SAFETY_LINE_COLUMN, "Adj. Safety Stock", "Safety Review",
     "建議 Safety 設定值", "Safety 建議調整量",
     "調入需求量 (補到14日)", "實際調入量", "調入缺口",
     "可轉出貨量", "轉出量", "調貨來源 (Site Code)",
@@ -5560,6 +5606,130 @@ def _build_hybrid_diag_summary(raw: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
+def _hybrid_safety_event_frame(raw: pd.DataFrame) -> pd.DataFrame:
+    """Safety 調整統計母體 — 僅「事件類型」非空的列（與 Safety Review × Shop Nature
+    交叉表同母體）。Safety 建議不受 OM 限制影響，故不限OM／同OM 共用同一份統計。"""
+    if raw is None or raw.empty or "事件類型" not in raw.columns:
+        return pd.DataFrame()
+    return raw[raw["事件類型"].fillna("").astype(str) != ""].copy()
+
+
+def _first_non_blank_value(values) -> str:
+    """取群組內首個非空值（SKU Desc／Buyer 每 SKU 應一致，容許個別列空白）。"""
+    for v in values:
+        text = "" if pd.isna(v) else str(v).strip()
+        if text:
+            return text
+    return ""
+
+
+def _build_hybrid_safety_change_summary(raw: pd.DataFrame) -> pd.DataFrame:
+    """Safety 調整方向分類表 — 按「Safety 建議調整量」（顯示值，已四捨五入至 1 位小數）
+    的正負分為 增加／減少／不變，統計列數、SKU 數與調整量合計，含總計列。
+    邊界情形：調整量四捨五入後為 0 的列歸「不變」（其「Safety Review」仍可能標示不足／過高）。
+    總計列的 SKU 數用母體不重複 SKU，避免同一 SKU 跨分類虛增。"""
+    cols = _HYBRID_SAFETY_CHANGE_COLUMNS
+    df = _hybrid_safety_event_frame(raw)
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    chg = pd.to_numeric(
+        df.get("Safety 建議調整量", _safe_default_series(np.nan, df.index)), errors="coerce"
+    ).fillna(0)
+    sku = df.get("SKU", _safe_default_series("", df.index))
+    cat = np.where(chg > 0, "增加", np.where(chg < 0, "減少", "不變"))
+
+    rows = []
+    for label in _HYBRID_SAFETY_CHANGE_ORDER:
+        m = cat == label
+        rows.append({
+            "分類": label,
+            "列數": int(m.sum()),
+            "SKU 數": int(sku[m].dropna().nunique()),
+            "Safety 建議調整量合計": int(round(float(chg[m].sum()))),
+            "說明": _HYBRID_SAFETY_CHANGE_DESC[label],
+        })
+    rows.append({
+        "分類": "總計",
+        "列數": int(len(df)),
+        "SKU 數": int(sku.dropna().nunique()),
+        "Safety 建議調整量合計": int(round(float(chg.sum()))),
+        "說明": _HYBRID_SAFETY_CHANGE_TOTAL_DESC,
+    })
+    return pd.DataFrame(rows, columns=cols)
+
+
+def _build_hybrid_safety_sku_detail(raw: pd.DataFrame) -> pd.DataFrame:
+    """Safety 調整明細（SKU 級彙總）— 每個有調貨事件的 SKU 一列：
+    Review 列數、需增加／需減少／設定正常店舖數（按 Site Code 不重複計）、
+    調整列（設定不足＋設定過高）的現有與建議 Safety 設定合計，以及淨調整量。
+    只有「設定正常」列的 SKU 仍會納入（淨調整量為 0，代表缺貨／過剩非 Safety 設定因素）。"""
+    cols = _HYBRID_SAFETY_SKU_COLUMNS
+    df = _hybrid_safety_event_frame(raw)
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+
+    diag = df.get("Safety Review", _safe_default_series("", df.index)).fillna("").astype(str)
+    chg = pd.to_numeric(
+        df.get("Safety 建議調整量", _safe_default_series(np.nan, df.index)), errors="coerce"
+    ).fillna(0)
+    adj = pd.to_numeric(
+        df.get("Adj. Safety Stock", _safe_default_series(np.nan, df.index)), errors="coerce"
+    ).fillna(0)
+    # 「建議 Safety 設定值」只落在不足／過高列，故其非空即代表該列需要調整
+    sugg = pd.to_numeric(
+        df.get("建議 Safety 設定值", _safe_default_series(np.nan, df.index)), errors="coerce"
+    )
+    work = pd.DataFrame({
+        "Brand": df.get("Brand", _safe_default_series("", df.index)).fillna("").astype(str),
+        "SKU": df.get("SKU", _safe_default_series("", df.index)),
+        "SKU Desc": df.get("SKU Desc", _safe_default_series("", df.index)),
+        "Buyer": df.get("Buyer", _safe_default_series("", df.index)),
+        "_site": df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip(),
+        "_chg": chg,
+        "_adj": adj,
+        "_sugg": sugg,
+        "_under": (diag == _HYBRID_DIAG_UNDER).to_numpy(),
+        "_over": (diag == _HYBRID_DIAG_OVER).to_numpy(),
+    })
+
+    rows = []
+    for (_brand, _sku), grp in work.groupby(["Brand", "SKU"], sort=False, dropna=False):
+        under = grp["_under"]
+        over = grp["_over"]
+        fix = grp[grp["_sugg"].notna()]
+        rows.append({
+            "Brand": _brand,
+            "SKU": _sku,
+            "SKU Desc": _first_non_blank_value(grp["SKU Desc"]),
+            "Buyer": _first_non_blank_value(grp["Buyer"]),
+            "Review 列數": int(len(grp)),
+            "需增加店舖數": int(grp.loc[under, "_site"].nunique()),
+            "需減少店舖數": int(grp.loc[over, "_site"].nunique()),
+            "設定正常店舖數": int(grp.loc[~under & ~over, "_site"].nunique()),
+            "現有 Safety 設定合計（調整列）": int(round(float(fix["_adj"].sum()))),
+            "建議 Safety 設定合計（調整列）": int(round(float(fix["_sugg"].sum()))),
+            "淨調整量": int(round(float(grp["_chg"].sum()))),
+        })
+    out = pd.DataFrame(rows, columns=cols)
+    return out.sort_values(["Brand", "SKU"], kind="stable").reset_index(drop=True)
+
+
+def _hybrid_safety_days_from_raw(raw: pd.DataFrame, nature=None) -> dict[str, int]:
+    """由 RAW 的「Safety 基準天數」欄還原各 Nature 實際採用的基準天數
+    （該欄每列同一 Nature 恆定）；缺欄時退回預設 7 / 9 / 10。"""
+    days = _hybrid_safety_days({})
+    if raw is None or raw.empty or _HYBRID_SAFETY_DAYS_COLUMN not in raw.columns:
+        return days
+    if nature is None:
+        nature = raw.get("Shop Nature", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
+    vals = pd.to_numeric(raw[_HYBRID_SAFETY_DAYS_COLUMN], errors="coerce")
+    for n in _HYBRID_DIAG_NATURES:
+        sub = vals[nature == n].dropna()
+        if len(sub):
+            days[n] = int(sub.iloc[0])
+    return days
+
+
 def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
     """由 raw 匯總 Review stats（stats 缺失時的回退，與 transform_hybrid 同口徑）。"""
     if raw is None or raw.empty:
@@ -5574,6 +5744,7 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
     over = diag == _HYBRID_DIAG_OVER
     donor = evt.isin([_HYBRID_EVENT_DONATED, _HYBRID_EVENT_DONOR])
     return {
+        "safety_days": _hybrid_safety_days_from_raw(raw, nature),
         "need_rows": int(need.sum()),
         "need_skus": int(raw.loc[need, "SKU"].nunique()) if need.any() else 0,
         "total_demand": int(_safe_numeric(raw.get("調入需求量 (補到14日)", _safe_default_series(0, raw.index))).sum()),
@@ -5628,9 +5799,9 @@ def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
         ("Mix 轉出量", g("mix_transfer"), "不限OM：NT 不足時由 Mix 店舖補足（件）", "06b6d4"),
     ]
     row3 = [
-        ("Safety 設定不足列數", g("under_rows"), "現有設定低於 14 日周轉線的調入列數", "ef4444"),
+        ("Safety 設定不足列數", g("under_rows"), "現有設定低於「Safety 周轉所需量」的調入列數（基準天數按 Nature）", "ef4444"),
         ("不足建議增加合計", g("under_inc_total"), "設定不足列的 Safety 建議調整量合計（正=增加）", "10b981"),
-        ("Safety 設定過高列數", g("over_rows"), "現有設定高於 14 日周轉線的轉出列數", "f59e0b"),
+        ("Safety 設定過高列數", g("over_rows"), "現有設定高於「Safety 周轉所需量」的轉出列數（基準天數按 Nature）", "f59e0b"),
         ("過高建議減少合計", g("over_dec_total"), "設定過高列的 Safety 建議調整量合計（負=減少）", "3b82f6"),
     ]
     row4 = [
@@ -5721,17 +5892,22 @@ def transform_hybrid(
     turnday_threshold: int = 14,
     d001_threshold: int = 100,
     bidirectional: bool = False,
+    safety_days: dict | None = None,
     progress_callback=None,
 ):
     """Safety Stock x NetStock Review 核心轉換（調貨事件 Review Safety 設定）。
 
     - 調貨段：與 Stock Checking 完全同規則（SKU 級加總 TurnDay、Nature 供應門檻、
-      14 日需求/可轉出、NT 優先→Mix 補足、需求量大→小）。
-    - Review 段（14 日周轉線基準）：14日周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 14)。
+      14 日需求/可轉出、NT 優先→Mix 補足、需求量大→小）。**調貨段恆以 14 日為基準，
+      不受 safety_days 影響。**
+    - Review 段（Safety 基準周轉天數，按 Shop Nature 分別設定）：
+      Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 的基準天數)；
+      safety_days 預設 {"Tourist": 7, "Mix": 9, "Non Tourist": 10}（UI 建議範圍 7–10 日）。
+      Safety 設定不跟隨存貨周轉（調貨）天數，兩段基準各自獨立。
       Tourist 需調入列：現有 Adj. Safety Stock < 所需量 → Safety 設定不足；
-      已標示 SKU 的 Mix / Non Tourist 有貨列（實際轉出或可轉出未使用）：
+      已標示 SKU 的有貨列（實際轉出或可轉出未使用）：
       現有設定 > 所需量 → Safety 設定過高；等於邊界一律視為設定正常。
-      建議 Safety 設定值 = 14日周轉所需量（僅不足/過高列），
+      建議 Safety 設定值 = Safety 周轉所需量（僅不足/過高列），
       Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）。
     - bidirectional=True（允許雙向調貨，預設 False 維持單向契約）：任何 Nature 缺貨
       （該 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且列需求 > 0）且其他任一 Nature
@@ -5745,7 +5921,8 @@ def transform_hybrid(
       欄位加「(同OM)」後綴）；Safety Review 與建議調整量兩變體相同，不受調貨限制影響。
     - Summary：附 Stock Checking 的 SKU 級彙總（各 Nature 庫存/月銷加總、TurnDay、佔比、
       強制調貨提示、存貨偏重提示），供查閱哪些 SKU 存貨偏重哪個 Nature。
-    回傳 (raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warnings)。
+    回傳 (raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warnings)；
+    stats["safety_days"] 為實際採用的各 Nature 基準天數。
     """
     missing = validate_hybrid_input(df_input)
     if missing:
@@ -5817,6 +5994,13 @@ def transform_hybrid(
     msold_val = msold_eff.to_numpy(dtype=float)
     no_sale_has_stock = (sold_val <= 0) & (cm_stock_val > 0)
     ideal_14d = sold_val / 90.0 * 14
+    # Safety 基準天數（按 Nature）— 只用於 Review 段；調貨段一律用上面的 14 日
+    _safety_days = _hybrid_safety_days(safety_days)
+    safety_days_np = np.select(
+        [is_tourist, is_mix, is_nt],
+        [float(_safety_days["Tourist"]), float(_safety_days["Mix"]), float(_safety_days["Non Tourist"])],
+        default=float(_safety_days["Non Tourist"]),
+    )
 
     sku_key = df["SKU"]
 
@@ -5928,8 +6112,8 @@ def transform_hybrid(
         progress_callback(0.45, "Review Safety 設定...")
     raw = df
 
-    # ── 調貨事件 Review（14 日周轉線基準；Review 與建議調整不受 OM 限制影響）──
-    line14 = np.maximum(0, np.ceil(np.maximum(0, ideal_14d)))
+    # ── 調貨事件 Review（Safety 基準天數按 Nature；Review 與建議調整不受 OM 限制影響）──
+    safety_line = np.maximum(0, np.ceil(np.maximum(0, sold_val / 90.0 * safety_days_np)))
     adj_s = pd.to_numeric(raw.get("Adj. Safety Stock", _safe_default_series(np.nan, idx)), errors="coerce")
     n_adj_blank = int(adj_s.isna().sum())
     if n_adj_blank:
@@ -5947,8 +6131,8 @@ def transform_hybrid(
     donated_mask = donor_mask & (donate_np > 0)
     donor_unused_mask = donor_mask & ~donated_mask
 
-    under_mask = need_mask & (adj_val < line14)
-    over_mask = donor_mask & (adj_val > line14)
+    under_mask = need_mask & (adj_val < safety_line)
+    over_mask = donor_mask & (adj_val > safety_line)
     in_table = need_mask | donor_mask
 
     event = np.full(n_rows, "", dtype=object)
@@ -5963,10 +6147,10 @@ def transform_hybrid(
     line_col = np.full(n_rows, np.nan)
     sugg = np.full(n_rows, np.nan)
     chg = np.full(n_rows, np.nan)
-    line_col[in_table] = line14[in_table]
+    line_col[in_table] = safety_line[in_table]
     fix_mask = under_mask | over_mask
-    sugg[fix_mask] = line14[fix_mask]
-    chg[fix_mask] = line14[fix_mask] - adj_val[fix_mask]
+    sugg[fix_mask] = safety_line[fix_mask]
+    chg[fix_mask] = safety_line[fix_mask] - adj_val[fix_mask]
 
     stock_after = cm_stock_val + actual_np - donate_np
     td_after = np.full(n_rows, np.nan)
@@ -5976,7 +6160,8 @@ def transform_hybrid(
     td_after_om = np.full(n_rows, np.nan)
     td_after_om[ms_pos] = stock_after_om[ms_pos] / msold_val[ms_pos] * 30.5
 
-    raw["14日周轉所需量"] = line_col
+    raw[_HYBRID_SAFETY_DAYS_COLUMN] = safety_days_np.astype(int)
+    raw[_HYBRID_SAFETY_LINE_COLUMN] = line_col
     raw["事件類型"] = event
     raw["Safety Review"] = diag
     raw["建議 Safety 設定值"] = sugg
@@ -5994,6 +6179,7 @@ def transform_hybrid(
     sc_summary = _build_stock_checking_summary(raw, bidirectional=bidirectional)
 
     stats = {
+        "safety_days": dict(_safety_days),
         "need_rows": int(need_series.sum()),
         "need_skus": int(raw.loc[need_series, "SKU"].nunique()) if need_series.any() else 0,
         "total_demand": int(raw.loc[need_series, "調入需求量 (補到14日)"].sum()) if need_series.any() else 0,
@@ -6137,53 +6323,92 @@ def _write_hybrid_transfer_detail_sheet(ws, detail: pd.DataFrame, progress_callb
     _auto_width(ws)
 
 
-def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None,
-                                     raw: pd.DataFrame, thin_border, desc_font,
-                                     progress_callback=None):
-    """Review 摘要工作表：指標卡 4 排（第 4 排為同OM調貨對照；雙向調貨時另加第 5 排
-    Tourist 轉出量）+ Safety Review × Shop Nature 交叉表（含總計列）。"""
-    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-    header_font = Font(bold=True, color="FFFFFF", size=11)
-    bold_font = Font(bold=True, size=11)
-    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
-
-    _rows = _hybrid_dashboard_metrics(raw, stats)
-    row5_metrics = _rows[4] if len(_rows) > 4 else None
-    _write_metric_cards(
-        ws, "Safety Stock 設定 Review 摘要 (Transfer Diagnosis Dashboard)",
-        _rows[0], _rows[1], thin_border, desc_font, progress_callback,
-        progress_pct=0.80, row3_metrics=_rows[2], row4_metrics=_rows[3],
-        row5_metrics=row5_metrics,
-    )
-
-    table_start = 24 if row5_metrics else 20
-    if cross is None or cross.empty:
-        ws.cell(row=table_start, column=1, value="無符合資料").font = Font(size=12)
-        _auto_width(ws)
-        return
-
-    sc = ws.cell(row=table_start - 1, column=1, value="Safety Review × Shop Nature 交叉表")
+def _write_hybrid_summary_block(ws, start_row, section_title, block, *, header_fill,
+                                header_font, bold_font, section_fill, total_fill,
+                                thin_border, center, left_wrap):
+    """「Review 摘要」工作表的統計區塊：合併標題列 → 表頭列 → 資料列
+    （首欄值為「總計」者加粗體與灰底）。樣式與 Safety Stock Review 的 SUMMARY
+    （_write_summary_sheet，transformer.py:971）一致。回傳下一個區塊的標題列號。"""
+    headers = list(block.columns)
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=len(headers))
+    sc = ws.cell(row=start_row, column=1, value=section_title)
     sc.font = Font(bold=True, size=12, color="1E40AF")
-    headers = list(cross.columns)
+    sc.fill = section_fill
+    sc.alignment = Alignment(horizontal="left", vertical="center")
+
+    header_row = start_row + 1
+    if block.empty:
+        ws.cell(row=header_row, column=1, value="無符合資料").font = Font(size=12)
+        return header_row + 2
+
     for col_idx, h in enumerate(headers, 1):
-        cell = ws.cell(row=table_start, column=col_idx, value=h)
+        cell = ws.cell(row=header_row, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = center
         cell.border = thin_border
-    for r_idx, (_, row) in enumerate(cross.iterrows()):
-        excel_row = table_start + 1 + r_idx
-        is_total = str(row.get("Safety Review")) == "總計"
+
+    for offset, (_, row) in enumerate(block.iterrows(), 1):
+        is_total = str(row.get(headers[0])) == "總計"
         for col_idx, h in enumerate(headers, 1):
             val = row.get(h)
-            cell = ws.cell(row=excel_row, column=col_idx, value=None if pd.isna(val) else val)
+            cell = ws.cell(row=header_row + offset, column=col_idx,
+                           value=None if (isinstance(val, float) and pd.isna(val)) else val)
             cell.border = thin_border
             cell.alignment = left_wrap if col_idx == 1 else center
             if isinstance(val, (int, float)) and not isinstance(val, bool):
                 cell.number_format = "#,##0"
             if is_total:
                 cell.font = bold_font
+                cell.fill = total_fill
+    return header_row + len(block) + 2
+
+
+def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None,
+                                     raw: pd.DataFrame, thin_border, desc_font,
+                                     progress_callback=None):
+    """Review 摘要工作表：指標卡 4 排（第 4 排為同OM調貨對照；雙向調貨時另加第 5 排
+    Tourist 轉出量）＋ ① Safety Review × Shop Nature 交叉表 ＋ ② Safety 調整方向分類
+    ＋ ③ Safety 調整明細（SKU 級彙總）。
+    ②③ 由 raw 即時彙算（Safety 建議不受 OM 限制影響，兩變體共用同一份統計）。"""
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    bold_font = Font(bold=True, size=11)
+    section_fill = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+    total_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    _rows = _hybrid_dashboard_metrics(raw, stats)
+    row5_metrics = _rows[4] if len(_rows) > 4 else None
+    _days = (stats or {}).get("safety_days") or _hybrid_safety_days_from_raw(raw)
+    _write_metric_cards(
+        ws, f"Safety Stock 設定 Review 摘要 (Transfer Diagnosis Dashboard｜"
+            f"Safety 基準 {_hybrid_safety_days_label(_days)})",
+        _rows[0], _rows[1], thin_border, desc_font, progress_callback,
+        progress_pct=0.80, row3_metrics=_rows[2], row4_metrics=_rows[3],
+        row5_metrics=row5_metrics,
+    )
+
+    table_start = 24 if row5_metrics else 20
+    # 三個區塊共用同一母體（事件類型非空），故 ① 為空即代表全無資料
+    if cross is None or cross.empty:
+        ws.cell(row=table_start, column=1, value="無符合資料").font = Font(size=12)
+        _auto_width(ws)
+        return
+
+    _block_kw = dict(header_fill=header_fill, header_font=header_font, bold_font=bold_font,
+                     section_fill=section_fill, total_fill=total_fill, thin_border=thin_border,
+                     center=center, left_wrap=left_wrap)
+    next_row = _write_hybrid_summary_block(
+        ws, table_start - 1, "Safety Review × Shop Nature 交叉表", cross, **_block_kw)
+    next_row = _write_hybrid_summary_block(
+        ws, next_row, "Safety 調整方向分類（增加 / 減少 / 不變）",
+        _build_hybrid_safety_change_summary(raw), **_block_kw)
+    _write_hybrid_summary_block(
+        ws, next_row, "Safety 調整明細（SKU 級彙總）",
+        _build_hybrid_safety_sku_detail(raw), **_block_kw)
+
     if progress_callback:
         progress_callback(0.90, "Review 摘要完成...")
     _auto_width(ws)
@@ -6201,7 +6426,8 @@ _HYBRID_RAW_DISPLAY_GROUPS = [
      "D001 Net Stock Qty (CM)", "D001 Stock Qty (CM)", "D001 Effective Stock Qty (CM)"],
     ["Tourist 加總 TurnDay", "Mix 加總 TurnDay", "Non Tourist 加總 TurnDay",
      "需要調貨", "調入需求量 (補到14日)"],
-    ["事件類型", "14日周轉所需量", "Safety Review", "建議 Safety 設定值", "Safety 建議調整量"],
+    ["事件類型", _HYBRID_SAFETY_DAYS_COLUMN, _HYBRID_SAFETY_LINE_COLUMN,
+     "Safety Review", "建議 Safety 設定值", "Safety 建議調整量"],
     ["可轉出貨量 (Non Tourist)", "可轉出貨量 (Mix)", "可轉出貨量 (Tourist)",
      "實際調入量", "調入缺口", "轉出量", "調貨來源 (Site Code)", "調貨後庫存", "調貨後 TurnDay"],
     ["實際調入量 (同OM)", "調入缺口 (同OM)", "轉出量 (同OM)", "調貨來源 (同OM)",
@@ -6247,7 +6473,8 @@ def generate_excel_hybrid(
     Summary（SKU 級彙總：各 Nature 加總/TurnDay/佔比、強制調貨提示、存貨偏重提示；雙向時另加 AA 欄
     「由Tourist 店舖預計調出數量」）/
     調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) /
- Review 摘要（指標卡 4 排（雙向時 5 排）+ Safety Review × Shop Nature 交叉表）/
+  Review 摘要（指標卡 4 排（雙向時 5 排）+ Safety Review × Shop Nature 交叉表
+ + Safety 調整方向分類 + Safety 調整明細（SKU 級彙總））/
     簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)（一列一筆來源店→接收店調貨，來源字串已拆行）。
     雙向與否由 RAW 是否含「可轉出貨量 (Tourist)」欄推定。
     """

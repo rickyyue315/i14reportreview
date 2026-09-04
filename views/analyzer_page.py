@@ -20,6 +20,9 @@ from transformer import (
     _stock_checking_raw_display_columns,
     transform_hybrid, generate_excel_hybrid, _hybrid_dashboard_metrics,
     _hybrid_raw_display_columns, _build_hybrid_transfer_detail,
+    _build_hybrid_safety_change_summary, _build_hybrid_safety_sku_detail,
+    _HYBRID_SAFETY_DAYS_DEFAULT, _HYBRID_SAFETY_DAYS_MIN, _HYBRID_SAFETY_DAYS_MAX,
+    _hybrid_safety_days_label,
 )
 import time
 import traceback
@@ -582,7 +585,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **14 日周轉線**Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。另附 SKU 級 **Summary**（各 Nature 庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
+        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。另附 SKU 級 **Summary**（各 Nature 庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -590,7 +593,7 @@ if uploaded_file is not None:
                 "🔁 Tourist 加總 TurnDay 門檻 (日)",
                 min_value=1, max_value=365, value=14, step=1, key="hy_ttd",
                 help="該 SKU 的 Tourist 加總 TurnDay（庫存加總 ÷ 月銷加總 × 30.5）低於此值時才列入調貨候選；"
-                     "勾選雙向調貨後，此門檻同樣套用於各 Nature 的加總 TurnDay 判定。Review 基準線固定 14 日，不隨此門檻變動。"
+                     "勾選雙向調貨後，此門檻同樣套用於各 Nature 的加總 TurnDay 判定。Safety Review 基準另行設定（見下方）。"
             )
         with sc_top[1]:
             d001_threshold = st.number_input(
@@ -598,6 +601,31 @@ if uploaded_file is not None:
                 min_value=0, max_value=1000000, value=100, step=10, key="hy_d001",
                 help="當 D001 Net Stock Qty (CM) 低於此值且需求 Nature 加總 TurnDay 低於門檻時，才標示需要調貨。"
             )
+        st.markdown("**🛡️ Safety 基準周轉天數（按 Shop Nature 分別設定；與調貨段的 14 日線互不影響）**")
+        _sd_cols = st.columns(3)
+        _sd_help = ("Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 此天數)。此天數只決定 Safety Stock 的 Review 基準線，"
+                    "不影響調貨需求與可轉出貨量（兩者固定補到／扣除 14 日周轉）。")
+        with _sd_cols[0]:
+            sd_tourist = st.number_input(
+                "🧳 Tourist (日)", min_value=_HYBRID_SAFETY_DAYS_MIN, max_value=_HYBRID_SAFETY_DAYS_MAX,
+                value=_HYBRID_SAFETY_DAYS_DEFAULT["Tourist"], step=1, key="hy_sd_tourist",
+                help=_sd_help + " 預設 7 日。",
+            )
+        with _sd_cols[1]:
+            sd_mix = st.number_input(
+                "🔀 Mix (日)", min_value=_HYBRID_SAFETY_DAYS_MIN, max_value=_HYBRID_SAFETY_DAYS_MAX,
+                value=_HYBRID_SAFETY_DAYS_DEFAULT["Mix"], step=1, key="hy_sd_mix",
+                help=_sd_help + " 預設 9 日。",
+            )
+        with _sd_cols[2]:
+            sd_nt = st.number_input(
+                "🏪 Non Tourist (日)", min_value=_HYBRID_SAFETY_DAYS_MIN, max_value=_HYBRID_SAFETY_DAYS_MAX,
+                value=_HYBRID_SAFETY_DAYS_DEFAULT["Non Tourist"], step=1, key="hy_sd_nt",
+                help=_sd_help + " 預設 10 日。",
+            )
+        _safety_days = {
+            "Tourist": int(sd_tourist), "Mix": int(sd_mix), "Non Tourist": int(sd_nt),
+        }
         bidirectional = st.checkbox(
             "🔁 允許雙向調貨（任何 Nature 缺貨皆可調入，遊客區店舖亦可轉出）",
             value=False, key="hy_bidir",
@@ -618,8 +646,11 @@ if uploaded_file is not None:
                 "且 Mix / Non Tourist 至少一個 Nature 加總 TurnDay ≥ 門檻（有貨可調）。調入補到 14 日周轉，NT 優先再由 Mix 補足。"
             )
         st.caption(
-            "🧭 Review 基準：14日周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 14)。調入列現有設定 < 所需量 → 「Safety 設定不足」；"
+            f"🧭 Review 基準：Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 基準天數)，"
+            f"目前基準 = {_hybrid_safety_days_label(_safety_days)}；"
+            "調入列現有設定 < 所需量 → 「Safety 設定不足」；"
             "轉出列現有設定 > 所需量 → 「Safety 設定過高」；建議 Safety 設定值 = 所需量（僅不足／過高列給建議）。"
+            "此基準不影響調貨需求與可轉出貨量（固定 14 日）。"
         )
 
         if st.button("⚙️ 執行報表轉換與分析", type="primary", width='stretch'):
@@ -643,6 +674,7 @@ if uploaded_file is not None:
                     turnday_threshold=int(turnday_threshold),
                     d001_threshold=int(d001_threshold),
                     bidirectional=bool(bidirectional),
+                    safety_days=_safety_days,
                     progress_callback=_cb_transform,
                 )
                 buf = generate_excel_hybrid(
@@ -706,12 +738,13 @@ if uploaded_file is not None:
                 "🧭 調貨 Review Safety Stock（不限OM）",
                 "🔗 調貨 Review Safety Stock（同OM）",
                 "📋 Summary（SKU 存貨偏重）",
-                "📊 Review 摘要（Review × Shop Nature）",
+                "📊 Review 摘要（Safety 調整統計）",
                 "🧾 簡易調貨明細",
                 "📄 RAW 完整明細",
             ])
             with tab_diag:
-                st.markdown("#### 店舖×SKU 逐列 Review — 不限OM調貨（需要調入／實際轉出／可轉出未使用，14 日周轉線基準）")
+                st.markdown("#### 店舖×SKU 逐列 Review — 不限OM調貨（需要調入／實際轉出／可轉出未使用；"
+                            f"Safety 基準 {_hybrid_safety_days_label(_safety_days)}，與調貨的 14 日線獨立）")
                 if diagnosis is not None and not diagnosis.empty:
                     st.dataframe(diagnosis, width='stretch', hide_index=True)
                     st.caption(f"共 {len(diagnosis):,} 列（按 Brand / SKU / 事件類型 / Site Code 排序）。")
@@ -737,9 +770,29 @@ if uploaded_file is not None:
                 else:
                     st.info("無符合資料")
             with tab_cross:
-                st.markdown("#### Safety Review × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計）")
+                st.markdown("#### ① Safety Review × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計）")
                 if diag_summary is not None and not diag_summary.empty:
                     st.dataframe(diag_summary, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+
+                st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+                st.markdown("#### ② Safety 調整方向分類（增加 / 減少 / 不變）")
+                _saf_change = _build_hybrid_safety_change_summary(raw_df)
+                if not _saf_change.empty:
+                    st.dataframe(_saf_change, width='stretch', hide_index=True)
+                    st.caption("統計範圍為有調貨事件的店舖×SKU 列（與上方交叉表相同）；分類以「Safety 建議調整量」的正負為準"
+                               "（正=增加、負=減少）；總計列的 SKU 數為不重複 SKU（同一 SKU 可跨分類），合計為淨調整量。")
+                else:
+                    st.info("無符合資料")
+
+                st.markdown("#### ③ Safety 調整明細（SKU 級彙總）")
+                _saf_sku = _build_hybrid_safety_sku_detail(raw_df)
+                if not _saf_sku.empty:
+                    st.dataframe(_saf_sku, width='stretch', hide_index=True)
+                    st.caption(f"共 {len(_saf_sku):,} 個 SKU（含調貨事件列，按 Brand / SKU 排序；店舖數按 Site Code 不重複計算）；"
+                               "「現有／建議 Safety 設定合計」只累加需要調整的列（Safety 設定不足＋過高）；"
+                               "淨調整量 = 該 SKU 各列「Safety 建議調整量」加總。")
                 else:
                     st.info("無符合資料")
             with tab_detail:
