@@ -1,5 +1,22 @@
 # 版本記錄
 
+## v1.13.0 (2026-09-04)
+
+- New: 調貨診斷 Safety Stock 分「不限OM」與「同OM」兩套 — 公司規定某些情況只允許同 OM 店舖調貨（例 Ivy HBA6 → Ivy HB94），同OM變體來源店須與需求店同 OM 才可轉出；分配抽為共用函數 `_hybrid_allocate_transfers()`（om_arr 參數），跑兩遍；同OM結果以「(同OM)」後綴欄存於 RAW（實際調入量 / 調入缺口 / 轉出量 / 調貨來源 / 調貨後庫存 / 調貨後 TurnDay），診斷主表輸出兩份工作表「調貨診斷 Safety Stock (不限OM)／(同OM)」，事件類型（實際轉出／可轉出未使用）按變體重算；**Safety 診斷與建議調整量兩變體完全相同（OM 限制不影響建議）**；OM 為選填欄位：缺失時同OM退化為不限OM＋warning（RAW／主表補「(未填OM)」欄），空白列歸入「(未填OM)」群組
+- New: 診斷主表新增「OM」欄（Site Code 後，共 24 欄）— 同OM對照時可直接核對店群；OM 缺失時以「(未填OM)」補入
+- New: 診斷摘要與 Streamlit 看板加第 4 排指標卡（同OM對照）：實際調入量 (同OM) / 無法足額缺口 (同OM) / Non Tourist 轉出量 (同OM) / Mix 轉出量 (同OM)（共 16 卡）；混合模式 Excel 由 3 工作表改為 4（RAW／不限OM 主表／同OM 主表／診斷摘要）；stats 新增 total_actual_om / total_gap_om / nt_transfer_om / mix_transfer_om / donated_rows_om；`transform_hybrid()` 回傳改 6 元組
+- New: Stock Checking Summary 新增「存貨偏重提示」欄（Z 欄，25→26 欄）— 個別 Nature 庫存佔比 ≥ 40% 且（庫存佔比 − 銷量佔比）≥ 20 個百分點 →「存貨偏重 {Nature}（庫存 x% / 銷量 y%）」，識別存貨集中但銷量不高的 Nature；全 SKU 月銷 0 時銷量佔比以 0 計；多 Nature 符合以；分隔、差距大者在前；總庫存 0 不提示
+- Update: README / 使用說明頁同步；真實來源檔（22,735 列 × 45 欄、275 SKU）實測：不限OM 實際調入 9,433／缺口 8,338 對比同OM 4,784／12,987，存貨偏重提示命中 14 個 SKU，Excel 生成約 12 秒
+- Update: tests/test_hybrid_mode.py 新增同OM測試 ×6 與主表 OM 欄斷言；test_stock_checking.py 新增存貨偏重提示測試 ×4 並更新 26 欄 Excel 契約；共 149+ 項測試通過
+
+## v1.13.0 (2026-09-04)
+
+- New: Safety Stock x NetStock Review 調貨分配分「不限OM」與「同OM」兩變體 — 來源店須與需求店同 OM 才可轉出（公司規定某些情況只允許同 OM 店舖調貨，例 Ivy HBA6 → Ivy HB94）；同OM結果以「(同OM)」後綴欄存於 RAW（實際調入量 / 調入缺口 / 轉出量 / 調貨來源 / 調貨後庫存 / 調貨後 TurnDay），診斷主表輸出兩份工作表「調貨診斷 Safety Stock (不限OM)／(同OM)」，事件類型（實際轉出／可轉出未使用）按變體重算；Safety 診斷與建議調整量兩變體完全相同（OM 限制不影響建議）；OM 為選填欄位：缺失時同OM退化為不限OM＋warning，空白列歸入「(未填OM)」群組
+- New: 診斷摘要加第 4 排指標卡（同OM對照）：實際調入量 (同OM) / 無法足額缺口 (同OM) / Non Tourist 轉出量 (同OM) / Mix 轉出量 (同OM)；Streamlit 看板同步 4 排 16 卡 + 診斷主表分兩頁籤；stats 新增 total_actual_om / total_gap_om / nt_transfer_om / mix_transfer_om / donated_rows_om；混合模式 Excel 由 3 工作表改為 4（RAW／不限OM 主表／同OM 主表／診斷摘要）
+- New: Stock Checking Summary 新增「存貨偏重提示」欄（Z 欄，25→26 欄）— 個別 Nature 庫存佔比 ≥ 40% 且（庫存佔比 − 銷量佔比）≥ 20 個百分點 →「存貨偏重 {Nature}（庫存 x% / 銷量 y%）」；全 SKU 月銷 0 時銷量佔比以 0 計；多 Nature 符合以；分隔、差距大者在前；總庫存 0 不提示
+- Update: 調貨分配抽為共用函數 `_hybrid_allocate_transfers()`（om_arr 參數控制同OM限制）；`_build_hybrid_diagnosis()` 加 variant 參數（free／om）；`transform_hybrid()` 回傳改 6 元組 (raw, diagnosis, diagnosis_om, diag_summary, stats, warnings)；`generate_excel_hybrid()` 改 4 表簽名
+- Update: tests/test_hybrid_mode.py 新增同OM測試 ×6（來源切換、同OM缺口、診斷兩版一致、OM 缺失／空白、RAW 同OM欄、row4 指標卡對照）；test_stock_checking.py 新增存貨偏重提示測試 ×4 並更新 26 欄契約；共 149 項測試通過
+
 ## v1.12.0 (2026-09-04)
 
 - Change: 「Safety Stock x NetStock Review」由「兩報告並排 + 反饋欄」完全轉換為「調貨事件診斷 Safety 設定」格式 — 以 14 日周轉線（14日周轉所需量 = ceil(P90D ÷ 90 × 14)，與調貨邏輯同口徑）診斷：Tourist 需調入列現有 Adj. Safety Stock < 所需量 → 「Safety 設定不足」；已標示調貨 SKU 的 Mix / Non Tourist 有貨列（轉出量 > 0 或可轉出貨量 > 0）現有設定 > 所需量 → 「Safety 設定過高」；等於邊界視為正常；建議 Safety 設定值 = 所需量、Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）

@@ -379,6 +379,80 @@ def test_summary_transfer_prompt_and_transfer_out_sums():
     assert int(row401["由Mix 店舖預計調出數量"]) == 0
 
 
+def test_summary_stock_skew_hint():
+    # NT 庫存佔比 70%、銷量佔比 30.3%（差 39.7 點 ≥ 20）→ 提示；Mix/Tourist 庫存佔比 < 40% 不提示
+    df = _df([
+        {"SKU": 700, "Site Code": "T01", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 150.0, "Shop Stock Qty (CM)": 10.0,
+         "Shop Monthly Sold Qty (P90D)": 50.0, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 700, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 70.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+        {"SKU": 700, "Site Code": "M01", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 60.0, "Shop Stock Qty (CM)": 20.0,
+         "Shop Monthly Sold Qty (P90D)": 20.0},
+    ])
+    _, summary, _, _ = transform_stock_checking(df)
+    row = summary[summary["SKU"] == "700"].iloc[0]
+    hint = str(row["存貨偏重提示"])
+    assert hint.startswith("存貨偏重 Non Tourist（庫存 70.0% / 銷量 30.3%）")
+    assert "Mix" not in hint and "Tourist（" not in hint.replace("Non Tourist（", "")
+
+
+def test_summary_stock_skew_hint_none_when_balanced():
+    # NT 庫存 50% 但銷量 45%（差 5 點 < 20）；其餘 Nature 庫存佔比 < 40% → 不提示
+    df = _df([
+        {"SKU": 701, "Site Code": "T01", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 15.0,
+         "Shop Monthly Sold Qty (P90D)": 27.5, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 701, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 50.0,
+         "Shop Monthly Sold Qty (P90D)": 27.5},
+        {"SKU": 701, "Site Code": "M01", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 35.0,
+         "Shop Monthly Sold Qty (P90D)": 5.5},
+    ])
+    _, summary, _, _ = transform_stock_checking(df)
+    row = summary[summary["SKU"] == "701"].iloc[0]
+    assert str(row["存貨偏重提示"]) in ("", "nan")
+
+
+def test_summary_stock_skew_hint_multiple_natures():
+    # NT 庫存 50% / 銷量 10%（差 40）；Mix 庫存 40% / 銷量 10%（差 30）→ 雙提示，差距大者在前
+    df = _df([
+        {"SKU": 702, "Site Code": "T01", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 10.0,
+         "Shop Monthly Sold Qty (P90D)": 80.0, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 702, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 50.0,
+         "Shop Monthly Sold Qty (P90D)": 10.0},
+        {"SKU": 702, "Site Code": "M01", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 40.0,
+         "Shop Monthly Sold Qty (P90D)": 10.0},
+    ])
+    _, summary, _, _ = transform_stock_checking(df)
+    hint = str(summary[summary["SKU"] == "702"].iloc[0]["存貨偏重提示"])
+    assert hint.startswith("存貨偏重 Non Tourist")
+    assert "存貨偏重 Mix" in hint
+    assert hint.index("Non Tourist") < hint.index("Mix")
+
+
+def test_summary_stock_skew_hint_zero_sales():
+    # 全 SKU 月銷 0 → 銷量佔比以 0 計：NT 庫存佔比 60% ≥ 40% 且差 60 點 → 提示（銷量 0.0%）
+    df = _df([
+        {"SKU": 703, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 0.0, "Shop Stock Qty (CM)": 60.0,
+         "Shop Monthly Sold Qty (P90D)": 0.0},
+        {"SKU": 703, "Site Code": "M01", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 0.0, "Shop Stock Qty (CM)": 40.0,
+         "Shop Monthly Sold Qty (P90D)": 0.0},
+    ])
+    _, summary, _, _ = transform_stock_checking(df)
+    hint = str(summary[summary["SKU"] == "703"].iloc[0]["存貨偏重提示"])
+    assert hint.startswith("存貨偏重 Non Tourist（庫存 60.0% / 銷量 0.0%）")
+    assert "存貨偏重 Mix（庫存 40.0% / 銷量 0.0%）" in hint  # 40% ≥ 40% 且差 40 點 ≥ 20 → 同樣入提示
+
+
 def test_summary_sorted_by_brand_sku():
     df = _df([
         {"SKU": 2, "Brand": "BB", "Site Code": "M01", "Shop Nature": "Mix", "Shop Monthly Sold Qty (P90D)": 10.0},
@@ -408,13 +482,13 @@ def test_generate_excel():
     ws = wb["Summary"]
     headers = [c.value for c in next(ws.iter_rows(min_row=5, max_row=5))]
     for col in ["Brand", "SKU", "Buyer", "Adj. SST", "強制調貨提示",
-                "由Non Tourist 店舖預計調出數量", "由Mix 店舖預計調出數量"]:
+                "由Non Tourist 店舖預計調出數量", "由Mix 店舖預計調出數量", "存貨偏重提示"]:
         assert col in headers
     # Buyer / Adj. SST 緊隨 SKU Desc 之後
     assert headers.index("Buyer") == headers.index("SKU Desc") + 1
     assert headers.index("Adj. SST") == headers.index("SKU Desc") + 2
-    # 共 25 欄；Q-V 為佔比欄（%），其餘數值欄取整
-    assert len(headers) == 25
+    # 共 26 欄（Z = 存貨偏重提示）；Q-V 為佔比欄（%），其餘數值欄取整
+    assert len(headers) == 26
     assert ws.max_row >= 6
     wb2 = load_workbook(buf, data_only=False)
     ws2 = wb2["Summary"]

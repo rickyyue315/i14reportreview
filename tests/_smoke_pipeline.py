@@ -86,8 +86,8 @@ def main():
         print("OK Safety Stock (%s)  | rows=%d warnings=%d" % (mode, len(s), len(w)))
 
     # ── Safety Stock x NetStock Review (調貨事件診斷 Safety 設定) ──
-    r, h_diag, h_cross, h_stats, h_w = transform_hybrid(df)
-    generate_excel_hybrid(r, h_diag, h_cross, h_stats)
+    r, h_diag, h_diag_om, h_cross, h_stats, h_w = transform_hybrid(df)
+    generate_excel_hybrid(r, h_diag, h_diag_om, h_cross, h_stats)
     print("OK Hybrid Diagnosis   | rows=%d need=%d diag=%d warnings=%d" % (len(r), h_stats["need_rows"], len(h_diag), len(h_w)))
 
     # ── Stock Impact Analysis ──

@@ -11,8 +11,8 @@
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
-| Stock Checking 分析 | D001 倉庫少貨且 Tourist 鋪 Turnday < 門檻 → 標示調貨需求，從 Mix / Non Tourist 鋪分配可轉出貨量（Non Tourist 優先） |
-| Safety Stock x NetStock | 沿用 Stock Checking 調貨引擎，以 14 日周轉線診斷調貨事件是否因 Safety Stock 設定不足／過高，輸出店舖×SKU 診斷主表與建議調整量 |
+| Stock Checking 分析 | D001 倉庫少貨且 Tourist 鋪 Turnday < 門檻 → 標示調貨需求，從 Mix / Non Tourist 店分配可轉出貨量（Non Tourist 優先）；Summary 另以佔比差額標示「存貨偏重」的 Nature（存貨集中但銷量不高） |
+| Safety Stock x NetStock | 沿用 Stock Checking 調貨引擎，以 14 日周轉線診斷調貨事件是否因 Safety Stock 設定不足／過高，輸出店舖×SKU 診斷主表與建議調整量；調貨分不限OM與同OM兩套對照（OM 限制不影響 Safety 建議） |
 | 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式、調貨門檻 |
 | 視覺化看板 | 即時顯示統計指標與交叉分析表 |
 | Excel 導出 | 一鍵下載含 RAW、Shop Stock Status、By Shop、分析摘要之美化報表 |
@@ -144,7 +144,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 
 輸出包含 Summary、RAW 與調貨分析摘要三個工作表：
 
-- **Summary** — SKU 級彙總（每 SKU 一列，按 Brand / SKU 排序）：Brand / SKU / SKU Desc / Buyer / Adj. SST / Supply Source / D001 Net Stock Qty (CM)；各 Shop Nature（Tourist / Mix / Non Tourist）加總 Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)（取整）、TurnDay = ROUND(加總庫存 ÷ 加總月銷 × 30.5, 0)（取整，月銷 0 留空）、各 Nature 佔比 (%) = 該 Nature 加總 ÷ 三 Nature 合計（庫存/月銷各 3 欄，活公式 + 0.00% 顯示，合計 0 留空）；強制調貨提示（該 SKU 有 Tourist 店需要調貨時標示）、由 Non Tourist / Mix 店舖預計調出數量；文字欄靠左、數值置中、間隔列底紋、凍結表頭 + 自動篩選
+- **Summary** — SKU 級彙總（每 SKU 一列，按 Brand / SKU 排序）：Brand / SKU / SKU Desc / Buyer / Adj. SST / Supply Source / D001 Net Stock Qty (CM)；各 Shop Nature（Tourist / Mix / Non Tourist）加總 Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)（取整）、TurnDay = ROUND(加總庫存 ÷ 加總月銷 × 30.5, 0)（取整，月銷 0 留空）、各 Nature 佔比 (%) = 該 Nature 加總 ÷ 三 Nature 合計（庫存/月銷各 3 欄，活公式 + 0.00% 顯示，合計 0 留空）；強制調貨提示（該 SKU 有 Tourist 店需要調貨時標示）、由 Non Tourist / Mix 店舖預計調出數量；存貨偏重提示（某 Nature 庫存佔比 ≥ 40% 且庫存佔比 − 銷量佔比 ≥ 20 個百分點 →「存貨偏重 {Nature}（庫存 x% / 銷量 y%）」，多個 Nature 以；分隔、差距大者在前）；文字欄靠左、數值置中、間隔列底紋、凍結表頭 + 自動篩選
 - **RAW** — 原始欄位全部保留並新增：Tourist / Mix / Non Tourist 加總 TurnDay / 需要調貨 / 調入需求量 (補到14日) / 實際調入量 / 調入缺口 / 可轉出貨量 (Mix) / 可轉出貨量 (Non Tourist) / 轉出量 / 調貨來源 (Site Code)
 - **調貨分析摘要** — Dashboard 指標卡（與 Streamlit 看板同口徑）：需要調貨列數 / 需調貨 SKU 數 / 調入需求量 / 實際調入量 / Non Tourist 轉出量 / Mix 轉出量 / 無法足額缺口 / 總明細行數
 
@@ -152,18 +152,19 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 
 以「調貨事件」為入口，診斷 Safety Stock 設定是否為缺貨／過剩的成因（**14 日周轉線基準**，與調貨邏輯同口徑）；不再執行 Safety Stock Review 引擎（無建議值 / Rate / MTD 參數）：
 
-1. **調貨段** — 與 Stock Checking 完全同規則：SKU 級 Tourist 加總 TurnDay < 門檻（預設 14）且 D001 < 門檻（預設 100）且有貨可調 → 標示需要調貨；補到 14 日周轉，Non Tourist 優先再由 Mix 補足（目標日數固定 14）
+1. **調貨段** — 與 Stock Checking 完全同規則：SKU 級 Tourist 加總 TurnDay < 門檻（預設 14）且 D001 < 門檻（預設 100）且有貨可調 → 標示需要調貨；補到 14 日周轉，Non Tourist 優先再由 Mix 補足（目標日數固定 14）。分配跑兩遍：**不限OM**（現行契約欄位）與**同OM**（來源店須與需求店同 OM 才可轉出，欄位加「(同OM)」後綴；公司規定某些情況只允許同 OM 店舖調貨，例 Ivy HBA6 → Ivy HB94）
 2. **診斷基準** — `14日周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 14)`（無銷售列為 0）；診斷線固定 14 日，不隨調貨觸發門檻（可調）變動
 3. **事件列與診斷**：
    - `需要調入`（Tourist 列且需要調貨=是）：現有 Adj. Safety Stock < 所需量 → `Safety 設定不足`；否則 `設定正常—缺貨非設定因素`
    - `實際轉出`／`可轉出未使用`（已標示調貨 SKU 的 Mix / Non Tourist 列，轉出量 > 0 或可轉出貨量 > 0）：現有設定 > 所需量 → `Safety 設定過高`；否則 `設定正常—過剩非設定因素`；等於邊界一律視為正常；未標示調貨的 SKU 不入診斷
    - `建議 Safety 設定值 = 14日周轉所需量`（僅不足／過高列）；`Safety 建議調整量 = 建議值 − 現有設定`（正=增加、負=減少）
-4. **上下文欄位** — `調貨後庫存 = Shop Stock Qty (CM) + 實際調入量 − 轉出量`；`調貨後 TurnDay = 調貨後庫存 ÷ Shop Monthly Sold Qty (P90D) × 30.5`（月銷 0 留空）
-5. **Shop Nature** — 固定保留三種；Other / 空白 / 大小寫差異一律正規化為 Non Tourist（映射列數列入 warning）；不做母體篩選 — 調貨供需需要同時看到 Tourist 需求與 Mix/Non Tourist 來源
-6. **輸入檢核** — 混合必要欄位嚴格檢核：基礎四欄 + Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D)，缺任一即停止；欄名前後空格自動正規化；Shop Stock Qty (CM) 必須為整數件數（小數即拒絕）；D001 逐列以 Net → Stock 回補（空白視為 0），月銷單列空白以 Sold Qty (P90D) 換算，兩者皆列 warning；Adj. Safety Stock 空白或非數值診斷視為 0 並列 warning
-7. **RAW 稽核欄位** — 新增 `D001 Effective Stock Qty (CM)`（實際採用的 D001 值）與原始 D001 Stock，以便核查 fallback
+4. **上下文欄位** — `調貨後庫存 = Shop Stock Qty (CM) + 實際調入量 − 轉出量`；`調貨後 TurnDay = 調貨後庫存 ÷ Shop Monthly Sold Qty (P90D) × 30.5`（月銷 0 留空）；同OM變體另存「(同OM)」後綴欄。OM 限制只影響調貨分配與事件標籤（實際轉出／可轉出未使用），**Safety 診斷與建議調整量兩變體完全相同**（不受調貨限制影響）
+5. **OM 欄位** — 選填；來源檔案缺「OM」欄時「同OM調貨」退化為與不限OM相同（全部店舖同一群組）並列 warning；OM 空白列歸入「(未填OM)」群組
+6. **Shop Nature** — 固定保留三種；Other / 空白 / 大小寫差異一律正規化為 Non Tourist（映射列數列入 warning）；不做母體篩選 — 調貨供需需要同時看到 Tourist 需求與 Mix/Non Tourist 來源
+7. **輸入檢核** — 混合必要欄位嚴格檢核：基礎四欄 + Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D)，缺任一即停止；欄名前後空格自動正規化；Shop Stock Qty (CM) 必須為整數件數（小數即拒絕）；D001 逐列以 Net → Stock 回補（空白視為 0），月銷單列空白以 Sold Qty (P90D) 換算，兩者皆列 warning；Adj. Safety Stock 空白或非數值診斷視為 0 並列 warning
+8. **RAW 稽核欄位** — 新增 `D001 Effective Stock Qty (CM)`（實際採用的 D001 值）與原始 D001 Stock，以便核查 fallback
 
-輸出包含 **3 個工作表**：RAW（全部欄位 + 診斷欄，非事件列留空）、調貨診斷 Safety Stock（店舖×SKU 逐列主表，按 Brand / SKU / 事件類型 / Site Code 排序）、診斷摘要（指標卡 12 項 + Safety 診斷 × Shop Nature 交叉表：列數 / SKU 數 / 建議調整量合計，含總計列）。
+輸出包含 **4 個工作表**：RAW（全部欄位 + 診斷欄 + 同OM調貨欄，非事件列留空）、調貨診斷 Safety Stock (不限OM) 與 調貨診斷 Safety Stock (同OM)（店舖×SKU 逐列主表，含 Site Code／OM／Shop Nature，按 Brand / SKU / 事件類型 / Site Code 排序；Safety 診斷欄兩表相同）、診斷摘要（指標卡 16 項（含同OM對照一排）+ Safety 診斷 × Shop Nature 交叉表：列數 / SKU 數 / 建議調整量合計，含總計列）。
 
 ## Excel 輸出結構
 
@@ -174,10 +175,10 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 | By Shop | 各店鋪層級之彙總分析 |
 | SUMMARY | 分類統計 — Safety Qty Change 分類（增加/減少/不變）與 ND 建議分類（Safety Stock Review） |
 | 分析摘要 | 數據看板 — 關鍵指標總覽 |
-| Summary | SKU 級調貨彙總 — 庫存/月銷加總、TurnDay、佔比、調貨提示（Stock Checking） |
+| Summary | SKU 級調貨彙總 — 庫存/月銷加總、TurnDay、佔比、調貨提示、存貨偏重提示（庫存佔比 ≥40% 且較銷量佔比高 ≥20 個百分點的 Nature）（Stock Checking） |
 | 調貨分析摘要 | 調貨 Dashboard — 需求/調入/轉出/缺口（Stock Checking） |
-| 調貨診斷 Safety Stock | 店舖×SKU 診斷主表（僅混合模式）— 需要調入／實際轉出／可轉出未使用事件列，14 日周轉線診斷與建議調整量 |
-| 診斷摘要 | 混合模式 — 指標卡 12 項 + Safety 診斷 × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計，含總計列） |
+| 調貨診斷 Safety Stock (不限OM)／(同OM) | 店舖×SKU 診斷主表兩版（僅混合模式）— 需要調入／實際轉出／可轉出未使用事件列，14 日周轉線診斷與建議調整量；同OM版來源店須與需求店同 OM |
+| 診斷摘要 | 混合模式 — 指標卡 16 項（第 4 排為同OM調貨對照）+ Safety 診斷 × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計，含總計列） |
 
 ## 版本
 
