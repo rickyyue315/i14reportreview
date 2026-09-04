@@ -473,3 +473,55 @@ def test_generate_excel_dashboard_matches_stats_no_stats_arg():
         assert vals["Mix 轉出量"] == stats["mix_transfer"]
         assert vals["無法足額缺口"] == stats["total_gap"]
         assert vals["總明細行數"] == len(raw)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Buyer 需調貨 SKU 統計
+# ──────────────────────────────────────────────────────────────────────────────
+def test_buyer_need_skus_stats():
+    df = _df([
+        {"SKU": 1, "Site Code": "S01", "Buyer": "B1", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+        {"SKU": 2, "Site Code": "S02", "Buyer": "B2", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+        {"SKU": 3, "Site Code": "S03", "Buyer": "B1", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+        {"SKU": 4, "Site Code": "S04", "Buyer": "B3", "Shop Stock Qty (CM)": 20.0, "D001 Net Stock Qty (CM)": 99.0},  # TurnDay 20 ≥ 14 → 不觸發
+    ])
+    raw, _, stats, _ = transform_stock_checking(df)
+    assert stats["need_skus"] == 3
+    assert stats["buyer_need_skus"] == [("B1", 2), ("B2", 1)]
+
+
+def test_buyer_need_skus_stats_empty_buyer():
+    df = _df([
+        {"SKU": 1, "Site Code": "S01", "Buyer": "", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+    ])
+    raw, _, stats, _ = transform_stock_checking(df)
+    assert stats["buyer_need_skus"] == [("(未填 Buyer)", 1)]
+
+
+def test_buyer_need_skus_stats_none_triggered():
+    df = _df([
+        {"SKU": 1, "Site Code": "S01", "Shop Stock Qty (CM)": 20.0, "D001 Net Stock Qty (CM)": 99.0},
+    ])
+    raw, _, stats, _ = transform_stock_checking(df)
+    assert stats["need_skus"] == 0
+    assert stats["buyer_need_skus"] == []
+
+
+def test_generate_excel_buyer_stats_table():
+    df = _df([
+        {"SKU": 1, "Site Code": "S01", "Buyer": "B1", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+        {"SKU": 2, "Site Code": "S02", "Buyer": "B2", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+    ])
+    raw, summary, stats, _ = transform_stock_checking(df)
+    for buf in (generate_excel_stock_checking(raw, summary, stats),
+                generate_excel_stock_checking(raw, summary)):  # 不傳 stats 亦由 raw 匯總
+        wb = load_workbook(buf)
+        ws = wb["調貨分析摘要"]
+        assert "Buyer 需調貨 SKU 統計" in str(ws.cell(row=11, column=1).value)
+        assert ws.cell(row=12, column=1).value == "Buyer"
+        assert ws.cell(row=12, column=2).value == "需調貨 SKU 數"
+        rows = {ws.cell(row=r, column=1).value: ws.cell(row=r, column=2).value for r in (13, 14)}
+        assert rows == {"B1": 1, "B2": 1}
+        assert ws.cell(row=15, column=1).value == "總計"
+        assert ws.cell(row=15, column=2).value == 2
+        assert ws.cell(row=13, column=3).number_format == "0.00%"

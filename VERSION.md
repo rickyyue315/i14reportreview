@@ -2,7 +2,7 @@
 
 ## v1.11.1 (2026-09-04)
 
-- 
+- New: Stock Checking Dashboard 加入「Buyer 需調貨 SKU 統計」— 統計各 Buyer 涉及多少個需調貨的去重 SKU（Buyer 取同 SKU 首個非空值、空白歸入「(未填 Buyer)」，按需調貨 SKU 數降序），Streamlit 指標卡下方顯示統計表（含佔比），Excel「調貨分析摘要」工作表指標卡下方同步輸出統計表（含總計列）；`transform_stock_checking` stats 新增 `buyer_need_skus`，呼叫端未帶 stats 時由 raw 自動匯總
 
 ## v1.11.0 (2026-09-03)
 

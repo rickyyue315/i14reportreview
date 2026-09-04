@@ -6724,7 +6724,38 @@ def _stock_checking_stats_empty() -> dict:
         "total_gap": 0,
         "nt_transfer": 0,
         "mix_transfer": 0,
+        "buyer_need_skus": [],
     }
+
+
+def _stock_checking_buyer_stats(raw: pd.DataFrame, need_series: pd.Series | None = None) -> list[tuple[str, int]]:
+    """Buyer 級統計：各 Buyer 涉及多少個「需要調貨」SKU（去重）。
+
+    - Buyer 取同 SKU 首個非空值（與 Summary 同口徑）；全空歸入「(未填 Buyer)」
+    - 回傳 [(Buyer, 需調貨 SKU 數)]，按數量降序、同數按 Buyer 名排序
+    """
+    if raw is None or raw.empty or "SKU" not in raw.columns:
+        return []
+    if need_series is None:
+        need_series = raw.get("需要調貨", _safe_default_series("", raw.index)).astype(str) == "是"
+    need_skus = set(raw.loc[need_series, "SKU"].dropna().unique())
+    if not need_skus:
+        return []
+    buyer = (
+        raw["Buyer"].fillna("").astype(str).str.strip()
+        if "Buyer" in raw.columns
+        else _safe_default_series("", raw.index)
+    )
+    tmp = pd.DataFrame({"_sku": raw["SKU"], "_buyer": buyer})
+    tmp = tmp[tmp["_sku"].isin(need_skus)]
+
+    def _first_nonempty(s: pd.Series) -> str:
+        s = s[s != ""]
+        return s.iloc[0] if len(s) else "(未填 Buyer)"
+
+    per_sku_buyer = tmp.groupby("_sku", sort=False)["_buyer"].agg(_first_nonempty)
+    counts = per_sku_buyer.value_counts()
+    return sorted(((str(b), int(c)) for b, c in counts.items()), key=lambda kv: (-kv[1], kv[0]))
 
 
 _STOCK_CHECKING_SUMMARY_COLUMNS = [
@@ -7000,6 +7031,7 @@ def transform_stock_checking(
         "total_gap": int(df["調入缺口"].sum()),
         "nt_transfer": int(df.loc[df["Shop Nature"] == "Non Tourist", "轉出量"].sum()),
         "mix_transfer": int(df.loc[df["Shop Nature"] == "Mix", "轉出量"].sum()),
+        "buyer_need_skus": _stock_checking_buyer_stats(df, need_series),
     }
 
     if not need_mask.any():
@@ -7232,6 +7264,54 @@ def _stock_checking_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = No
     return row1_metrics, row2_metrics
 
 
+def _write_stock_checking_buyer_table(ws, buyer_stats, thin_border, start_row: int = 11):
+    """Dashboard 指標卡下方的「Buyer 需調貨 SKU 統計」表（Buyer / 需調貨 SKU 數 / 佔比 + 總計）。"""
+    if not buyer_stats:
+        return
+    center = Alignment(horizontal="center", vertical="center")
+    header_fill = PatternFill(start_color="0EA5E9", end_color="0EA5E9", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    total_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    total_skus = sum(c for _, c in buyer_stats)
+
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=3)
+    tc = ws.cell(row=start_row, column=1, value="Buyer 需調貨 SKU 統計（按需調貨 SKU 數排序）")
+    tc.font = Font(bold=True, size=12, color="1E40AF")
+    tc.alignment = Alignment(horizontal="left", vertical="center")
+
+    hr = start_row + 1
+    for col_idx, h in enumerate(("Buyer", "需調貨 SKU 數", "佔比"), 1):
+        cell = ws.cell(row=hr, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+        cell.border = thin_border
+    r = hr + 1
+    for buyer, cnt in buyer_stats:
+        c1 = ws.cell(row=r, column=1, value=buyer)
+        c1.border = thin_border
+        c2 = ws.cell(row=r, column=2, value=cnt)
+        c2.number_format = "#,##0"
+        c2.alignment = center
+        c2.border = thin_border
+        c3 = ws.cell(row=r, column=3, value=cnt / total_skus if total_skus else None)
+        c3.number_format = "0.00%"
+        c3.alignment = center
+        c3.border = thin_border
+        r += 1
+    for col_idx, v in ((1, "總計"), (2, total_skus), (3, 1.0 if total_skus else None)):
+        cell = ws.cell(row=r, column=col_idx, value=v)
+        cell.font = Font(bold=True, size=11)
+        cell.fill = total_fill
+        cell.border = thin_border
+        cell.alignment = center
+        if col_idx == 2:
+            cell.number_format = "#,##0"
+        elif col_idx == 3:
+            cell.number_format = "0.00%"
+    _auto_width(ws)
+
+
 def generate_excel_stock_checking(
     raw: pd.DataFrame,
     summary: pd.DataFrame | None = None,
@@ -7265,6 +7345,10 @@ def generate_excel_stock_checking(
         ws_dashboard, "調貨分析摘要 (Transfer Analysis Dashboard)",
         row1_metrics, row2_metrics, thin_border, desc_font, progress_callback,
     )
+    buyer_stats = (stats or {}).get("buyer_need_skus")
+    if buyer_stats is None:
+        buyer_stats = _stock_checking_buyer_stats(raw)
+    _write_stock_checking_buyer_table(ws_dashboard, buyer_stats, thin_border)
 
     if progress_callback:
         progress_callback(0.95, "正在儲存 Excel 檔案...")

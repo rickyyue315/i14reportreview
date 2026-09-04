@@ -2758,6 +2758,19 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
+            buyer_stats = (stats or {}).get("buyer_need_skus") or []
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+            st.markdown("#### 👤 Buyer 需調貨 SKU 統計")
+            if buyer_stats:
+                _b_total = sum(c for _, c in buyer_stats)
+                _b_df = pd.DataFrame(buyer_stats, columns=["Buyer", "需調貨 SKU 數"])
+                _b_df["佔比"] = _b_df["需調貨 SKU 數"] / _b_total if _b_total else 0.0
+                _b_df = _b_df.sort_values(["需調貨 SKU 數", "Buyer"], ascending=[False, True], kind="stable")
+                st.dataframe(_b_df, width='stretch', hide_index=True)
+                st.caption(f"共 {len(buyer_stats)} 個 Buyer 涉及 {_b_total:,} 個需調貨 SKU（去重；Buyer 取同 SKU 首個非空值，空白歸入「(未填 Buyer)」）。")
+            else:
+                st.info("無符合調貨條件的 Buyer 統計")
+
             st.markdown('</div>', unsafe_allow_html=True)
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
