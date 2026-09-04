@@ -6080,9 +6080,9 @@ def generate_excel_hybrid(
     if progress_callback:
         progress_callback(0.25, "建立 SKU Summary（存貨偏重提示）...")
 
-    # ── Sheet 2: Summary（SKU 級彙總，與 Stock Checking 同格式；雙向時另加 AA 欄）──
+    # ── Sheet 2: Summary（SKU 級彙總，與 Stock Checking 同格式；雙向時另加 AA 欄；偏重提示以醒目橘底加強顯示）──
     ws_sc = wb.create_sheet(title="Summary")
-    _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38, bidirectional=_bidirectional)
+    _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38, bidirectional=_bidirectional, highlight_skew=True)
 
     if progress_callback:
         progress_callback(0.40, "建立調貨 Review 主表 (不限OM)...")
@@ -7278,7 +7278,7 @@ _STOCK_CHECKING_SUMMARY_SHEET_HEADERS = [
 ]
 
 
-def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30, bidirectional: bool = False):
+def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30, bidirectional: bool = False, highlight_skew: bool = False):
     """Summary 工作表：SKU 級彙總（雙列表頭模仿 By SKUxShop_Stock Checking_Output 樞紐佈局）。
 
     欄位配置（A-Z，共 26 欄）：
@@ -7288,6 +7288,9 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     - W-Y：強制調貨提示 / 由NT 調出 / 由Mix 調出
     - Z：存貨偏重提示（庫存佔比 ≥ 40% 且與銷量佔比差 ≥ 20 個百分點的 Nature）
     - AA（僅 bidirectional=True）：由Tourist 店舖預計調出數量（A-Z 契約欄序不動）
+
+    highlight_skew=True 時，存貨偏重提示非空的列以醒目橘底（FFC000）加強顯示
+    提示欄（Z）與偏重 Nature 的庫存佔比欄（Q/S/U）。
     """
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
@@ -7297,6 +7300,8 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     nature_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     pct_fill = PatternFill(start_color="70AD47", end_color="70AD47", fill_type="solid")
     band_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    skew_fill = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
+    skew_font = Font(bold=True)
     header_font = Font(bold=True, size=11)
     nature_font = Font(bold=True, size=11, color="FFFFFF")
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -7435,6 +7440,15 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
         cell.alignment = left_wrap
         if is_band:
             cell.fill = band_fill
+        # 偏重數值以醒目橘底加強顯示（提示欄 + 偏重 Nature 的庫存佔比欄）
+        if hint and highlight_skew:
+            cell.fill = skew_fill
+            cell.font = skew_font
+            for _nat, _pct_col in (("Tourist", 17), ("Mix", 19), ("Non Tourist", 21)):
+                if f"存貨偏重 {_nat}" in hint:
+                    _pc = ws.cell(row=excel_row, column=_pct_col)
+                    _pc.fill = skew_fill
+                    _pc.font = skew_font
         # AA（僅雙向）：由Tourist 店舖預計調出數量
         if bidirectional:
             val = row.get("由Tourist 店舖預計調出數量", 0)

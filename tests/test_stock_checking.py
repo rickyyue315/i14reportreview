@@ -453,6 +453,27 @@ def test_summary_stock_skew_hint_zero_sales():
     assert "存貨偏重 Mix（庫存 40.0% / 銷量 0.0%）" in hint  # 40% ≥ 40% 且差 40 點 ≥ 20 → 同樣入提示
 
 
+def test_generate_excel_summary_skew_not_highlighted_by_default():
+    # Stock Checking Summary 維持原樣（橘底加強顯示只用於 Safety Stock x NetStock Review）
+    df = _df([
+        {"SKU": 700, "Site Code": "T01", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 150.0, "Shop Stock Qty (CM)": 10.0,
+         "Shop Monthly Sold Qty (P90D)": 50.0, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 700, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 70.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+        {"SKU": 700, "Site Code": "M01", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 60.0, "Shop Stock Qty (CM)": 20.0,
+         "Shop Monthly Sold Qty (P90D)": 20.0},
+    ])
+    raw, summary, _, _ = transform_stock_checking(df)
+    assert str(summary.iloc[0]["存貨偏重提示"]).startswith("存貨偏重 Non Tourist")
+    buf = generate_excel_stock_checking(raw, summary)
+    ws = load_workbook(buf)["Summary"]
+    assert not str(ws.cell(row=6, column=26).fill.start_color.rgb).endswith("FFC000")
+    assert not str(ws.cell(row=6, column=21).fill.start_color.rgb).endswith("FFC000")
+
+
 def test_summary_sorted_by_brand_sku():
     df = _df([
         {"SKU": 2, "Brand": "BB", "Site Code": "M01", "Shop Nature": "Mix", "Shop Monthly Sold Qty (P90D)": 10.0},

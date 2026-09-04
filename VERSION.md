@@ -1,5 +1,11 @@
 # 版本記錄
 
+## v1.14.1 (2026-09-04)
+
+- New: Safety Stock x NetStock Review 的 Summary 出現存貨偏重數值時，以**醒目橘底（FFC000）加粗體**加強顯示——Excel「Summary」工作表的「存貨偏重提示」欄（Z）與偏重 Nature 的庫存佔比欄（Q/S/U）同步底色；Streamlit「📋 Summary（SKU 存貨偏重）」分頁的偏重提示與偏重 Nature 庫存佔比儲存格同步橘底高亮
+- Update: `_write_stock_checking_summary_sheet()` 加 `highlight_skew` 參數（預設 False，僅混合模式傳 True；Stock Checking 輸出零變動）；analyzer_page.py 新增 `_style_inventory_skew()` Styler
+- Update: tests/test_hybrid_mode.py 新增偏重底色測試 ×1、test_stock_checking.py 新增預設不底色測試 ×1；共 164 項測試通過
+
 ## v1.14.0 (2026-09-04)
 
 - New: Safety Stock x NetStock Review 新增「允許雙向調貨」選項（UI checkbox `hy_bidir`，預設關閉）— 針對「存貨偏重遊客區而其他區域賣得好出現缺貨」場景，調貨由單向（只向遊客區調入）改為**完全對稱三向**：任何 Nature 缺貨（該 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且個別店補到 14 日需求 > 0）且其他任一 Nature 有貨（加總 TurnDay ≥ 門檻）即標示需要調貨；來源優先序固定 **Non Tourist → Mix → Tourist**（需求 Nature 自身除外）；缺貨 Nature 的超額列一律不可轉出（池級歸零）；自我調貨與同OM守衛不變

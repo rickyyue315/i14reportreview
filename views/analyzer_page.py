@@ -47,6 +47,28 @@ def _release_os_memory():
     except Exception:
         pass
 
+
+def _style_inventory_skew(df: pd.DataFrame):
+    """Summary 顯示：存貨偏重提示非空時，以醒目橘底加強顯示提示欄與偏重 Nature 的庫存佔比欄。"""
+    hint_col = "存貨偏重提示"
+    if df is None or df.empty or hint_col not in df.columns:
+        return df
+
+    def _row_styles(row):
+        hint = str(row.get(hint_col, "") or "")
+        styles = [""] * len(row)
+        if hint.strip():
+            targets = {hint_col}
+            for nat in ("Tourist", "Mix", "Non Tourist"):
+                if f"存貨偏重 {nat}" in hint:
+                    targets.add(f"{nat} 加總 - Shop Stock Qty (CM) %")
+            for i, col in enumerate(row.index):
+                if col in targets:
+                    styles[i] = "background-color: #FFC000; font-weight: 700"
+        return pd.Series(styles, index=row.index)
+
+    return df.style.apply(_row_styles, axis=1)
+
 # 1. 側邊欄設計 (Sidebar)
 with st.sidebar:
     st.markdown("""
@@ -558,7 +580,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **14 日周轉線**Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。另附 SKU 級 **Summary**（各 Nature 庫存/銷量佔比與「存貨偏重提示」）。")
+        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **14 日周轉線**Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。另附 SKU 級 **Summary**（各 Nature 庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -705,10 +727,10 @@ if uploaded_file is not None:
                     _skewed = sc_summary[sc_summary["存貨偏重提示"].fillna("").astype(str) != ""] if "存貨偏重提示" in sc_summary.columns else sc_summary.iloc[0:0]
                     if not _skewed.empty:
                         st.markdown(f"**存貨偏重 SKU（{len(_skewed):,} 個）**")
-                        st.dataframe(_skewed, width='stretch', hide_index=True)
+                        st.dataframe(_style_inventory_skew(_skewed), width='stretch', hide_index=True)
                     st.markdown("**全部 SKU Summary**")
-                    st.dataframe(sc_summary, width='stretch', hide_index=True)
-                    st.caption(f"共 {len(sc_summary):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = 某 Nature 庫存佔比 ≥ 40% 且較銷量佔比高 ≥ 20 個百分點。")
+                    st.dataframe(_style_inventory_skew(sc_summary), width='stretch', hide_index=True)
+                    st.caption(f"共 {len(sc_summary):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = 某 Nature 庫存佔比 ≥ 40% 且較銷量佔比高 ≥ 20 個百分點；偏重數值以橘色底色加強顯示。")
                 else:
                     st.info("無符合資料")
             with tab_cross:

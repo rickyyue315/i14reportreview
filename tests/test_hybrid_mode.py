@@ -494,6 +494,20 @@ def test_generate_excel_sheets_and_headers():
         assert col in sc_headers
 
 
+def test_generate_excel_summary_skew_highlight():
+    # 偏重列：Z 提示欄與偏重 Nature 庫存佔比欄（Tourist=Q）以醒目橘底 FFC000 加強顯示
+    raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, _ = transform_hybrid(_df(_BIDIR_B1), bidirectional=True)
+    assert str(sc_summary.iloc[0]["存貨偏重提示"]).startswith("存貨偏重 Tourist")
+    buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
+    ws = load_workbook(buf)["Summary"]
+    assert str(ws.cell(row=6, column=26).value).startswith("存貨偏重 Tourist")
+    assert str(ws.cell(row=6, column=26).fill.start_color.rgb).endswith("FFC000")
+    assert ws.cell(row=6, column=26).font.bold
+    assert str(ws.cell(row=6, column=17).fill.start_color.rgb).endswith("FFC000")  # Tourist 庫存 %
+    assert not str(ws.cell(row=6, column=19).fill.start_color.rgb).endswith("FFC000")  # Mix 未偏重
+    assert not str(ws.cell(row=6, column=21).fill.start_color.rgb).endswith("FFC000")  # NT 未偏重
+
+
 def test_generate_excel_dashboard_matches_stats():
     raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, _ = transform_hybrid(_df(_SCENARIO_OM))
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
