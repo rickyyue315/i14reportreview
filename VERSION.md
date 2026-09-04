@@ -1,5 +1,18 @@
 # 版本記錄
 
+## v1.13.3 (2026-09-04)
+
+- Change: 全站字眼修正 — 「診斷」一律改為「Review」（「Review」的書面語對應並非診斷）；影響欄位名 `Safety 診斷` → `Safety Review`、工作表名 `調貨診斷 Safety Stock (不限OM)／(同OM)` → `調貨 Review Safety Stock (不限OM)／(同OM)`、`診斷摘要` → `Review 摘要`，以及 Streamlit 介面、進度訊息、README／使用說明頁同義文字
+- Update: tests/test_hybrid_mode.py、test_stock_impact_pipeline.py、_smoke_pipeline.py 同步新欄位與工作表名稱；共 154 項測試通過（既有歷史版本記錄保留原用字）
+
+## v1.13.2 (2026-09-04)
+
+- Fix: 調貨分配自我調貨防護 — 來源店與需求店同為一店（Site Code 相同）時一律排除（`_hybrid_allocate_transfers` 與 Stock Checking 分配迴圈）；過去輸入檔若同一店×同一 SKU 出現重複列且 Shop Nature 不一致（如一行 Tourist、一行 Non Tourist），該店會同時成為調入方與調出方，甚至出現「調貨來源＝自己店舖」的自我調貨
+- New: 調貨模式輸入一致性檢核（`_transfer_input_consistency_warnings()`，調貨診斷與 Stock Checking 共用，只列 warning 不拒絕）— ①「Site Code × SKU」重複列（組數與列數，正常輸入應為一店×一SKU一列）；②同一店舖的 Shop Nature 在不同列之間不一致（列出店號，最多 5 間）
+- Update: tests/test_hybrid_mode.py 新增重複列與自我調貨回歸測試 ×3（warning 檢核、同 Nature 重複不误報 Nature 不一致、店級同時調入+調出＝0／調貨來源不含自己店號／守恆）；test_stock_checking.py 新增 ×2；共 154 項測試通過
+- Update: 真實來源檔實測 — 正常輸入（22,732 列）修復前後調入／轉出合計完全相同（不限OM 9,433／同OM 4,784），新檢核無誤報；異常輸入合成案例（同店 Tourist＋Non Tourist 衝突列）修復後同店來源被排除、改列缺口並出現 warning
+- Update: README／使用說明頁同步（分配規則與輸入檢核兩節）
+
 ## v1.13.1 (2026-09-04)
 
 - New: Safety Stock x NetStock Review 引入 Stock Checking 的 SKU 級 Summary — 於混合模式輸出新增第 2 工作表「Summary」（與 Stock Checking 同格式同值：各 Nature 庫存/月銷加總、TurnDay、佔比、強制調貨提示、存貨偏重提示），供查閱哪些 SKU 存貨偏重哪個 Nature；Excel 由 4 工作表改為 5（RAW／Summary／調貨診斷 (不限OM)／調貨診斷 (同OM)／診斷摘要）

@@ -558,14 +558,14 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件診斷 Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **14 日周轉線**診斷 Safety Stock 設定 — Tourist 需調入列若現有設定低於所需量 → 「Safety 設定不足」；Mix / Non Tourist 有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety 診斷與建議調整。另附 SKU 級 **Summary**（各 Nature 庫存/銷量佔比與「存貨偏重提示」）。")
+        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **14 日周轉線**Review Safety Stock 設定 — Tourist 需調入列若現有設定低於所需量 → 「Safety 設定不足」；Mix / Non Tourist 有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。另附 SKU 級 **Summary**（各 Nature 庫存/銷量佔比與「存貨偏重提示」）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
             turnday_threshold = st.number_input(
                 "🔁 Tourist 加總 TurnDay 門檻 (日)",
                 min_value=1, max_value=365, value=14, step=1, key="hy_ttd",
-                help="該 SKU 的 Tourist 加總 TurnDay（庫存加總 ÷ 月銷加總 × 30.5）低於此值時才列入調貨候選。診斷基準線固定 14 日，不隨此門檻變動。"
+                help="該 SKU 的 Tourist 加總 TurnDay（庫存加總 ÷ 月銷加總 × 30.5）低於此值時才列入調貨候選。Review 基準線固定 14 日，不隨此門檻變動。"
             )
         with sc_top[1]:
             d001_threshold = st.number_input(
@@ -578,7 +578,7 @@ if uploaded_file is not None:
             "且 Mix / Non Tourist 至少一個 Nature 加總 TurnDay ≥ 門檻（有貨可調）。調入補到 14 日周轉，NT 優先再由 Mix 補足。"
         )
         st.caption(
-            "🧭 診斷基準：14日周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 14)。調入列現有設定 < 所需量 → 「Safety 設定不足」；"
+            "🧭 Review 基準：14日周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 14)。調入列現有設定 < 所需量 → 「Safety 設定不足」；"
             "轉出列現有設定 > 所需量 → 「Safety 設定過高」；建議 Safety 設定值 = 所需量（僅不足／過高列給建議）。"
         )
 
@@ -662,21 +662,21 @@ if uploaded_file is not None:
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             tab_diag, tab_diag_om, tab_sc, tab_cross, tab_raw = st.tabs([
-                "🧭 調貨診斷 Safety Stock（不限OM）",
-                "🔗 調貨診斷 Safety Stock（同OM）",
+                "🧭 調貨 Review Safety Stock（不限OM）",
+                "🔗 調貨 Review Safety Stock（同OM）",
                 "📋 Summary（SKU 存貨偏重）",
-                "📊 診斷摘要（診斷 × Shop Nature）",
+                "📊 Review 摘要（Review × Shop Nature）",
                 "📄 RAW 完整明細",
             ])
             with tab_diag:
-                st.markdown("#### 店舖×SKU 逐列診斷 — 不限OM調貨（需要調入／實際轉出／可轉出未使用，14 日周轉線基準）")
+                st.markdown("#### 店舖×SKU 逐列 Review — 不限OM調貨（需要調入／實際轉出／可轉出未使用，14 日周轉線基準）")
                 if diagnosis is not None and not diagnosis.empty:
                     st.dataframe(diagnosis, width='stretch', hide_index=True)
                     st.caption(f"共 {len(diagnosis):,} 列（按 Brand / SKU / 事件類型 / Site Code 排序）。")
                 else:
                     st.info("無符合資料")
             with tab_diag_om:
-                st.markdown("#### 店舖×SKU 逐列診斷 — 同OM調貨（來源店須與需求店同 OM；Safety 診斷與建議調整不受 OM 限制影響）")
+                st.markdown("#### 店舖×SKU 逐列 Review — 同OM調貨（來源店須與需求店同 OM；Safety Review 與建議調整不受 OM 限制影響）")
                 if diagnosis_om is not None and not diagnosis_om.empty:
                     st.dataframe(diagnosis_om, width='stretch', hide_index=True)
                     st.caption(f"共 {len(diagnosis_om):,} 列（按 Brand / SKU / 事件類型 / Site Code 排序）。")
@@ -695,15 +695,15 @@ if uploaded_file is not None:
                 else:
                     st.info("無符合資料")
             with tab_cross:
-                st.markdown("#### Safety 診斷 × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計）")
+                st.markdown("#### Safety Review × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計）")
                 if diag_summary is not None and not diag_summary.empty:
                     st.dataframe(diag_summary, width='stretch', hide_index=True)
                 else:
                     st.info("無符合資料")
             with tab_raw:
-                st.markdown("#### RAW 原始資料（診斷欄位已附於每一列）")
+                st.markdown("#### RAW 原始資料（Review 欄位已附於每一列）")
                 _display = raw_df.copy()
-                _hyb_cols = ["事件類型", "Safety 診斷", "14日周轉所需量", "建議 Safety 設定值", "Safety 建議調整量",
+                _hyb_cols = ["事件類型", "Safety Review", "14日周轉所需量", "建議 Safety 設定值", "Safety 建議調整量",
                              "調貨後庫存", "調貨後 TurnDay",
                              "實際調入量 (同OM)", "調入缺口 (同OM)", "轉出量 (同OM)", "調貨來源 (同OM)", "調貨後庫存 (同OM)", "調貨後 TurnDay (同OM)",
                              "需要調貨", "調入需求量 (補到14日)", "實際調入量", "調入缺口",
@@ -1017,7 +1017,7 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            impact_tabs = st.tabs(["📊 存貨分佈", "📦 SKU月銷量和存儲", "🏷️ By Brand", "👤 By Buyer", "📦 By Category", "🔍 SKU 缺貨診斷"])
+            impact_tabs = st.tabs(["📊 存貨分佈", "📦 SKU月銷量和存儲", "🏷️ By Brand", "👤 By Buyer", "📦 By Category", "🔍 SKU 缺貨 Review"])
 
             with impact_tabs[0]:
                 st.markdown("#### 📊 存貨分佈分析")
@@ -1102,7 +1102,7 @@ if uploaded_file is not None:
                     st.info("無 Category 層級缺貨影響數據（若缺少 Adj. MCH1 欄位則無法產出）")
 
             with impact_tabs[5]:
-                st.markdown("#### 🔍 by-SKU 缺貨診斷（Tourist + Mix + Non Tourist）")
+                st.markdown("#### 🔍 by-SKU 缺貨 Review（Tourist + Mix + Non Tourist）")
                 st.caption("每個缺貨 SKU 的 Tourist/Mix/Non Tourist 缺貨店數、D001 倉庫三期貨量與店舖總存貨。🟧 **倉庫有貨** = 補貨流程問題；⬜ **源頭斷貨** = 倉庫也斷貨需上游補貨。")
                 if sku_diagnosis is not None and not sku_diagnosis.empty:
                     # 統計摘要

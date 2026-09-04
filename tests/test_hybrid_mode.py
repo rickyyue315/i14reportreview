@@ -1,14 +1,14 @@
-"""Validation tests for Safety Stock x NetStock Review mode (調貨事件診斷 Safety 設定, v1.12.0/v1.13.0).
+"""Validation tests for Safety Stock x NetStock Review mode (調貨事件 Review Safety 設定, v1.12.0/v1.13.0).
 
-以調貨事件為入口、14 日周轉線為基準診斷 Safety Stock 設定：
+以調貨事件為入口、14 日周轉線為基準 Review Safety Stock 設定：
 - 調貨段與 transform_stock_checking 同規則（SKU 級加總 TurnDay、Nature 供應門檻、14 日目標、NT→Mix）
 - 需要調入列：Adj. Safety Stock < 14日周轉所需量 → Safety 設定不足
 - 已標示 SKU 的 Mix/NT 有貨列：Adj. Safety Stock > 所需量 → Safety 設定過高
 - 建議 Safety 設定值 = 所需量；Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）
 - 調貨分兩變體：不限OM（契約欄位）與同OM（來源店與需求店同 OM，欄位加「(同OM)」後綴）；
-  OM 限制只影響分配，Safety 診斷與建議調整兩變體相同
+  OM 限制只影響分配，Safety Review 與建議調整兩變體相同
 - Shop Nature：Other/空白/大小寫差異一律正規化為 Non Tourist
-- 輸出 4 工作表：RAW / 調貨診斷 Safety Stock (不限OM) / 調貨診斷 Safety Stock (同OM) / 診斷摘要
+- 輸出 4 工作表：RAW / 調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) / Review 摘要
 """
 import warnings
 warnings.filterwarnings("ignore")
@@ -118,7 +118,7 @@ def test_default_args_produce_results():
     raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warns = transform_hybrid(_df(_SCENARIO_A))
     assert stats["need_rows"] == 1
     assert len(warns) == 0
-    assert "事件類型" in raw.columns and "Safety 診斷" in raw.columns
+    assert "事件類型" in raw.columns and "Safety Review" in raw.columns
     assert "轉出量 (同OM)" in raw.columns
     assert len(diagnosis) == 3 and len(diagnosis_om) == 3
     assert not diag_summary.empty
@@ -146,13 +146,13 @@ def test_transfer_columns_equivalent_to_stock_checking():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 3. 診斷規則（14 日周轉線基準）
+# 3. Review 規則（14 日周轉線基準）
 # ──────────────────────────────────────────────────────────────────────────────
 def test_tourist_under_setting_diagnosis():
     raw, sc_summary, diagnosis, _, _, stats, _ = transform_hybrid(_df(_SCENARIO_A))
     assert int(_get(raw, "T01", "14日周轉所需量")) == 56  # ceil(360/90×14)
     assert _get(raw, "T01", "事件類型") == "需要調入"
-    assert _get(raw, "T01", "Safety 診斷") == "Safety 設定不足"
+    assert _get(raw, "T01", "Safety Review") == "Safety 設定不足"
     assert int(_get(raw, "T01", "建議 Safety 設定值")) == 56
     assert float(_get(raw, "T01", "Safety 建議調整量")) == 26
     assert stats["under_rows"] == 1 and stats["under_skus"] == 1 and stats["under_inc_total"] == 26
@@ -161,7 +161,7 @@ def test_tourist_under_setting_diagnosis():
 def test_donor_over_setting_diagnosis():
     raw, sc_summary, _, _, _, stats, _ = transform_hybrid(_df(_SCENARIO_A))
     assert _get(raw, "N01", "事件類型") == "實際轉出"
-    assert _get(raw, "N01", "Safety 診斷") == "Safety 設定過高"  # Adj 30 > 所需 14
+    assert _get(raw, "N01", "Safety Review") == "Safety 設定過高"  # Adj 30 > 所需 14
     assert int(_get(raw, "N01", "建議 Safety 設定值")) == 14
     assert float(_get(raw, "N01", "Safety 建議調整量")) == -16
     assert stats["over_rows"] == 1 and stats["over_dec_total"] == -16
@@ -170,7 +170,7 @@ def test_donor_over_setting_diagnosis():
 def test_donor_boundary_equal_is_normal():
     raw, sc_summary, _, _, _, stats, _ = transform_hybrid(_df(_SCENARIO_A))
     assert _get(raw, "M01", "事件類型") == "可轉出未使用"  # 可轉出 11、轉出 0
-    assert _get(raw, "M01", "Safety 診斷") == "設定正常—過剩非設定因素"  # Adj 14 = 所需 14
+    assert _get(raw, "M01", "Safety Review") == "設定正常—過剩非設定因素"  # Adj 14 = 所需 14
     assert pd.isna(_get(raw, "M01", "建議 Safety 設定值"))
     assert pd.isna(_get(raw, "M01", "Safety 建議調整量"))
     assert stats["normal_rows"] == 1
@@ -181,9 +181,9 @@ def test_tourist_normal_setting_when_covered():
     rows[0].update({"SKU": 500, "Site Code": "T03", "Adj. Safety Stock": 60})
     rows[1].update({"SKU": 500, "Site Code": "N03", "Adj. Safety Stock": 10})
     raw, sc_summary, _, _, _, _, _ = transform_hybrid(_df([rows[0], rows[1]]))
-    assert _get(raw, "T03", "Safety 診斷") == "設定正常—缺貨非設定因素"  # 60 ≥ 56
+    assert _get(raw, "T03", "Safety Review") == "設定正常—缺貨非設定因素"  # 60 ≥ 56
     assert pd.isna(_get(raw, "T03", "Safety 建議調整量"))
-    assert _get(raw, "N03", "Safety 診斷") == "設定正常—過剩非設定因素"  # 10 ≤ 14
+    assert _get(raw, "N03", "Safety Review") == "設定正常—過剩非設定因素"  # 10 ≤ 14
 
 
 def test_no_sale_donor_suggests_zero():
@@ -199,7 +199,7 @@ def test_no_sale_donor_suggests_zero():
     raw, sc_summary, _, _, _, stats, _ = transform_hybrid(_df(rows))
     assert _get(raw, "N02", "事件類型") == "實際轉出"
     assert int(_get(raw, "N02", "14日周轉所需量")) == 0
-    assert _get(raw, "N02", "Safety 診斷") == "Safety 設定過高"
+    assert _get(raw, "N02", "Safety Review") == "Safety 設定過高"
     assert int(_get(raw, "N02", "建議 Safety 設定值")) == 0
     assert float(_get(raw, "N02", "Safety 建議調整量")) == -5
     assert stats["total_gap"] == 8  # 需求 28 − NT 全數可轉出 20
@@ -216,7 +216,7 @@ def test_blank_adj_safety_treated_as_zero_with_warning():
          "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 30},
     ]
     raw, sc_summary, _, _, _, _, warns = transform_hybrid(_df(rows))
-    assert _get(raw, "T05", "Safety 診斷") == "Safety 設定不足"  # 0 < 14
+    assert _get(raw, "T05", "Safety Review") == "Safety 設定不足"  # 0 < 14
     assert int(_get(raw, "T05", "建議 Safety 設定值")) == 14
     assert any("Adj. Safety Stock" in w for w in warns)
 
@@ -239,7 +239,7 @@ def test_unflagged_sku_surplus_not_in_diagnosis():
                   "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 30}])
     raw, sc_summary, diagnosis, diagnosis_om, _, _, _ = transform_hybrid(pd.concat([_df(_SCENARIO_A), extra], ignore_index=True))
     assert int(_get(raw, "M04", "可轉出貨量 (Mix)")) == 26  # RAW 仍計算可轉出
-    assert "M04" not in set(diagnosis["Site Code"])  # 但 SKU 600 未標示調貨 → 不入診斷主表
+    assert "M04" not in set(diagnosis["Site Code"])  # 但 SKU 600 未標示調貨 → 不入 Review 主表
     assert "M04" not in set(diagnosis_om["Site Code"])
 
 
@@ -286,7 +286,7 @@ def test_same_om_gap_when_no_same_om_donor():
 
 def test_om_restriction_does_not_alter_safety_diagnosis():
     raw, sc_summary, diagnosis, diagnosis_om, _, _, _ = transform_hybrid(_df(_SCENARIO_OM))
-    diag_cols = ["Safety 診斷", "建議 Safety 設定值", "Safety 建議調整量", "14日周轉所需量"]
+    diag_cols = ["Safety Review", "建議 Safety 設定值", "Safety 建議調整量", "14日周轉所需量"]
     a = diagnosis.set_index("Site Code")[diag_cols].sort_index()
     b = diagnosis_om.set_index("Site Code")[diag_cols].sort_index()
     pd.testing.assert_frame_equal(a, b)
@@ -415,7 +415,7 @@ def test_missing_d001_warns():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 8. 診斷主表 / 交叉表 / stats
+# 8. Review 主表 / 交叉表 / stats
 # ──────────────────────────────────────────────────────────────────────────────
 def test_diagnosis_table_rows_and_order():
     raw, sc_summary, diagnosis, _, _, _, _ = transform_hybrid(_df(_SCENARIO_A))
@@ -429,14 +429,14 @@ def test_diagnosis_table_rows_and_order():
 
 def test_diag_summary_cross_and_totals():
     raw, sc_summary, diagnosis, _, diag_summary, stats, _ = transform_hybrid(_df(_SCENARIO_A))
-    assert list(diag_summary["Safety 診斷"])[:1] == ["Safety 設定不足"]
-    assert (diag_summary["Safety 診斷"] == "總計").any()
-    under = diag_summary[diag_summary["Safety 診斷"] == "Safety 設定不足"].iloc[0]
+    assert list(diag_summary["Safety Review"])[:1] == ["Safety 設定不足"]
+    assert (diag_summary["Safety Review"] == "總計").any()
+    under = diag_summary[diag_summary["Safety Review"] == "Safety 設定不足"].iloc[0]
     assert int(under["Tourist 列數"]) == 1 and int(under["合計 列數"]) == 1
     assert int(under["合計 建議調整量"]) == 26
-    over = diag_summary[diag_summary["Safety 診斷"] == "Safety 設定過高"].iloc[0]
+    over = diag_summary[diag_summary["Safety Review"] == "Safety 設定過高"].iloc[0]
     assert int(over["Non Tourist 列數"]) == 1 and int(over["合計 建議調整量"]) == -16
-    total = diag_summary[diag_summary["Safety 診斷"] == "總計"].iloc[0]
+    total = diag_summary[diag_summary["Safety Review"] == "總計"].iloc[0]
     assert int(total["合計 列數"]) == len(diagnosis)
 
 
@@ -474,18 +474,18 @@ def test_generate_excel_sheets_and_headers():
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
-        "RAW", "Summary", "調貨診斷 Safety Stock (不限OM)", "調貨診斷 Safety Stock (同OM)", "診斷摘要",
+        "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "Review 摘要",
     ]
     raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
-    for col in ["事件類型", "Safety 診斷", "14日周轉所需量", "建議 Safety 設定值",
+    for col in ["事件類型", "Safety Review", "14日周轉所需量", "建議 Safety 設定值",
                 "Safety 建議調整量", "調貨後庫存", "調貨後 TurnDay",
                 "實際調入量 (同OM)", "轉出量 (同OM)", "調貨來源 (同OM)",
                 "調貨後庫存 (同OM)", "調貨後 TurnDay (同OM)", "需要調貨",
                 "D001 Effective Stock Qty (CM)"]:
         assert col in raw_headers
-    for sheet in ("調貨診斷 Safety Stock (不限OM)", "調貨診斷 Safety Stock (同OM)"):
+    for sheet in ("調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)"):
         headers = [c.value for c in next(wb[sheet].iter_rows(min_row=1, max_row=1))]
-        for col in ["Brand", "SKU", "Site Code", "OM", "Shop Nature", "事件類型", "Safety 診斷",
+        for col in ["Brand", "SKU", "Site Code", "OM", "Shop Nature", "事件類型", "Safety Review",
                     "建議 Safety 設定值", "Safety 建議調整量", "可轉出貨量", "轉出量", "調貨後庫存"]:
             assert col in headers, (sheet, col)
     sc_headers = [c.value for c in next(wb["Summary"].iter_rows(min_row=5, max_row=5))]
@@ -498,7 +498,7 @@ def test_generate_excel_dashboard_matches_stats():
     raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, _ = transform_hybrid(_df(_SCENARIO_OM))
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     wb = load_workbook(buf, read_only=True)
-    ws = wb["診斷摘要"]
+    ws = wb["Review 摘要"]
     vals = {}
     for header_row, value_row in ((3, 4), (7, 8), (11, 12), (15, 16)):
         for c in range(1, 5):
@@ -525,7 +525,7 @@ def test_excel_diagnosis_sheet_freeze_and_autofilter():
     raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, _ = transform_hybrid(_df(_SCENARIO_A))
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     wb = load_workbook(buf)
-    for sheet in ("調貨診斷 Safety Stock (不限OM)", "調貨診斷 Safety Stock (同OM)"):
+    for sheet in ("調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)"):
         ws = wb[sheet]
         assert ws.freeze_panes == "A2"
         assert ws.auto_filter.ref is not None
@@ -612,3 +612,73 @@ def test_sku_desc_all_blank_derived():
     raw, sc_summary, diagnosis, _, _, _, _ = transform_hybrid(df)
     assert not diagnosis.empty
     assert (diagnosis["SKU Desc"].fillna("").astype(str).str.rstrip("-") == "Prod").all()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 11. 重複列與自我調貨防護（同店同 SKU 資料異常）
+# ──────────────────────────────────────────────────────────────────────────────
+# S01 對 SKU 500 同時出現 Tourist 與 Non Tourist 列（重複列＋Nature 不一致的異常輸入）。
+# 修復前：S01-Tourist 由 S01-Non Tourist 調入（自我調貨），S01 同一 SKU 同時調入與調出。
+# 修復後：同店來源一律排除——S01-Tourist 缺口 9 件（無其他來源），S02 正常由 S01 調入 9 件。
+_SCENARIO_DUP = [
+    {"SKU": 500, "Site Code": "S01", "Shop Nature": "Tourist",
+     "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
+     "Shop Monthly Sold Qty (P90D)": 120.0, "D001 Net Stock Qty (CM)": 10.0},
+    {"SKU": 500, "Site Code": "S01", "Shop Nature": "Non Tourist",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5},
+    {"SKU": 500, "Site Code": "S02", "Shop Nature": "Tourist",
+     "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
+     "Shop Monthly Sold Qty (P90D)": 120.0, "D001 Net Stock Qty (CM)": 10.0},
+]
+
+
+def _pick(raw, site, nat):
+    return raw[(raw["Site Code"] == site) & (raw["Shop Nature"] == nat)].iloc[0]
+
+
+def test_duplicate_site_sku_conflicting_nature_warned():
+    raw, _, _, _, _, _, warns = transform_hybrid(_df(_SCENARIO_DUP))
+    assert any("Site Code × SKU" in w and "重複" in w for w in warns)
+    assert any("Shop Nature" in w and "不一致" in w for w in warns)
+
+
+def test_duplicate_same_nature_warns_dup_only():
+    rows = [
+        {"SKU": 510, "Site Code": "S01", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
+         "Shop Monthly Sold Qty (P90D)": 120.0, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 510, "Site Code": "S01", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
+         "Shop Monthly Sold Qty (P90D)": 120.0, "D001 Net Stock Qty (CM)": 10.0},
+    ]
+    raw, _, _, _, _, _, warns = transform_hybrid(_df(rows))
+    assert any("Site Code × SKU" in w and "重複" in w for w in warns)
+    assert not any("不一致" in w for w in warns)
+
+
+def test_self_transfer_guarded_and_no_site_both_in_and_out():
+    raw, _, _, _, _, _, _ = transform_hybrid(_df(_SCENARIO_DUP))
+    t01 = _pick(raw, "S01", "Tourist")
+    t02 = raw[raw["Site Code"] == "S02"].iloc[0]
+    n01 = _pick(raw, "S01", "Non Tourist")
+    # 自我調貨被排除：S01-Tourist 無其他來源 → 全數缺口
+    assert int(t01["實際調入量"]) == 0 and int(t01["調入缺口"]) == 9
+    assert str(t01["調貨來源 (Site Code)"]) == ""
+    assert int(t01["實際調入量 (同OM)"]) == 0 and int(t01["調入缺口 (同OM)"]) == 9
+    # S02 正常由 S01 調入
+    assert int(t02["實際調入量"]) == 9 and str(t02["調貨來源 (Site Code)"]) == "S01:9"
+    assert int(t02["實際調入量 (同OM)"]) == 9 and str(t02["調貨來源 (同OM)"]) == "S01:9"
+    assert int(n01["轉出量"]) == 9 and int(n01["轉出量 (同OM)"]) == 9
+    # 店級：同一 SKU + 同一店舖不得同時調入與調出（兩變體）
+    g = raw.groupby(["SKU", "Site Code"])[["實際調入量", "轉出量", "實際調入量 (同OM)", "轉出量 (同OM)"]].sum()
+    assert not ((g["實際調入量"] > 0) & (g["轉出量"] > 0)).any()
+    assert not ((g["實際調入量 (同OM)"] > 0) & (g["轉出量 (同OM)"] > 0)).any()
+    # 列級與來源欄：任何需求列的調貨來源都不含自己店號
+    for _, r in raw.iterrows():
+        for col in ("調貨來源 (Site Code)", "調貨來源 (同OM)"):
+            src_sites = {p.split(":")[0] for p in str(r[col]).split("; ") if p}
+            assert r["Site Code"] not in src_sites
+    # 守恆：總調入 = 總轉出
+    assert int(raw["實際調入量"].sum()) == int(raw["轉出量"].sum())
+    assert int(raw["實際調入量 (同OM)"].sum()) == int(raw["轉出量 (同OM)"].sum())

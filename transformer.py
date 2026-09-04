@@ -3632,7 +3632,7 @@ def _classify_d001_status(d001_cm: float) -> str:
 
 
 def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | None = None) -> pd.DataFrame:
-    """by-SKU 缺貨診斷表（Tourist + Mix + Non Tourist 缺貨 SKU）。
+    """by-SKU 缺貨 Review 表（Tourist + Mix + Non Tourist 缺貨 SKU）。
 
     每列為一個缺貨 SKU，彙總：
     - Tourist / Mix / Non Tourist 各自缺貨店數與銷售
@@ -4780,11 +4780,11 @@ def _write_sku_allocation_sheet(ws, alloc_df, header_font, header_fill, thin_bor
 
 
 def _write_sku_stock_diagnosis_sheet(ws, diag_df, header_font, header_fill, thin_border, progress_callback):
-    """寫入 by-SKU 缺貨診斷表（Tourist+Mix 缺貨 SKU，含 D001 貨量與店舖貨量）。
+    """寫入 by-SKU 缺貨 Review 表（Tourist+Mix 缺貨 SKU，含 D001 貨量與店舖貨量）。
 
     D001 狀態分類用顏色標示：「倉庫有貨」(補貨問題) 用橘色警示、「源頭斷貨」用灰色。
     """
-    ws.cell(row=1, column=1, value="SKU Stock Diagnosis — by-SKU 缺貨診斷（Tourist + Mix + Non Tourist 缺貨 SKU｜含 D001 倉庫貨量與店舖貨量）").font = Font(bold=True, size=12, color="1E40AF")
+    ws.cell(row=1, column=1, value="SKU Stock Diagnosis — by-SKU 缺貨 Review（Tourist + Mix + Non Tourist 缺貨 SKU｜含 D001 倉庫貨量與店舖貨量）").font = Font(bold=True, size=12, color="1E40AF")
 
     if diag_df is None or diag_df.empty:
         ws.cell(row=3, column=1, value="無 Tourist/Mix 缺貨 SKU").font = Font(size=11, italic=True, color="6B7280")
@@ -4825,10 +4825,10 @@ def _write_sku_stock_diagnosis_sheet(ws, diag_df, header_font, header_fill, thin
                     cell.font = Font(size=10, color="4B5563")
         if progress_callback and ((row_idx - 4) % 500 == 0 or row_idx - 3 == total_rows):
             progress_callback(0.741 + 0.018 * ((row_idx - 3) / max(total_rows, 1)),
-                              f"寫入 SKU 缺貨診斷 ({row_idx-3}/{total_rows})...")
+                              f"寫入 SKU 缺貨 Review ({row_idx-3}/{total_rows})...")
 
     if progress_callback:
-        progress_callback(0.759, f"SKU 缺貨診斷表寫入完成（{len(diag_df)} SKU）")
+        progress_callback(0.759, f"SKU 缺貨 Review 表寫入完成（{len(diag_df)} SKU）")
 
     _auto_width(ws)
 
@@ -5221,9 +5221,9 @@ def generate_excel_stock_impact(
     else:
         ws_sku_monthly.cell(row=1, column=1, value="無 SKU 月銷量/存儲量數據").font = Font(size=12)
 
-    # Sheet 7: SKU Stock Diagnosis (by-SKU 缺貨診斷, 含 D001 + 店舖貨量)
+    # Sheet 7: SKU Stock Diagnosis (by-SKU 缺貨 Review, 含 D001 + 店舖貨量)
     if progress_callback:
-        progress_callback(0.70, "建立 by-SKU 缺貨診斷工作表...")
+        progress_callback(0.70, "建立 by-SKU 缺貨 Review 工作表...")
     ws_diag = wb.create_sheet(title="SKU Stock Diagnosis")
     _write_sku_stock_diagnosis_sheet(ws_diag, sku_diagnosis, header_font, header_fill, thin_border, progress_callback)
 
@@ -5254,7 +5254,7 @@ def generate_excel_stock_impact(
     return buf
 
 
-# ─── Safety Stock x NetStock Review (調貨事件診斷 Safety 設定) Functions ──────
+# ─── Safety Stock x NetStock Review (調貨事件 Review Safety 設定) Functions ──────
 
 
 _HYBRID_REQUIRED = [
@@ -5264,7 +5264,7 @@ _HYBRID_REQUIRED = [
     "Shop Monthly Sold Qty (P90D)",
 ]
 
-# ── 調貨事件診斷（14 日周轉線基準）──
+# ── 調貨事件 Review（14 日周轉線基準）──
 _HYBRID_EVENT_NEED_IN = "需要調入"
 _HYBRID_EVENT_DONATED = "實際轉出"
 _HYBRID_EVENT_DONOR = "可轉出未使用"
@@ -5279,11 +5279,11 @@ _HYBRID_DIAG_ORDER = [
 _HYBRID_EVENT_ORDER = {_HYBRID_EVENT_NEED_IN: 0, _HYBRID_EVENT_DONATED: 1, _HYBRID_EVENT_DONOR: 2}
 _HYBRID_DIAG_NATURES = ["Tourist", "Mix", "Non Tourist"]
 
-# 「調貨診斷 Safety Stock」主表欄序（店舖×SKU 逐列；RAW 則輸出全部欄位 + 診斷欄）
+# 「調貨 Review Safety Stock」主表欄序（店舖×SKU 逐列；RAW 則輸出全部欄位 + Review 欄）
 _HYBRID_DIAG_COLUMNS = [
     "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Site Code", "OM", "Shop Nature",
     "事件類型", "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)",
-    "14日周轉所需量", "Adj. Safety Stock", "Safety 診斷",
+    "14日周轉所需量", "Adj. Safety Stock", "Safety Review",
     "建議 Safety 設定值", "Safety 建議調整量",
     "調入需求量 (補到14日)", "實際調入量", "調入缺口",
     "可轉出貨量", "轉出量", "調貨來源 (Site Code)",
@@ -5336,11 +5336,48 @@ def _normalize_hybrid_nature(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     return df, mapped
 
 
+def _transfer_input_consistency_warnings(df: pd.DataFrame) -> list[str]:
+    """調貨模式輸入一致性檢核（調貨 Review 與 Stock Checking 共用，只列 warning 不拒絕）：
+
+    - 「Site Code × SKU」重複列：正常輸入粒度為一店×一SKU一列，重複列會令
+      同一店舖的庫存與銷量被多次計入；
+    - 同一店舖的「Shop Nature」在不同列之間不一致：同店同 SKU 同時存在 Tourist 列
+      與 Mix / Non Tourist 列時，該店可能同時成為調入方與調出方；
+      調貨分配已排除同店來源，自我調貨（調貨來源＝自己店舖）不會發生。
+    """
+    out: list[str] = []
+    if "Site Code" not in df.columns or "SKU" not in df.columns:
+        return out
+    site = df["Site Code"].fillna("").astype(str).str.strip()
+    sku = df["SKU"].fillna("").astype(str).str.strip()
+    key = site + "\u0000" + sku
+    sizes = key.groupby(key).size()
+    dup_sizes = sizes[sizes > 1]
+    if len(dup_sizes):
+        out.append(
+            f"偵測到「Site Code × SKU」重複列 {len(dup_sizes)} 組（共 {int(dup_sizes.sum())} 列；"
+            "正常輸入應為一店×一SKU一列），重複列會令同一店舖的庫存與銷量被多次計入，請檢查來源檔案。"
+        )
+    nature = df.get("Shop Nature", _safe_default_series("", df.index))
+    nature_norm = nature.fillna("").astype(str).str.strip().str.lower()
+    n_unique = nature_norm.groupby(site).nunique()
+    bad_sites = n_unique[n_unique > 1]
+    if len(bad_sites):
+        shown = "、".join(str(s) for s in list(bad_sites.index[:5]))
+        suffix = f" 等 {len(bad_sites)} 間店舖" if len(bad_sites) > 5 else ""
+        out.append(
+            f"店舖 {shown}{suffix} 的「Shop Nature」在不同列之間不一致；"
+            "同一店舖對同一 SKU 同時出現 Tourist 與非 Tourist 列時，可能同時成為調入方與調出方"
+            "（調貨分配已排除同店來源，不會出現自我調貨），請檢查來源資料。"
+        )
+    return out
+
+
 def _build_hybrid_diagnosis(raw: pd.DataFrame, variant: str = "free") -> pd.DataFrame:
-    """調貨診斷主表（店舖×SKU 逐列）：只收錄事件類型非空的列，
+    """調貨 Review 主表（店舖×SKU 逐列）：只收錄事件類型非空的列，
     按 Brand / SKU / 事件類型 / Site Code 排序；「可轉出貨量」為 Mix 與 Non Tourist 兩欄加總。
     variant="om" 時改用同OM調貨欄位並重算事件類型（轉出量=0 的來源列改列「可轉出未使用」）；
-    Safety 診斷與建議調整欄兩變體相同。"""
+    Safety Review 與建議調整欄兩變體相同。"""
     if raw is None or raw.empty or "事件類型" not in raw.columns:
         return pd.DataFrame(columns=_HYBRID_DIAG_COLUMNS)
     df = raw[raw["事件類型"].fillna("").astype(str) != ""].copy()
@@ -5371,7 +5408,7 @@ def _build_hybrid_diagnosis(raw: pd.DataFrame, variant: str = "free") -> pd.Data
 
 
 def _hybrid_diag_summary_columns() -> list[str]:
-    cols = ["Safety 診斷"]
+    cols = ["Safety Review"]
     for n in _HYBRID_DIAG_NATURES:
         cols += [f"{n} 列數", f"{n} SKU 數", f"{n} 建議調整量合計"]
     cols += ["合計 列數", "合計 SKU 數", "合計 建議調整量"]
@@ -5379,7 +5416,7 @@ def _hybrid_diag_summary_columns() -> list[str]:
 
 
 def _build_hybrid_diag_summary(raw: pd.DataFrame) -> pd.DataFrame:
-    """Safety 診斷 × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計），含總計列。"""
+    """Safety Review × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計），含總計列。"""
     cols = _hybrid_diag_summary_columns()
     if raw is None or raw.empty or "事件類型" not in raw.columns:
         return pd.DataFrame(columns=cols)
@@ -5390,7 +5427,7 @@ def _build_hybrid_diag_summary(raw: pd.DataFrame) -> pd.DataFrame:
         df.get("Safety 建議調整量", _safe_default_series(np.nan, df.index)), errors="coerce"
     ).fillna(0)
     nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
-    diag = df["Safety 診斷"].fillna("").astype(str)
+    diag = df["Safety Review"].fillna("").astype(str)
 
     def _agg(sub: pd.DataFrame) -> dict:
         return {
@@ -5404,14 +5441,14 @@ def _build_hybrid_diag_summary(raw: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for d in _HYBRID_DIAG_ORDER:
         sub_d = df[diag == d]
-        row = {"Safety 診斷": d}
+        row = {"Safety Review": d}
         for n in _HYBRID_DIAG_NATURES:
             for k, v in _agg(sub_d[nature.loc[sub_d.index] == n]).items():
                 row[f"{n} {k}"] = v
         for k, v in _agg(sub_d).items():
             row[_total_key[k]] = v
         rows.append(row)
-    total_row = {"Safety 診斷": "總計"}
+    total_row = {"Safety Review": "總計"}
     for n in _HYBRID_DIAG_NATURES:
         for k, v in _agg(df[nature == n]).items():
             total_row[f"{n} {k}"] = v
@@ -5422,12 +5459,12 @@ def _build_hybrid_diag_summary(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
-    """由 raw 匯總診斷 stats（stats 缺失時的回退，與 transform_hybrid 同口徑）。"""
+    """由 raw 匯總 Review stats（stats 缺失時的回退，與 transform_hybrid 同口徑）。"""
     if raw is None or raw.empty:
         return {}
     need = raw.get("需要調貨", _safe_default_series("", raw.index)).astype(str) == "是"
     evt = raw.get("事件類型", _safe_default_series("", raw.index)).fillna("").astype(str)
-    diag = raw.get("Safety 診斷", _safe_default_series("", raw.index)).fillna("").astype(str)
+    diag = raw.get("Safety Review", _safe_default_series("", raw.index)).fillna("").astype(str)
     chg = pd.to_numeric(raw.get("Safety 建議調整量", _safe_default_series(np.nan, raw.index)), errors="coerce")
     nature = raw.get("Shop Nature", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
     under = diag == _HYBRID_DIAG_UNDER
@@ -5458,8 +5495,8 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
 
 
 def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
-    """調貨診斷指標卡（4 排 × 4 卡，與 Streamlit Hybrid Dashboard 同口徑；
-    第 4 排為同OM調貨對照，Safety 診斷建議不受 OM 限制影響）。
+    """調貨 Review 指標卡（4 排 × 4 卡，與 Streamlit Hybrid Dashboard 同口徑；
+    第 4 排為同OM調貨對照，Safety Review 建議不受 OM 限制影響）。
     回傳 (row1, row2, row3, row4) 供 _write_metric_cards 使用；stats 缺失時由 raw 自動匯總。"""
     if stats is None:
         stats = _hybrid_stats_from_raw(raw)
@@ -5506,6 +5543,7 @@ def _hybrid_allocate_transfers(
 ):
     """調貨分配：按 SKU 彙總需求，Non Tourist 優先 → Mix 補足，需求列按需求量大→小依序分配。
     om_arr 非 None 時來源店須與需求列同 OM 才可轉出（同OM調貨）。
+    來源店與需求列同為一店（Site Code 相同）時一律排除，防止重複列資料異常造成自我調貨。
     回傳 (actual_np, gap_np, donate_np, desc_np)。"""
     actual_np = np.zeros(n_rows, dtype=int)
     donate_np = np.zeros(n_rows, dtype=int)
@@ -5532,6 +5570,8 @@ def _hybrid_allocate_transfers(
                 for spos in list(pool.keys()):
                     if rem <= 0:
                         break
+                    if site_arr[spos] == site_arr[row_pos]:
+                        continue  # 自我調貨守衛：來源店＝需求店時排除（重複列資料異常防護）
                     if om_arr is not None and om_arr[spos] != om_arr[row_pos]:
                         continue
                     avail_n = pool[spos]
@@ -5556,11 +5596,11 @@ def transform_hybrid(
     d001_threshold: int = 100,
     progress_callback=None,
 ):
-    """Safety Stock x NetStock Review 核心轉換（調貨事件診斷 Safety 設定）。
+    """Safety Stock x NetStock Review 核心轉換（調貨事件 Review Safety 設定）。
 
     - 調貨段：與 Stock Checking 完全同規則（SKU 級加總 TurnDay、Nature 供應門檻、
       14 日需求/可轉出、NT 優先→Mix 補足、需求量大→小）。
-    - 診斷段（14 日周轉線基準）：14日周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 14)。
+    - Review 段（14 日周轉線基準）：14日周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 14)。
       Tourist 需調入列：現有 Adj. Safety Stock < 所需量 → Safety 設定不足；
       已標示 SKU 的 Mix / Non Tourist 有貨列（實際轉出或可轉出未使用）：
       現有設定 > 所需量 → Safety 設定過高；等於邊界一律視為設定正常。
@@ -5569,7 +5609,7 @@ def transform_hybrid(
     - 上下文欄位：調貨後庫存 = 原始 + 實際調入 − 轉出；
       調貨後 TurnDay = 調貨後庫存 ÷ 月銷 × 30.5（月銷 0 留空）。
     - OM 變體：分配跑兩遍——不限OM（契約欄位）與同OM（來源店須與需求店同 OM，
-      欄位加「(同OM)」後綴）；Safety 診斷與建議調整量兩變體相同，不受調貨限制影響。
+      欄位加「(同OM)」後綴）；Safety Review 與建議調整量兩變體相同，不受調貨限制影響。
     - Summary：附 Stock Checking 的 SKU 級彙總（各 Nature 庫存/月銷加總、TurnDay、佔比、
       強制調貨提示、存貨偏重提示），供查閱哪些 SKU 存貨偏重哪個 Nature。
     回傳 (raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warnings)。
@@ -5596,6 +5636,7 @@ def transform_hybrid(
     df, mapped_other = _normalize_hybrid_nature(df)
     if mapped_other:
         warnings.append(f"有 {mapped_other} 列 Shop Nature 無法辨識（Other / 空白 / 其他非標準值），已正規化為 Non Tourist。")
+    warnings.extend(_transfer_input_consistency_warnings(df))
 
     idx = df.index
     nature = df["Shop Nature"]
@@ -5722,15 +5763,15 @@ def transform_hybrid(
         warnings.append("沒有符合調貨條件的 Tourist SKU（加總 TurnDay < 門檻 且 D001 < 門檻 且補到 14 日周轉的需求 > 0 且有貨可調）。")
 
     if progress_callback:
-        progress_callback(0.45, "診斷 Safety 設定...")
+        progress_callback(0.45, "Review Safety 設定...")
     raw = df
 
-    # ── 調貨事件診斷（14 日周轉線基準；診斷與建議調整不受 OM 限制影響）──
+    # ── 調貨事件 Review（14 日周轉線基準；Review 與建議調整不受 OM 限制影響）──
     line14 = np.maximum(0, np.ceil(np.maximum(0, ideal_14d)))
     adj_s = pd.to_numeric(raw.get("Adj. Safety Stock", _safe_default_series(np.nan, idx)), errors="coerce")
     n_adj_blank = int(adj_s.isna().sum())
     if n_adj_blank:
-        warnings.append(f"有 {n_adj_blank} 列「Adj. Safety Stock」空白或非數值，診斷時已視為 0。")
+        warnings.append(f"有 {n_adj_blank} 列「Adj. Safety Stock」空白或非數值，Review 時已視為 0。")
     adj_val = np.nan_to_num(adj_s.to_numpy(dtype=float), nan=0.0)
 
     flagged_skus = set(sku_arr[need_mask])
@@ -5771,7 +5812,7 @@ def transform_hybrid(
 
     raw["14日周轉所需量"] = line_col
     raw["事件類型"] = event
-    raw["Safety 診斷"] = diag
+    raw["Safety Review"] = diag
     raw["建議 Safety 設定值"] = sugg
     raw["Safety 建議調整量"] = np.round(chg, 1)
     raw["調貨後庫存"] = np.where(in_table, stock_after, np.nan)
@@ -5780,7 +5821,7 @@ def transform_hybrid(
     raw["調貨後 TurnDay (同OM)"] = np.where(in_table, np.round(td_after_om, 1), np.nan)
 
     if progress_callback:
-        progress_callback(0.55, "建立診斷表...")
+        progress_callback(0.55, "建立 Review 表...")
     diagnosis = _build_hybrid_diagnosis(raw)
     diagnosis_om = _build_hybrid_diagnosis(raw, variant="om")
     diag_summary = _build_hybrid_diag_summary(raw)
@@ -5821,7 +5862,7 @@ def transform_hybrid(
 
 def _write_hybrid_diagnosis_sheet(ws, diagnosis: pd.DataFrame, progress_callback=None,
                                   progress_start: float = 0.42, progress_end: float = 0.72):
-    """調貨診斷 Safety Stock 主表工作表：店舖×SKU 逐列（僅含事件列）。
+    """調貨 Review Safety Stock 主表工作表：店舖×SKU 逐列（僅含事件列）。
     progress 區間必須落在對應 generate_excel_* 的下一階段區間內，避免進度倒退。"""
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
@@ -5832,7 +5873,7 @@ def _write_hybrid_diagnosis_sheet(ws, diagnosis: pd.DataFrame, progress_callback
     band_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
-    _text_keys = ["Brand", "SKU Desc", "Buyer", "Adj. SST", "Site Code", "事件類型", "Safety 診斷", "調貨來源 (Site Code)"]
+    _text_keys = ["Brand", "SKU Desc", "Buyer", "Adj. SST", "Site Code", "事件類型", "Safety Review", "調貨來源 (Site Code)"]
     _decimal_keys = {"調貨後 TurnDay": "0.0", "Safety 建議調整量": "#,##0.##"}
 
     headers = list(diagnosis.columns)
@@ -5867,7 +5908,7 @@ def _write_hybrid_diagnosis_sheet(ws, diagnosis: pd.DataFrame, progress_callback
                 cell.fill = band_fill
         if progress_callback and (r_idx % 200 == 0 or r_idx == total - 1):
             p = progress_start + (progress_end - progress_start) * ((r_idx + 1) / max(total, 1))
-            progress_callback(p, f"寫入調貨診斷主表 ({r_idx+1}/{total})...")
+            progress_callback(p, f"寫入調貨 Review 主表 ({r_idx+1}/{total})...")
 
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{1 + total}"
@@ -5877,7 +5918,7 @@ def _write_hybrid_diagnosis_sheet(ws, diagnosis: pd.DataFrame, progress_callback
 def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None,
                                      raw: pd.DataFrame, thin_border, desc_font,
                                      progress_callback=None):
-    """診斷摘要工作表：指標卡 4 排（第 4 排為同OM調貨對照）+ Safety 診斷 × Shop Nature 交叉表（含總計列）。"""
+    """Review 摘要工作表：指標卡 4 排（第 4 排為同OM調貨對照）+ Safety Review × Shop Nature 交叉表（含總計列）。"""
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     bold_font = Font(bold=True, size=11)
@@ -5886,7 +5927,7 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
 
     row1, row2, row3, row4 = _hybrid_dashboard_metrics(raw, stats)
     _write_metric_cards(
-        ws, "Safety Stock 設定診斷摘要 (Transfer Diagnosis Dashboard)",
+        ws, "Safety Stock 設定 Review 摘要 (Transfer Diagnosis Dashboard)",
         row1, row2, thin_border, desc_font, progress_callback,
         progress_pct=0.80, row3_metrics=row3, row4_metrics=row4,
     )
@@ -5897,7 +5938,7 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
         _auto_width(ws)
         return
 
-    sc = ws.cell(row=table_start - 1, column=1, value="Safety 診斷 × Shop Nature 交叉表")
+    sc = ws.cell(row=table_start - 1, column=1, value="Safety Review × Shop Nature 交叉表")
     sc.font = Font(bold=True, size=12, color="1E40AF")
     headers = list(cross.columns)
     for col_idx, h in enumerate(headers, 1):
@@ -5908,7 +5949,7 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
         cell.border = thin_border
     for r_idx, (_, row) in enumerate(cross.iterrows()):
         excel_row = table_start + 1 + r_idx
-        is_total = str(row.get("Safety 診斷")) == "總計"
+        is_total = str(row.get("Safety Review")) == "總計"
         for col_idx, h in enumerate(headers, 1):
             val = row.get(h)
             cell = ws.cell(row=excel_row, column=col_idx, value=None if pd.isna(val) else val)
@@ -5919,7 +5960,7 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
             if is_total:
                 cell.font = bold_font
     if progress_callback:
-        progress_callback(0.90, "診斷摘要完成...")
+        progress_callback(0.90, "Review 摘要完成...")
     _auto_width(ws)
 
 
@@ -5933,10 +5974,10 @@ def generate_excel_hybrid(
     progress_callback=None,
 ) -> BytesIO:
     """Safety Stock x NetStock Review 輸出（5 工作表，順序固定）：
-    RAW（全部欄位 + 診斷欄，含不限OM與同OM兩套調貨結果）/
+    RAW（全部欄位 + Review 欄，含不限OM與同OM兩套調貨結果）/
     Summary（SKU 級彙總：各 Nature 加總/TurnDay/佔比、強制調貨提示、存貨偏重提示）/
-    調貨診斷 Safety Stock (不限OM) / 調貨診斷 Safety Stock (同OM) /
-    診斷摘要（指標卡 4 排 + Safety 診斷 × Shop Nature 交叉表）。
+    調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) /
+ Review 摘要（指標卡 4 排 + Safety Review × Shop Nature 交叉表）。
     """
     if diagnosis is None:
         diagnosis = _build_hybrid_diagnosis(raw)
@@ -5955,7 +5996,7 @@ def generate_excel_hybrid(
     )
     desc_font = Font(size=9, color="6B7280", italic=True)
 
-    # ── Sheet 1: RAW（全部欄位 + 診斷欄）──
+    # ── Sheet 1: RAW（全部欄位 + Review 欄）──
     ws_raw = wb.active
     ws_raw.title = "RAW"
     _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.0, progress_end=0.24)
@@ -5968,24 +6009,24 @@ def generate_excel_hybrid(
     _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38)
 
     if progress_callback:
-        progress_callback(0.40, "建立調貨診斷主表 (不限OM)...")
+        progress_callback(0.40, "建立調貨 Review 主表 (不限OM)...")
 
-    # ── Sheet 3: 調貨診斷 Safety Stock（不限OM）──
-    ws_diag = wb.create_sheet(title="調貨診斷 Safety Stock (不限OM)")
+    # ── Sheet 3: 調貨 Review Safety Stock（不限OM）──
+    ws_diag = wb.create_sheet(title="調貨 Review Safety Stock (不限OM)")
     _write_hybrid_diagnosis_sheet(ws_diag, diagnosis, progress_callback, progress_start=0.40, progress_end=0.56)
 
     if progress_callback:
-        progress_callback(0.57, "建立調貨診斷主表 (同OM)...")
+        progress_callback(0.57, "建立調貨 Review 主表 (同OM)...")
 
-    # ── Sheet 4: 調貨診斷 Safety Stock（同OM）──
-    ws_diag_om = wb.create_sheet(title="調貨診斷 Safety Stock (同OM)")
+    # ── Sheet 4: 調貨 Review Safety Stock（同OM）──
+    ws_diag_om = wb.create_sheet(title="調貨 Review Safety Stock (同OM)")
     _write_hybrid_diagnosis_sheet(ws_diag_om, diagnosis_om, progress_callback, progress_start=0.57, progress_end=0.73)
 
     if progress_callback:
-        progress_callback(0.75, "建立診斷摘要...")
+        progress_callback(0.75, "建立 Review 摘要...")
 
-    # ── Sheet 5: 診斷摘要 ──
-    ws_sum = wb.create_sheet(title="診斷摘要")
+    # ── Sheet 5: Review 摘要 ──
+    ws_sum = wb.create_sheet(title="Review 摘要")
     _write_hybrid_diag_summary_sheet(ws_sum, diag_summary, stats, raw, thin_border, desc_font, progress_callback)
 
     if progress_callback:
@@ -6967,7 +7008,8 @@ def transform_stock_checking(
     - 供應端：Mix / Non Tourist 店列的可轉出貨量（14 日超額標準，與 Stock Impact 模式一致）：
       可轉出 = max(0, Shop Stock Qty (CM) − P90D / 90 × 14)；「無銷售但有存貨」全數可釋放。
       該 Nature 的 SKU 級加總 TurnDay < 門檻時，該 Nature 視為無貨可調（可轉出量歸零）。RP Type 為 RF 與 ND 皆可作為來源。
-    - 分配：按 SKU 彙總需求，Non Tourist 店優先，不足再由 Mix 店補足；需求列按需求量大→小依序分配。
+    - 分配：按 SKU 彙總需求，Non Tourist 店優先，不足再由 Mix 店補足；需求列按需求量大→小依序分配；
+      來源店與需求店同為一店（Site Code 相同）時一律排除，防止重複列資料異常造成自我調貨。
     """
     if progress_callback:
         progress_callback(0.0, "驗證輸入資料...")
@@ -6993,6 +7035,7 @@ def transform_stock_checking(
     nature = df["Shop Nature"]
     if "SKU" in df.columns:
         df["SKU"] = df["SKU"].apply(_safe_sku)
+    warnings.extend(_transfer_input_consistency_warnings(df))
 
     # D001：優先 D001 Net Stock Qty (CM)，退用 D001 Stock Qty (CM)，兩者皆缺視為 0
     d001_col = None
@@ -7099,6 +7142,8 @@ def transform_stock_checking(
                     for spos in list(pool.keys()):
                         if rem <= 0:
                             break
+                        if site_arr[spos] == site_arr[row_pos]:
+                            continue  # 自我調貨守衛：來源店＝需求店時排除（重複列資料異常防護）
                         avail = pool[spos]
                         take = min(rem, avail)
                         if take > 0:

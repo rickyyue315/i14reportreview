@@ -381,7 +381,7 @@ def test_classify_d001_status():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Test 7b: by-SKU 缺貨診斷表（Tourist+Mix+Non Tourist, 含 D001 + 店舖貨量, v1.7.1 新增 Non Tourist / 取消缺貨行數）
+# Test 7b: by-SKU 缺貨 Review 表（Tourist+Mix+Non Tourist, 含 D001 + 店舖貨量, v1.7.1 新增 Non Tourist / 取消缺貨行數）
 # ──────────────────────────────────────────────────────────────────────────────
 def test_sku_stock_diagnosis():
     df = _df([
@@ -400,7 +400,7 @@ def test_sku_stock_diagnosis():
          "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 20.0, "Sold Qty (CM - MTD)": 5.0, "Shop Monthly Sold Qty (P90D)": 15.0,
          "D001 Stock Qty (M-2)": 200, "D001 Stock Qty (M-1)": 200, "D001 Stock Qty (CM)": 150},
-        # SKU 3: Non Tourist 缺貨 → v1.7.1 起納入診斷表
+        # SKU 3: Non Tourist 缺貨 → v1.7.1 起納入 Review 表
         {"SKU": "3", "Brand": "C", "Buyer": "B3", "SKU Desc": "Test Product C", "Shop Nature": "Non Tourist", "Site Code": "N01",
          "Shop Stock Qty (CM)": 0,
          "Sold Qty (M-2)": 30.0, "Sold Qty (CM - MTD)": 10.0, "Shop Monthly Sold Qty (P90D)": 20.0},
@@ -410,7 +410,7 @@ def test_sku_stock_diagnosis():
 
     assert not diag.empty, "應有缺貨 SKU"
     skus = set(diag["SKU"].astype(str))
-    assert "1" in skus and "2" in skus and "3" in skus, "SKU 1, 2, 3 皆應在診斷表（含 Non Tourist）"
+    assert "1" in skus and "2" in skus and "3" in skus, "SKU 1, 2, 3 皆應在 Review 表（含 Non Tourist）"
 
     # SKU Desc 欄位應存在
     assert "SKU Desc" in diag.columns, "應有 SKU Desc 欄位"
@@ -443,11 +443,11 @@ def test_sku_stock_diagnosis():
     # SKU 3: Non Tourist 缺貨（v1.7.1 新增）
     row3 = diag[diag["SKU"].astype(str) == "3"].iloc[0]
     assert int(row3["Non Tourist缺貨店數"]) == 1
-    print("OK SKU 3: Non Tourist 缺貨 1 間（v1.7.1 起納入診斷）")
+    print("OK SKU 3: Non Tourist 缺貨 1 間（v1.7.1 起納入 Review）")
 
     # 排序: Tourist 缺貨店數多的在前 → SKU 1 (2間) 應在最前
     assert str(diag.iloc[0]["SKU"]) == "1"
-    print("OK by-SKU 缺貨診斷表（Tourist+Mix+Non Tourist, 含 SKU Desc + NDRF 行數, 取消缺貨行數）")
+    print("OK by-SKU 缺貨 Review 表（Tourist+Mix+Non Tourist, 含 SKU Desc + NDRF 行數, 取消缺貨行數）")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -599,3 +599,47 @@ def test_generate_excel_buyer_stats_table():
         assert ws.cell(row=15, column=1).value == "總計"
         assert ws.cell(row=15, column=2).value == 2
         assert ws.cell(row=13, column=3).number_format == "0.0%"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 重複列與自我調貨防護（同店同 SKU 資料異常）
+# ──────────────────────────────────────────────────────────────────────────────
+def test_duplicate_site_sku_conflicting_nature_warned():
+    df = _df([
+        {"SKU": 600, "Site Code": "S01", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 600, "Site Code": "S01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+    ])
+    raw, _, stats, warns = transform_stock_checking(df)
+    assert any("Site Code × SKU" in w and "重複" in w for w in warns)
+    assert any("Shop Nature" in w and "不一致" in w for w in warns)
+
+
+def test_self_transfer_guarded_and_no_site_both_in_and_out():
+    # S01 同時為需求列（Tourist）與唯一來源列（Non Tourist）：修復後同店來源排除，
+    # 需求全數列缺口，不得出現自我調貨或同店同時調入與調出
+    df = _df([
+        {"SKU": 600, "Site Code": "S01", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 600, "Site Code": "S01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+        {"SKU": 600, "Site Code": "S02", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "D001 Net Stock Qty (CM)": 10.0},
+    ])
+    raw, _, stats, warns = transform_stock_checking(df)
+    t01 = raw[(raw["Site Code"] == "S01") & (raw["Shop Nature"] == "Tourist")].iloc[0]
+    t02 = raw[raw["Site Code"] == "S02"].iloc[0]
+    n01 = raw[(raw["Site Code"] == "S01") & (raw["Shop Nature"] == "Non Tourist")].iloc[0]
+    assert int(t01["實際調入量"]) == 0 and int(t01["調入缺口"]) == 9
+    assert str(t01["調貨來源 (Site Code)"]) == ""
+    assert int(t02["實際調入量"]) == 9 and str(t02["調貨來源 (Site Code)"]) == "S01:9"
+    assert int(n01["轉出量"]) == 9
+    g = raw.groupby(["SKU", "Site Code"])[["實際調入量", "轉出量"]].sum()
+    assert not ((g["實際調入量"] > 0) & (g["轉出量"] > 0)).any()
+    assert int(raw["實際調入量"].sum()) == int(raw["轉出量"].sum())
