@@ -17,6 +17,7 @@ from transformer import (
     transform_ndrf_comparison, generate_excel_ndrf_comparison,
     transform_p90d_zero_sales, generate_excel_p90d_zero_sales,
     transform_stock_checking, generate_excel_stock_checking,
+    _stock_checking_raw_display_columns,
     transform_hybrid, generate_excel_hybrid, _hybrid_dashboard_metrics,
     _hybrid_raw_display_columns,
 )
@@ -2558,25 +2559,16 @@ if uploaded_file is not None:
                 st.markdown("#### SKU 級 Summary：各 Shop Nature 庫存/月銷加總與 TurnDay、佔比 (%)、調貨提示與調出量")
                 st.markdown("即為 Excel 導出檔中「Summary」工作表之即時數據（加總/TurnDay 取整，TurnDay = 四捨五入到整數日；佔比 (%) = 該 Nature 加總 ÷ Tourist+Mix+Non Tourist 合計，頁面顯示小數、Excel 顯示為 %）：")
                 if summary_df is not None and not summary_df.empty:
-                    st.dataframe(summary_df, width='stretch', hide_index=True)
-                    st.caption(f"共 {len(summary_df):,} 個 SKU（按 Brand / SKU 排序）。")
+                    st.dataframe(_style_inventory_skew(summary_df), width='stretch', hide_index=True)
+                    st.caption(f"共 {len(summary_df):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = 某 Nature 庫存佔比 ≥ 40% 且較銷量佔比高 ≥ 20 個百分點；偏重數值以橘色底色加強顯示（Excel 同步）。")
                 else:
                     st.info("無符合資料")
             with tab_raw:
-                st.markdown("#### RAW 原始資料（調貨計算欄位已附於每一列）")
-                _display = raw_df.copy()
-                _new_cols = ["Tourist 加總 TurnDay", "Mix 加總 TurnDay", "Non Tourist 加總 TurnDay",
-                             "需要調貨", "調入需求量 (補到14日)", "實際調入量", "調入缺口",
-                             "可轉出貨量 (Mix)", "可轉出貨量 (Non Tourist)", "轉出量", "調貨來源 (Site Code)"]
-                _avail_new = [c for c in _new_cols if c in _display.columns]
-                _base = [c for c in ["Shop Nature", "Site Code", "Shop Name", "SKU", "SKU Desc",
-                                     "Turnday (P90D Qty)", "D001 Net Stock Qty (CM)", "Shop Stock Qty (CM)",
-                                     "Sold Qty (P90D)"] if c in _display.columns]
-                if _base:
-                    _rest = [c for c in _display.columns if c not in _base and c not in _avail_new]
-                    _display = _display[_base + _avail_new + _rest]
+                st.markdown("#### RAW 原始資料（調貨計算欄位已附於每一列；不顯示 Item_Shop 與 Value 金額欄）")
+                _display_cols = [c for c in _stock_checking_raw_display_columns(raw_df) if c in raw_df.columns]
+                _display = raw_df[_display_cols]
                 st.dataframe(_display.head(50), width='stretch')
-                st.caption(f"僅顯示前 50 筆，完整 {total_rows:,} 筆資料將包含在下載的 Excel 報表中。")
+                st.caption(f"僅顯示前 50 筆，完整 {total_rows:,} 筆資料（已按可讀性重排欄序）將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 

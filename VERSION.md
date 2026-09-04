@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.14.3 (2026-09-04)
+
+- Change: Stock Checking 的 Summary 出現存貨偏重數值時，同步以**醒目橘底（FFC000）加粗體**加強顯示（與 Safety Stock x NetStock Review 同式）——Excel「Summary」工作表的「存貨偏重提示」欄（Z）與偏重 Nature 的庫存佔比欄（Q/S/U）底色；Streamlit「📊 Summary (SKU 彙總)」分頁以 `_style_inventory_skew()` Styler 同步高亮（`generate_excel_stock_checking()` 傳 `highlight_skew=True`）
+- Change: Stock Checking 的 RAW 工作表優化顯示 — **不顯示「Item_Shop」與所有含「Value」的金額欄**（僅工作表層面移除，RAW dataframe 保留原欄供稽核；SKU Desc / Shop Name 仍由 Item_Shop 衍生顯示）
+- New: RAW 欄序按可讀性重排 — 識別（Buyer / Brand / SKU / SKU Desc / Site Code / Shop Name / OM / Shop Nature）→ 品項屬性（Adj. SST / Vendor MC / Item Status / Item Class / RP Type / Shop Stock Status / Supply Source / Launch Date 等）→ 庫存與銷售（店舖庫存 / Safety Stock / P90D 銷售 / 月銷 / D001 三欄）→ SKU 級判定（各 Nature 加總 TurnDay / 需要調貨 / 調入需求量）→ 調貨執行（可轉出貨量 NT/Mix / 實際調入量 / 調入缺口 / 轉出量 / 調貨來源）→ 其他原始欄按原序；新增 `_stock_checking_raw_display_columns()`（transformer.py，Excel 與 Streamlit 共用）；Streamlit「RAW 完整明細」分頁改用共用函數（移除舊 `_base`/`_rest` 排列）
+- Update: tests/test_stock_checking.py 偏重底色測試反轉斷言（Stock Checking 現在高亮）、新增欄序測試 ×2（helper 去重／移除斷言與分組順序、Excel RAW 表頭無 Item_Shop 與 Value 欄且分組順序正確）；README／使用說明頁同步；共 168 項測試通過
+
 ## v1.14.2 (2026-09-04)
 
 - Change: Safety Stock x NetStock Review 的 RAW 工作表優化顯示 — **不顯示「Item_Shop」與所有含「Value」的金額欄**（僅工作表層面移除，RAW dataframe 保留原欄供稽核；SKU Desc / Shop Name 仍由 Item_Shop 衍生顯示）

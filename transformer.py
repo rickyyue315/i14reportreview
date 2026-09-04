@@ -7613,25 +7613,67 @@ def _write_stock_checking_buyer_table(ws, buyer_stats, thin_border, start_row: i
     _auto_width(ws)
 
 
+# Stock Checking RAW 顯示欄序分組（識別→品項屬性→庫存與銷售→SKU 級判定→調貨執行→其他）
+_STOCK_CHECKING_RAW_DISPLAY_GROUPS = [
+    ["Buyer", "Brand", "SKU", "SKU Desc", "Site Code", "Shop Name", "OM", "Shop Nature"],
+    ["Adj. SST", "Adj. MCH1", "Vendor MC", "MCH2", "Item Status", "Item Class", "RP Type",
+     "Shop Stock Status", "Supply Source", "Launch Date"],
+    ["Shop Stock Qty (CM)", "Adj. Safety Stock", "Sold Qty (P90D)", "Shop Monthly Sold Qty (P90D)",
+     "Turnday (P90D Qty)", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
+     "Net Sales (M-2)", "Net Sales (M-1)", "Net Sales (CM - MTD)", "Excess Stock Qty",
+     "Shop On Order PO Qty (CM)", "Shop Pending Receive",
+     "D001 Net Stock Qty (CM)", "D001 Stock Qty (CM)", "D001 Effective Stock Qty (CM)"],
+    ["Tourist 加總 TurnDay", "Mix 加總 TurnDay", "Non Tourist 加總 TurnDay",
+     "需要調貨", "調入需求量 (補到14日)"],
+    ["可轉出貨量 (Non Tourist)", "可轉出貨量 (Mix)", "實際調入量", "調入缺口", "轉出量",
+     "調貨來源 (Site Code)"],
+]
+
+
+def _stock_checking_raw_display_columns(raw: pd.DataFrame) -> list[str]:
+    """Stock Checking RAW 顯示欄序：不顯示「Item_Shop」與所有含「Value」的金額欄，
+    其餘欄位（含 _compute_raw_extra_columns 衍生的 Shop Name / SKU Desc）按
+    _STOCK_CHECKING_RAW_DISPLAY_GROUPS 分組排列，未歸組的原始欄位按原序置於最後。"""
+    cols = [str(c) for c in raw.columns] + ["Shop Name", "SKU Desc"]
+    seen: set[str] = set()
+    kept: list[str] = []
+    for c in cols:
+        if c in seen or c == "Item_Shop" or "value" in c.lower():
+            continue
+        seen.add(c)
+        kept.append(c)
+    kept_set = set(kept)
+    ordered: list[str] = []
+    for group in _STOCK_CHECKING_RAW_DISPLAY_GROUPS:
+        for c in group:
+            if c in kept_set:
+                ordered.append(c)
+                kept_set.discard(c)
+    ordered += [c for c in kept if c in kept_set]
+    return ordered
+
+
 def generate_excel_stock_checking(
     raw: pd.DataFrame,
     summary: pd.DataFrame | None = None,
     stats: dict | None = None,
     progress_callback=None,
 ) -> BytesIO:
-    """Stock Checking 輸出：Summary（SKU 級彙總）+ RAW（原始欄位 + 調貨計算欄位）+ 調貨分析摘要（Dashboard）。"""
+    """Stock Checking 輸出：Summary（SKU 級彙總，偏重提示以醒目橘底加強顯示）
+    + RAW（重排欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄）+ 調貨分析摘要（Dashboard）。"""
     wb = Workbook()
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
 
     ws_summary = wb.active
     ws_summary.title = "Summary"
-    _write_stock_checking_summary_sheet(ws_summary, summary, progress_callback)
+    _write_stock_checking_summary_sheet(ws_summary, summary, progress_callback, highlight_skew=True)
 
     if progress_callback:
         progress_callback(0.35, "建立 RAW...")
     ws_raw = wb.create_sheet(title="RAW")
-    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.35, progress_end=0.85)
+    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.35, progress_end=0.85,
+                     columns=_stock_checking_raw_display_columns(raw))
 
     if progress_callback:
         progress_callback(0.88, "建立調貨分析摘要工作表...")

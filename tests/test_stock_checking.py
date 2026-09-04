@@ -17,6 +17,7 @@ from openpyxl import load_workbook
 from transformer import (
     transform_stock_checking,
     generate_excel_stock_checking,
+    _stock_checking_raw_display_columns,
 )
 
 BASE = {
@@ -453,8 +454,8 @@ def test_summary_stock_skew_hint_zero_sales():
     assert "存貨偏重 Mix（庫存 40.0% / 銷量 0.0%）" in hint  # 40% ≥ 40% 且差 40 點 ≥ 20 → 同樣入提示
 
 
-def test_generate_excel_summary_skew_not_highlighted_by_default():
-    # Stock Checking Summary 維持原樣（橘底加強顯示只用於 Safety Stock x NetStock Review）
+def test_generate_excel_summary_skew_highlighted():
+    # Stock Checking Summary：存貨偏重提示與偏重 Nature 的庫存佔比欄以醒目橘底（FFC000）加強顯示
     df = _df([
         {"SKU": 700, "Site Code": "T01", "Shop Nature": "Tourist",
          "Sold Qty (P90D)": 150.0, "Shop Stock Qty (CM)": 10.0,
@@ -470,8 +471,10 @@ def test_generate_excel_summary_skew_not_highlighted_by_default():
     assert str(summary.iloc[0]["存貨偏重提示"]).startswith("存貨偏重 Non Tourist")
     buf = generate_excel_stock_checking(raw, summary)
     ws = load_workbook(buf)["Summary"]
-    assert not str(ws.cell(row=6, column=26).fill.start_color.rgb).endswith("FFC000")
-    assert not str(ws.cell(row=6, column=21).fill.start_color.rgb).endswith("FFC000")
+    assert str(ws.cell(row=6, column=26).fill.start_color.rgb).endswith("FFC000")  # Z 提示欄
+    assert str(ws.cell(row=6, column=21).fill.start_color.rgb).endswith("FFC000")  # U NT 庫存佔比欄
+    assert ws.cell(row=6, column=21).font.bold
+    assert not str(ws.cell(row=6, column=17).fill.start_color.rgb).endswith("FFC000")  # Q Tourist 未偏重
 
 
 def test_summary_sorted_by_brand_sku():
@@ -568,6 +571,52 @@ def test_generate_excel_dashboard_matches_stats_no_stats_arg():
         assert vals["Mix 轉出量"] == stats["mix_transfer"]
         assert vals["無法足額缺口"] == stats["total_gap"]
         assert vals["總明細行數"] == len(raw)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 6b. RAW 顯示欄序（不顯示 Item_Shop 與 Value 金額欄；分組重排）
+# ──────────────────────────────────────────────────────────────────────────────
+def test_stock_checking_raw_display_columns_helper():
+    df = _df([{"SKU": 1, "Excess Stock Value": 123.0}])
+    df["Shop Stock Value (CM)"] = 1.0
+    for c in ("Tourist 加總 TurnDay", "Mix 加總 TurnDay", "Non Tourist 加總 TurnDay",
+              "需要調貨", "調入需求量 (補到14日)", "可轉出貨量 (Non Tourist)",
+              "可轉出貨量 (Mix)", "實際調入量", "調入缺口", "轉出量", "調貨來源 (Site Code)"):
+        df[c] = 0
+    cols = _stock_checking_raw_display_columns(df)
+    assert "Item_Shop" not in cols
+    assert "Excess Stock Value" not in cols and "Shop Stock Value (CM)" not in cols
+    assert len(cols) == len(set(cols))  # 去重
+    idx = {c: i for i, c in enumerate(cols)}
+    # 識別 → 品項屬性 → 庫存與銷售 → SKU 級判定 → 調貨執行
+    assert idx["Buyer"] < idx["SKU"] < idx["Site Code"] < idx["Shop Nature"]
+    assert idx["Shop Nature"] < idx["Shop Stock Qty (CM)"] < idx["D001 Net Stock Qty (CM)"]
+    assert idx["D001 Net Stock Qty (CM)"] < idx["需要調貨"]
+    assert idx["Tourist 加總 TurnDay"] < idx["需要調貨"] < idx["調入需求量 (補到14日)"]
+    assert idx["調入需求量 (補到14日)"] < idx["可轉出貨量 (Non Tourist)"] < idx["調貨來源 (Site Code)"]
+
+
+def test_generate_excel_raw_hides_item_shop_and_value_columns():
+    df = _df([
+        {"SKU": 100, "Site Code": "T01", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
+         "Shop Monthly Sold Qty (P90D)": 120.0,
+         "Turnday (P90D Qty)": 10.0, "D001 Net Stock Qty (CM)": 10.0,
+         "Excess Stock Value": 888.0},
+        {"SKU": 100, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Shop Monthly Sold Qty (P90D)": 30.0, "Shop Stock Qty (CM)": 30.0},
+    ])
+    raw, summary, _, _ = transform_stock_checking(df)
+    assert "Item_Shop" in raw.columns  # RAW dataframe 保留原欄，只在工作表層面移除
+    buf = generate_excel_stock_checking(raw, summary)
+    ws_raw = load_workbook(buf, read_only=True)["RAW"]
+    headers = [c.value for c in next(ws_raw.iter_rows(min_row=1, max_row=1))]
+    assert "Item_Shop" not in headers
+    assert not any(h and "value" in str(h).lower() for h in headers)
+    idx = {c: i for i, c in enumerate(headers)}
+    assert idx["Buyer"] < idx["SKU"] < idx["Shop Nature"] < idx["Shop Stock Qty (CM)"]
+    assert idx["需要調貨"] < idx["調貨來源 (Site Code)"]
+    assert headers[0] == "Buyer"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
