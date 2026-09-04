@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.13.1 (2026-09-04)
+
+- New: Safety Stock x NetStock Review 引入 Stock Checking 的 SKU 級 Summary — 於混合模式輸出新增第 2 工作表「Summary」（與 Stock Checking 同格式同值：各 Nature 庫存/月銷加總、TurnDay、佔比、強制調貨提示、存貨偏重提示），供查閱哪些 SKU 存貨偏重哪個 Nature；Excel 由 4 工作表改為 5（RAW／Summary／調貨診斷 (不限OM)／調貨診斷 (同OM)／診斷摘要）
+- New: Streamlit 混合模式新增「📋 Summary（SKU 存貨偏重）」分頁 — 先列存貨偏重 SKU 清單，再列全部 SKU Summary；session 鍵 hybrid_sc_summary
+- Update: `transform_hybrid()` 回傳改 7 元組 (raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warnings)；`generate_excel_hybrid()` 第二參數為 sc_summary（None 時自動由 raw 建立，全部參數可省略回退）；README／使用說明頁同步
+- Update: tests/test_hybrid_mode.py 解包改 7 元組、5 表契約、Summary 與 Stock Checking 等價斷言（含存貨偏重提示欄）；_smoke_pipeline.py 輸出 skew 計數；共 149 項測試通過
+
 ## v1.13.0 (2026-09-04)
 
 - New: 調貨診斷 Safety Stock 分「不限OM」與「同OM」兩套 — 公司規定某些情況只允許同 OM 店舖調貨（例 Ivy HBA6 → Ivy HB94），同OM變體來源店須與需求店同 OM 才可轉出；分配抽為共用函數 `_hybrid_allocate_transfers()`（om_arr 參數），跑兩遍；同OM結果以「(同OM)」後綴欄存於 RAW（實際調入量 / 調入缺口 / 轉出量 / 調貨來源 / 調貨後庫存 / 調貨後 TurnDay），診斷主表輸出兩份工作表「調貨診斷 Safety Stock (不限OM)／(同OM)」，事件類型（實際轉出／可轉出未使用）按變體重算；**Safety 診斷與建議調整量兩變體完全相同（OM 限制不影響建議）**；OM 為選填欄位：缺失時同OM退化為不限OM＋warning（RAW／主表補「(未填OM)」欄），空白列歸入「(未填OM)」群組

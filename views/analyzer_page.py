@@ -136,7 +136,7 @@ MODE_KEYS = {
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "sku_soh_summary": None, "excel_data": None, "warnings": []},
     "Past 90 Days 0 Sales": {"prefix": "p90ds_", "processed": False, "summary_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "Stock Checking": {"prefix": "stock_chk_", "processed": False, "summary_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
-    "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "diagnosis": None, "diagnosis_om": None, "diag_summary": None, "stats": None, "excel_data": None, "warnings": []},
+    "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "sc_summary": None, "diagnosis": None, "diagnosis_om": None, "diag_summary": None, "stats": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -558,7 +558,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件診斷 Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **14 日周轉線**診斷 Safety Stock 設定 — Tourist 需調入列若現有設定低於所需量 → 「Safety 設定不足」；Mix / Non Tourist 有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety 診斷與建議調整。")
+        st.caption("🔀 **調貨事件診斷 Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **14 日周轉線**診斷 Safety Stock 設定 — Tourist 需調入列若現有設定低於所需量 → 「Safety 設定不足」；Mix / Non Tourist 有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety 診斷與建議調整。另附 SKU 級 **Summary**（各 Nature 庫存/銷量佔比與「存貨偏重提示」）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -598,18 +598,19 @@ if uploaded_file is not None:
                 def _cb_excel(pct, msg):
                     _cb(0.55 + 0.45 * pct, msg)
 
-                raw_df, diagnosis, diagnosis_om, diag_summary, _stats, _warnings = transform_hybrid(
+                raw_df, sc_summary, diagnosis, diagnosis_om, diag_summary, _stats, _warnings = transform_hybrid(
                     df_input,
                     turnday_threshold=int(turnday_threshold),
                     d001_threshold=int(d001_threshold),
                     progress_callback=_cb_transform,
                 )
                 buf = generate_excel_hybrid(
-                    raw_df, diagnosis, diagnosis_om, diag_summary, _stats,
+                    raw_df, sc_summary, diagnosis, diagnosis_om, diag_summary, _stats,
                     progress_callback=_cb_excel,
                 )
                 st.session_state.hybrid_processed = True
                 st.session_state.hybrid_raw_df = raw_df
+                st.session_state.hybrid_sc_summary = sc_summary
                 st.session_state.hybrid_diagnosis = diagnosis
                 st.session_state.hybrid_diagnosis_om = diagnosis_om
                 st.session_state.hybrid_diag_summary = diag_summary
@@ -631,6 +632,7 @@ if uploaded_file is not None:
 
         if st.session_state.hybrid_processed:
             raw_df = st.session_state.hybrid_raw_df
+            sc_summary = st.session_state.hybrid_sc_summary
             diagnosis = st.session_state.hybrid_diagnosis
             diagnosis_om = st.session_state.hybrid_diagnosis_om
             diag_summary = st.session_state.hybrid_diag_summary
@@ -659,9 +661,10 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_diag, tab_diag_om, tab_cross, tab_raw = st.tabs([
+            tab_diag, tab_diag_om, tab_sc, tab_cross, tab_raw = st.tabs([
                 "🧭 調貨診斷 Safety Stock（不限OM）",
                 "🔗 調貨診斷 Safety Stock（同OM）",
+                "📋 Summary（SKU 存貨偏重）",
                 "📊 診斷摘要（診斷 × Shop Nature）",
                 "📄 RAW 完整明細",
             ])
@@ -677,6 +680,18 @@ if uploaded_file is not None:
                 if diagnosis_om is not None and not diagnosis_om.empty:
                     st.dataframe(diagnosis_om, width='stretch', hide_index=True)
                     st.caption(f"共 {len(diagnosis_om):,} 列（按 Brand / SKU / 事件類型 / Site Code 排序）。")
+                else:
+                    st.info("無符合資料")
+            with tab_sc:
+                st.markdown("#### SKU 級彙總（同 Stock Checking Summary）：各 Nature 庫存/月銷加總、TurnDay、佔比 (%)、強制調貨提示、存貨偏重提示")
+                if sc_summary is not None and not sc_summary.empty:
+                    _skewed = sc_summary[sc_summary["存貨偏重提示"].fillna("").astype(str) != ""] if "存貨偏重提示" in sc_summary.columns else sc_summary.iloc[0:0]
+                    if not _skewed.empty:
+                        st.markdown(f"**存貨偏重 SKU（{len(_skewed):,} 個）**")
+                        st.dataframe(_skewed, width='stretch', hide_index=True)
+                    st.markdown("**全部 SKU Summary**")
+                    st.dataframe(sc_summary, width='stretch', hide_index=True)
+                    st.caption(f"共 {len(sc_summary):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = 某 Nature 庫存佔比 ≥ 40% 且較銷量佔比高 ≥ 20 個百分點。")
                 else:
                     st.info("無符合資料")
             with tab_cross:

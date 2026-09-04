@@ -181,7 +181,7 @@ Tourist 缺貨、Mix/NT 調撥計算：
 - 調貨段沿用 Stock Checking 規則（14 日目標、NT 優先→Mix 補足、D001/TurnDay 門檻），分配跑兩遍：**不限OM** 與 **同OM**（來源店須與需求店同 OM，例 Ivy HBA6 → Ivy HB94）；不再執行 Safety Stock Review 引擎（無建議值 / Rate / MTD 參數）
 - Tourist 需調入列：現有 Adj. Safety Stock < 14日周轉所需量 → 「Safety 設定不足」；Mix / Non Tourist 有貨可轉出列（實際轉出或可轉出未使用）：現有設定 > 所需量 → 「Safety 設定過高」，並給出建議調整值與調整量；OM 限制只影響調貨分配，**Safety 診斷與建議調整兩變體相同**
 - Shop Nature 固定全三種；Other/空白/大小寫差異一律正規化為 Non Tourist；混合必要欄位嚴格檢核（不再要求 Sold Qty (CM - MTD)）；OM 為選填欄位（缺失時同OM＝不限OM＋warning）
-- 輸出：RAW（全部欄位 + 診斷欄 + 同OM調貨欄）/ 調貨診斷 Safety Stock (不限OM) / 調貨診斷 Safety Stock (同OM) / 診斷摘要（指標卡 16 項 + 診斷 × Shop Nature 交叉表）共 4 個工作表
+- 輸出：RAW（全部欄位 + 診斷欄 + 同OM調貨欄）/ Summary（SKU 級彙總，與 Stock Checking 同格式，含存貨偏重提示）/ 調貨診斷 Safety Stock (不限OM) / 調貨診斷 Safety Stock (同OM) / 診斷摘要（指標卡 16 項 + 診斷 × Shop Nature 交叉表）共 5 個工作表
      """,
      """
 調貨事件診斷 Safety 設定：
@@ -193,7 +193,7 @@ Tourist 缺貨、Mix/NT 調撥計算：
 6. **OM 欄位** = 選填；缺「OM」欄時同OM調貨退化為與不限OM相同（全部店舖同一群組）並列 warning；OM 空白列歸入「(未填OM)」群組
 7. **Shop Nature** = 固定三種；Other/空白/大小寫差異一律正規化為 Non Tourist，映射列數列 warning；不做 Nature 篩選（避免破壞調貨供需母體）
 8. **輸入檢核** = 基礎四欄 + Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D) 皆為混合必要欄位，缺任一即停止；D001 沿用 Net→Stock fallback，兩者皆缺視為 0+warning
-9. **輸出 4 工作表** = RAW（全部欄位 + 14日周轉所需量 / 事件類型 / Safety 診斷 / 建議 Safety 設定值 / Safety 建議調整量 / 調貨後庫存 / 調貨後 TurnDay 及「(同OM)」後綴欄，非事件列留空）/ 調貨診斷 Safety Stock (不限OM) / 調貨診斷 Safety Stock (同OM)（店舖×SKU 主表，含 Site Code／OM／Shop Nature，按 Brand / SKU / 事件類型 / Site Code 排序）/ 診斷摘要（指標卡 16 項——第 4 排為同OM調貨對照 + Safety 診斷 × Shop Nature 交叉表：列數 / SKU 數 / 建議調整量合計，含總計列）
+9. **輸出 5 工作表** = RAW（全部欄位 + 14日周轉所需量 / 事件類型 / Safety 診斷 / 建議 Safety 設定值 / Safety 建議調整量 / 調貨後庫存 / 調貨後 TurnDay 及「(同OM)」後綴欄，非事件列留空）/ Summary（SKU 級彙總，與 Stock Checking 同格式同值：各 Nature 庫存/月銷加總、TurnDay、佔比、強制調貨提示、存貨偏重提示）/ 調貨診斷 Safety Stock (不限OM) / 調貨診斷 Safety Stock (同OM)（店舖×SKU 主表，含 Site Code／OM／Shop Nature，按 Brand / SKU / 事件類型 / Site Code 排序）/ 診斷摘要（指標卡 16 項——第 4 排為同OM調貨對照 + Safety 診斷 × Shop Nature 交叉表：列數 / SKU 數 / 建議調整量合計，含總計列）
      """),
 ]
 

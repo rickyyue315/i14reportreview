@@ -164,7 +164,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 7. **輸入檢核** — 混合必要欄位嚴格檢核：基礎四欄 + Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D)，缺任一即停止；欄名前後空格自動正規化；Shop Stock Qty (CM) 必須為整數件數（小數即拒絕）；D001 逐列以 Net → Stock 回補（空白視為 0），月銷單列空白以 Sold Qty (P90D) 換算，兩者皆列 warning；Adj. Safety Stock 空白或非數值診斷視為 0 並列 warning
 8. **RAW 稽核欄位** — 新增 `D001 Effective Stock Qty (CM)`（實際採用的 D001 值）與原始 D001 Stock，以便核查 fallback
 
-輸出包含 **4 個工作表**：RAW（全部欄位 + 診斷欄 + 同OM調貨欄，非事件列留空）、調貨診斷 Safety Stock (不限OM) 與 調貨診斷 Safety Stock (同OM)（店舖×SKU 逐列主表，含 Site Code／OM／Shop Nature，按 Brand / SKU / 事件類型 / Site Code 排序；Safety 診斷欄兩表相同）、診斷摘要（指標卡 16 項（含同OM對照一排）+ Safety 診斷 × Shop Nature 交叉表：列數 / SKU 數 / 建議調整量合計，含總計列）。
+輸出包含 **5 個工作表**：RAW（全部欄位 + 診斷欄 + 同OM調貨欄，非事件列留空）、Summary（SKU 級彙總，與 Stock Checking 同格式：各 Nature 庫存/月銷加總、TurnDay、佔比、強制調貨提示、存貨偏重提示）、調貨診斷 Safety Stock (不限OM) 與 調貨診斷 Safety Stock (同OM)（店舖×SKU 逐列主表，含 Site Code／OM／Shop Nature，按 Brand / SKU / 事件類型 / Site Code 排序；Safety 診斷欄兩表相同）、診斷摘要（指標卡 16 項（含同OM對照一排）+ Safety 診斷 × Shop Nature 交叉表：列數 / SKU 數 / 建議調整量合計，含總計列）。
 
 ## Excel 輸出結構
 
@@ -175,7 +175,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 | By Shop | 各店鋪層級之彙總分析 |
 | SUMMARY | 分類統計 — Safety Qty Change 分類（增加/減少/不變）與 ND 建議分類（Safety Stock Review） |
 | 分析摘要 | 數據看板 — 關鍵指標總覽 |
-| Summary | SKU 級調貨彙總 — 庫存/月銷加總、TurnDay、佔比、調貨提示、存貨偏重提示（庫存佔比 ≥40% 且較銷量佔比高 ≥20 個百分點的 Nature）（Stock Checking） |
+| Summary | SKU 級調貨彙總 — 庫存/月銷加總、TurnDay、佔比、調貨提示、存貨偏重提示（庫存佔比 ≥40% 且較銷量佔比高 ≥20 個百分點的 Nature）（Stock Checking 及混合模式） |
 | 調貨分析摘要 | 調貨 Dashboard — 需求/調入/轉出/缺口（Stock Checking） |
 | 調貨診斷 Safety Stock (不限OM)／(同OM) | 店舖×SKU 診斷主表兩版（僅混合模式）— 需要調入／實際轉出／可轉出未使用事件列，14 日周轉線診斷與建議調整量；同OM版來源店須與需求店同 OM |
 | 診斷摘要 | 混合模式 — 指標卡 16 項（第 4 排為同OM調貨對照）+ Safety 診斷 × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計，含總計列） |

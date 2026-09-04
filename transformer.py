@@ -5570,7 +5570,9 @@ def transform_hybrid(
       調貨後 TurnDay = 調貨後庫存 ÷ 月銷 × 30.5（月銷 0 留空）。
     - OM 變體：分配跑兩遍——不限OM（契約欄位）與同OM（來源店須與需求店同 OM，
       欄位加「(同OM)」後綴）；Safety 診斷與建議調整量兩變體相同，不受調貨限制影響。
-    回傳 (raw, diagnosis, diagnosis_om, diag_summary, stats, warnings)。
+    - Summary：附 Stock Checking 的 SKU 級彙總（各 Nature 庫存/月銷加總、TurnDay、佔比、
+      強制調貨提示、存貨偏重提示），供查閱哪些 SKU 存貨偏重哪個 Nature。
+    回傳 (raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warnings)。
     """
     missing = validate_hybrid_input(df_input)
     if missing:
@@ -5782,6 +5784,7 @@ def transform_hybrid(
     diagnosis = _build_hybrid_diagnosis(raw)
     diagnosis_om = _build_hybrid_diagnosis(raw, variant="om")
     diag_summary = _build_hybrid_diag_summary(raw)
+    sc_summary = _build_stock_checking_summary(raw)
 
     stats = {
         "need_rows": int(need_series.sum()),
@@ -5813,7 +5816,7 @@ def transform_hybrid(
     if progress_callback:
         progress_callback(0.7, "轉換完成")
 
-    return raw, diagnosis, diagnosis_om, diag_summary, stats, warnings
+    return raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warnings
 
 
 def _write_hybrid_diagnosis_sheet(ws, diagnosis: pd.DataFrame, progress_callback=None,
@@ -5922,21 +5925,27 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
 
 def generate_excel_hybrid(
     raw: pd.DataFrame,
-    diagnosis: pd.DataFrame,
+    sc_summary: pd.DataFrame | None = None,
+    diagnosis: pd.DataFrame | None = None,
     diagnosis_om: pd.DataFrame | None = None,
     diag_summary: pd.DataFrame | None = None,
     stats: dict | None = None,
     progress_callback=None,
 ) -> BytesIO:
-    """Safety Stock x NetStock Review 輸出（4 工作表，順序固定）：
+    """Safety Stock x NetStock Review 輸出（5 工作表，順序固定）：
     RAW（全部欄位 + 診斷欄，含不限OM與同OM兩套調貨結果）/
+    Summary（SKU 級彙總：各 Nature 加總/TurnDay/佔比、強制調貨提示、存貨偏重提示）/
     調貨診斷 Safety Stock (不限OM) / 調貨診斷 Safety Stock (同OM) /
     診斷摘要（指標卡 4 排 + Safety 診斷 × Shop Nature 交叉表）。
     """
+    if diagnosis is None:
+        diagnosis = _build_hybrid_diagnosis(raw)
     if diagnosis_om is None:
         diagnosis_om = _build_hybrid_diagnosis(raw, variant="om")
     if diag_summary is None:
         diag_summary = _build_hybrid_diag_summary(raw)
+    if sc_summary is None:
+        sc_summary = _build_stock_checking_summary(raw)
     wb = Workbook()
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
@@ -5949,26 +5958,33 @@ def generate_excel_hybrid(
     # ── Sheet 1: RAW（全部欄位 + 診斷欄）──
     ws_raw = wb.active
     ws_raw.title = "RAW"
-    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.0, progress_end=0.32)
+    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.0, progress_end=0.24)
 
     if progress_callback:
-        progress_callback(0.34, "建立調貨診斷主表 (不限OM)...")
+        progress_callback(0.25, "建立 SKU Summary（存貨偏重提示）...")
 
-    # ── Sheet 2: 調貨診斷 Safety Stock（不限OM）──
+    # ── Sheet 2: Summary（SKU 級彙總，與 Stock Checking 同格式）──
+    ws_sc = wb.create_sheet(title="Summary")
+    _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38)
+
+    if progress_callback:
+        progress_callback(0.40, "建立調貨診斷主表 (不限OM)...")
+
+    # ── Sheet 3: 調貨診斷 Safety Stock（不限OM）──
     ws_diag = wb.create_sheet(title="調貨診斷 Safety Stock (不限OM)")
-    _write_hybrid_diagnosis_sheet(ws_diag, diagnosis, progress_callback, progress_start=0.34, progress_end=0.54)
+    _write_hybrid_diagnosis_sheet(ws_diag, diagnosis, progress_callback, progress_start=0.40, progress_end=0.56)
 
     if progress_callback:
-        progress_callback(0.55, "建立調貨診斷主表 (同OM)...")
+        progress_callback(0.57, "建立調貨診斷主表 (同OM)...")
 
-    # ── Sheet 3: 調貨診斷 Safety Stock（同OM）──
+    # ── Sheet 4: 調貨診斷 Safety Stock（同OM）──
     ws_diag_om = wb.create_sheet(title="調貨診斷 Safety Stock (同OM)")
-    _write_hybrid_diagnosis_sheet(ws_diag_om, diagnosis_om, progress_callback, progress_start=0.55, progress_end=0.74)
+    _write_hybrid_diagnosis_sheet(ws_diag_om, diagnosis_om, progress_callback, progress_start=0.57, progress_end=0.73)
 
     if progress_callback:
-        progress_callback(0.76, "建立診斷摘要...")
+        progress_callback(0.75, "建立診斷摘要...")
 
-    # ── Sheet 4: 診斷摘要 ──
+    # ── Sheet 5: 診斷摘要 ──
     ws_sum = wb.create_sheet(title="診斷摘要")
     _write_hybrid_diag_summary_sheet(ws_sum, diag_summary, stats, raw, thin_border, desc_font, progress_callback)
 
