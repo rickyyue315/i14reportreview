@@ -6729,7 +6729,7 @@ def _stock_checking_stats_empty() -> dict:
 
 
 def _stock_checking_buyer_stats(raw: pd.DataFrame, need_series: pd.Series | None = None) -> list[tuple[str, int]]:
-    """Buyer 級統計：各 Buyer 涉及多少個「需要調貨」SKU（去重）。
+    """Buyer 級統計：各 Buyer 涉及多少個「需要調貨」SKU（已刪除重複）。
 
     - Buyer 取同 SKU 首個非空值（與 Summary 同口徑）；全空歸入「(未填 Buyer)」
     - 回傳 [(Buyer, 需調貨 SKU 數)]，按數量降序、同數按 Buyer 名排序
@@ -7251,13 +7251,13 @@ def _stock_checking_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = No
 
     row1_metrics = [
         ("需要調貨列數", need_rows, "Tourist 加總 TurnDay & D001 皆低於門檻的 SKU", "EF4444"),
-        ("需調貨 SKU 數", need_skus, "符合條件的去重 SKU 總數", "F59E0B"),
+        ("需調貨 SKU 數", need_skus, "符合條件的 SKU 總數（已刪除重複）", "F59E0B"),
         ("調入需求量", total_demand, "補到 14 日周轉的總需求（件）", "3B82F6"),
         ("實際調入量", total_actual, "NT 優先、Mix 補足後的總調入（件）", "10B981"),
     ]
     row2_metrics = [
-        ("Non Tourist 轉出量", nt_transfer, "優先由 Non Tourist 鋪轉出（件）", "8B5CF6"),
-        ("Mix 轉出量", mix_transfer, "NT 不足時由 Mix 鋪補足（件）", "06B6D4"),
+        ("Non Tourist 轉出量", nt_transfer, "優先由 Non Tourist 店舖轉出（件）", "8B5CF6"),
+        ("Mix 轉出量", mix_transfer, "NT 不足時由 Mix 店舖補足（件）", "06B6D4"),
         ("無法足額缺口", total_gap, "來源可轉出量不足的缺口（件）", "F97316"),
         ("總明細行數", total_rows, "RAW 完整明細總行數", "64748B"),
     ]
@@ -7295,7 +7295,7 @@ def _write_stock_checking_buyer_table(ws, buyer_stats, thin_border, start_row: i
         c2.alignment = center
         c2.border = thin_border
         c3 = ws.cell(row=r, column=3, value=cnt / total_skus if total_skus else None)
-        c3.number_format = "0.00%"
+        c3.number_format = "0.0%"
         c3.alignment = center
         c3.border = thin_border
         r += 1
@@ -7308,7 +7308,7 @@ def _write_stock_checking_buyer_table(ws, buyer_stats, thin_border, start_row: i
         if col_idx == 2:
             cell.number_format = "#,##0"
         elif col_idx == 3:
-            cell.number_format = "0.00%"
+            cell.number_format = "0.0%"
     _auto_width(ws)
 
 

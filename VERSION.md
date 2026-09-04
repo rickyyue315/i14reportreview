@@ -3,6 +3,8 @@
 ## v1.11.1 (2026-09-04)
 
 - New: Stock Checking Dashboard 加入「Buyer 需調貨 SKU 統計」— 統計各 Buyer 涉及多少個需調貨的去重 SKU（Buyer 取同 SKU 首個非空值、空白歸入「(未填 Buyer)」，按需調貨 SKU 數降序），Streamlit 指標卡下方顯示統計表（含佔比），Excel「調貨分析摘要」工作表指標卡下方同步輸出統計表（含總計列）；`transform_stock_checking` stats 新增 `buyer_need_skus`，呼叫端未帶 stats 時由 raw 自動匯總
+- Change: Buyer 需調貨 SKU 統計「佔比」改顯示 1 位小數百分比（Streamlit `%.1f%%`、Excel `0.0%`）
+- Change: 全站字眼優化（書面語繁體）—「去重」改為「已刪除重複」（Stock Checking / Hybrid / Past 90 Days 0 Sales 卡標題與描述、Excel 指標說明、使用說明頁）；「Non Tourist 鋪／Mix 鋪」改為「店舖」；「至少一邊」改為「至少一個 Nature」；新增 `AGENTS.md` 記錄語言規範（欄位名稱與 Excel 固定表頭屬資料契約，維持不動）
 
 ## v1.11.0 (2026-09-03)
 

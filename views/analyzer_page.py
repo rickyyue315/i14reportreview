@@ -650,7 +650,7 @@ if uploaded_file is not None:
             )
         st.caption(
             f"🔁 調貨觸發（同 Stock Checking）：該 SKU 的 **Tourist 加總 TurnDay < {int(turnday_threshold)} 日** 且 **D001 < {int(d001_threshold)} 件**，"
-            "且 Mix / Non Tourist 至少一邊加總 TurnDay ≥ 門檻（有貨可調）。調入補到 14 日周轉，NT 優先再由 Mix 補足。"
+            "且 Mix / Non Tourist 至少一個 Nature 加總 TurnDay ≥ 門檻（有貨可調）。調入補到 14 日周轉，NT 優先再由 Mix 補足。"
             "補貨覆蓋目標固定 14 日，不另設第三套可調目標。"
         )
 
@@ -836,7 +836,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #f97316;">
                     <div class="metric-title">需調貨 SKU 數</div>
                     <div class="metric-value" style="color: #f97316;">{need_skus:,}</div>
-                    <div class="metric-desc">符合調貨條件的去重 SKU 總數</div>
+                    <div class="metric-desc">符合調貨條件的 SKU 總數（已刪除重複）</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r3_col3:
@@ -865,7 +865,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #8b5cf6;">
                     <div class="metric-title">Non Tourist 轉出量</div>
                     <div class="metric-value" style="color: #8b5cf6;">{nt_transfer:,}</div>
-                    <div class="metric-desc">優先由 Non Tourist 鋪轉出（件）</div>
+                    <div class="metric-desc">優先由 Non Tourist 店舖轉出（件）</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r4_col2:
@@ -873,7 +873,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #06b6d4;">
                     <div class="metric-title">Mix 轉出量</div>
                     <div class="metric-value" style="color: #06b6d4;">{mix_transfer:,}</div>
-                    <div class="metric-desc">NT 不足時由 Mix 鋪補足（件）</div>
+                    <div class="metric-desc">NT 不足時由 Mix 店舖補足（件）</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r4_col3:
@@ -1729,7 +1729,7 @@ if uploaded_file is not None:
                 f"🔄 觸發條件（同時符合）：該 SKU 的 **Tourist 加總 TurnDay < {int(turnday_threshold)} 日** "
                 f"且 **D001 Net Stock < {int(d001_threshold)} 件**，且 **Mix / Non Tourist 至少一個 Nature 的加總 TurnDay ≥ {int(turnday_threshold)} 日**（有貨可調）。"
                 "加總 TurnDay ≥ 門檻的 SKU 一律無須調貨；Mix 與 Non Tourist 加總 TurnDay 皆低於門檻時視為無貨可調，不標示。"
-                "只有已標示 SKU 的 RAW 才計算調貨數量；調入需求補到 14 日周轉，來源優先 Non Tourist 鋪，再由 Mix 鋪補足（RF 與 ND 店皆可轉出）。"
+                "只有已標示 SKU 的 RAW 才計算調貨數量；調入需求補到 14 日周轉，來源優先 Non Tourist 店舖，再由 Mix 店舖補足（RF 與 ND 店皆可轉出）。"
             )
 
         st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -2614,9 +2614,9 @@ if uploaded_file is not None:
             with r1_col2:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #f59e0b;">
-                    <div class="metric-title">SKU 數 (去重)</div>
+                    <div class="metric-title">SKU 數（已刪除重複）</div>
                     <div class="metric-value" style="color: #f59e0b;">{total_skus:,}</div>
-                    <div class="metric-desc">符合條件的去重 SKU 總數</div>
+                    <div class="metric-desc">符合條件的 SKU 總數（已刪除重複）</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col3:
@@ -2677,7 +2677,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 🔄 Stock Checking 調貨分析摘要 (Transfer Analysis Dashboard)")
-            st.caption("SKU 級判定：Tourist 加總 TurnDay < 門檻 且 D001 < 門檻 且 Mix / NT 至少一邊加總 TurnDay ≥ 門檻（有貨可調）→ 標示需要調貨；調入需求補到 14 日周轉，來源優先 Non Tourist 鋪再由 Mix 鋪補足。")
+            st.caption("SKU 級判定：Tourist 加總 TurnDay < 門檻 且 D001 < 門檻 且 Mix / NT 至少一個 Nature 加總 TurnDay ≥ 門檻（有貨可調）→ 標示需要調貨；調入需求補到 14 日周轉，來源優先 Non Tourist 店舖，再由 Mix 店舖補足。")
 
             total_rows = len(raw_df) if raw_df is not None else 0
             need_rows = int(stats.get("need_rows", 0)) if stats else 0
@@ -2702,7 +2702,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #f59e0b;">
                     <div class="metric-title">需調貨 SKU 數</div>
                     <div class="metric-value" style="color: #f59e0b;">{need_skus:,}</div>
-                    <div class="metric-desc">符合條件的去重 SKU 總數</div>
+                    <div class="metric-desc">符合條件的 SKU 總數（已刪除重複）</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col3:
@@ -2730,7 +2730,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #8b5cf6;">
                     <div class="metric-title">Non Tourist 轉出量</div>
                     <div class="metric-value" style="color: #8b5cf6;">{nt_transfer:,}</div>
-                    <div class="metric-desc">優先由 Non Tourist 鋪轉出（件）</div>
+                    <div class="metric-desc">優先由 Non Tourist 店舖轉出（件）</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:
@@ -2738,7 +2738,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #06b6d4;">
                     <div class="metric-title">Mix 轉出量</div>
                     <div class="metric-value" style="color: #06b6d4;">{mix_transfer:,}</div>
-                    <div class="metric-desc">NT 不足時由 Mix 鋪補足（件）</div>
+                    <div class="metric-desc">NT 不足時由 Mix 店舖補足（件）</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col3:
@@ -2764,10 +2764,13 @@ if uploaded_file is not None:
             if buyer_stats:
                 _b_total = sum(c for _, c in buyer_stats)
                 _b_df = pd.DataFrame(buyer_stats, columns=["Buyer", "需調貨 SKU 數"])
-                _b_df["佔比"] = _b_df["需調貨 SKU 數"] / _b_total if _b_total else 0.0
+                _b_df["佔比"] = (_b_df["需調貨 SKU 數"] / _b_total * 100) if _b_total else 0.0
                 _b_df = _b_df.sort_values(["需調貨 SKU 數", "Buyer"], ascending=[False, True], kind="stable")
-                st.dataframe(_b_df, width='stretch', hide_index=True)
-                st.caption(f"共 {len(buyer_stats)} 個 Buyer 涉及 {_b_total:,} 個需調貨 SKU（去重；Buyer 取同 SKU 首個非空值，空白歸入「(未填 Buyer)」）。")
+                st.dataframe(
+                    _b_df, width='stretch', hide_index=True,
+                    column_config={"佔比": st.column_config.NumberColumn("佔比", format="%.1f%%")},
+                )
+                st.caption(f"共 {len(buyer_stats)} 個 Buyer 涉及 {_b_total:,} 個需調貨 SKU（已刪除重複；Buyer 取同 SKU 首個非空值，空白歸入「(未填 Buyer)」）。")
             else:
                 st.info("無符合調貨條件的 Buyer 統計")
 

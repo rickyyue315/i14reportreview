@@ -524,4 +524,4 @@ def test_generate_excel_buyer_stats_table():
         assert rows == {"B1": 1, "B2": 1}
         assert ws.cell(row=15, column=1).value == "總計"
         assert ws.cell(row=15, column=2).value == 2
-        assert ws.cell(row=13, column=3).number_format == "0.00%"
+        assert ws.cell(row=13, column=3).number_format == "0.0%"
