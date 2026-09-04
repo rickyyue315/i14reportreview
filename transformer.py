@@ -6037,6 +6037,49 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
     _auto_width(ws)
 
 
+# RAW 顯示欄序分組（識別→品項屬性→庫存與銷售→SKU 級判定→Review 結果→調貨 不限OM→調貨 同OM→其他）
+_HYBRID_RAW_DISPLAY_GROUPS = [
+    ["Buyer", "Brand", "SKU", "SKU Desc", "Site Code", "Shop Name", "OM", "Shop Nature"],
+    ["Adj. SST", "Adj. MCH1", "Vendor MC", "MCH2", "Item Status", "Item Class", "RP Type",
+     "Shop Stock Status", "Supply Source", "Launch Date"],
+    ["Shop Stock Qty (CM)", "Adj. Safety Stock", "Sold Qty (P90D)", "Shop Monthly Sold Qty (P90D)",
+     "Turnday (P90D Qty)", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
+     "Net Sales (M-2)", "Net Sales (M-1)", "Net Sales (CM - MTD)", "Excess Stock Qty",
+     "Shop On Order PO Qty (CM)", "Shop Pending Receive",
+     "D001 Net Stock Qty (CM)", "D001 Stock Qty (CM)", "D001 Effective Stock Qty (CM)"],
+    ["Tourist 加總 TurnDay", "Mix 加總 TurnDay", "Non Tourist 加總 TurnDay",
+     "需要調貨", "調入需求量 (補到14日)"],
+    ["事件類型", "14日周轉所需量", "Safety Review", "建議 Safety 設定值", "Safety 建議調整量"],
+    ["可轉出貨量 (Non Tourist)", "可轉出貨量 (Mix)", "可轉出貨量 (Tourist)",
+     "實際調入量", "調入缺口", "轉出量", "調貨來源 (Site Code)", "調貨後庫存", "調貨後 TurnDay"],
+    ["實際調入量 (同OM)", "調入缺口 (同OM)", "轉出量 (同OM)", "調貨來源 (同OM)",
+     "調貨後庫存 (同OM)", "調貨後 TurnDay (同OM)"],
+]
+
+
+def _hybrid_raw_display_columns(raw: pd.DataFrame) -> list[str]:
+    """Safety Stock x NetStock Review RAW 顯示欄序：不顯示「Item_Shop」與所有含「Value」的金額欄，
+    其餘欄位（含 _compute_raw_extra_columns 衍生的 Shop Name / SKU Desc）按 _HYBRID_RAW_DISPLAY_GROUPS
+    分組排列，未歸組的原始欄位按原序置於最後。"""
+    cols = [str(c) for c in raw.columns] + ["Shop Name", "SKU Desc"]
+    seen: set[str] = set()
+    kept: list[str] = []
+    for c in cols:
+        if c in seen or c == "Item_Shop" or "value" in c.lower():
+            continue
+        seen.add(c)
+        kept.append(c)
+    kept_set = set(kept)
+    ordered: list[str] = []
+    for group in _HYBRID_RAW_DISPLAY_GROUPS:
+        for c in group:
+            if c in kept_set:
+                ordered.append(c)
+                kept_set.discard(c)
+    ordered += [c for c in kept if c in kept_set]
+    return ordered
+
+
 def generate_excel_hybrid(
     raw: pd.DataFrame,
     sc_summary: pd.DataFrame | None = None,
@@ -6047,7 +6090,8 @@ def generate_excel_hybrid(
     progress_callback=None,
 ) -> BytesIO:
     """Safety Stock x NetStock Review 輸出（5 工作表，順序固定）：
-    RAW（全部欄位 + Review 欄，含不限OM與同OM兩套調貨結果；雙向時另含「可轉出貨量 (Tourist)」）/
+    RAW（重新排列欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄；含不限OM與同OM兩套調貨結果；
+    雙向時另含「可轉出貨量 (Tourist)」）/
     Summary（SKU 級彙總：各 Nature 加總/TurnDay/佔比、強制調貨提示、存貨偏重提示；雙向時另加 AA 欄
     「由Tourist 店舖預計調出數量」）/
     調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) /
@@ -6072,10 +6116,11 @@ def generate_excel_hybrid(
     )
     desc_font = Font(size=9, color="6B7280", italic=True)
 
-    # ── Sheet 1: RAW（全部欄位 + Review 欄）──
+    # ── Sheet 1: RAW（重排欄序；不顯示 Item_Shop 與 Value 金額欄）──
     ws_raw = wb.active
     ws_raw.title = "RAW"
-    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.0, progress_end=0.24)
+    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.0, progress_end=0.24,
+                     columns=_hybrid_raw_display_columns(raw))
 
     if progress_callback:
         progress_callback(0.25, "建立 SKU Summary（存貨偏重提示）...")

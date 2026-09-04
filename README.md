@@ -165,13 +165,13 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 7. **輸入檢核** — 混合必要欄位嚴格檢核：基礎四欄 + Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D)，缺任一即停止；欄名前後空格自動正規化；Shop Stock Qty (CM) 必須為整數件數（小數即拒絕）；D001 逐列以 Net → Stock 回補（空白視為 0），月銷單列空白以 Sold Qty (P90D) 換算，兩者皆列 warning；Adj. Safety Stock 空白或非數值時，Review 視為 0 並列 warning；「Site Code × SKU」重複列與同一店舖 Shop Nature 不一致列 warning 提示（正常輸入應為一店×一SKU一列）
 8. **RAW 稽核欄位** — 新增 `D001 Effective Stock Qty (CM)`（實際採用的 D001 值）與原始 D001 Stock，以便核查 fallback
 
-輸出包含 **5 個工作表**：RAW（全部欄位 + Review 欄 + 同OM調貨欄，非事件列留空；雙向時另含「可轉出貨量 (Tourist)」）、Summary（SKU 級彙總，與 Stock Checking 同格式：各 Nature 庫存/月銷加總、TurnDay、佔比、強制調貨提示、存貨偏重提示，偏重提示欄與偏重 Nature 的庫存佔比欄以醒目橘底加強顯示；雙向時末尾另加「由Tourist 店舖預計調出數量」欄）、調貨 Review Safety Stock (不限OM) 與 調貨 Review Safety Stock (同OM)（店舖×SKU 逐列主表，含 Site Code／OM／Shop Nature，按 Brand / SKU / 事件類型 / Site Code 排序；Safety Review 欄兩表相同）、Review 摘要（指標卡——第 4 排為同OM調貨對照、雙向時另加第 5 排 Tourist 轉出量 + Safety Review × Shop Nature 交叉表：列數 / SKU 數 / 建議調整量合計，含總計列）。
+輸出包含 **5 個工作表**：RAW（按可讀性重排欄序——識別→品項屬性→庫存與銷售→SKU 級判定→Review 結果→調貨 (不限OM)→調貨 (同OM)→其他原始欄；不顯示「Item_Shop」與所有含「Value」的金額欄；非事件列 Review 欄留空；雙向時另含「可轉出貨量 (Tourist)」）、Summary（SKU 級彙總，與 Stock Checking 同格式：各 Nature 庫存/月銷加總、TurnDay、佔比、強制調貨提示、存貨偏重提示，偏重提示欄與偏重 Nature 的庫存佔比欄以醒目橘底加強顯示；雙向時末尾另加「由Tourist 店舖預計調出數量」欄）、調貨 Review Safety Stock (不限OM) 與 調貨 Review Safety Stock (同OM)（店舖×SKU 逐列主表，含 Site Code／OM／Shop Nature，按 Brand / SKU / 事件類型 / Site Code 排序；Safety Review 欄兩表相同）、Review 摘要（指標卡——第 4 排為同OM調貨對照、雙向時另加第 5 排 Tourist 轉出量 + Safety Review × Shop Nature 交叉表：列數 / SKU 數 / 建議調整量合計，含總計列）。
 
 ## Excel 輸出結構
 
 | 工作表 | 說明 |
 |--------|------|
-| RAW | 完整明細資料（含所有原始及計算欄位；混合模式另含 Review 欄） |
+| RAW | 完整明細資料（含所有原始及計算欄位；混合模式另含 Review 欄並重排欄序，不顯示 Item_Shop 與 Value 金額欄） |
 | Shop Stock Status | 採購人員 x 品牌之庫存異常交叉統計表 |
 | By Shop | 各店鋪層級之彙總分析 |
 | SUMMARY | 分類統計 — Safety Qty Change 分類（增加/減少/不變）與 ND 建議分類（Safety Stock Review） |

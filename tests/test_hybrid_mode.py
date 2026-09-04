@@ -23,6 +23,7 @@ from transformer import (
     validate_hybrid_input,
     _hybrid_dashboard_metrics,
     _hybrid_stats_from_raw,
+    _hybrid_raw_display_columns,
     _HYBRID_DIAG_COLUMNS,
 )
 
@@ -506,6 +507,33 @@ def test_generate_excel_summary_skew_highlight():
     assert str(ws.cell(row=6, column=17).fill.start_color.rgb).endswith("FFC000")  # Tourist 庫存 %
     assert not str(ws.cell(row=6, column=19).fill.start_color.rgb).endswith("FFC000")  # Mix 未偏重
     assert not str(ws.cell(row=6, column=21).fill.start_color.rgb).endswith("FFC000")  # NT 未偏重
+
+
+def test_hybrid_raw_display_columns_helper():
+    df = pd.DataFrame(columns=["Buyer", "SKU", "Item_Shop", "Shop Stock Value (CM)", "事件類型", "SKU Desc"])
+    cols = _hybrid_raw_display_columns(df)
+    assert "Item_Shop" not in cols and "Shop Stock Value (CM)" not in cols
+    assert cols == ["Buyer", "SKU", "SKU Desc", "Shop Name", "事件類型"]  # SKU Desc 去重；Shop Name 為衍生欄
+
+
+def test_generate_excel_raw_view_columns():
+    df = _df(_SCENARIO_A)
+    df["Shop Stock Value (CM)"] = 999.0
+    df["Excess Stock Value"] = 1.0
+    raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, _ = transform_hybrid(df)
+    assert "Item_Shop" in raw.columns  # RAW dataframe 保留原欄，只在工作表層面移除
+    buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
+    ws = load_workbook(buf, read_only=True)["RAW"]
+    headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    assert "Item_Shop" not in headers
+    assert not any("value" in str(h).lower() for h in headers)
+    idx = {h: i for i, h in enumerate(headers)}
+    # 可讀欄序：識別 → 庫存與銷售 → SKU 級判定 → Review 結果 → 調貨 (不限OM) → 調貨 (同OM)
+    assert idx["Site Code"] < idx["Shop Stock Qty (CM)"] < idx["需要調貨"]
+    assert idx["需要調貨"] < idx["事件類型"] < idx["Safety Review"] < idx["建議 Safety 設定值"] < idx["Safety 建議調整量"]
+    assert idx["Safety 建議調整量"] < idx["實際調入量"] < idx["調貨來源 (Site Code)"] < idx["調貨後庫存"]
+    assert idx["調貨後 TurnDay"] < idx["實際調入量 (同OM)"] < idx["調貨後 TurnDay (同OM)"]
+    assert len(headers) == len(set(headers))
 
 
 def test_generate_excel_dashboard_matches_stats():

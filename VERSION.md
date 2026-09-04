@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.14.2 (2026-09-04)
+
+- Change: Safety Stock x NetStock Review 的 RAW 工作表優化顯示 — **不顯示「Item_Shop」與所有含「Value」的金額欄**（僅工作表層面移除，RAW dataframe 保留原欄供稽核；SKU Desc / Shop Name 仍由 Item_Shop 衍生顯示）
+- New: RAW 欄序按可讀性重排 — 識別（Buyer / Brand / SKU / SKU Desc / Site Code / Shop Name / OM / Shop Nature）→ 品項屬性（Adj. SST / Vendor MC / Item Status / Item Class / RP Type / Shop Stock Status / Supply Source / Launch Date 等）→ 庫存與銷售（店舖庫存 / Safety Stock / P90D 銷售 / 月銷 / D001 三欄）→ SKU 級判定（各 Nature 加總 TurnDay / 需要調貨 / 調入需求量）→ **Review 結果**（事件類型 / 14日周轉所需量 / Safety Review / 建議 Safety 設定值 / Safety 建議調整量）→ 調貨 (不限OM) → 調貨 (同OM) → 其他原始欄按原序；Streamlit「📄 RAW 完整明細」分頁與 Excel 同口徑
+- Update: 新增 `_hybrid_raw_display_columns()`（transformer.py，Excel 與 Streamlit 共用）；`generate_excel_hybrid()` 的 `_write_raw_sheet()` 呼叫加 `columns=` 參數；analyzer_page.py RAW tab 改用共用函數（移除舊 `_hyb_cols`/`_base`/`_rest` 排列）
+- Update: tests/test_hybrid_mode.py 新增欄序測試 ×2（helper 去重／移除斷言、Excel RAW 表頭無 Item_Shop 與 Value 欄且分組順序正確）；共 166 項測試通過
+
 ## v1.14.1 (2026-09-04)
 
 - New: Safety Stock x NetStock Review 的 Summary 出現存貨偏重數值時，以**醒目橘底（FFC000）加粗體**加強顯示——Excel「Summary」工作表的「存貨偏重提示」欄（Z）與偏重 Nature 的庫存佔比欄（Q/S/U）同步底色；Streamlit「📋 Summary（SKU 存貨偏重）」分頁的偏重提示與偏重 Nature 庫存佔比儲存格同步橘底高亮

@@ -18,6 +18,7 @@ from transformer import (
     transform_p90d_zero_sales, generate_excel_p90d_zero_sales,
     transform_stock_checking, generate_excel_stock_checking,
     transform_hybrid, generate_excel_hybrid, _hybrid_dashboard_metrics,
+    _hybrid_raw_display_columns,
 )
 import time
 import traceback
@@ -740,23 +741,11 @@ if uploaded_file is not None:
                 else:
                     st.info("無符合資料")
             with tab_raw:
-                st.markdown("#### RAW 原始資料（Review 欄位已附於每一列）")
-                _display = raw_df.copy()
-                _hyb_cols = ["事件類型", "Safety Review", "14日周轉所需量", "建議 Safety 設定值", "Safety 建議調整量",
-                             "調貨後庫存", "調貨後 TurnDay",
-                             "實際調入量 (同OM)", "調入缺口 (同OM)", "轉出量 (同OM)", "調貨來源 (同OM)", "調貨後庫存 (同OM)", "調貨後 TurnDay (同OM)",
-                             "需要調貨", "調入需求量 (補到14日)", "實際調入量", "調入缺口",
-                             "可轉出貨量 (Mix)", "可轉出貨量 (Non Tourist)", "可轉出貨量 (Tourist)",
-                             "轉出量", "調貨來源 (Site Code)"]
-                _avail_hyb = [c for c in _hyb_cols if c in _display.columns]
-                _base = [c for c in ["Shop Nature", "Site Code", "OM", "Shop Name", "SKU", "SKU Desc",
-                                     "Adj. Safety Stock", "Shop Stock Qty (CM)",
-                                     "Sold Qty (P90D)", "D001 Net Stock Qty (CM)"] if c in _display.columns]
-                if _base:
-                    _rest = [c for c in _display.columns if c not in _base and c not in _avail_hyb]
-                    _display = _display[_base + _avail_hyb + _rest]
+                st.markdown("#### RAW 原始資料（Review 欄位已附於每一列；不顯示 Item_Shop 與 Value 金額欄）")
+                _display_cols = [c for c in _hybrid_raw_display_columns(raw_df) if c in raw_df.columns]
+                _display = raw_df[_display_cols]
                 st.dataframe(_display.head(50), width='stretch')
-                st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+                st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料（已按可讀性重排欄序）將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
