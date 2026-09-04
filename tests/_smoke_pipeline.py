@@ -85,13 +85,10 @@ def main():
         generate_excel_combined(s, r, c)
         print("OK Safety Stock (%s)  | rows=%d warnings=%d" % (mode, len(s), len(w)))
 
-    # ── Safety Stock x NetStock Review (both modes) ──
-    for mode in ("increase_only", "allow_both"):
-        r, s_sum, sc_sum, h_sum, h_stats, h_w = transform_hybrid(
-            df, rates_overstock=ro, rates_oos=po, mtd_days=15, month_total_days=30, safety_mode=mode,
-        )
-        generate_excel_hybrid(r, s_sum, sc_sum, h_sum, h_stats)
-        print("OK Hybrid (%s)       | rows=%d need=%d warnings=%d" % (mode, len(r), h_stats["need_rows"], len(h_w)))
+    # ── Safety Stock x NetStock Review (調貨事件診斷 Safety 設定) ──
+    r, h_diag, h_cross, h_stats, h_w = transform_hybrid(df)
+    generate_excel_hybrid(r, h_diag, h_cross, h_stats)
+    print("OK Hybrid Diagnosis   | rows=%d need=%d diag=%d warnings=%d" % (len(r), h_stats["need_rows"], len(h_diag), len(h_w)))
 
     # ── Stock Impact Analysis ──
     _, si_brand, si_buyer, si_cat, _, si_alloc, si_diag, si_inv, si_mly, si_raw, si_warns = transform_stock_impact(

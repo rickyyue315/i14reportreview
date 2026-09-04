@@ -1,5 +1,15 @@
 # 版本記錄
 
+## v1.12.0 (2026-09-04)
+
+- Change: 「Safety Stock x NetStock Review」由「兩報告並排 + 反饋欄」完全轉換為「調貨事件診斷 Safety 設定」格式 — 以 14 日周轉線（14日周轉所需量 = ceil(P90D ÷ 90 × 14)，與調貨邏輯同口徑）診斷：Tourist 需調入列現有 Adj. Safety Stock < 所需量 → 「Safety 設定不足」；已標示調貨 SKU 的 Mix / Non Tourist 有貨列（轉出量 > 0 或可轉出貨量 > 0）現有設定 > 所需量 → 「Safety 設定過高」；等於邊界視為正常；建議 Safety 設定值 = 所需量、Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）
+- Change: 移除混合模式內的安全庫存引擎段 — 不再計算 Recommend Safety Stock / X cap / Y floor；UI 刪除 MTD 日期、Overstock/OOS Rate、只可增加/可加可減參數（僅保留調貨兩門檻）；輸入檢核不再要求 Sold Qty (CM - MTD)；Adj. Safety Stock 空白或非數值診斷視為 0 並列 warning
+- Change: Excel 輸出由 8 工作表精簡為 3 — RAW（全部欄位 + 診斷欄：14日周轉所需量 / 事件類型 / Safety 診斷 / 建議 Safety 設定值 / Safety 建議調整量 / 調貨後庫存 / 調貨後 TurnDay，非事件列留空）、調貨診斷 Safety Stock（店舖×SKU 主表，按 Brand / SKU / 事件類型 / Site Code 排序）、診斷摘要（指標卡 12 項 + Safety 診斷 × Shop Nature 交叉表含總計列）；刪除 Shop Stock Status / By Shop / SUMMARY / Safety 數據分析摘要 / 調貨 Summary / 調貨分析摘要 / Hybrid Summary
+- Change: Streamlit 混合模式看板改為診斷指標卡（3 排 × 4：需調貨 SKU 數、需要調入列數、轉出來源列數、調入需求量、實際調入量、無法足額缺口、NT/Mix 轉出量、設定不足列數、建議增加合計、設定過高列數、建議減少合計）+ 3 個分頁（診斷主表 / 交叉表 / RAW）
+- Update: `transform_hybrid()` 簽名精簡（移除 rates / mtd / safety_mode 參數）回傳 (raw, diagnosis, diag_summary, stats, warnings)；新增 `_build_hybrid_diagnosis()`、`_build_hybrid_diag_summary()`、`_hybrid_dashboard_metrics()`、`_hybrid_stats_from_raw()`、`_write_hybrid_diagnosis_sheet()`、`_write_hybrid_diag_summary_sheet()`；刪除 `_hybrid_build_safety_summary()`、`_build_hybrid_summary()`、`_write_hybrid_summary_sheet()`；`generate_excel_hybrid()` 改 3 表
+- Update: tests/test_hybrid_mode.py 重寫為診斷契約（判定規則、事件類型、主表範圍、交叉表、3 表 Excel 契約等）；_smoke_pipeline.py 同步；README / 使用說明頁同步
+
+
 ## v1.11.1 (2026-09-04)
 
 - New: Stock Checking Dashboard 加入「Buyer 需調貨 SKU 統計」— 統計各 Buyer 涉及多少個需調貨的去重 SKU（Buyer 取同 SKU 首個非空值、空白歸入「(未填 Buyer)」，按需調貨 SKU 數降序），Streamlit 指標卡下方顯示統計表（含佔比），Excel「調貨分析摘要」工作表指標卡下方同步輸出統計表（含總計列）；`transform_stock_checking` stats 新增 `buyer_need_skus`，呼叫端未帶 stats 時由 raw 自動匯總

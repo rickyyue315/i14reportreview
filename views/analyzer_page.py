@@ -17,7 +17,7 @@ from transformer import (
     transform_ndrf_comparison, generate_excel_ndrf_comparison,
     transform_p90d_zero_sales, generate_excel_p90d_zero_sales,
     transform_stock_checking, generate_excel_stock_checking,
-    transform_hybrid, generate_excel_hybrid,
+    transform_hybrid, generate_excel_hybrid, _hybrid_dashboard_metrics,
 )
 import time
 import traceback
@@ -136,7 +136,7 @@ MODE_KEYS = {
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "sku_soh_summary": None, "excel_data": None, "warnings": []},
     "Past 90 Days 0 Sales": {"prefix": "p90ds_", "processed": False, "summary_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "Stock Checking": {"prefix": "stock_chk_", "processed": False, "summary_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
-    "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "safety_summary": None, "sc_summary": None, "hybrid_summary": None, "stats": None, "categories": None, "excel_data": None, "warnings": []},
+    "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "diagnosis": None, "diag_summary": None, "stats": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -558,89 +558,14 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **Safety Stock Review × Stock Checking 混合**：同一次執行計算 Safety 建議與調貨需求；調貨沿用現行規則（14 日目標、NT 優先→Mix 補足），結果只反饋「調貨後狀態」（調貨後庫存 / TurnDay / Safety 缺口），**不修改** Recommend Safety Stock。")
-
-        mtd_date = st.date_input(
-            "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
-            value=datetime.now().date() - timedelta(days=1),
-            key="hy_mtd_date",
-            help="Safety 段的 MTD 截止日期，系統將據此推算月度預估銷售量（與 Safety Stock Review 同口徑）。"
-        )
-        mtd_days = mtd_date.day
-        month_total_days = calendar.monthrange(mtd_date.year, mtd_date.month)[1]
-        _w_pct = round(mtd_days / month_total_days * 100)
-        st.caption(
-            f"MTD: {mtd_days}日，當月共 {month_total_days} 日。"
-            f"月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均（P90D 權重 {100 - _w_pct}%／MTD 權重 {_w_pct}%）"
-        )
-
-        st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
-
-        with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
-            st.info(
-                "**Safety 段倍率**（與 Safety Stock Review 相同）：建議 Safety Stock = max(OOS 底線 Y, 現有 Safety 若 ≤ Overstock 上限 X，否則 X)，最低 3 件。\n\n"
-                "- **Overstock Rate（庫存上限 X 的倍率）**：X = floor(P90D 月均銷售 × Rate)。Rate 30% ≈ 保留 9 日銷售量；越低越積極壓縮庫存\n"
-                "- **OOS Rate（缺貨底線 Y 的倍率）**：Y = ceil(月銷預估 × Rate)。Rate 50% ≈ 覆蓋 15 日銷售；越高缺貨保護越強\n\n"
-                "調貨段不受這些倍率影響（調貨沿用 14 日周轉標準）。"
-            )
-            st.markdown("**Overstock Rate** — 各 Shop Nature 庫存上限計算倍率（月銷 × Rate = 建議值上限）。")
-            col_os1, col_os2, col_os3 = st.columns(3)
-            with col_os1:
-                os_rate_tourist = st.slider("Overstock Tourist Rate (%)", 0, 100, 30, 1, key="hy_os_tourist",
-                    help="Tourist 類型 Overstock 上限 X = floor(P90D 月均銷售 × Rate)。30% ≈ 保留 9 日銷售量。")
-            with col_os2:
-                os_rate_mix = st.slider("Overstock Mix Rate (%)", 0, 100, 40, 1, key="hy_os_mix",
-                    help="Mix 類型 Overstock 上限 X = floor(P90D 月均銷售 × Rate)。40% ≈ 保留 12 日銷售量。")
-            with col_os3:
-                os_rate_non_tourist = st.slider("Overstock Non Tourist Rate (%)", 0, 100, 50, 1, key="hy_os_non_tourist",
-                    help="Non Tourist（及其他類型，混合模式已正規化至此）Overstock 上限 X = floor(P90D 月均銷售 × Rate)。")
-
-            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
-            st.markdown("**OOS Rate** — 各 Shop Nature OOS 底線計算倍率（月銷預估 × Rate = 建議值底線）。")
-            col_oos1, col_oos2, col_oos3 = st.columns(3)
-            with col_oos1:
-                oos_rate_tourist = st.slider("OOS Tourist Rate (%)", 0, 100, 50, 1, key="hy_oos_tourist",
-                    help="Tourist 類型 OOS 底線 Y = ceil(月銷預估 × Rate)。50% ≈ 覆蓋半個月銷售。")
-            with col_oos2:
-                oos_rate_mix = st.slider("OOS Mix Rate (%)", 0, 100, 50, 1, key="hy_oos_mix",
-                    help="Mix 類型 OOS 底線 Y = ceil(月銷預估 × Rate)。")
-            with col_oos3:
-                oos_rate_non_tourist = st.slider("OOS Non Tourist Rate (%)", 0, 100, 50, 1, key="hy_oos_non_tourist",
-                    help="Non Tourist 類型 OOS 底線 Y = ceil(月銷預估 × Rate)。")
-
-            st.caption(f"Overstock → Tourist: **{os_rate_tourist}%** | Mix: **{os_rate_mix}%** | Non Tourist: **{os_rate_non_tourist}%**")
-            st.caption(f"OOS → Tourist: **{oos_rate_tourist}%** | Mix: **{oos_rate_mix}%** | Non Tourist: **{oos_rate_non_tourist}%**")
-
-        rates_overstock = {
-            "tourist": os_rate_tourist / 100.0,
-            "mix": os_rate_mix / 100.0,
-            "default": os_rate_non_tourist / 100.0,
-        }
-        rates_oos = {
-            "tourist": oos_rate_tourist / 100.0,
-            "mix": oos_rate_mix / 100.0,
-            "default": oos_rate_non_tourist / 100.0,
-        }
-
-        SAFETY_MODE_OPTIONS = ["只可增加", "可加可減"]
-        safety_mode = st.radio(
-            "🔒 Safety Qty 計算模式",
-            options=SAFETY_MODE_OPTIONS,
-            index=0,
-            horizontal=True,
-            key="hy_safety_mode",
-            help="只可增加：Safety Qty 只增不減；可加可減：允許減少並套用退場建議（ND / P90D 0 Sales 歸零+ND，90 天內新品除外）。"
-        )
-        safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
-
-        st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+        st.caption("🔀 **調貨事件診斷 Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **14 日周轉線**診斷 Safety Stock 設定 — Tourist 需調入列若現有設定低於所需量 → 「Safety 設定不足」；Mix / Non Tourist 有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
             turnday_threshold = st.number_input(
                 "🔁 Tourist 加總 TurnDay 門檻 (日)",
                 min_value=1, max_value=365, value=14, step=1, key="hy_ttd",
-                help="該 SKU 的 Tourist 加總 TurnDay（庫存加總 ÷ 月銷加總 × 30.5）低於此值時才列入調貨候選。"
+                help="該 SKU 的 Tourist 加總 TurnDay（庫存加總 ÷ 月銷加總 × 30.5）低於此值時才列入調貨候選。診斷基準線固定 14 日，不隨此門檻變動。"
             )
         with sc_top[1]:
             d001_threshold = st.number_input(
@@ -651,7 +576,10 @@ if uploaded_file is not None:
         st.caption(
             f"🔁 調貨觸發（同 Stock Checking）：該 SKU 的 **Tourist 加總 TurnDay < {int(turnday_threshold)} 日** 且 **D001 < {int(d001_threshold)} 件**，"
             "且 Mix / Non Tourist 至少一個 Nature 加總 TurnDay ≥ 門檻（有貨可調）。調入補到 14 日周轉，NT 優先再由 Mix 補足。"
-            "補貨覆蓋目標固定 14 日，不另設第三套可調目標。"
+        )
+        st.caption(
+            "🧭 診斷基準：14日周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 14)。調入列現有設定 < 所需量 → 「Safety 設定不足」；"
+            "轉出列現有設定 > 所需量 → 「Safety 設定過高」；建議 Safety 設定值 = 所需量（僅不足／過高列給建議）。"
         )
 
         if st.button("⚙️ 執行報表轉換與分析", type="primary", width='stretch'):
@@ -670,29 +598,21 @@ if uploaded_file is not None:
                 def _cb_excel(pct, msg):
                     _cb(0.55 + 0.45 * pct, msg)
 
-                raw_df, safety_summary, sc_summary, hybrid_summary, _stats, _warnings = transform_hybrid(
+                raw_df, diagnosis, diag_summary, _stats, _warnings = transform_hybrid(
                     df_input,
-                    rates_overstock=rates_overstock,
-                    rates_oos=rates_oos,
-                    mtd_days=mtd_days,
-                    month_total_days=month_total_days,
-                    safety_mode=safety_mode_value,
                     turnday_threshold=int(turnday_threshold),
                     d001_threshold=int(d001_threshold),
                     progress_callback=_cb_transform,
                 )
                 buf = generate_excel_hybrid(
-                    raw_df, safety_summary, sc_summary, hybrid_summary, _stats,
-                    ["Overstock", "OOS", "Balanced (Safety Adjusted)"],
+                    raw_df, diagnosis, diag_summary, _stats,
                     progress_callback=_cb_excel,
                 )
                 st.session_state.hybrid_processed = True
                 st.session_state.hybrid_raw_df = raw_df
-                st.session_state.hybrid_safety_summary = safety_summary
-                st.session_state.hybrid_sc_summary = sc_summary
-                st.session_state.hybrid_hybrid_summary = hybrid_summary
+                st.session_state.hybrid_diagnosis = diagnosis
+                st.session_state.hybrid_diag_summary = diag_summary
                 st.session_state.hybrid_stats = _stats
-                st.session_state.hybrid_categories = ["Overstock", "OOS", "Balanced (Safety Adjusted)"]
                 st.session_state.hybrid_excel_data = buf
                 st.session_state.hybrid_warnings = _warnings
             except Exception as e:
@@ -710,261 +630,61 @@ if uploaded_file is not None:
 
         if st.session_state.hybrid_processed:
             raw_df = st.session_state.hybrid_raw_df
-            safety_summary = st.session_state.hybrid_safety_summary
-            sc_summary = st.session_state.hybrid_sc_summary
-            hybrid_summary = st.session_state.hybrid_hybrid_summary
+            diagnosis = st.session_state.hybrid_diagnosis
+            diag_summary = st.session_state.hybrid_diag_summary
             stats = st.session_state.hybrid_stats
             excel_data = st.session_state.hybrid_excel_data
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 🔀 Safety Stock x NetStock Review 分析摘要 (Hybrid Dashboard)")
 
-            _total_row = safety_summary[safety_summary["Buyer"] == "總計"]
-            if _total_row.empty:
-                st.error("❌ 摘要資料中未找到總計列，無法顯示分析看板。")
-                st.stop()
-            total_combined = int(_total_row["總計"].values[0])
-            total_skus = raw_df["SKU"].dropna().nunique()
-            total_buyers = len(safety_summary[safety_summary["Buyer"] != "總計"]["Buyer"].dropna().unique())
-            total_brands = len(safety_summary[safety_summary["Buyer"] != "總計"]["Brand"].dropna().unique())
-            cat_overstock = int(_total_row["Overstock"].values[0]) if "Overstock" in _total_row.columns else 0
-            cat_oos = int(_total_row["OOS"].values[0]) if "OOS" in _total_row.columns else 0
-            cat_balanced = int(_total_row["Balanced (Safety Adjusted)"].values[0]) if "Balanced (Safety Adjusted)" in _total_row.columns else 0
-            safety_change_total = int(pd.to_numeric(raw_df.get("Safety Qty Change", pd.Series(0, index=raw_df.index)), errors="coerce").fillna(0).sum())
-            need_rows = int(stats.get("need_rows", 0)) if stats else 0
-            need_skus = int(stats.get("need_skus", 0)) if stats else 0
-            total_demand = int(stats.get("total_demand", 0)) if stats else 0
-            total_actual = int(stats.get("total_actual", 0)) if stats else 0
-            total_gap = int(stats.get("total_gap", 0)) if stats else 0
-            nt_transfer = int(stats.get("nt_transfer", 0)) if stats else 0
-            mix_transfer = int(stats.get("mix_transfer", 0)) if stats else 0
-            gap_before = int(stats.get("safety_gap_before", 0)) if stats else 0
-            gap_after = int(stats.get("safety_gap_after", 0)) if stats else 0
-            improved = int(stats.get("safety_gap_improved", 0)) if stats else 0
-            gap_skus_after = int(stats.get("gap_skus_after", 0)) if stats else 0
-            total_raw_rows = int(len(raw_df))
+            _hyb_rows = _hybrid_dashboard_metrics(raw_df, stats)
 
-            _imp_color = "#10b981" if improved >= 0 else "#ef4444"
-            _imp_desc = "調貨前缺口 − 調貨後缺口（正值=改善，負值=來源店 Safety 受損）"
-
-            # ── Row 1: Safety 概覽（8 卡前半）──
-            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
-            with r1_col1:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ef4444;">
-                    <div class="metric-title">總 Safety Stock 審查行數</div>
-                    <div class="metric-value" style="color: #ef4444;">{total_combined:,}</div>
-                    <div class="metric-desc">所有 Safety 審查之總計行數</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r1_col2:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #3B82F6;">
-                    <div class="metric-title">影響採購人員數 (Buyers)</div>
-                    <div class="metric-value" style="color: #3B82F6;">{total_buyers:,}</div>
-                    <div class="metric-desc">位採購人員名下有需審查品項</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r1_col3:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #8B5CF6;">
-                    <div class="metric-title">影響品牌總數 (Brands)</div>
-                    <div class="metric-value" style="color: #8B5CF6;">{total_brands:,}</div>
-                    <div class="metric-desc">個品牌包含需審查商品</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r1_col4:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #10B981;">
-                    <div class="metric-title">影響SKU總數</div>
-                    <div class="metric-value" style="color: #10B981;">{total_skus:,}</div>
-                    <div class="metric-desc">個包含需審查商品(SKUs)</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-
-            # ── Row 2: Safety 分類（8 卡後半）──
-            r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
-            with r2_col1:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #F59E0B;">
-                    <div class="metric-title">Overstock 分類行數</div>
-                    <div class="metric-value" style="color: #F59E0B;">{cat_overstock:,}</div>
-                    <div class="metric-desc">庫存過剩分類行數</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r2_col2:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #EC4899;">
-                    <div class="metric-title">OOS 分類行數</div>
-                    <div class="metric-value" style="color: #EC4899;">{cat_oos:,}</div>
-                    <div class="metric-desc">缺貨分類行數</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r2_col3:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #06B6D4;">
-                    <div class="metric-title">Safety 調整行數</div>
-                    <div class="metric-value" style="color: #06B6D4;">{cat_balanced:,}</div>
-                    <div class="metric-desc">Balanced (Safety Adjusted) 行數</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r2_col4:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #8B5CF6;">
-                    <div class="metric-title">Safety 調整總量</div>
-                    <div class="metric-value" style="color: #8B5CF6;">{safety_change_total:,}</div>
-                    <div class="metric-desc">Safety Qty Change 總和</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-
-            # ── Row 3: 調貨觸發與需求（8 卡前半）──
-            r3_col1, r3_col2, r3_col3, r3_col4 = st.columns(4)
-            with r3_col1:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #f59e0b;">
-                    <div class="metric-title">需要調貨列數</div>
-                    <div class="metric-value" style="color: #f59e0b;">{need_rows:,}</div>
-                    <div class="metric-desc">符合調貨條件的 Tourist 明細列數</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r3_col2:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #f97316;">
-                    <div class="metric-title">需調貨 SKU 數</div>
-                    <div class="metric-value" style="color: #f97316;">{need_skus:,}</div>
-                    <div class="metric-desc">符合調貨條件的 SKU 總數（已刪除重複）</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r3_col3:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #3b82f6;">
-                    <div class="metric-title">調入需求量</div>
-                    <div class="metric-value" style="color: #3b82f6;">{total_demand:,}</div>
-                    <div class="metric-desc">補到 14 日周轉的總需求（件）</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r3_col4:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #10b981;">
-                    <div class="metric-title">實際調入量</div>
-                    <div class="metric-value" style="color: #10b981;">{total_actual:,}</div>
-                    <div class="metric-desc">NT 優先、Mix 補足後的總調入（件）</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-
-            # ── Row 4: 調貨分配（8 卡後半）──
-            r4_col1, r4_col2, r4_col3, r4_col4 = st.columns(4)
-            with r4_col1:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #8b5cf6;">
-                    <div class="metric-title">Non Tourist 轉出量</div>
-                    <div class="metric-value" style="color: #8b5cf6;">{nt_transfer:,}</div>
-                    <div class="metric-desc">優先由 Non Tourist 店舖轉出（件）</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r4_col2:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #06b6d4;">
-                    <div class="metric-title">Mix 轉出量</div>
-                    <div class="metric-value" style="color: #06b6d4;">{mix_transfer:,}</div>
-                    <div class="metric-desc">NT 不足時由 Mix 店舖補足（件）</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r4_col3:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #f97316;">
-                    <div class="metric-title">無法足額缺口</div>
-                    <div class="metric-value" style="color: #f97316;">{total_gap:,}</div>
-                    <div class="metric-desc">來源可轉出量不足的缺口（件）</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r4_col4:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #64748b;">
-                    <div class="metric-title">總明細行數</div>
-                    <div class="metric-value" style="color: #64748b;">{total_raw_rows:,}</div>
-                    <div class="metric-desc">混合模式 RAW 總行數</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-
-            # ── Row 5: 調貨反饋 Safety（4 卡）──
-            r5_col1, r5_col2, r5_col3, r5_col4 = st.columns(4)
-            with r5_col1:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #3b82f6;">
-                    <div class="metric-title">調貨前 Safety 缺口</div>
-                    <div class="metric-value" style="color: #3b82f6;">{gap_before:,}</div>
-                    <div class="metric-desc">調貨前 max(0, Recommend − 庫存) 合計（件）</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r5_col2:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ef4444;">
-                    <div class="metric-title">調貨後 Safety 缺口</div>
-                    <div class="metric-value" style="color: #ef4444;">{gap_after:,}</div>
-                    <div class="metric-desc">調貨後 max(0, Recommend − 調貨後庫存) 合計（件）</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r5_col3:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: {_imp_color};">
-                    <div class="metric-title">Safety 缺口改善量</div>
-                    <div class="metric-value" style="color: {_imp_color};">{improved:,}</div>
-                    <div class="metric-desc">{_imp_desc}</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with r5_col4:
-                st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #64748b;">
-                    <div class="metric-title">仍有缺口 SKU 數</div>
-                    <div class="metric-value" style="color: #64748b;">{gap_skus_after:,}</div>
-                    <div class="metric-desc">調貨後仍有 Safety 缺口的 SKU 數</div>
-                </div>
-                """, unsafe_allow_html=True)
+            for _row_m in _hyb_rows:
+                _cols = st.columns(4)
+                for _c, (_name, _val, _desc, _color) in zip(_cols, _row_m):
+                    with _c:
+                        st.markdown(f"""
+                        <div class="metric-card" style="border-left-color: #{_color};">
+                            <div class="metric-title">{_name}</div>
+                            <div class="metric-value" style="color: #{_color};">{_val:,}</div>
+                            <div class="metric-desc">{_desc}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
 
             st.markdown('</div>', unsafe_allow_html=True)
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_s, tab_sc, tab_hyb, tab_raw = st.tabs([
-                "📋 Safety 彙總 (Shop Stock Status)",
-                "🔁 Stock Checking Summary",
-                "🧩 Hybrid Summary（調貨反饋 Safety）",
+            tab_diag, tab_cross, tab_raw = st.tabs([
+                "🧭 調貨診斷 Safety Stock",
+                "📊 診斷摘要（診斷 × Shop Nature）",
                 "📄 RAW 完整明細",
             ])
-            with tab_s:
-                st.markdown("#### 採購人員與品牌之 Safety Stock 交叉統計表")
-                st.dataframe(safety_summary, width='stretch', hide_index=True)
-            with tab_sc:
-                st.markdown("#### SKU 級調貨彙總：各 Shop Nature 庫存/月銷加總、TurnDay、佔比 (%)、調貨提示與調出量")
-                if sc_summary is not None and not sc_summary.empty:
-                    st.dataframe(sc_summary, width='stretch', hide_index=True)
-                    st.caption(f"共 {len(sc_summary):,} 個 SKU（按 Brand / SKU 排序）。")
+            with tab_diag:
+                st.markdown("#### 店舖×SKU 逐列診斷（需要調入／實際轉出／可轉出未使用，14 日周轉線基準）")
+                if diagnosis is not None and not diagnosis.empty:
+                    st.dataframe(diagnosis, width='stretch', hide_index=True)
+                    st.caption(f"共 {len(diagnosis):,} 列（按 Brand / SKU / 事件類型 / Site Code 排序）。")
                 else:
                     st.info("無符合資料")
-            with tab_hyb:
-                st.markdown("#### SKU 級調貨前後 Safety 對照（調貨後庫存 = 原始 + 實際調入 − 轉出）")
-                if hybrid_summary is not None and not hybrid_summary.empty:
-                    st.dataframe(hybrid_summary, width='stretch', hide_index=True)
+            with tab_cross:
+                st.markdown("#### Safety 診斷 × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計）")
+                if diag_summary is not None and not diag_summary.empty:
+                    st.dataframe(diag_summary, width='stretch', hide_index=True)
                 else:
                     st.info("無符合資料")
             with tab_raw:
-                st.markdown("#### RAW 原始資料（反饋欄位已附於每一列）")
+                st.markdown("#### RAW 原始資料（診斷欄位已附於每一列）")
                 _display = raw_df.copy()
-                _hyb_cols = ["調貨後庫存", "調貨前 Safety 缺口", "調貨後 Safety 缺口", "調貨後 TurnDay",
+                _hyb_cols = ["事件類型", "Safety 診斷", "14日周轉所需量", "建議 Safety 設定值", "Safety 建議調整量",
+                             "調貨後庫存", "調貨後 TurnDay",
                              "需要調貨", "調入需求量 (補到14日)", "實際調入量", "調入缺口",
                              "可轉出貨量 (Mix)", "可轉出貨量 (Non Tourist)", "轉出量", "調貨來源 (Site Code)"]
                 _avail_hyb = [c for c in _hyb_cols if c in _display.columns]
                 _base = [c for c in ["Shop Nature", "Site Code", "Shop Name", "SKU", "SKU Desc",
-                                     "Adj. Safety Stock", "Recommend Safety Stock", "Shop Stock Qty (CM)",
+                                     "Adj. Safety Stock", "Shop Stock Qty (CM)",
                                      "Sold Qty (P90D)", "D001 Net Stock Qty (CM)"] if c in _display.columns]
                 if _base:
                     _rest = [c for c in _display.columns if c not in _base and c not in _avail_hyb]

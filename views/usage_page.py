@@ -175,21 +175,22 @@ Tourist 缺貨、Mix/NT 調撥計算：
 
     ("🔀 Safety Stock x NetStock Review",
      """
-- 同一次執行「Safety Stock Review × Stock Checking」雙引擎，並以調貨結果反饋 Safety 診斷（**不改寫** Recommend Safety Stock）
-- Safety 段沿用現行公式（Overstock Cap × OOS Floor、參數全可調）；調貨段沿用現行規則（14 日目標、NT 優先、D001/TurnDay 門檻）
-- 反饋欄位：調貨後庫存 = 原始 + 實際調入 − 轉出；調貨前/後 Safety 缺口 = max(0, Recommend Safety Stock − 庫存)；調貨後 TurnDay = 調貨後庫存 ÷ 月銷 × 30.5
-- Shop Nature 固定全三種；Other/空白/大小寫差異一律正規化為 Non Tourist；混合必要欄位嚴格檢核
-- 輸出：RAW + Safety（Shop Stock Status / By Shop / SUMMARY / 數據分析摘要）+ 調貨（Summary / 調貨分析摘要）+ Hybrid Summary 共 8 個工作表
+- 以「調貨事件」為入口診斷 Safety Stock 設定是否為成因（**14 日周轉線基準**，與調貨邏輯同口徑）
+- 調貨段沿用 Stock Checking 規則（14 日目標、NT 優先→Mix 補足、D001/TurnDay 門檻）；不再執行 Safety Stock Review 引擎（無建議值 / Rate / MTD 參數）
+- Tourist 需調入列：現有 Adj. Safety Stock < 14日周轉所需量 → 「Safety 設定不足」；Mix / Non Tourist 有貨可轉出列（實際轉出或可轉出未使用）：現有設定 > 所需量 → 「Safety 設定過高」；建議 Safety 設定值 = 所需量
+- Shop Nature 固定全三種；Other/空白/大小寫差異一律正規化為 Non Tourist；混合必要欄位嚴格檢核（不再要求 Sold Qty (CM - MTD)）
+- 輸出：RAW（全部欄位 + 診斷欄）/ 調貨診斷 Safety Stock（店舖×SKU 主表）/ 診斷摘要（指標卡 + 診斷 × Shop Nature 交叉表）共 3 個工作表
      """,
      """
-合併兩套既有引擎，調貨結果只反饋為 Safety 診斷：
-1. **Safety 段** = 與 Safety Stock Review 完全同公式（X/Y、Projected、Safety 只增或加減、New SKU 保護、ND 加註），參數（MTD 日期 / Overstock×OOS Rate / Safety Qty 模式）全數開放
-2. **調貨段** = 與 Stock Checking 完全同規則（SKU 級加總 TurnDay 門檻、D001 門檻、14 日需求/供應、NT 優先→Mix 補足、需求量大→小）
-3. **反饋（不改寫 Safety）** = 調貨後庫存 = Shop Stock Qty (CM) + 實際調入量 − 轉出量；調貨前 Safety 缺口 = max(0, Recommend Safety Stock − 原始庫存)；調貨後 Safety 缺口 = max(0, Recommend Safety Stock − 調貨後庫存)；調貨後 TurnDay = 調貨後庫存 ÷ Shop Monthly Sold Qty (P90D) × 30.5（月銷 0 留空）
-4. **Shop Nature** = 固定三種；Other/空白/大小寫差異一律正規化為 Non Tourist，映射列數列 warning；不做 Nature 篩選（避免破壞調貨供需母體）
-5. **輸入檢核** = 基礎四欄 + Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D) / Sold Qty (CM - MTD) 皆為混合必要欄位，缺任一即停止；D001 沿用 Net→Stock fallback，兩者皆缺視為 0+warning
-6. **調貨目標固定 14 日**（沿用現行規則），不另開第三套可調目標
-7. **輸出 8 工作表** = RAW / Shop Stock Status / By Shop / SUMMARY / Safety Stock 數據分析摘要 / Summary（調貨）/ 調貨分析摘要 / Hybrid Summary（調貨反饋 Safety：SKU 級調貨前後庫存、Safety 缺口前/後、改善件數、仍有缺口）
+調貨事件診斷 Safety 設定：
+1. **調貨段** = 與 Stock Checking 完全同規則（SKU 級加總 TurnDay 門檻、D001 門檻、14 日需求/供應、NT 優先→Mix 補足、需求量大→小）
+2. **診斷基準** = 14日周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 14)（無銷售列為 0）；診斷線固定 14 日，不隨調貨觸發門檻（可調）變動
+3. **事件列與診斷** = ①「需要調入」：Tourist 列且需要調貨=是——現有 Adj. Safety Stock < 所需量 → 「Safety 設定不足」，否則「設定正常—缺貨非設定因素」；②「實際轉出」／「可轉出未使用」：已標示調貨 SKU 的 Mix / Non Tourist 列且轉出量 > 0 或可轉出貨量 > 0——現有設定 > 所需量 → 「Safety 設定過高」，否則「設定正常—過剩非設定因素」；等於邊界一律視為正常；未標示調貨的 SKU 不入診斷
+4. **建議調整** = 建議 Safety 設定值 = 14日周轉所需量（僅「不足／過高」列）；Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少；正常列留空）；Adj. Safety Stock 空白或非數值時診斷視為 0 並列 warning
+5. **上下文欄位** = 調貨後庫存 = Shop Stock Qty (CM) + 實際調入量 − 轉出量；調貨後 TurnDay = 調貨後庫存 ÷ Shop Monthly Sold Qty (P90D) × 30.5（月銷 0 留空）
+6. **Shop Nature** = 固定三種；Other/空白/大小寫差異一律正規化為 Non Tourist，映射列數列 warning；不做 Nature 篩選（避免破壞調貨供需母體）
+7. **輸入檢核** = 基礎四欄 + Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D) 皆為混合必要欄位，缺任一即停止；D001 沿用 Net→Stock fallback，兩者皆缺視為 0+warning
+8. **輸出 3 工作表** = RAW（全部欄位 + 14日周轉所需量 / 事件類型 / Safety 診斷 / 建議 Safety 設定值 / Safety 建議調整量 / 調貨後庫存 / 調貨後 TurnDay，非事件列留空）/ 調貨診斷 Safety Stock（店舖×SKU 主表，按 Brand / SKU / 事件類型 / Site Code 排序）/ 診斷摘要（指標卡 12 項 + Safety 診斷 × Shop Nature 交叉表：列數 / SKU 數 / 建議調整量合計，含總計列）
      """),
 ]
 
