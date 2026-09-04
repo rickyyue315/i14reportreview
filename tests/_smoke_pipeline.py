@@ -90,6 +90,11 @@ def main():
     generate_excel_hybrid(r, h_sc, h_diag, h_diag_om, h_cross, h_stats)
     print("OK Hybrid Diagnosis   | rows=%d need=%d diag=%d skew=%d warnings=%d" % (len(r), h_stats["need_rows"], len(h_diag), int((h_sc["存貨偏重提示"].fillna("").astype(str) != "").sum()) if not h_sc.empty else 0, len(h_w)))
 
+    # ── Safety Stock x NetStock Review（允許雙向調貨）──
+    r2, h_sc2, h_diag2, h_diag2_om, h_cross2, h_stats2, h_w2 = transform_hybrid(df, bidirectional=True)
+    generate_excel_hybrid(r2, h_sc2, h_diag2, h_diag2_om, h_cross2, h_stats2)
+    print("OK Hybrid Bidirectional | rows=%d need=%d diag=%d tourist_out=%d warnings=%d" % (len(r2), h_stats2["need_rows"], len(h_diag2), h_stats2["tourist_transfer"], len(h_w2)))
+
     # ── Stock Impact Analysis ──
     _, si_brand, si_buyer, si_cat, _, si_alloc, si_diag, si_inv, si_mly, si_raw, si_warns = transform_stock_impact(
         df, warehouse_only=False, stock_threshold=300

@@ -12,7 +12,7 @@
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
 | Stock Checking 分析 | D001 倉庫少貨且 Tourist 鋪 Turnday < 門檻 → 標示調貨需求，從 Mix / Non Tourist 店分配可轉出貨量（Non Tourist 優先）；Summary 另以佔比差額標示「存貨偏重」的 Nature（存貨集中但銷量不高） |
-| Safety Stock x NetStock | 沿用 Stock Checking 調貨引擎，以 14 日周轉線 Review 調貨事件是否因 Safety Stock 設定不足／過高，輸出店舖×SKU Review 主表與建議調整量；調貨分不限OM與同OM兩套對照（OM 限制不影響 Safety 建議） |
+| Safety Stock x NetStock | 沿用 Stock Checking 調貨引擎，以 14 日周轉線 Review 調貨事件是否因 Safety Stock 設定不足／過高，輸出店舖×SKU Review 主表與建議調整量；調貨分不限OM與同OM兩套對照（OM 限制不影響 Safety 建議）；可勾選「允許雙向調貨」讓任何 Nature 缺貨皆可調入、遊客區店舖亦可轉出 |
 | 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式、調貨門檻 |
 | 視覺化看板 | 即時顯示統計指標與交叉分析表 |
 | Excel 導出 | 一鍵下載含 RAW、Shop Stock Status、By Shop、分析摘要之美化報表 |
@@ -135,7 +135,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 
 ### Stock Checking（調貨檢查）
 
-上傳 `By SKUxShop_Stock Checking_<日期>.xlsx`（D001 倉庫少貨且遊客區店舖缺貨時的檢查），計算 Tourist 鋪 SKU 的調貨需求，並從 Mix / Non Tourist 鋪分配可轉出貨量：
+上傳 `By SKUxShop_Stock Checking_<日期>.xlsx`（D001 倉庫少貨且遊客區店舖缺貨時的檢查），計算 Tourist 鋪 SKU 的調貨需求，並從 Mix / Non Tourist 鋪分配可轉出貨量（調貨方向固定單向——只向遊客區調入；「允許雙向調貨」只適用於 Safety Stock x NetStock Review 模式）：
 
 1. **觸發條件（SKU 級，同時符合才標示）** — 該 SKU 的「Tourist 加總 TurnDay」（各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5，與 Summary 同口徑）< 門檻（預設 14 日，UI 可調），且 D001 Net Stock Qty (CM) < 門檻（預設 100 件，UI 可調），且 Mix / Non Tourist 至少一個 Nature 的加總 TurnDay ≥ 門檻（有貨可調）；Tourist 加總 TurnDay ≥ 門檻的 SKU 一律無須調貨；Mix 與 Non Tourist 加總 TurnDay 皆低於門檻時視為無貨可調、不標示。只有已標示 SKU 才在 RAW 計算調貨數量（個別 Tourist 店補到 14 日周轉的需求 > 0）
 2. **調入需求量** = ceil(P90D / 90 × 14) − Shop Stock Qty (CM)，補到 14 日周轉
@@ -153,10 +153,11 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 以「調貨事件」為入口，Review Safety Stock 設定是否為缺貨／過剩的成因（**14 日周轉線基準**，與調貨邏輯同口徑）；不再執行 Safety Stock Review 引擎（無建議值 / Rate / MTD 參數）：
 
 1. **調貨段** — 與 Stock Checking 完全同規則：SKU 級 Tourist 加總 TurnDay < 門檻（預設 14）且 D001 < 門檻（預設 100）且有貨可調 → 標示需要調貨；補到 14 日周轉，Non Tourist 優先再由 Mix 補足（目標日數固定 14）。分配跑兩遍：**不限OM**（現行契約欄位）與**同OM**（來源店須與需求店同 OM 才可轉出，欄位加「(同OM)」後綴；公司規定某些情況只允許同 OM 店舖調貨，例 Ivy HBA6 → Ivy HB94）；來源店與需求店同為一店（Site Code 相同）時一律排除，防止自我調貨
+   - **允許雙向調貨（UI 勾選，預設關閉）** — 針對「存貨偏重遊客區而其他區域缺貨」場景：任何 Nature 缺貨（該 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且個別店補到 14 日需求 > 0）且其他任一 Nature 有貨（加總 TurnDay ≥ 門檻）即標示需要調貨；RAW 另加「可轉出貨量 (Tourist)」，遊客區店舖亦可轉出，來源優先序固定 **Non Tourist → Mix → Tourist**（需求 Nature 自身除外）；缺貨 Nature 的超額列一律不可轉出（池級歸零）；未勾選時輸出欄位與數值與單向完全一致。雙向只適用於本模式，Stock Checking 仍為單向（只向遊客區調入）
 2. **Review 基準** — `14日周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 14)`（無銷售列為 0）；Review 線固定 14 日，不隨調貨觸發門檻（可調）變動
 3. **事件列與 Review**：
-   - `需要調入`（Tourist 列且需要調貨=是）：現有 Adj. Safety Stock < 所需量 → `Safety 設定不足`；否則 `設定正常—缺貨非設定因素`
-   - `實際轉出`／`可轉出未使用`（已標示調貨 SKU 的 Mix / Non Tourist 列，轉出量 > 0 或可轉出貨量 > 0）：現有設定 > 所需量 → `Safety 設定過高`；否則 `設定正常—過剩非設定因素`；等於邊界一律視為正常；未標示調貨的 SKU 不入 Review
+   - `需要調入`（需要調貨=是 的列；單向只出現在 Tourist，雙向任何 Nature）：現有 Adj. Safety Stock < 所需量 → `Safety 設定不足`；否則 `設定正常—缺貨非設定因素`
+   - `實際轉出`／`可轉出未使用`（已標示調貨 SKU 的有貨列——單向為 Mix / Non Tourist 列，雙向含 Tourist 列——轉出量 > 0 或可轉出貨量 > 0）：現有設定 > 所需量 → `Safety 設定過高`；否則 `設定正常—過剩非設定因素`；等於邊界一律視為正常；未標示調貨的 SKU 不入 Review
    - `建議 Safety 設定值 = 14日周轉所需量`（僅不足／過高列）；`Safety 建議調整量 = 建議值 − 現有設定`（正=增加、負=減少）
 4. **上下文欄位** — `調貨後庫存 = Shop Stock Qty (CM) + 實際調入量 − 轉出量`；`調貨後 TurnDay = 調貨後庫存 ÷ Shop Monthly Sold Qty (P90D) × 30.5`（月銷 0 留空）；同OM變體另存「(同OM)」後綴欄。OM 限制只影響調貨分配與事件標籤（實際轉出／可轉出未使用），**Safety Review 與建議調整量兩變體完全相同**（不受調貨限制影響）
 5. **OM 欄位** — 選填；來源檔案缺「OM」欄時「同OM調貨」退化為與不限OM相同（全部店舖同一群組）並列 warning；OM 空白列歸入「(未填OM)」群組
@@ -164,7 +165,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 7. **輸入檢核** — 混合必要欄位嚴格檢核：基礎四欄 + Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D)，缺任一即停止；欄名前後空格自動正規化；Shop Stock Qty (CM) 必須為整數件數（小數即拒絕）；D001 逐列以 Net → Stock 回補（空白視為 0），月銷單列空白以 Sold Qty (P90D) 換算，兩者皆列 warning；Adj. Safety Stock 空白或非數值時，Review 視為 0 並列 warning；「Site Code × SKU」重複列與同一店舖 Shop Nature 不一致列 warning 提示（正常輸入應為一店×一SKU一列）
 8. **RAW 稽核欄位** — 新增 `D001 Effective Stock Qty (CM)`（實際採用的 D001 值）與原始 D001 Stock，以便核查 fallback
 
-輸出包含 **5 個工作表**：RAW（全部欄位 + Review 欄 + 同OM調貨欄，非事件列留空）、Summary（SKU 級彙總，與 Stock Checking 同格式：各 Nature 庫存/月銷加總、TurnDay、佔比、強制調貨提示、存貨偏重提示）、調貨 Review Safety Stock (不限OM) 與 調貨 Review Safety Stock (同OM)（店舖×SKU 逐列主表，含 Site Code／OM／Shop Nature，按 Brand / SKU / 事件類型 / Site Code 排序；Safety Review 欄兩表相同）、Review 摘要（指標卡 16 項（含同OM對照一排）+ Safety Review × Shop Nature 交叉表：列數 / SKU 數 / 建議調整量合計，含總計列）。
+輸出包含 **5 個工作表**：RAW（全部欄位 + Review 欄 + 同OM調貨欄，非事件列留空；雙向時另含「可轉出貨量 (Tourist)」）、Summary（SKU 級彙總，與 Stock Checking 同格式：各 Nature 庫存/月銷加總、TurnDay、佔比、強制調貨提示、存貨偏重提示；雙向時末尾另加「由Tourist 店舖預計調出數量」欄）、調貨 Review Safety Stock (不限OM) 與 調貨 Review Safety Stock (同OM)（店舖×SKU 逐列主表，含 Site Code／OM／Shop Nature，按 Brand / SKU / 事件類型 / Site Code 排序；Safety Review 欄兩表相同）、Review 摘要（指標卡——第 4 排為同OM調貨對照、雙向時另加第 5 排 Tourist 轉出量 + Safety Review × Shop Nature 交叉表：列數 / SKU 數 / 建議調整量合計，含總計列）。
 
 ## Excel 輸出結構
 
@@ -178,7 +179,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 | Summary | SKU 級調貨彙總 — 庫存/月銷加總、TurnDay、佔比、調貨提示、存貨偏重提示（庫存佔比 ≥40% 且較銷量佔比高 ≥20 個百分點的 Nature）（Stock Checking 及混合模式） |
 | 調貨分析摘要 | 調貨 Dashboard — 需求/調入/轉出/缺口（Stock Checking） |
 | 調貨 Review Safety Stock (不限OM)／(同OM) | 店舖×SKU Review 主表兩版（僅混合模式）— 需要調入／實際轉出／可轉出未使用事件列，14 日周轉線 Review 與建議調整量；同OM版來源店須與需求店同 OM |
-| Review 摘要 | 混合模式 — 指標卡 16 項（第 4 排為同OM調貨對照）+ Safety Review × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計，含總計列） |
+| Review 摘要 | 混合模式 — 指標卡（第 4 排為同OM調貨對照；雙向調貨時另加第 5 排 Tourist 轉出量）+ Safety Review × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計，含總計列） |
 
 ## 版本
 

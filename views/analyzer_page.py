@@ -558,25 +558,41 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **14 日周轉線**Review Safety Stock 設定 — Tourist 需調入列若現有設定低於所需量 → 「Safety 設定不足」；Mix / Non Tourist 有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。另附 SKU 級 **Summary**（各 Nature 庫存/銷量佔比與「存貨偏重提示」）。")
+        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **14 日周轉線**Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。另附 SKU 級 **Summary**（各 Nature 庫存/銷量佔比與「存貨偏重提示」）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
             turnday_threshold = st.number_input(
                 "🔁 Tourist 加總 TurnDay 門檻 (日)",
                 min_value=1, max_value=365, value=14, step=1, key="hy_ttd",
-                help="該 SKU 的 Tourist 加總 TurnDay（庫存加總 ÷ 月銷加總 × 30.5）低於此值時才列入調貨候選。Review 基準線固定 14 日，不隨此門檻變動。"
+                help="該 SKU 的 Tourist 加總 TurnDay（庫存加總 ÷ 月銷加總 × 30.5）低於此值時才列入調貨候選；"
+                     "勾選雙向調貨後，此門檻同樣套用於各 Nature 的加總 TurnDay 判定。Review 基準線固定 14 日，不隨此門檻變動。"
             )
         with sc_top[1]:
             d001_threshold = st.number_input(
                 "🏭 D001 庫存門檻 (件)",
                 min_value=0, max_value=1000000, value=100, step=10, key="hy_d001",
-                help="當 D001 Net Stock Qty (CM) 低於此值且 Tourist 加總 TurnDay 低於門檻時，才標示需要調貨。"
+                help="當 D001 Net Stock Qty (CM) 低於此值且需求 Nature 加總 TurnDay 低於門檻時，才標示需要調貨。"
             )
-        st.caption(
-            f"🔁 調貨觸發（同 Stock Checking）：該 SKU 的 **Tourist 加總 TurnDay < {int(turnday_threshold)} 日** 且 **D001 < {int(d001_threshold)} 件**，"
-            "且 Mix / Non Tourist 至少一個 Nature 加總 TurnDay ≥ 門檻（有貨可調）。調入補到 14 日周轉，NT 優先再由 Mix 補足。"
+        bidirectional = st.checkbox(
+            "🔁 允許雙向調貨（任何 Nature 缺貨皆可調入，遊客區店舖亦可轉出）",
+            value=False, key="hy_bidir",
+            help="預設關閉：維持現行規則（只向遊客區調入，來源 Mix / Non Tourist）。"
+                 "開啟後任何 Nature 加總 TurnDay 低於門檻且其他任一 Nature 有貨即標示需要調貨；"
+                 "新增「可轉出貨量 (Tourist)」與 Summary「由Tourist 店舖預計調出數量」欄位，"
+                 "來源優先序固定 Non Tourist → Mix → Tourist。"
         )
+        if bidirectional:
+            st.caption(
+                f"🔁 雙向調貨觸發：該 SKU **任一 Nature 加總 TurnDay < {int(turnday_threshold)} 日** 且 **D001 < {int(d001_threshold)} 件**，"
+                "且**其他任一 Nature 加總 TurnDay ≥ 門檻**（有貨可調）→ 該 Nature 缺貨店舖標示需要調貨；"
+                "調入補到 14 日周轉，來源固定 Non Tourist → Mix → Tourist 依序轉出（同 Nature 除外）。"
+            )
+        else:
+            st.caption(
+                f"🔁 調貨觸發（同 Stock Checking）：該 SKU 的 **Tourist 加總 TurnDay < {int(turnday_threshold)} 日** 且 **D001 < {int(d001_threshold)} 件**，"
+                "且 Mix / Non Tourist 至少一個 Nature 加總 TurnDay ≥ 門檻（有貨可調）。調入補到 14 日周轉，NT 優先再由 Mix 補足。"
+            )
         st.caption(
             "🧭 Review 基準：14日周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 14)。調入列現有設定 < 所需量 → 「Safety 設定不足」；"
             "轉出列現有設定 > 所需量 → 「Safety 設定過高」；建議 Safety 設定值 = 所需量（僅不足／過高列給建議）。"
@@ -602,6 +618,7 @@ if uploaded_file is not None:
                     df_input,
                     turnday_threshold=int(turnday_threshold),
                     d001_threshold=int(d001_threshold),
+                    bidirectional=bool(bidirectional),
                     progress_callback=_cb_transform,
                 )
                 buf = generate_excel_hybrid(
@@ -707,7 +724,8 @@ if uploaded_file is not None:
                              "調貨後庫存", "調貨後 TurnDay",
                              "實際調入量 (同OM)", "調入缺口 (同OM)", "轉出量 (同OM)", "調貨來源 (同OM)", "調貨後庫存 (同OM)", "調貨後 TurnDay (同OM)",
                              "需要調貨", "調入需求量 (補到14日)", "實際調入量", "調入缺口",
-                             "可轉出貨量 (Mix)", "可轉出貨量 (Non Tourist)", "轉出量", "調貨來源 (Site Code)"]
+                             "可轉出貨量 (Mix)", "可轉出貨量 (Non Tourist)", "可轉出貨量 (Tourist)",
+                             "轉出量", "調貨來源 (Site Code)"]
                 _avail_hyb = [c for c in _hyb_cols if c in _display.columns]
                 _base = [c for c in ["Shop Nature", "Site Code", "OM", "Shop Name", "SKU", "SKU Desc",
                                      "Adj. Safety Stock", "Shop Stock Qty (CM)",

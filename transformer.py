@@ -931,7 +931,7 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
     _auto_width(ws)
 
 
-def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None, progress_pct=0.95, row3_metrics=None, row4_metrics=None):
+def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None, progress_pct=0.95, row3_metrics=None, row4_metrics=None, row5_metrics=None):
     ws.merge_cells("A1:D1")
     title_cell = ws.cell(row=1, column=1, value=title)
     title_cell.font = Font(bold=True, size=14, color="1E40AF")
@@ -942,6 +942,8 @@ def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc
         row_offsets.append((11, row3_metrics))
     if row4_metrics:
         row_offsets.append((15, row4_metrics))
+    if row5_metrics:
+        row_offsets.append((19, row5_metrics))
 
     for row_offset, metrics in row_offsets:
         for i, (name, value, desc, color) in enumerate(metrics):
@@ -5400,6 +5402,7 @@ def _build_hybrid_diagnosis(raw: pd.DataFrame, variant: str = "free") -> pd.Data
     df["可轉出貨量"] = (
         _safe_numeric(df.get("可轉出貨量 (Mix)", _safe_default_series(0, df.index)))
         + _safe_numeric(df.get("可轉出貨量 (Non Tourist)", _safe_default_series(0, df.index)))
+        + _safe_numeric(df.get("可轉出貨量 (Tourist)", _safe_default_series(0, df.index)))
     ).astype(int)
     df["_evt_key"] = df["事件類型"].map(_HYBRID_EVENT_ORDER).fillna(9)
     df = df.sort_values(["Brand", "SKU", "_evt_key", "Site Code"], kind="stable")
@@ -5467,6 +5470,7 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
     diag = raw.get("Safety Review", _safe_default_series("", raw.index)).fillna("").astype(str)
     chg = pd.to_numeric(raw.get("Safety 建議調整量", _safe_default_series(np.nan, raw.index)), errors="coerce")
     nature = raw.get("Shop Nature", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
+    bidirectional = "可轉出貨量 (Tourist)" in raw.columns
     under = diag == _HYBRID_DIAG_UNDER
     over = diag == _HYBRID_DIAG_OVER
     donor = evt.isin([_HYBRID_EVENT_DONATED, _HYBRID_EVENT_DONOR])
@@ -5478,10 +5482,13 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
         "total_gap": int(_safe_numeric(raw.get("調入缺口", _safe_default_series(0, raw.index))).sum()),
         "nt_transfer": int(_safe_numeric(raw.loc[nature == "Non Tourist", "轉出量"]).sum()) if "轉出量" in raw.columns else 0,
         "mix_transfer": int(_safe_numeric(raw.loc[nature == "Mix", "轉出量"]).sum()) if "轉出量" in raw.columns else 0,
+        "tourist_transfer": int(_safe_numeric(raw.loc[nature == "Tourist", "轉出量"]).sum()) if bidirectional and "轉出量" in raw.columns else 0,
         "total_actual_om": int(_safe_numeric(raw.get("實際調入量 (同OM)", _safe_default_series(0, raw.index))).sum()),
         "total_gap_om": int(_safe_numeric(raw.get("調入缺口 (同OM)", _safe_default_series(0, raw.index))).sum()),
         "nt_transfer_om": int(_safe_numeric(raw.loc[nature == "Non Tourist", "轉出量 (同OM)"]).sum()) if "轉出量 (同OM)" in raw.columns else 0,
         "mix_transfer_om": int(_safe_numeric(raw.loc[nature == "Mix", "轉出量 (同OM)"]).sum()) if "轉出量 (同OM)" in raw.columns else 0,
+        "tourist_transfer_om": int(_safe_numeric(raw.loc[nature == "Tourist", "轉出量 (同OM)"]).sum()) if bidirectional and "轉出量 (同OM)" in raw.columns else 0,
+        "bidirectional": bool(bidirectional),
         "donor_rows": int(donor.sum()),
         "under_rows": int(under.sum()),
         "under_skus": int(raw.loc[under, "SKU"].nunique()) if under.any() else 0,
@@ -5495,23 +5502,28 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
 
 
 def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
-    """調貨 Review 指標卡（4 排 × 4 卡，與 Streamlit Hybrid Dashboard 同口徑；
-    第 4 排為同OM調貨對照，Safety Review 建議不受 OM 限制影響）。
-    回傳 (row1, row2, row3, row4) 供 _write_metric_cards 使用；stats 缺失時由 raw 自動匯總。"""
+    """調貨 Review 指標卡（每排 4 卡，與 Streamlit Hybrid Dashboard 同口徑；
+    第 4 排為同OM調貨對照，Safety Review 建議不受 OM 限制影響；
+    雙向調貨時另加第 5 排 Tourist 轉出量兩卡）。
+    回傳各排指標 list（4 或 5 排）供 _write_metric_cards 使用；stats 缺失時由 raw 自動匯總。"""
     if stats is None:
         stats = _hybrid_stats_from_raw(raw)
 
     def g(key: str) -> int:
         return int(stats.get(key, 0) or 0)
 
+    bidir = bool(stats.get("bidirectional"))
     row1 = [
         ("需調貨 SKU 數", g("need_skus"), "符合調貨條件的 SKU 總數（已刪除重複）", "f97316"),
-        ("需要調入列數", g("need_rows"), "符合調貨條件的 Tourist 店舖×SKU 列數", "f59e0b"),
-        ("轉出來源列數", g("donor_rows"), "實際轉出與可轉出未使用的 Mix / Non Tourist 列數", "8b5cf6"),
+        ("需要調入列數", g("need_rows"),
+         "符合調貨條件的店舖×SKU 列數（任何 Nature 皆可調入）" if bidir else "符合調貨條件的 Tourist 店舖×SKU 列數", "f59e0b"),
+        ("轉出來源列數", g("donor_rows"),
+         "實際轉出與可轉出未使用的各 Nature 列數" if bidir else "實際轉出與可轉出未使用的 Mix / Non Tourist 列數", "8b5cf6"),
         ("調入需求量", g("total_demand"), "補到 14 日周轉的總需求（件）", "3b82f6"),
     ]
     row2 = [
-        ("實際調入量", g("total_actual"), "不限OM：NT 優先、Mix 補足後的總調入（件）", "10b981"),
+        ("實際調入量", g("total_actual"),
+         "不限OM：NT→Mix→Tourist 依序補足後的總調入（件）" if bidir else "不限OM：NT 優先、Mix 補足後的總調入（件）", "10b981"),
         ("無法足額缺口", g("total_gap"), "不限OM：來源可轉出量不足的缺口（件）", "ef4444"),
         ("Non Tourist 轉出量", g("nt_transfer"), "不限OM：優先由 Non Tourist 店舖轉出（件）", "8b5cf6"),
         ("Mix 轉出量", g("mix_transfer"), "不限OM：NT 不足時由 Mix 店舖補足（件）", "06b6d4"),
@@ -5528,7 +5540,13 @@ def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
         ("Non Tourist 轉出量 (同OM)", g("nt_transfer_om"), "限同 OM：Non Tourist 店舖轉出（件）", "8b5cf6"),
         ("Mix 轉出量 (同OM)", g("mix_transfer_om"), "限同 OM：Mix 店舖轉出（件）", "06b6d4"),
     ]
-    return row1, row2, row3, row4
+    rows = [row1, row2, row3, row4]
+    if bidir:
+        rows.append([
+            ("Tourist 轉出量", g("tourist_transfer"), "不限OM：由 Tourist 店舖轉出（件）", "f43f5e"),
+            ("Tourist 轉出量 (同OM)", g("tourist_transfer_om"), "限同 OM：Tourist 店舖轉出（件）", "ec4899"),
+        ])
+    return rows
 
 
 def _hybrid_allocate_transfers(
@@ -5540,8 +5558,10 @@ def _hybrid_allocate_transfers(
     nt_avail0: np.ndarray,
     mix_avail0: np.ndarray,
     om_arr: np.ndarray | None = None,
+    tourist_avail0: np.ndarray | None = None,
 ):
-    """調貨分配：按 SKU 彙總需求，Non Tourist 優先 → Mix 補足，需求列按需求量大→小依序分配。
+    """調貨分配：按 SKU 彙總需求，來源池固定 Non Tourist → Mix → Tourist（tourist_avail0
+    為 None 時不設 Tourist 池，即現行單向規則），需求列按需求量大→小依序分配。
     om_arr 非 None 時來源店須與需求列同 OM 才可轉出（同OM調貨）。
     來源店與需求列同為一店（Site Code 相同）時一律排除，防止重複列資料異常造成自我調貨。
     回傳 (actual_np, gap_np, donate_np, desc_np)。"""
@@ -5553,6 +5573,9 @@ def _hybrid_allocate_transfers(
         return actual_np, gap_np, donate_np, desc_np
     nt_avail = np.asarray(nt_avail0, dtype=float).copy()
     mix_avail = np.asarray(mix_avail0, dtype=float).copy()
+    tourist_avail = (
+        np.asarray(tourist_avail0, dtype=float).copy() if tourist_avail0 is not None else None
+    )
     for sku in set(sku_arr[need_mask]):
         sku_mask = sku_arr == sku
         need_rows = np.nonzero(sku_mask & need_mask)[0]
@@ -5561,12 +5584,16 @@ def _hybrid_allocate_transfers(
         order = np.argsort(-demand[need_rows], kind="stable")
         remain_nt = {p: float(nt_avail[p]) for p in nt_src}
         remain_mix = {p: float(mix_avail[p]) for p in mix_src}
+        pools = [remain_nt, remain_mix]
+        if tourist_avail is not None:
+            tourist_src = [int(p) for p in np.nonzero(sku_mask & (tourist_avail > 0))[0]]
+            pools.append({p: float(tourist_avail[p]) for p in tourist_src})
         for n in order:
             row_pos = int(need_rows[n])
             rem = float(demand[row_pos])
             parts: list[str] = []
             donated_actual = 0
-            for pool in (remain_nt, remain_mix):
+            for pool in pools:
                 for spos in list(pool.keys()):
                     if rem <= 0:
                         break
@@ -5594,6 +5621,7 @@ def transform_hybrid(
     df_input: pd.DataFrame,
     turnday_threshold: int = 14,
     d001_threshold: int = 100,
+    bidirectional: bool = False,
     progress_callback=None,
 ):
     """Safety Stock x NetStock Review 核心轉換（調貨事件 Review Safety 設定）。
@@ -5606,6 +5634,12 @@ def transform_hybrid(
       現有設定 > 所需量 → Safety 設定過高；等於邊界一律視為設定正常。
       建議 Safety 設定值 = 14日周轉所需量（僅不足/過高列），
       Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）。
+    - bidirectional=True（允許雙向調貨，預設 False 維持單向契約）：任何 Nature 缺貨
+      （該 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且列需求 > 0）且其他任一 Nature
+      有貨（加總 TurnDay ≥ 門檻）即標示需要調貨；新增 RAW 欄「可轉出貨量 (Tourist)」，
+      Tourist 列亦可作轉出來源；來源池順序固定 Non Tourist → Mix → Tourist。
+      Review 段對稱擴展：需要調入可出現在任何 Nature 列、實際轉出／可轉出未使用
+      可出現在 Tourist 列（事件與診斷文字不變）。
     - 上下文欄位：調貨後庫存 = 原始 + 實際調入 − 轉出；
       調貨後 TurnDay = 調貨後庫存 ÷ 月銷 × 30.5（月銷 0 留空）。
     - OM 變體：分配跑兩遍——不限OM（契約欄位）與同OM（來源店須與需求店同 OM，
@@ -5711,13 +5745,36 @@ def transform_hybrid(
     demand = np.maximum(0, np.ceil(ideal_14d) - cm_stock_val)
     d001_np = eff_d001.to_numpy(dtype=float)
     ttd_np = pd.Series(sku_tourist_turnday, index=idx).to_numpy(dtype=float)
-    need_mask = (
-        is_tourist
-        & (ttd_np < turnday_threshold)
-        & (d001_np < d001_threshold)
-        & (demand > 0)
-        & (mix_pool_ok | nt_pool_ok)
-    )
+    if bidirectional:
+        # 對稱三向：任何 Nature 缺貨（加總 TurnDay < 門檻）且其他任一 Nature 有貨即為需求方；
+        # Tourist 亦可作轉出來源（來源池順序固定 NT → Mix → Tourist）
+        tourist_pool_ok = sku_tourist_turnday >= turnday_threshold
+        tourist_excess = np.where(
+            tourist_pool_ok,
+            np.where(is_tourist, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0),
+            0,
+        )
+        df["可轉出貨量 (Tourist)"] = tourist_excess.astype(int)
+        mtd_np = pd.Series(sku_mix_turnday, index=idx).to_numpy(dtype=float)
+        ntd_np = pd.Series(sku_nt_turnday, index=idx).to_numpy(dtype=float)
+        need_mask = (
+            (
+                (is_tourist & (ttd_np < turnday_threshold) & (mix_pool_ok | nt_pool_ok))
+                | (is_mix & (mtd_np < turnday_threshold) & (nt_pool_ok | tourist_pool_ok))
+                | (is_nt & (ntd_np < turnday_threshold) & (mix_pool_ok | tourist_pool_ok))
+            )
+            & (d001_np < d001_threshold)
+            & (demand > 0)
+        )
+    else:
+        tourist_excess = np.zeros(len(df))
+        need_mask = (
+            is_tourist
+            & (ttd_np < turnday_threshold)
+            & (d001_np < d001_threshold)
+            & (demand > 0)
+            & (mix_pool_ok | nt_pool_ok)
+        )
     need_series = pd.Series(need_mask, index=idx)
 
     df["需要調貨"] = np.where(need_mask, "是", "")
@@ -5744,11 +5801,14 @@ def transform_hybrid(
     # ── 調貨分配：不限OM（現行契約欄位）＋ 同OM（來源店與需求店同 OM 才可轉出）──
     nt_avail0 = df["可轉出貨量 (Non Tourist)"].to_numpy(dtype=float)
     mix_avail0 = df["可轉出貨量 (Mix)"].to_numpy(dtype=float)
+    tourist_avail0 = df["可轉出貨量 (Tourist)"].to_numpy(dtype=float) if bidirectional else None
     actual_np, gap_np, donate_np, desc_np = _hybrid_allocate_transfers(
-        n_rows, sku_arr, site_arr, need_mask, demand, nt_avail0, mix_avail0
+        n_rows, sku_arr, site_arr, need_mask, demand, nt_avail0, mix_avail0,
+        tourist_avail0=tourist_avail0,
     )
     actual_om, gap_om, donate_om, desc_om = _hybrid_allocate_transfers(
-        n_rows, sku_arr, site_arr, need_mask, demand, nt_avail0, mix_avail0, om_arr=om_arr
+        n_rows, sku_arr, site_arr, need_mask, demand, nt_avail0, mix_avail0, om_arr=om_arr,
+        tourist_avail0=tourist_avail0,
     )
     df["實際調入量"] = actual_np
     df["調入缺口"] = gap_np
@@ -5760,7 +5820,10 @@ def transform_hybrid(
     df["調貨來源 (同OM)"] = desc_om
 
     if not need_mask.any():
-        warnings.append("沒有符合調貨條件的 Tourist SKU（加總 TurnDay < 門檻 且 D001 < 門檻 且補到 14 日周轉的需求 > 0 且有貨可調）。")
+        if bidirectional:
+            warnings.append("沒有符合調貨條件的 SKU（任何 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且補到 14 日周轉的需求 > 0 且有貨可調）。")
+        else:
+            warnings.append("沒有符合調貨條件的 Tourist SKU（加總 TurnDay < 門檻 且 D001 < 門檻 且補到 14 日周轉的需求 > 0 且有貨可調）。")
 
     if progress_callback:
         progress_callback(0.45, "Review Safety 設定...")
@@ -5775,9 +5838,13 @@ def transform_hybrid(
     adj_val = np.nan_to_num(adj_s.to_numpy(dtype=float), nan=0.0)
 
     flagged_skus = set(sku_arr[need_mask])
-    transferable_np = mix_excess + nt_excess
+    transferable_np = mix_excess + nt_excess + (tourist_excess if bidirectional else 0)
     donor_pool = np.isin(sku_arr, list(flagged_skus)) if flagged_skus else np.zeros(n_rows, dtype=bool)
-    donor_mask = (~is_tourist) & donor_pool & ((donate_np > 0) | (transferable_np > 0))
+    if bidirectional:
+        # 雙向：轉出來源可以是任何 Nature（含 Tourist），需求列本身不列為來源
+        donor_mask = (~need_mask) & donor_pool & ((donate_np > 0) | (transferable_np > 0))
+    else:
+        donor_mask = (~is_tourist) & donor_pool & ((donate_np > 0) | (transferable_np > 0))
     donated_mask = donor_mask & (donate_np > 0)
     donor_unused_mask = donor_mask & ~donated_mask
 
@@ -5825,7 +5892,7 @@ def transform_hybrid(
     diagnosis = _build_hybrid_diagnosis(raw)
     diagnosis_om = _build_hybrid_diagnosis(raw, variant="om")
     diag_summary = _build_hybrid_diag_summary(raw)
-    sc_summary = _build_stock_checking_summary(raw)
+    sc_summary = _build_stock_checking_summary(raw, bidirectional=bidirectional)
 
     stats = {
         "need_rows": int(need_series.sum()),
@@ -5835,10 +5902,13 @@ def transform_hybrid(
         "total_gap": int(raw["調入缺口"].sum()),
         "nt_transfer": int(raw.loc[raw["Shop Nature"] == "Non Tourist", "轉出量"].sum()),
         "mix_transfer": int(raw.loc[raw["Shop Nature"] == "Mix", "轉出量"].sum()),
+        "tourist_transfer": int(raw.loc[raw["Shop Nature"] == "Tourist", "轉出量"].sum()) if bidirectional else 0,
         "total_actual_om": int(actual_om.sum()),
         "total_gap_om": int(gap_om.sum()),
         "nt_transfer_om": int(raw.loc[raw["Shop Nature"] == "Non Tourist", "轉出量 (同OM)"].sum()),
         "mix_transfer_om": int(raw.loc[raw["Shop Nature"] == "Mix", "轉出量 (同OM)"].sum()),
+        "tourist_transfer_om": int(raw.loc[raw["Shop Nature"] == "Tourist", "轉出量 (同OM)"].sum()) if bidirectional else 0,
+        "bidirectional": bool(bidirectional),
         "donated_rows_om": int((donor_mask & (donate_om > 0)).sum()),
         "mapped_other_rows": int(mapped_other),
         "donor_rows": int(donor_mask.sum()),
@@ -5918,21 +5988,24 @@ def _write_hybrid_diagnosis_sheet(ws, diagnosis: pd.DataFrame, progress_callback
 def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None,
                                      raw: pd.DataFrame, thin_border, desc_font,
                                      progress_callback=None):
-    """Review 摘要工作表：指標卡 4 排（第 4 排為同OM調貨對照）+ Safety Review × Shop Nature 交叉表（含總計列）。"""
+    """Review 摘要工作表：指標卡 4 排（第 4 排為同OM調貨對照；雙向調貨時另加第 5 排
+    Tourist 轉出量）+ Safety Review × Shop Nature 交叉表（含總計列）。"""
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     bold_font = Font(bold=True, size=11)
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
-    row1, row2, row3, row4 = _hybrid_dashboard_metrics(raw, stats)
+    _rows = _hybrid_dashboard_metrics(raw, stats)
+    row5_metrics = _rows[4] if len(_rows) > 4 else None
     _write_metric_cards(
         ws, "Safety Stock 設定 Review 摘要 (Transfer Diagnosis Dashboard)",
-        row1, row2, thin_border, desc_font, progress_callback,
-        progress_pct=0.80, row3_metrics=row3, row4_metrics=row4,
+        _rows[0], _rows[1], thin_border, desc_font, progress_callback,
+        progress_pct=0.80, row3_metrics=_rows[2], row4_metrics=_rows[3],
+        row5_metrics=row5_metrics,
     )
 
-    table_start = 20
+    table_start = 24 if row5_metrics else 20
     if cross is None or cross.empty:
         ws.cell(row=table_start, column=1, value="無符合資料").font = Font(size=12)
         _auto_width(ws)
@@ -5974,10 +6047,12 @@ def generate_excel_hybrid(
     progress_callback=None,
 ) -> BytesIO:
     """Safety Stock x NetStock Review 輸出（5 工作表，順序固定）：
-    RAW（全部欄位 + Review 欄，含不限OM與同OM兩套調貨結果）/
-    Summary（SKU 級彙總：各 Nature 加總/TurnDay/佔比、強制調貨提示、存貨偏重提示）/
+    RAW（全部欄位 + Review 欄，含不限OM與同OM兩套調貨結果；雙向時另含「可轉出貨量 (Tourist)」）/
+    Summary（SKU 級彙總：各 Nature 加總/TurnDay/佔比、強制調貨提示、存貨偏重提示；雙向時另加 AA 欄
+    「由Tourist 店舖預計調出數量」）/
     調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) /
- Review 摘要（指標卡 4 排 + Safety Review × Shop Nature 交叉表）。
+ Review 摘要（指標卡 4 排（雙向時 5 排）+ Safety Review × Shop Nature 交叉表）。
+    雙向與否由 RAW 是否含「可轉出貨量 (Tourist)」欄推定。
     """
     if diagnosis is None:
         diagnosis = _build_hybrid_diagnosis(raw)
@@ -5985,8 +6060,9 @@ def generate_excel_hybrid(
         diagnosis_om = _build_hybrid_diagnosis(raw, variant="om")
     if diag_summary is None:
         diag_summary = _build_hybrid_diag_summary(raw)
+    _bidirectional = raw is not None and "可轉出貨量 (Tourist)" in raw.columns
     if sc_summary is None:
-        sc_summary = _build_stock_checking_summary(raw)
+        sc_summary = _build_stock_checking_summary(raw, bidirectional=_bidirectional)
     wb = Workbook()
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
@@ -6004,9 +6080,9 @@ def generate_excel_hybrid(
     if progress_callback:
         progress_callback(0.25, "建立 SKU Summary（存貨偏重提示）...")
 
-    # ── Sheet 2: Summary（SKU 級彙總，與 Stock Checking 同格式）──
+    # ── Sheet 2: Summary（SKU 級彙總，與 Stock Checking 同格式；雙向時另加 AA 欄）──
     ws_sc = wb.create_sheet(title="Summary")
-    _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38)
+    _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38, bidirectional=_bidirectional)
 
     if progress_callback:
         progress_callback(0.40, "建立調貨 Review 主表 (不限OM)...")
@@ -6894,7 +6970,7 @@ _STOCK_CHECKING_SUMMARY_COLUMNS = [
 ]
 
 
-def _build_stock_checking_summary(raw: pd.DataFrame) -> pd.DataFrame:
+def _build_stock_checking_summary(raw: pd.DataFrame, bidirectional: bool = False) -> pd.DataFrame:
     """SKU 級 Summary（參考 By SKUxShop_Stock Checking_Output 格式）：
 
     - 每個 SKU 一列：Brand / SKU / SKU Desc / Buyer / Adj. SST / Supply Source / D001 Net Stock Qty (CM)
@@ -6903,10 +6979,11 @@ def _build_stock_checking_summary(raw: pd.DataFrame) -> pd.DataFrame:
       TurnDay = 加總庫存 ÷ 加總月銷 × 30.5（月銷為 0 時留空）；除佔比外一律取整顯示
     - 各 Nature 佔比 (%)：該 Nature 加總 ÷ 三個 Nature 加總合計（0-1 小數，Excel 以 0.00% 顯示；
       合計為 0 時留空；僅計 Tourist / Mix / Non Tourist 精確比對，其他值不計入分子分母）
-    - 強制調貨提示：該 SKU 有任何 Tourist 店列被標示「需要調貨」時顯示「需要調貨」
+    - 強制調貨提示：該 SKU 有任何店舖列被標示「需要調貨」時顯示「需要調貨」
     - 存貨偏重提示：某 Nature 庫存佔比 ≥ 40% 且庫存佔比 − 銷量佔比 ≥ 20 個百分點 →
       「存貨偏重 {Nature}（庫存 x% / 銷量 y%）」，多個 Nature 以；分隔（差距大者在前）
-    - 由 Non Tourist / Mix 店舖預計調出數量 = 該 SKU 對應 Nature 來源店的「轉出量」加總
+    - 由 Non Tourist / Mix 店舖預計調出數量 = 該 SKU 對應 Nature 來源店的「轉出量」加總；
+      bidirectional=True 時另加「由Tourist 店舖預計調出數量」（置於欄序最後，A–Z 契約欄位不動）
     """
     if raw is None or raw.empty:
         return pd.DataFrame()
@@ -6955,7 +7032,7 @@ def _build_stock_checking_summary(raw: pd.DataFrame) -> pd.DataFrame:
             row[f"{nat} 加總 - Shop Stock Qty (CM)"] = int(round(stock_sum))
             row[f"{nat} 加總 - Shop Monthly Sold Qty (P90D)"] = int(round(msold_sum))
             row[f"{nat} TurnDay"] = int(round(stock_sum / msold_sum * 30.5)) if msold_sum > 0 else None
-            if nat != "Tourist":
+            if nat != "Tourist" or bidirectional:
                 row[f"由{nat} 店舖預計調出數量"] = int(gn["_transfer"].sum())
         # 各 Nature 佔比（分母 = 三個 Nature 加總合計；合計為 0 留空）
         _total_stock = sum(v[0] for v in _sums.values())
@@ -7201,7 +7278,7 @@ _STOCK_CHECKING_SUMMARY_SHEET_HEADERS = [
 ]
 
 
-def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30):
+def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30, bidirectional: bool = False):
     """Summary 工作表：SKU 級彙總（雙列表頭模仿 By SKUxShop_Stock Checking_Output 樞紐佈局）。
 
     欄位配置（A-Z，共 26 欄）：
@@ -7210,6 +7287,7 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     - Q-V：各 Nature 佔比 (%) = 該 Nature 加總 ÷ 三 Nature 合計（活公式，0.00% 顯示；合計 0 留空）
     - W-Y：強制調貨提示 / 由NT 調出 / 由Mix 調出
     - Z：存貨偏重提示（庫存佔比 ≥ 40% 且與銷量佔比差 ≥ 20 個百分點的 Nature）
+    - AA（僅 bidirectional=True）：由Tourist 店舖預計調出數量（A-Z 契約欄序不動）
     """
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
@@ -7245,7 +7323,10 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
         _style_merge(4, col_start, col_start + 1, label, nature_font, pct_fill)
 
     # Row 5: 欄位標題
-    for col_idx, h in enumerate(_STOCK_CHECKING_SUMMARY_SHEET_HEADERS, 1):
+    _headers = list(_STOCK_CHECKING_SUMMARY_SHEET_HEADERS)
+    if bidirectional:
+        _headers.append("由Tourist 店舖預計調出數量")
+    for col_idx, h in enumerate(_headers, 1):
         cell = ws.cell(row=5, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
@@ -7264,7 +7345,7 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     _center_text_keys = ["SKU", "Supply Source"]
 
     total = len(summary)
-    n_cols = len(_STOCK_CHECKING_SUMMARY_SHEET_HEADERS)
+    n_cols = len(_headers)
     for r_idx, (_, row) in enumerate(summary.iterrows()):
         excel_row = r_idx + 6
         is_band = (r_idx % 2 == 1)
@@ -7354,6 +7435,16 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
         cell.alignment = left_wrap
         if is_band:
             cell.fill = band_fill
+        # AA（僅雙向）：由Tourist 店舖預計調出數量
+        if bidirectional:
+            val = row.get("由Tourist 店舖預計調出數量", 0)
+            cell = ws.cell(row=excel_row, column=27,
+                           value=int(val) if pd.notna(val) else None)
+            cell.number_format = "#,##0"
+            cell.border = thin_border
+            cell.alignment = center
+            if is_band:
+                cell.fill = band_fill
         if progress_callback and (r_idx % 200 == 0 or r_idx == total - 1):
             p = progress_start + (progress_end - progress_start) * ((r_idx + 1) / max(total, 1))
             progress_callback(p, f"寫入 Summary ({r_idx+1}/{total})...")

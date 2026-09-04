@@ -1,5 +1,14 @@
 # 版本記錄
 
+## v1.14.0 (2026-09-04)
+
+- New: Safety Stock x NetStock Review 新增「允許雙向調貨」選項（UI checkbox `hy_bidir`，預設關閉）— 針對「存貨偏重遊客區而其他區域賣得好出現缺貨」場景，調貨由單向（只向遊客區調入）改為**完全對稱三向**：任何 Nature 缺貨（該 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且個別店補到 14 日需求 > 0）且其他任一 Nature 有貨（加總 TurnDay ≥ 門檻）即標示需要調貨；來源優先序固定 **Non Tourist → Mix → Tourist**（需求 Nature 自身除外）；缺貨 Nature 的超額列一律不可轉出（池級歸零）；自我調貨與同OM守衛不變
+- New: 雙向時 RAW 另加「可轉出貨量 (Tourist)」欄；Summary 末尾另加「由Tourist 店舖預計調出數量」欄（AA 欄，A–Z 契約欄序不動）；Review 事件對稱擴展——`需要調入` 可出現在任何 Nature 列、`實際轉出`／`可轉出未使用` 可出現在 Tourist 列（事件與診斷文字不變）；主表「可轉出貨量」含 Tourist；Review 摘要與 Streamlit 看板另加第 5 排指標卡（Tourist 轉出量／Tourist 轉出量 (同OM)）；stats 新增 tourist_transfer / tourist_transfer_om / bidirectional
+- Change: 未勾選雙向時輸出欄位、數值與工作表結構與 v1.13.3 完全一致（零契約變動）；雙向只適用於本模式，**Stock Checking 維持單向**（兩模式調貨引擎自此分岔）
+- Update: `transform_hybrid()` 加 `bidirectional` 參數；`_hybrid_allocate_transfers()` 加 `tourist_avail0` 來源池；`_build_stock_checking_summary()`／`_write_stock_checking_summary_sheet()` 加 `bidirectional` 參數；`_write_metric_cards()` 加 `row5_metrics`；`generate_excel_hybrid()` 以 RAW 是否含「可轉出貨量 (Tourist)」推定雙向
+- Update: tests/test_hybrid_mode.py 新增雙向測試 ×8（逆向轉出、來源序、雙缺競爭、同店／同OM守衛、全池不足不標示、單向契約零變動、第 5 排指標卡與 stats 回退、Excel 27 欄契約）；_smoke_pipeline.py 加雙向一輪；共 162 項測試通過
+- Update: README／使用說明頁同步（雙向規則、Stock Checking 單向限制註明）
+
 ## v1.13.3 (2026-09-04)
 
 - Change: 全站字眼修正 — 「診斷」一律改為「Review」（「Review」的書面語對應並非診斷）；影響欄位名 `Safety 診斷` → `Safety Review`、工作表名 `調貨診斷 Safety Stock (不限OM)／(同OM)` → `調貨 Review Safety Stock (不限OM)／(同OM)`、`診斷摘要` → `Review 摘要`，以及 Streamlit 介面、進度訊息、README／使用說明頁同義文字

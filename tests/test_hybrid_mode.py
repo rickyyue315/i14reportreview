@@ -682,3 +682,200 @@ def test_self_transfer_guarded_and_no_site_both_in_and_out():
     # 守恆：總調入 = 總轉出
     assert int(raw["實際調入量"].sum()) == int(raw["轉出量"].sum())
     assert int(raw["實際調入量 (同OM)"].sum()) == int(raw["轉出量 (同OM)"].sum())
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 12. 允許雙向調貨（bidirectional=True，v1.14.0）
+# ──────────────────────────────────────────────────────────────────────────────
+# B1（SKU 800）：存貨偏重遊客區 → Mix 缺貨由 Tourist 逆向轉出
+_BIDIR_B1 = [
+    {"SKU": 800, "Site Code": "M01", "Shop Nature": "Mix",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 3},
+    {"SKU": 800, "Site Code": "T01", "Shop Nature": "Tourist",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 30},
+]
+
+
+def test_bidir_mix_short_tourist_donates():
+    raw, sc_summary, diagnosis, _, _, stats, _ = transform_hybrid(_df(_BIDIR_B1), bidirectional=True)
+    assert _get(raw, "M01", "需要調貨") == "是"
+    assert int(_get(raw, "M01", "調入需求量 (補到14日)")) == 9
+    assert int(_get(raw, "M01", "實際調入量")) == 9 and int(_get(raw, "M01", "調入缺口")) == 0
+    assert _get(raw, "M01", "調貨來源 (Site Code)") == "T01:9"
+    assert int(_get(raw, "T01", "可轉出貨量 (Tourist)")) == 16
+    assert int(_get(raw, "T01", "轉出量")) == 9
+    assert int(_get(raw, "T01", "調貨後庫存")) == 21
+    assert stats["tourist_transfer"] == 9 and stats["nt_transfer"] == 0 and stats["mix_transfer"] == 0
+    # Review 對稱擴展：Mix 調入列判不足、Tourist 轉出列判過高
+    assert _get(raw, "M01", "事件類型") == "需要調入"
+    assert _get(raw, "M01", "Safety Review") == "Safety 設定不足"
+    assert _get(raw, "T01", "事件類型") == "實際轉出"
+    assert _get(raw, "T01", "Safety Review") == "Safety 設定過高"
+    assert float(_get(raw, "T01", "Safety 建議調整量")) == -16
+    # 主表「可轉出貨量」含 Tourist 欄
+    assert int(_get(diagnosis, "T01", "可轉出貨量")) == 16
+    # 存貨偏重提示指向 Tourist（使用者場景）
+    hint = str(sc_summary.iloc[0]["存貨偏重提示"])
+    assert hint.startswith("存貨偏重 Tourist")
+    assert int(sc_summary.iloc[0]["由Tourist 店舖預計調出數量"]) == 9
+
+
+def test_bidir_nt_short_source_order_mix_before_tourist():
+    # B2（SKU 801）：NT 缺貨 → 來源固定 NT→Mix→Tourist（NT 自身除外）：Mix 6 件先、Tourist 補 3 件
+    rows = [
+        {"SKU": 801, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 3},
+        {"SKU": 801, "Site Code": "M02", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 20.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+        {"SKU": 801, "Site Code": "T02", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+    ]
+    raw, _, _, _, _, stats, _ = transform_hybrid(_df(rows), bidirectional=True)
+    assert _get(raw, "N01", "需要調貨") == "是"
+    assert int(_get(raw, "N01", "實際調入量")) == 9
+    assert _get(raw, "N01", "調貨來源 (Site Code)") == "M02:6; T02:3"
+    assert stats["mix_transfer"] == 6 and stats["tourist_transfer"] == 3
+    assert int(raw["實際調入量"].sum()) == int(raw["轉出量"].sum())  # 守恆
+
+
+def test_bidir_two_short_natures_compete_by_demand_desc():
+    # B3（SKU 802）：Tourist 與 Mix 同缺、僅 NT 有貨 6 件 → 需求大者（Mix 23）先獲 6 件，Tourist 9 全列缺口
+    rows = [
+        {"SKU": 802, "Site Code": "T03", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
+         "Shop Monthly Sold Qty (P90D)": 120.0, "Adj. Safety Stock": 30,
+         "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 802, "Site Code": "M03", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 180.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 61.0, "Adj. Safety Stock": 3,
+         "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 802, "Site Code": "N03", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 20.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 14,
+         "D001 Net Stock Qty (CM)": 10.0},
+    ]
+    raw, _, _, _, _, stats, _ = transform_hybrid(_df(rows), bidirectional=True)
+    assert stats["need_rows"] == 2
+    assert int(_get(raw, "M03", "調入需求量 (補到14日)")) == 23
+    assert int(_get(raw, "M03", "實際調入量")) == 6 and int(_get(raw, "M03", "調入缺口")) == 17
+    assert int(_get(raw, "T03", "實際調入量")) == 0 and int(_get(raw, "T03", "調入缺口")) == 9
+    assert _get(raw, "M03", "調貨來源 (Site Code)") == "N03:6"
+    assert stats["total_actual"] == 6 and stats["total_gap"] == 26
+    assert stats["nt_transfer"] == 6 and stats["tourist_transfer"] == 0
+    # 缺貨 Nature 池低於門檻 → 其超額列可轉出歸零（不得互調）
+    assert int(_get(raw, "T03", "可轉出貨量 (Tourist)")) == 0
+
+
+def test_bidir_self_site_guard_and_om_restriction_on_tourist_donor():
+    # B4（SKU 803）：需求 Mix S06 (Ivy)；Tourist 來源 S06（同店，Max）與 S07（Max）
+    # 不限OM：同店排除 → S07 轉出 9；同OM：S07 異 OM → 全數缺口
+    rows = [
+        {"SKU": 803, "Site Code": "S06", "OM": "Ivy", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 3},
+        {"SKU": 803, "Site Code": "S06", "OM": "Max", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+        {"SKU": 803, "Site Code": "S07", "OM": "Max", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+    ]
+    raw, _, _, _, _, stats, _ = transform_hybrid(_df(rows), bidirectional=True)
+    mix_rows = raw[raw["Shop Nature"] == "Mix"]
+    assert len(mix_rows) == 1 and str(mix_rows.iloc[0]["需要調貨"]) == "是"
+    assert int(mix_rows.iloc[0]["實際調入量"]) == 9
+    assert str(mix_rows.iloc[0]["調貨來源 (Site Code)"]) == "S07:9"
+    assert int(mix_rows.iloc[0]["實際調入量 (同OM)"]) == 0
+    assert int(mix_rows.iloc[0]["調入缺口 (同OM)"]) == 9
+    assert stats["tourist_transfer"] == 9 and stats["tourist_transfer_om"] == 0
+    t07 = raw[raw["Site Code"] == "S07"].iloc[0]
+    assert int(t07["轉出量"]) == 9 and int(t07["轉出量 (同OM)"]) == 0
+
+
+def test_bidir_all_pools_below_threshold_no_flag():
+    # B5（SKU 804）：三 Nature 加總 TurnDay 皆 < 門檻 → 無貨可調，不標示＋warning
+    rows = [
+        {"SKU": 804, "Site Code": "T08", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+        {"SKU": 804, "Site Code": "M08", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+        {"SKU": 804, "Site Code": "N08", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+    ]
+    raw, _, diagnosis, _, _, stats, warns = transform_hybrid(_df(rows), bidirectional=True)
+    assert stats["need_rows"] == 0
+    assert (raw["需要調貨"] == "").all()
+    assert diagnosis.empty
+    assert any("沒有符合調貨條件" in w and "Nature" in w for w in warns)
+
+
+def test_bidir_off_column_contract_and_single_direction_unchanged():
+    raw_off, sc_off, _, _, _, stats_off, _ = transform_hybrid(_df(_BIDIR_B1))
+    assert "可轉出貨量 (Tourist)" not in raw_off.columns
+    assert "由Tourist 店舖預計調出數量" not in sc_off.columns
+    assert stats_off["bidirectional"] is False and stats_off["tourist_transfer"] == 0
+    assert stats_off["need_rows"] == 0  # 單向：Mix 缺貨不標示
+    assert len(_hybrid_dashboard_metrics(raw_off, stats_off)) == 4
+    # 單向場景（_SCENARIO_A）開雙向：調貨契約欄數值與單向完全一致（Tourist 缺貨時來源仍是 NT→Mix）
+    raw_a_off = transform_hybrid(_df(_SCENARIO_A))[0]
+    raw_on, sc_on, _, _, _, stats_on, _ = transform_hybrid(_df(_SCENARIO_A), bidirectional=True)
+    cmp_cols = ["需要調貨", "調入需求量 (補到14日)", "實際調入量", "調入缺口",
+                "可轉出貨量 (Mix)", "可轉出貨量 (Non Tourist)", "轉出量", "調貨來源 (Site Code)"]
+    for c in cmp_cols:
+        assert list(raw_on[c]) == list(raw_a_off[c]), c
+    assert (raw_on["可轉出貨量 (Tourist)"] == 0).all()  # Tourist 池缺貨 → 歸零
+    assert stats_on["tourist_transfer"] == 0
+    assert int(sc_on.iloc[0]["由Tourist 店舖預計調出數量"]) == 0
+
+
+def test_bidir_on_dashboard_and_stats_fallback():
+    raw, sc_summary, _, _, _, stats, _ = transform_hybrid(_df(_BIDIR_B1), bidirectional=True)
+    assert stats["bidirectional"] is True
+    rows = _hybrid_dashboard_metrics(raw, stats)
+    assert len(rows) == 5
+    assert rows[4][0][0] == "Tourist 轉出量" and rows[4][0][1] == 9
+    assert rows[4][1][0] == "Tourist 轉出量 (同OM)" and rows[4][1][1] == 9
+    fb = _hybrid_stats_from_raw(raw)
+    for k in ("need_rows", "need_skus", "total_demand", "total_actual", "total_gap",
+              "nt_transfer", "mix_transfer", "tourist_transfer", "total_actual_om",
+              "nt_transfer_om", "tourist_transfer_om", "donor_rows", "under_rows",
+              "over_rows", "normal_rows"):
+        assert fb[k] == stats[k], k
+    assert fb["bidirectional"] is True
+    assert _hybrid_dashboard_metrics(raw, stats) == _hybrid_dashboard_metrics(raw, None)
+
+
+def test_bidir_excel_headers_and_dashboard_rows():
+    raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, _ = transform_hybrid(
+        _df(_BIDIR_B1), bidirectional=True)
+    buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
+    wb = load_workbook(buf, read_only=True)
+    assert wb.sheetnames == [
+        "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "Review 摘要",
+    ]
+    raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
+    assert "可轉出貨量 (Tourist)" in raw_headers
+    sc_headers = [c.value for c in next(wb["Summary"].iter_rows(min_row=5, max_row=5))]
+    assert len(sc_headers) == 27
+    assert sc_headers[26] == "由Tourist 店舖預計調出數量"
+    # 單向輸出 A–Z 契約欄序不動
+    off_args = transform_hybrid(_df(_BIDIR_B1))
+    buf_off = generate_excel_hybrid(*off_args[:5], off_args[5])
+    wb_off = load_workbook(buf_off, read_only=True)
+    off_headers = [c.value for c in next(wb_off["Summary"].iter_rows(min_row=5, max_row=5))]
+    assert len(off_headers) == 26
+    assert off_headers == sc_headers[:26]
+    ws = wb["Review 摘要"]
+    assert ws.cell(row=19, column=1).value == "Tourist 轉出量"
+    assert ws.cell(row=20, column=1).value == stats["tourist_transfer"]
+    assert ws.cell(row=19, column=2).value == "Tourist 轉出量 (同OM)"
+    assert ws.cell(row=23, column=1).value == "Safety Review × Shop Nature 交叉表"
+    assert ws.cell(row=24, column=1).value == "Safety Review"
