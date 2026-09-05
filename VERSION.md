@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.26.0 (2026-09-05)
+
+Safety Stock x NetStock Review 店舖問題表新增 Past 90 Days 0 Sales 轉 ND 提示。
+
+- New: `_build_hybrid_shop_issues()` 另收零銷售轉 ND 候選（M-2／M-1／CM-MTD／P90D 皆零銷售且有庫存，LM 欄存在時須雙＞0；上市 90 天內新品、需要調貨列與 ND 列除外；重疊於 Safety 不足／過高列時保留原問題類型並加註，否則以「ND 退場」收錄，每店×SKU 最多一列）；`transform_hybrid()` 缺銷售欄與候選列數列 warning（不改 7 元組簽名與主表欄序）
+- Update: 新增 `_hybrid_p90d_zero_sales_mask()`（NaN 視為 0、負數視為 ≤0，重用 `_parse_launch_dates` 新品保護）；新增 `tests/test_hybrid_p90d_nd.py`（×6：四欄口徑、LM／NaN／負數、缺欄 warning、新品／ND／需求排除、ND 單列、重疊加註不重複計列）；`tests/test_hybrid_mode.py` BASE 補 M-2／M-1 銷售欄（維持零 warning 口徑）；共 251 項測試通過；README／使用說明頁／結果頁 caption 同步
+
 ## v1.25.1 (2026-09-05)
 
 店舖問題 SKU 顯示 Supply Source 與 D001 Net Stock Qty (CM)，缺口跟進按供貨來源分支。

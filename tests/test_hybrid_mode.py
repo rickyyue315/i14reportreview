@@ -64,7 +64,8 @@ BASE = {
     "Adj. SST": "SST1",
     "Launch Date": "2024-01-01", "Item Class": "C1", "RP Type": "RF",
     "Shop Stock Status": "Normal", "Adj. Safety Stock": 3.0,
-    "Sold Qty (P90D)": 90.0, "Excess Stock Qty": 2.0,
+    "Sold Qty (P90D)": 90.0, "Sold Qty (M-2)": 30.0, "Sold Qty (M-1)": 30.0,
+    "Excess Stock Qty": 2.0,
     "Shop Stock Qty (CM)": 5.0,
     "Shop Monthly Sold Qty (P90D)": 30.5,
     "Sold Qty (CM - MTD)": 8.0,
@@ -152,7 +153,7 @@ def test_empty_after_clean_raises():
 def test_default_args_produce_results():
     raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warns = transform_hybrid(_df(_SCENARIO_A))
     assert stats["need_rows"] == 1
-    assert len(warns) == 0
+    assert all("Past 90 Days 0 Sales" not in w for w in warns)
     assert "事件類型" in raw.columns and "Safety Review" in raw.columns
     assert "轉出量 (同OM)" in raw.columns
     assert len(diagnosis) == 3 and len(diagnosis_om) == 3

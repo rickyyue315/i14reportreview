@@ -879,7 +879,7 @@ if uploaded_file is not None:
                     st.info("無符合資料")
             with tab_issue:
                 st.markdown("#### 每間店舖需行動 SKU（問題＋建議方法）")
-                st.markdown("只收錄 Safety 設定不足／過高列（設定正常列不佔版面），按店舖分組、店內按嚴重度排序；同OM數值作對照欄：")
+                st.markdown("只收錄 Safety 設定不足／過高列與 Past 90 Days 0 Sales 轉 ND 候選（四期皆零銷售且有庫存，新品除外；設定正常列不佔版面），按店舖分組、店內按嚴重度排序；同OM數值作對照欄：")
                 try:
                     _hy_issues = _build_hybrid_shop_issues(raw_df)
                 except Exception:
@@ -887,7 +887,7 @@ if uploaded_file is not None:
                 if _hy_issues is not None and not _hy_issues.empty:
                     _hy_cols = [c for c in _HYBRID_SHOP_ISSUE_COLUMNS if c in _hy_issues.columns]
                     st.dataframe(_hy_issues[_hy_cols], width='stretch', hide_index=True)
-                    st.caption(f"共 {len(_hy_issues):,} 列需行動（Safety 設定不足＋過高；調入缺口另於建議方法加註）。")
+                    st.caption(f"共 {len(_hy_issues):,} 列需行動（Safety 設定不足＋過高＋ND 退場；調入缺口另於建議方法加註）。")
                 else:
                     st.info("無符合資料")
             with tab_cross:

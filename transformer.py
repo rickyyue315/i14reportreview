@@ -1326,19 +1326,27 @@ def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
-    """Safety Stock x NetStock Review 店舖問題表：只收 Safety 設定不足／過高列。
+    """Safety Stock x NetStock Review 店舖問題表：Safety 設定不足／過高＋ND 退場列。
 
-    - 母體與 Safety Review × 分類維度交叉表相同（事件類型非空），但設定正常列一律排除。
+    - 母體為 Safety 需調整列（不足／過高）加上 Past 90 Days 0 Sales 轉 ND 候選
+      （四期銷售皆 ≤ 0 且有庫存、上市 90 天內新品與需要調貨列除外，見
+      `_hybrid_p90d_zero_sales_mask`）；設定正常列一律排除。
+    - 已屬不足／過高且同時符合零銷售的列保留原問題類型，建議方法末尾加註；
+      僅零銷售的列以「ND 退場」收錄（每店×SKU 最多一列）。
     - 主表以不限OM事件為準，另附三個同OM對照欄；調入缺口 > 0 時在建議方法加註。
     """
     cols = _HYBRID_SHOP_ISSUE_COLUMNS
-    if raw is None or raw.empty or "事件類型" not in raw.columns:
+    if raw is None or raw.empty:
         return pd.DataFrame(columns=cols)
     diag = raw.get("Safety Review", _safe_default_series("", raw.index)).fillna("").astype(str)
     mask = diag.isin([_HYBRID_DIAG_UNDER, _HYBRID_DIAG_OVER])
-    if not bool(mask.any()):
+    zero_mask, _ = _hybrid_p90d_zero_sales_mask(raw)
+    zero_mask = zero_mask.reindex(raw.index, fill_value=False).fillna(False).astype(bool)
+    nd_only_mask = zero_mask & ~mask.fillna(False).to_numpy()
+    combined = mask.fillna(False).to_numpy() | nd_only_mask.to_numpy()
+    if not bool(combined.any()):
         return pd.DataFrame(columns=cols)
-    work = _shop_issue_base_frame(raw, mask)
+    work = _shop_issue_base_frame(raw, pd.Series(combined, index=raw.index))
     if "Supply Source" not in work.columns:
         work["Supply Source"] = raw.get("Supply Source", _safe_default_series("", work.index))
     if "D001 Net Stock Qty (CM)" not in work.columns:
@@ -1359,6 +1367,8 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
     src_w = work.get("調貨來源 (Site Code)", _safe_default_series("", work.index)).fillna("").astype(str).str.strip()
     d001_qty_w = _d001_available_qty(raw).loc[work.index]
     warehouse_w = _is_warehouse_supply(raw).loc[work.index]
+    zero_w = zero_mask.reindex(work.index, fill_value=False).fillna(False).astype(bool)
+    stock_cm_w = _safe_numeric(work.get("Shop Stock Qty (CM)", _safe_default_series(0, work.index))).astype(int)
 
     issue, desc, advice, sev = [], [], [], []
     for i in range(len(work)):
@@ -1368,6 +1378,7 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
         sugg_txt = f"{float(sugg_w.iloc[i]):g}" if pd.notna(sugg_w.iloc[i]) else "未能確認"
         delta_txt = f"{float(chg_w.iloc[i]):g}" if pd.notna(chg_w.iloc[i]) else "未能確認"
         evt_txt = str(evt_w.iloc[i]).strip()
+        is_zero = bool(zero_w.iloc[i])
         if diag_w.iloc[i] == _HYBRID_DIAG_UNDER:
             issue.append("Safety 設定不足")
             desc.append(f"現時 Safety {adj_txt} 件低於周轉所需 {line_txt} 件（基準 {days_txt}；事件：{evt_txt}）")
@@ -1378,16 +1389,31 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
             if int(gap_w.iloc[i]) > 0:
                 text += (f"；尚有缺口 {int(gap_w.iloc[i])} 件，"
                          f"{_d001_gap_advice(float(d001_qty_w.iloc[i]), int(gap_w.iloc[i]), bool(warehouse_w.iloc[i]))}")
+            if is_zero:
+                text += f"；{_HYBRID_P90D_ZERO_SALES_ANNOTATION}"
             advice.append(text)
             sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定不足"])
-        else:
+        elif diag_w.iloc[i] == _HYBRID_DIAG_OVER:
             issue.append("Safety 設定過高")
             desc.append(f"現時 Safety {adj_txt} 件高於周轉所需 {line_txt} 件（基準 {days_txt}；事件：{evt_txt}）")
-            advice.append(
+            text = (
                 f"建議將 Safety 由 {adj_txt} 件調整為 {sugg_txt} 件（{delta_txt}），"
                 f"多餘存貨可轉出（實際轉出 {int(out_w.iloc[i])} 件），詳見「調貨來源 (Site Code)」欄"
             )
+            if is_zero:
+                text += f"；{_HYBRID_P90D_ZERO_SALES_ANNOTATION}"
+            advice.append(text)
             sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定過高"])
+        else:
+            stock_txt = f"{int(stock_cm_w.iloc[i])}"
+            issue.append("ND 退場")
+            desc.append("過去 90 日（M-2／M-1／CM-MTD／P90D）皆零銷售，店舖仍有庫存，建議檢視是否轉 ND 停補貨")
+            text = f"建議轉為 ND，現有庫存全數轉出或退倉（現時 Safety {adj_txt} 件；店舖庫存 {stock_txt} 件）"
+            if int(gap_w.iloc[i]) > 0:
+                text += (f"；尚有缺口 {int(gap_w.iloc[i])} 件，"
+                         f"{_d001_gap_advice(float(d001_qty_w.iloc[i]), int(gap_w.iloc[i]), bool(warehouse_w.iloc[i]))}")
+            advice.append(text)
+            sev.append(_SHOP_ISSUE_SEVERITY["ND 退場"])
     work["問題類型"] = issue
     work["問題說明"] = desc
     work["建議方法"] = advice
@@ -5961,6 +5987,58 @@ def _transfer_input_consistency_warnings(df: pd.DataFrame) -> list[str]:
     return out
 
 
+# ── Past 90 Days 0 Sales 轉 ND 候選（混合模式店舖問題表提示用）──
+_HYBRID_P90D_ZERO_SALES_COLUMNS = [
+    "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)", "Sold Qty (P90D)",
+]
+_HYBRID_P90D_ZERO_SALES_ANNOTATION = "另符合 Past 90 Days 0 Sales，建議檢視是否轉 ND 停補貨"
+
+
+def _hybrid_p90d_zero_sales_mask(raw: pd.DataFrame) -> tuple[pd.Series, list[str]]:
+    """混合模式零銷售轉 ND 候選遮罩（僅店舖問題表提示用，不改主表）。
+
+    口徑與獨立 Past 90 Days 0 Sales 模式一致：四期銷售皆 ≤ 0 且店舖有庫存
+    （NaN 視為 0；負數視為 ≤ 0；`Shop Stock Qty (LM)` 欄存在時須 LM／CM 皆 > 0，
+    缺欄時僅以 CM > 0 判定）。另作新品保護（`Launch Date` 距今 90 天內排除，
+    重用 `_parse_launch_dates`；缺欄／缺值／無法解析視為非新品）與防呆排除
+    （`需要調貨=是` 列、非 RF 列不納入；`RP Type` 缺欄時沿用全 RF 口徑）。
+    四個銷售欄任一缺失時回傳全 False＋一條 warning（不停止、不拋錯）。
+    """
+    idx = raw.index
+    empty = pd.Series(False, index=idx)
+    warnings: list[str] = []
+    if raw is None or raw.empty:
+        return empty, warnings
+    avail = set(raw.columns)
+    missing = [c for c in _HYBRID_P90D_ZERO_SALES_COLUMNS if _resolve_column_name(c, avail) is None]
+    if missing:
+        warnings.append(
+            f"缺少「{'／'.join(missing)}」欄位，無法判定 Past 90 Days 0 Sales 轉 ND 候選（店舖問題 SKU 不顯示 ND 退場提示）。"
+        )
+        return empty, warnings
+    sold = pd.concat(
+        [_safe_numeric(raw[c], _safe_default_series(0, idx)) for c in _HYBRID_P90D_ZERO_SALES_COLUMNS],
+        axis=1,
+    )
+    stock_cm = _safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, idx)))
+    mask = (sold.le(0).all(axis=1) & (stock_cm > 0)).fillna(False)
+    if "Shop Stock Qty (LM)" in raw.columns:
+        stock_lm = _safe_numeric(raw.get("Shop Stock Qty (LM)", _safe_default_series(0, idx)))
+        mask &= (stock_lm > 0).fillna(False)
+    if "Launch Date" in raw.columns:
+        launch_dt = _parse_launch_dates(raw["Launch Date"].fillna("").astype(str).str.strip())
+        is_new_sku = launch_dt.notna() & (
+            launch_dt >= pd.Timestamp(datetime.date.today()) - pd.Timedelta(days=90)
+        )
+        mask &= ~is_new_sku.fillna(False).to_numpy()
+    need = raw.get("需要調貨", _safe_default_series("", idx)).fillna("").astype(str).str.strip() == "是"
+    mask &= ~need.fillna(False).to_numpy()
+    if "RP Type" in raw.columns:
+        rp = raw["RP Type"].fillna("").astype(str).str.strip().str.upper()
+        mask &= (rp == "RF").fillna(False).to_numpy()
+    return pd.Series(mask.to_numpy(), index=idx), warnings
+
+
 def _build_hybrid_diagnosis(raw: pd.DataFrame, variant: str = "free") -> pd.DataFrame:
     """調貨 Review 主表（店舖×SKU 逐列）：只收錄事件類型非空的列，
     按 Brand / SKU / 事件類型 / Site Code 排序；「可轉出貨量」為三 Nature 可轉出欄加總
@@ -7032,6 +7110,13 @@ def transform_hybrid(
 
     if progress_callback:
         progress_callback(0.55, "建立 Review 表...")
+    _zero_mask, _zero_warnings = _hybrid_p90d_zero_sales_mask(raw)
+    warnings.extend(_zero_warnings)
+    if bool(_zero_mask.any()):
+        warnings.append(
+            f"偵測到 {int(_zero_mask.sum())} 列符合 Past 90 Days 0 Sales"
+            "（M-2／M-1／CM-MTD／P90D 皆零銷售且有庫存），已於「店舖問題 SKU」標示 ND 退場建議（新品已排除）。"
+        )
     diagnosis = _build_hybrid_diagnosis(raw)
     diagnosis_om = _build_hybrid_diagnosis(raw, variant="om")
     diag_summary = _build_hybrid_diag_summary(raw, dimension=dim)
@@ -7502,7 +7587,7 @@ def generate_excel_hybrid(
     if progress_callback:
         progress_callback(0.71, "建立店舖問題 SKU...")
 
-    # ── Sheet 5: 店舖問題 SKU（只收 Safety 設定不足／過高；空表寫「無符合資料」）──
+    # ── Sheet 5: 店舖問題 SKU（Safety 設定不足／過高＋ND 退場；空表寫「無符合資料」）──
     ws_shop_issue = wb.create_sheet(title="店舖問題 SKU")
     _write_shop_issue_sheet(
         ws_shop_issue, _build_hybrid_shop_issues(raw),
