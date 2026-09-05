@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.21.0 (2026-09-05)
+
+Safety Stock x NetStock Review Buyer 合併表補回貨量與佔比欄。
+
+- Fix: ④ Buyer 統計合併表補回「調入需求量合計」（各 Buyer 名下需調貨 SKU 的調入需求量列合計，取整，與指標卡總需求對帳）與「需調貨 SKU 佔比」／「需調整 Safety SKU 佔比」（0.0%，總計列 100%）；欄位為 Buyer／需調貨 SKU 數／需調貨 SKU 佔比／調入需求量合計／需調整 Safety SKU 數／需調整 Safety SKU 佔比／Safety 建議調整量合計＋總計列
+- Update: 新增 `_hybrid_buyer_combined_detail(raw)`（同 SKU 全表首個非空 Buyer 歸屬，調入需求量與 Safety 調整量同步合計；舊 `_hybrid_buyer_combined_stats` 保留相容）；Excel 與 Streamlit 合併表同步七欄；Buyer 統計跟隨現行分類維度與調貨結果
+- Update: `tests/test_hybrid_buyer_stats.py` 同步（×9，含貨量對帳與七欄位置／總計）；使用說明頁同步
+
 ## v1.20.0 (2026-09-05)
 
 Safety Stock x NetStock Review 新增分類維度選擇（Shop Nature／RP Type／Shop Nature＋RP Type，預設 Shop Nature），並加入 ND 列不作調貨需求方規則。

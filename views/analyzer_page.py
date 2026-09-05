@@ -22,7 +22,7 @@ from transformer import (
     _hybrid_raw_display_columns, _build_hybrid_transfer_detail,
     _build_hybrid_safety_change_summary, _build_hybrid_safety_sku_detail,
     _hybrid_buyer_need_stats, _hybrid_buyer_safety_stats,
-    _hybrid_buyer_combined_stats,
+    _hybrid_buyer_combined_stats, _hybrid_buyer_combined_detail,
     _HYBRID_SAFETY_DAYS_DEFAULT, _HYBRID_SAFETY_DAYS_MIN, _HYBRID_SAFETY_DAYS_MAX,
     _hybrid_safety_days_label,
     _HYBRID_DIMENSION_LABELS,
@@ -793,30 +793,30 @@ if uploaded_file is not None:
                         """, unsafe_allow_html=True)
                 st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
 
-            _hyb_buyer_need = (stats or {}).get("buyer_need_skus")
-            if _hyb_buyer_need is None:
-                try:
-                    _hyb_buyer_need = _hybrid_buyer_need_stats(raw_df)
-                except Exception:
-                    _hyb_buyer_need = []
-            _hyb_buyer_safety = (stats or {}).get("buyer_safety_fix")
-            if _hyb_buyer_safety is None:
-                try:
-                    _hyb_buyer_safety = _hybrid_buyer_safety_stats(raw_df)
-                except Exception:
-                    _hyb_buyer_safety = []
             try:
-                _hyb_buyer_combined = _hybrid_buyer_combined_stats(_hyb_buyer_need, _hyb_buyer_safety)
+                _hyb_buyer_combined = _hybrid_buyer_combined_detail(raw_df)
             except Exception:
                 _hyb_buyer_combined = []
             if _hyb_buyer_combined:
                 st.markdown("#### 👤 Buyer 統計（需調貨＋需調整 Safety）")
+                _b_total_need = sum(n for _, n, _, _, _ in _hyb_buyer_combined)
+                _b_total_fix = sum(f for _, _, _, f, _ in _hyb_buyer_combined)
                 _b_df = pd.DataFrame(
                     _hyb_buyer_combined,
-                    columns=["Buyer", "需調貨 SKU 數", "需調整 Safety SKU 數", "Safety 建議調整量合計"],
+                    columns=["Buyer", "需調貨 SKU 數", "調入需求量合計", "需調整 Safety SKU 數", "Safety 建議調整量合計"],
                 )
-                st.dataframe(_b_df, width='stretch', hide_index=True)
-                st.caption(f"共 {len(_hyb_buyer_combined):,} 個 Buyer（已刪除重複；Buyer 取同 SKU 首個非空值，空白歸入「(未填 Buyer)」；需調整母體為 Safety 設定不足＋過高，調整量為淨額）。")
+                _b_df["需調貨 SKU 佔比"] = (_b_df["需調貨 SKU 數"] / _b_total_need * 100) if _b_total_need else 0.0
+                _b_df["需調整 Safety SKU 佔比"] = (_b_df["需調整 Safety SKU 數"] / _b_total_fix * 100) if _b_total_fix else 0.0
+                _b_df = _b_df[["Buyer", "需調貨 SKU 數", "需調貨 SKU 佔比", "調入需求量合計",
+                               "需調整 Safety SKU 數", "需調整 Safety SKU 佔比", "Safety 建議調整量合計"]]
+                st.dataframe(
+                    _b_df, width='stretch', hide_index=True,
+                    column_config={
+                        "需調貨 SKU 佔比": st.column_config.NumberColumn("需調貨 SKU 佔比", format="%.1f%%"),
+                        "需調整 Safety SKU 佔比": st.column_config.NumberColumn("需調整 Safety SKU 佔比", format="%.1f%%"),
+                    },
+                )
+                st.caption(f"共 {len(_hyb_buyer_combined):,} 個 Buyer（已刪除重複；Buyer 取同 SKU 首個非空值，空白歸入「(未填 Buyer)」；需調整母體為 Safety 設定不足＋過高，貨量與調整量為淨額）。")
 
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -887,29 +887,29 @@ if uploaded_file is not None:
 
                 st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
                 st.markdown("#### ④ Buyer 統計（需調貨＋需調整 Safety 合併表）")
-                _hyb_buyer_need_tab = (stats or {}).get("buyer_need_skus")
-                if _hyb_buyer_need_tab is None:
-                    try:
-                        _hyb_buyer_need_tab = _hybrid_buyer_need_stats(raw_df)
-                    except Exception:
-                        _hyb_buyer_need_tab = []
-                _hyb_buyer_safety_tab = (stats or {}).get("buyer_safety_fix")
-                if _hyb_buyer_safety_tab is None:
-                    try:
-                        _hyb_buyer_safety_tab = _hybrid_buyer_safety_stats(raw_df)
-                    except Exception:
-                        _hyb_buyer_safety_tab = []
                 try:
-                    _hyb_buyer_combined_tab = _hybrid_buyer_combined_stats(_hyb_buyer_need_tab, _hyb_buyer_safety_tab)
+                    _hyb_buyer_combined_tab = _hybrid_buyer_combined_detail(raw_df)
                 except Exception:
                     _hyb_buyer_combined_tab = []
                 if _hyb_buyer_combined_tab:
+                    _bt_total_need = sum(n for _, n, _, _, _ in _hyb_buyer_combined_tab)
+                    _bt_total_fix = sum(f for _, _, _, f, _ in _hyb_buyer_combined_tab)
                     _bt_df = pd.DataFrame(
                         _hyb_buyer_combined_tab,
-                        columns=["Buyer", "需調貨 SKU 數", "需調整 Safety SKU 數", "Safety 建議調整量合計"],
+                        columns=["Buyer", "需調貨 SKU 數", "調入需求量合計", "需調整 Safety SKU 數", "Safety 建議調整量合計"],
                     )
-                    st.dataframe(_bt_df, width='stretch', hide_index=True)
-                    st.caption("同一 Buyer 的需調貨與需調整 Safety 並列顯示（已刪除重複；需調貨同 Stock Checking 口徑；需調整母體為 Safety 設定不足＋過高，調整量為淨額）。")
+                    _bt_df["需調貨 SKU 佔比"] = (_bt_df["需調貨 SKU 數"] / _bt_total_need * 100) if _bt_total_need else 0.0
+                    _bt_df["需調整 Safety SKU 佔比"] = (_bt_df["需調整 Safety SKU 數"] / _bt_total_fix * 100) if _bt_total_fix else 0.0
+                    _bt_df = _bt_df[["Buyer", "需調貨 SKU 數", "需調貨 SKU 佔比", "調入需求量合計",
+                                     "需調整 Safety SKU 數", "需調整 Safety SKU 佔比", "Safety 建議調整量合計"]]
+                    st.dataframe(
+                        _bt_df, width='stretch', hide_index=True,
+                        column_config={
+                            "需調貨 SKU 佔比": st.column_config.NumberColumn("需調貨 SKU 佔比", format="%.1f%%"),
+                            "需調整 Safety SKU 佔比": st.column_config.NumberColumn("需調整 Safety SKU 佔比", format="%.1f%%"),
+                        },
+                    )
+                    st.caption("同一 Buyer 的需調貨與需調整 Safety 並列顯示（已刪除重複；需調貨同 Stock Checking 口徑；需調整母體為 Safety 設定不足＋過高，貨量與調整量為淨額）。")
                 else:
                     st.info("無符合條件的 Buyer 統計")
             with tab_detail:

@@ -5929,6 +5929,7 @@ def _hybrid_buyer_combined_stats(
     任一為空或缺席的 Buyer 以 0 補齊。回傳
     [(Buyer, 需調貨 SKU 數, 需調整 Safety SKU 數, Safety 建議調整量合計)]，
     按需調貨數降序、再按需調整數降序、同數按 Buyer 名排序。
+    （保留供相容；新合併表含貨量與佔比，請改用 `_hybrid_buyer_combined_detail`。）
     """
     need_map: dict[str, int] = {str(b): int(c) for b, c in (buyer_need or [])}
     safety_map: dict[str, tuple[int, int]] = {
@@ -5942,6 +5943,66 @@ def _hybrid_buyer_combined_stats(
         (b, int(need_map.get(b, 0)), int(safety_map.get(b, (0, 0))[0]), int(safety_map.get(b, (0, 0))[1]))
         for b in buyers
     ]
+
+
+def _hybrid_buyer_combined_detail(raw: pd.DataFrame) -> list[tuple[str, int, int, int, int]]:
+    """Buyer 合併明細：同一 Buyer 的需調貨與需調整 Safety 並列（已刪除重複）。
+
+    Buyer 取同 SKU 全表首個非空值（需調貨與需調整共用同一歸屬，避免同一 SKU
+    在兩母體歸入不同 Buyer）；全空歸入「(未填 Buyer)」。
+    需調貨貨量為該 Buyer 名下各需調貨 SKU 的「調入需求量 (補到14日)」列合計
+    （取整，與指標卡總需求同口徑）；Safety 調整量為「Safety 建議調整量」列合計
+    （取整，正=增加、負=減少）。
+    回傳 [(Buyer, 需調貨 SKU 數, 調入需求量合計, 需調整 Safety SKU 數,
+    Safety 建議調整量合計)]，按需調貨數降序、再按需調整數降序、同數按 Buyer 名排序。
+    """
+    if raw is None or raw.empty or "SKU" not in raw.columns:
+        return []
+    buyer = (
+        raw["Buyer"].fillna("").astype(str).str.strip()
+        if "Buyer" in raw.columns
+        else _safe_default_series("", raw.index)
+    )
+    sku = raw["SKU"]
+
+    def _first_nonempty(s: pd.Series) -> str:
+        s = s[s != ""]
+        return s.iloc[0] if len(s) else "(未填 Buyer)"
+
+    per_sku_buyer = pd.DataFrame({"_sku": sku, "_buyer": buyer}).groupby("_sku", sort=False)["_buyer"].agg(_first_nonempty)
+
+    need_mask = raw.get("需要調貨", _safe_default_series("", raw.index)).astype(str) == "是"
+    demand = pd.to_numeric(
+        raw.get("調入需求量 (補到14日)", _safe_default_series(np.nan, raw.index)), errors="coerce"
+    ).fillna(0.0)
+    need_skus = set(raw.loc[need_mask, "SKU"].dropna().unique()) if bool(need_mask.any()) else set()
+    per_sku_demand = demand.loc[need_mask].groupby(raw.loc[need_mask, "SKU"], sort=False).sum() if need_skus else pd.Series(dtype=float)
+
+    diag = raw.get("Safety Review", _safe_default_series("", raw.index)).fillna("").astype(str)
+    fix_mask = diag.isin([_HYBRID_DIAG_UNDER, _HYBRID_DIAG_OVER])
+    chg = pd.to_numeric(
+        raw.get("Safety 建議調整量", _safe_default_series(np.nan, raw.index)), errors="coerce"
+    ).fillna(0.0)
+    fix_skus = set(raw.loc[fix_mask, "SKU"].dropna().unique()) if bool(fix_mask.any()) else set()
+    per_sku_chg = chg.loc[fix_mask].groupby(raw.loc[fix_mask, "SKU"], sort=False).sum() if fix_skus else pd.Series(dtype=float)
+
+    if not need_skus and not fix_skus:
+        return []
+    per_buyer: dict[str, list[float]] = {}
+    for s in need_skus | fix_skus:
+        b = str(per_sku_buyer.get(s, "(未填 Buyer)"))
+        rec = per_buyer.setdefault(b, [0, 0.0, 0, 0.0])
+        if s in need_skus:
+            rec[0] += 1
+            rec[1] += float(per_sku_demand.get(s, 0.0))
+        if s in fix_skus:
+            rec[2] += 1
+            rec[3] += float(per_sku_chg.get(s, 0.0))
+    result = [
+        (b, int(v[0]), int(round(v[1])), int(v[2]), int(round(v[3])))
+        for b, v in per_buyer.items()
+    ]
+    return sorted(result, key=lambda kv: (-kv[1], -kv[3], kv[0]))
 
 
 def _hybrid_safety_days_from_raw(raw: pd.DataFrame, nature=None) -> dict[str, int]:
@@ -6713,48 +6774,85 @@ def _write_hybrid_summary_block(ws, start_row, section_title, block, *, header_f
 def _write_hybrid_buyer_combined_table(ws, combined, thin_border, header_fill,
                                         header_font, bold_font, section_fill,
                                         total_fill, center, start_row: int) -> int:
-    """Review 摘要的 Buyer 合併統計表
-    （Buyer／需調貨 SKU 數／需調整 Safety SKU 數／Safety 建議調整量合計＋總計列）。
+    """Review 摘要的 Buyer 合併統計表（Buyer／需調貨 SKU 數／需調貨 SKU 佔比／
+    調入需求量合計／需調整 Safety SKU 數／需調整 Safety SKU 佔比／
+    Safety 建議調整量合計＋總計列）。
 
-    combined 為 [(Buyer, 需調貨 SKU 數, 需調整 Safety SKU 數, Safety 建議調整量合計)]；
-    缺席值以 0 補齊；總計列為各欄合計（調整量為淨額）。
+    combined 為 [(Buyer, 需調貨 SKU 數, 調入需求量合計, 需調整 Safety SKU 數,
+    Safety 建議調整量合計)]；舊 4 元組（無貨量）亦相容，貨量以 0 補齊。
+    缺席值以 0 補齊；總計列為各欄合計（貨量與調整量為淨額；佔比總計為 100%）。
     空集合時不寫入，回傳原 start_row。回傳下一個區塊的標題列號。
     """
     if not combined:
         return start_row
-    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=4)
+    norm: list[tuple[str, int, int, int, int]] = []
+    for row in combined:
+        if len(row) == 5:
+            b, n, d, f, v = row
+            norm.append((str(b), int(n), int(d), int(f), int(v)))
+        else:
+            b, n, f, v = row  # type: ignore[misc]
+            norm.append((str(b), int(n), 0, int(f), int(v)))
+    combined = norm
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=7)
     tc = ws.cell(row=start_row, column=1, value=_HYBRID_BUYER_COMBINED_TITLE)
     tc.font = Font(bold=True, size=12, color="1E40AF")
     tc.fill = section_fill
     tc.alignment = Alignment(horizontal="left", vertical="center")
     hr = start_row + 1
-    for col_idx, h in enumerate(("Buyer", "需調貨 SKU 數", "需調整 Safety SKU 數", "Safety 建議調整量合計"), 1):
+    for col_idx, h in enumerate(
+        ("Buyer", "需調貨 SKU 數", "需調貨 SKU 佔比", "調入需求量合計",
+         "需調整 Safety SKU 數", "需調整 Safety SKU 佔比", "Safety 建議調整量合計"), 1):
         cell = ws.cell(row=hr, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = center
         cell.border = thin_border
-    total_need = sum(n for _, n, _, _ in combined)
-    total_fix = sum(f for _, _, f, _ in combined)
-    total_chg = sum(v for _, _, _, v in combined)
+    total_need = sum(n for _, n, _, _, _ in combined)
+    total_demand = sum(d for _, _, d, _, _ in combined)
+    total_fix = sum(f for _, _, _, f, _ in combined)
+    total_chg = sum(v for _, _, _, _, v in combined)
     r = hr + 1
-    for buyer, need_cnt, fix_cnt, chg_total in combined:
+    for buyer, need_cnt, demand_total, fix_cnt, chg_total in combined:
         c1 = ws.cell(row=r, column=1, value=buyer)
         c1.border = thin_border
-        for col_idx, val in ((2, need_cnt), (3, fix_cnt), (4, chg_total)):
-            cell = ws.cell(row=r, column=col_idx, value=val)
-            cell.number_format = "#,##0"
-            cell.alignment = center
-            cell.border = thin_border
+        c2 = ws.cell(row=r, column=2, value=need_cnt)
+        c2.number_format = "#,##0"
+        c2.alignment = center
+        c2.border = thin_border
+        c3 = ws.cell(row=r, column=3, value=need_cnt / total_need if total_need else None)
+        c3.number_format = "0.0%"
+        c3.alignment = center
+        c3.border = thin_border
+        c4 = ws.cell(row=r, column=4, value=demand_total)
+        c4.number_format = "#,##0"
+        c4.alignment = center
+        c4.border = thin_border
+        c5 = ws.cell(row=r, column=5, value=fix_cnt)
+        c5.number_format = "#,##0"
+        c5.alignment = center
+        c5.border = thin_border
+        c6 = ws.cell(row=r, column=6, value=fix_cnt / total_fix if total_fix else None)
+        c6.number_format = "0.0%"
+        c6.alignment = center
+        c6.border = thin_border
+        c7 = ws.cell(row=r, column=7, value=chg_total)
+        c7.number_format = "#,##0"
+        c7.alignment = center
+        c7.border = thin_border
         r += 1
-    for col_idx, v in ((1, "總計"), (2, total_need), (3, total_fix), (4, total_chg)):
+    for col_idx, v in ((1, "總計"), (2, total_need), (3, 1.0 if total_need else None),
+                       (4, total_demand), (5, total_fix), (6, 1.0 if total_fix else None),
+                       (7, total_chg)):
         cell = ws.cell(row=r, column=col_idx, value=v)
         cell.font = bold_font
         cell.fill = total_fill
         cell.border = thin_border
         cell.alignment = center
-        if col_idx in (2, 3, 4):
+        if col_idx in (2, 4, 5, 7):
             cell.number_format = "#,##0"
+        elif col_idx in (3, 6):
+            cell.number_format = "0.0%"
     return r + 2
 
 
@@ -6806,13 +6904,16 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
         ws, next_row, "Safety 調整明細（SKU 級彙總）",
         _build_hybrid_safety_sku_detail(raw), **_block_kw)
 
-    buyer_need = (stats or {}).get("buyer_need_skus")
-    if buyer_need is None:
-        buyer_need = _hybrid_buyer_need_stats(raw)
-    buyer_safety = (stats or {}).get("buyer_safety_fix")
-    if buyer_safety is None:
-        buyer_safety = _hybrid_buyer_safety_stats(raw)
-    combined = _hybrid_buyer_combined_stats(buyer_need, buyer_safety)
+    try:
+        combined = _hybrid_buyer_combined_detail(raw)
+    except Exception:
+        buyer_need = (stats or {}).get("buyer_need_skus")
+        if buyer_need is None:
+            buyer_need = _hybrid_buyer_need_stats(raw)
+        buyer_safety = (stats or {}).get("buyer_safety_fix")
+        if buyer_safety is None:
+            buyer_safety = _hybrid_buyer_safety_stats(raw)
+        combined = _hybrid_buyer_combined_stats(buyer_need, buyer_safety)
     _table_kw = dict(thin_border=thin_border, header_fill=header_fill,
                      header_font=header_font, bold_font=bold_font,
                      section_fill=section_fill, total_fill=total_fill,
