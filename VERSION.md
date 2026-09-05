@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.24.1 (2026-09-05)
+
+店舖問題 SKU 的建議方法不再重複列出調貨來源店號，只計涉及來源店舖數量（店號留給「調貨來源 (Site Code)」／「調貨來源 (同OM)」欄）。
+
+- Change: Stock Checking 與 Hybrid 店舖問題表的建議方法改為「涉及 N 間來源店舖」，並指引用家查閱調貨來源欄；新增 `_count_transfer_sources()`（「HB30:2; HB49:3」計 2 間，空白計 0）
+- Update: `tests/test_shop_issues.py` 新增去重複測試（×1：店號不出現在建議方法；Safety 表同步斷言）；共 244 項測試通過
+
 ## v1.24.0 (2026-09-05)
 
 Stock Checking、Safety Stock Review、Safety Stock x NetStock Review 各新增「店舖問題 SKU」分析（每間店舖需行動列：問題＋建議方法）。

@@ -1107,6 +1107,21 @@ def _shop_issue_base_frame(raw: pd.DataFrame, mask: pd.Series) -> pd.DataFrame:
     return sel
 
 
+def _count_transfer_sources(src: str) -> int:
+    """計算調貨來源店舖數量：「HB30:2; HB49:3」→ 2；空白／無法解析 → 0。"""
+    if not src:
+        return 0
+    count = 0
+    for part in str(src).split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        supply_site, sep, _qty_text = part.rpartition(":")
+        if sep and supply_site.strip():
+            count += 1
+    return count
+
+
 def _build_stock_checking_shop_issues(
     raw: pd.DataFrame,
     turnday_threshold: int = 14,
@@ -1155,10 +1170,10 @@ def _build_stock_checking_shop_issues(
                     f"Tourist 加總 TurnDay {ttd_txt}低於門檻 {int(turnday_threshold)} 日，"
                     f"D001 僅 {d001_txt} 件（門檻 {int(d001_threshold)} 件），需調入卻無足額來源"
                 )
-                src_txt = str(src_w.iloc[i]) or "無來源"
+                src_n = _count_transfer_sources(str(src_w.iloc[i]))
                 advice.append(
                     f"建議調入 {int(demand_w.iloc[i])} 件（實際可調入 {int(actual_w.iloc[i])} 件，"
-                    f"缺口 {gap_n} 件，來源 {src_txt}），不足部分請追蹤 D001 補貨"
+                    f"缺口 {gap_n} 件，涉及 {src_n} 間來源店舖），不足部分請追蹤 D001 補貨"
                 )
                 sev.append(_SHOP_ISSUE_SEVERITY["調入缺口（來源不足）"])
             else:
@@ -1167,10 +1182,10 @@ def _build_stock_checking_shop_issues(
                     f"Tourist 加總 TurnDay {ttd_txt}低於門檻 {int(turnday_threshold)} 日，"
                     f"D001 僅 {d001_txt} 件（門檻 {int(d001_threshold)} 件），店舖庫存不足 14 日周轉"
                 )
-                src_txt = str(src_w.iloc[i]) or "無來源"
+                src_n = _count_transfer_sources(str(src_w.iloc[i]))
                 advice.append(
                     f"建議調入 {int(demand_w.iloc[i])} 件（實際可調入 {int(actual_w.iloc[i])} 件，"
-                    f"來源 {src_txt}），請按調貨來源執行調撥"
+                    f"涉及 {src_n} 間來源店舖），詳見「調貨來源 (Site Code)」欄"
                 )
                 sev.append(_SHOP_ISSUE_SEVERITY["需要調入"])
         else:
@@ -1178,7 +1193,7 @@ def _build_stock_checking_shop_issues(
             desc.append("店舖庫存超過 14 日周轉，可向缺貨店舖供應")
             advice.append(
                 f"可轉出 Non Tourist {int(nt_w.iloc[i])} 件、Mix {int(mix_w.iloc[i])} 件"
-                f"（實際轉出 {int(out_w.iloc[i])} 件），請配合調貨來源執行轉出"
+                f"（實際轉出 {int(out_w.iloc[i])} 件），詳見「調貨來源 (Site Code)」欄"
             )
             sev.append(_SHOP_ISSUE_SEVERITY["可轉出供應"])
     work["問題類型"] = issue
@@ -1190,9 +1205,7 @@ def _build_stock_checking_shop_issues(
     if "SKU" not in work.columns:
         work["SKU"] = ""
     work = work.sort_values(["Site Code", "_sev", "Brand", "SKU"], kind="stable").drop(columns=["_sev"])
-    ordered = [c for c in cols if c in work.columns]
-    trailing = [c for c in work.columns if c not in ordered]
-    return work[ordered + trailing].reset_index(drop=True)
+    return work[[c for c in cols if c in work.columns]].reset_index(drop=True)
 
 
 def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
@@ -1257,9 +1270,7 @@ def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
     if "SKU" not in work.columns:
         work["SKU"] = ""
     work = work.sort_values(["Site Code", "_sev", "Brand", "SKU"], kind="stable").drop(columns=["_sev"])
-    ordered = [c for c in cols if c in work.columns]
-    trailing = [c for c in work.columns if c not in ordered]
-    return work[ordered + trailing].reset_index(drop=True)
+    return work[[c for c in cols if c in work.columns]].reset_index(drop=True)
 
 
 def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
@@ -1302,8 +1313,8 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
             desc.append(f"現時 Safety {adj_txt} 件低於周轉所需 {line_txt} 件（基準 {days_txt}；事件：{evt_txt}）")
             text = f"建議將 Safety 由 {adj_txt} 件調整為 {sugg_txt} 件（{delta_txt}）"
             if int(demand_w.iloc[i]) > 0:
-                src_txt = str(src_w.iloc[i]) or "無來源"
-                text += f"；另需調入 {int(demand_w.iloc[i])} 件（實際可調入 {int(actual_w.iloc[i])} 件，來源 {src_txt}）"
+                src_n = _count_transfer_sources(str(src_w.iloc[i]))
+                text += f"；另需調入 {int(demand_w.iloc[i])} 件（實際可調入 {int(actual_w.iloc[i])} 件，涉及 {src_n} 間來源店舖）"
             if int(gap_w.iloc[i]) > 0:
                 text += f"；尚有缺口 {int(gap_w.iloc[i])} 件，來源不足部分請追蹤 D001 補貨"
             advice.append(text)
@@ -1313,7 +1324,7 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
             desc.append(f"現時 Safety {adj_txt} 件高於周轉所需 {line_txt} 件（基準 {days_txt}；事件：{evt_txt}）")
             advice.append(
                 f"建議將 Safety 由 {adj_txt} 件調整為 {sugg_txt} 件（{delta_txt}），"
-                f"多餘存貨可轉出（實際轉出 {int(out_w.iloc[i])} 件），請配合調貨來源執行"
+                f"多餘存貨可轉出（實際轉出 {int(out_w.iloc[i])} 件），詳見「調貨來源 (Site Code)」欄"
             )
             sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定過高"])
     work["問題類型"] = issue
@@ -1329,9 +1340,7 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
     if "SKU" not in work.columns:
         work["SKU"] = ""
     work = work.sort_values(["Site Code", "_sev", "Brand", "SKU"], kind="stable").drop(columns=["_sev"])
-    ordered = [c for c in cols if c in work.columns]
-    trailing = [c for c in work.columns if c not in ordered]
-    return work[ordered + trailing].reset_index(drop=True)
+    return work[[c for c in cols if c in work.columns]].reset_index(drop=True)
 
 
 def _write_shop_issue_sheet(ws, issue_df, *, title, progress_callback=None, progress_start=0.0, progress_end=0.0):
