@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.19.0 (2026-09-05)
+
+Safety Stock x NetStock Review Buyer 統計合併為單一對照表。
+
+- Change: ④ Buyer 需調貨 SKU 統計與 ⑤ Buyer 需調整 Safety SKU 統計合併為單一 ④ Buyer 統計（需調貨＋需調整 Safety）：同一 Buyer 的需調貨 SKU 數、需調整 Safety SKU 數與 Safety 建議調整量合計並列顯示（外連接，缺席以 0 補齊；按需調貨數降序、再按需調整數降序）
+- Update: 新增 `_hybrid_buyer_combined_stats` 與 `_write_hybrid_buyer_combined_table`（欄位 Buyer／需調貨 SKU 數／需調整 Safety SKU 數／Safety 建議調整量合計＋總計列）；`transform_hybrid` stats 維持 `buyer_need_skus` 與 `buyer_safety_fix` 作為組合輸入；Excel Review 摘要由 ①②③④⑤ 五表改為 ①②③④ 四表；Streamlit 看板與分頁同步改為單表
+- Update: `tests/test_hybrid_buyer_stats.py` 同步（×8，含外連接與合併表位置／總計）；使用說明頁同步
+
 ## v1.18.0 (2026-09-05)
 
 Safety Stock x NetStock Review 新增 Buyer 統計與需要修改 Safety 統計。

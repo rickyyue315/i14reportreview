@@ -1,8 +1,9 @@
-"""Safety Stock x NetStock Review Buyer 統計（需調貨＋需調整 Safety）。
+"""Safety Stock x NetStock Review Buyer 統計（需調貨＋需調整 Safety 合併表）。
 
 - Buyer 需調貨 SKU 統計與 Stock Checking 同口徑（同 SKU 首個非空 Buyer，已刪除重複）
 - Buyer 需調整 Safety SKU 統計母體為 Safety 設定不足＋過高（有建議 Safety 設定值的列）
-- Excel Review 摘要在既有 ①②③ 區塊後另加 ④⑤ Buyer 表；Streamlit 看板與 Review 摘要分頁同步顯示
+- 兩者按 Buyer 外連接合併為單一表：Buyer／需調貨 SKU 數／需調整 Safety SKU 數／Safety 建議調整量合計
+- Excel Review 摘要在既有 ①②③ 區塊後另加 ④ 合併表；Streamlit 看板與 Review 摘要分頁同步顯示
 """
 import warnings
 warnings.filterwarnings("ignore")
@@ -14,9 +15,9 @@ from transformer import (
     transform_stock_checking,
     _hybrid_buyer_need_stats,
     _hybrid_buyer_safety_stats,
+    _hybrid_buyer_combined_stats,
     _hybrid_stats_from_raw,
-    _HYBRID_BUYER_NEED_TITLE,
-    _HYBRID_BUYER_SAFETY_TITLE,
+    _HYBRID_BUYER_COMBINED_TITLE,
 )
 
 BASE = {
@@ -98,6 +99,16 @@ def test_buyer_safety_counts_and_amounts():
     assert sum(c for _, c, _ in stats["buyer_safety_fix"]) == 2
 
 
+def test_buyer_combined_outer_join():
+    assert _hybrid_buyer_combined_stats([("Alice", 2), ("Bob", 1)], [("Bob", 1, 5), ("Cathy", 3, -7)]) == [
+        ("Alice", 2, 0, 0),
+        ("Bob", 1, 1, 5),
+        ("Cathy", 0, 3, -7),
+    ]
+    assert _hybrid_buyer_combined_stats([], []) == []
+    assert _hybrid_buyer_combined_stats(None, None) == []
+
+
 def test_buyer_safety_empty_when_no_fix():
     df = _df([
         {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist",
@@ -109,6 +120,7 @@ def test_buyer_safety_empty_when_no_fix():
     assert stats["buyer_safety_fix"] == []
     assert _hybrid_buyer_need_stats(raw) == []
     assert _hybrid_buyer_safety_stats(raw) == []
+    assert _hybrid_buyer_combined_stats([], []) == []
     assert _hybrid_buyer_need_stats(None) == []
     assert _hybrid_buyer_safety_stats(pd.DataFrame()) == []
 
@@ -118,41 +130,38 @@ def test_stats_fallback_matches_transform():
     fb = _hybrid_stats_from_raw(raw)
     assert fb["buyer_need_skus"] == stats["buyer_need_skus"]
     assert fb["buyer_safety_fix"] == stats["buyer_safety_fix"]
+    assert _hybrid_buyer_combined_stats(fb["buyer_need_skus"], fb["buyer_safety_fix"]) == [
+        ("Alice", 1, 1, -10), ("Bob", 1, 1, 15),
+    ]
 
 
-def test_excel_buyer_tables_after_safety_blocks():
+def test_excel_buyer_combined_after_safety_blocks():
     raw, sc, diag, diag_om, cross, stats, _ = transform_hybrid(_df(_TWO_BUYER), safety_days=_SD10)
     ws = load_workbook(generate_excel_hybrid(raw, sc, diag, diag_om, cross, stats))["Review 摘要"]
-    titles = {}
+    title_row = None
     for row in ws.iter_rows():
         for c in row:
-            if c.value in (_HYBRID_BUYER_NEED_TITLE, _HYBRID_BUYER_SAFETY_TITLE):
-                titles[c.value] = c.row
-    assert set(titles) == {_HYBRID_BUYER_NEED_TITLE, _HYBRID_BUYER_SAFETY_TITLE}
-    assert titles[_HYBRID_BUYER_NEED_TITLE] < titles[_HYBRID_BUYER_SAFETY_TITLE]
-    # ④ 需調貨表：標題 → 表頭 → Alice → Bob → 總計
-    r0 = titles[_HYBRID_BUYER_NEED_TITLE]
-    assert ws.cell(row=r0 + 1, column=1).value == "Buyer"
-    assert ws.cell(row=r0 + 1, column=2).value == "需調貨 SKU 數"
-    assert ws.cell(row=r0 + 2, column=1).value == "Alice"
-    assert ws.cell(row=r0 + 2, column=2).value == 1
-    assert ws.cell(row=r0 + 3, column=1).value == "Bob"
-    assert ws.cell(row=r0 + 4, column=1).value == "總計"
-    assert ws.cell(row=r0 + 4, column=2).value == 2
-    assert ws.cell(row=r0 + 2, column=3).number_format == "0.0%"
-    # ⑤ Safety 表：標題 → 表頭 → Alice(−10) → Bob(+15) → 總計(淨 +5)
-    r1 = titles[_HYBRID_BUYER_SAFETY_TITLE]
-    assert ws.cell(row=r1 + 1, column=2).value == "需調整 Safety SKU 數"
-    assert ws.cell(row=r1 + 1, column=3).value == "Safety 建議調整量合計"
-    assert ws.cell(row=r1 + 2, column=1).value == "Alice"
-    assert ws.cell(row=r1 + 2, column=3).value == -10
-    assert ws.cell(row=r1 + 3, column=3).value == 15
-    assert ws.cell(row=r1 + 4, column=1).value == "總計"
-    assert ws.cell(row=r1 + 4, column=2).value == 2
-    assert ws.cell(row=r1 + 4, column=3).value == 5
+            if c.value == _HYBRID_BUYER_COMBINED_TITLE:
+                title_row = c.row
+    assert title_row is not None
+    # 合併表：標題 → 表頭 → Alice(1, 1, −10) → Bob(1, 1, +15) → 總計(2, 2, +5)
+    assert ws.cell(row=title_row + 1, column=1).value == "Buyer"
+    assert ws.cell(row=title_row + 1, column=2).value == "需調貨 SKU 數"
+    assert ws.cell(row=title_row + 1, column=3).value == "需調整 Safety SKU 數"
+    assert ws.cell(row=title_row + 1, column=4).value == "Safety 建議調整量合計"
+    assert ws.cell(row=title_row + 2, column=1).value == "Alice"
+    assert ws.cell(row=title_row + 2, column=2).value == 1
+    assert ws.cell(row=title_row + 2, column=3).value == 1
+    assert ws.cell(row=title_row + 2, column=4).value == -10
+    assert ws.cell(row=title_row + 3, column=1).value == "Bob"
+    assert ws.cell(row=title_row + 3, column=4).value == 15
+    assert ws.cell(row=title_row + 4, column=1).value == "總計"
+    assert ws.cell(row=title_row + 4, column=2).value == 2
+    assert ws.cell(row=title_row + 4, column=3).value == 2
+    assert ws.cell(row=title_row + 4, column=4).value == 5
 
 
-def test_excel_no_buyer_tables_when_empty():
+def test_excel_no_buyer_table_when_empty():
     df = _df([
         {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist",
          "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
@@ -161,5 +170,4 @@ def test_excel_no_buyer_tables_when_empty():
     raw, sc, diag, diag_om, cross, stats, _ = transform_hybrid(df)
     ws = load_workbook(generate_excel_hybrid(raw, sc, diag, diag_om, cross, stats))["Review 摘要"]
     texts = {c.value for row in ws.iter_rows() for c in row}
-    assert _HYBRID_BUYER_NEED_TITLE not in texts
-    assert _HYBRID_BUYER_SAFETY_TITLE not in texts
+    assert _HYBRID_BUYER_COMBINED_TITLE not in texts
