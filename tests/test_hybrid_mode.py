@@ -1007,20 +1007,28 @@ _SCENARIO_NO_SUPPLY = [
 
 
 def test_detail_columns_and_row_splitting():
-    raw, *_ = transform_hybrid(_df(_SCENARIO_MULTI))
+    rows = [dict(r) for r in _SCENARIO_MULTI]
+    rows[2]["RP Type"] = "ND"  # M21 轉 ND → 仍可作供應來源，RP Type 應帶出
+    raw, *_ = transform_hybrid(_df(rows))
     assert _get(raw, "T21", "調貨來源 (Site Code)") == "N21:6; M21:11"
     det = _build_hybrid_transfer_detail(raw)
     assert list(det.columns) == _HYBRID_TRANSFER_DETAIL_COLUMNS
+    assert _HYBRID_TRANSFER_DETAIL_COLUMNS.index("調貨數量") == _HYBRID_TRANSFER_DETAIL_COLUMNS.index("Supply Site Code(調貨來源)") - 1
+    assert _HYBRID_TRANSFER_DETAIL_COLUMNS.index("Target RP Type") == _HYBRID_TRANSFER_DETAIL_COLUMNS.index("Target Shop Name") + 1
+    assert _HYBRID_TRANSFER_DETAIL_COLUMNS.index("Supply RP Type") == _HYBRID_TRANSFER_DETAIL_COLUMNS.index("Supply Shop Name") + 1
     assert len(det) == 2
     assert int(det["調貨數量"].sum()) == int(_get(raw, "T21", "實際調入量")) == 17
     r0 = det.iloc[0]  # 按 Supply Site Code 排序：M21 先於 N21
     assert r0["Supply Site Code(調貨來源)"] == "M21" and int(r0["調貨數量"]) == 11
     assert r0["Target Site Code(接收店舖)"] == "T21"
     assert r0["Target Shop Name"] == "ShopT" and r0["Target OM"] == "Ivy"
+    assert r0["Target RP Type"] == "RF"
     assert r0["Supply Shop Name"] == "ShopM" and r0["Supply OM"] == "Ivy"
+    assert r0["Supply RP Type"] == "ND"
     r1 = det.iloc[1]
     assert r1["Supply Site Code(調貨來源)"] == "N21" and int(r1["調貨數量"]) == 6
     assert r1["Supply Shop Name"] == "ShopN" and r1["Supply OM"] == "Max"
+    assert r1["Supply RP Type"] == "RF"
     assert det["Brand"].eq("A").all() and det["SKU"].astype(str).eq("820").all()
     assert det["SKU Desc"].eq("Test Product").all()
 
@@ -1055,6 +1063,7 @@ def test_detail_merges_duplicate_supply_site():
     hb30 = det[det["Supply Site Code(調貨來源)"] == "HB30"]
     assert int(hb30.iloc[0]["調貨數量"]) == 5  # 重複段合併加總
     assert hb30.iloc[0]["Supply Shop Name"] == "" and hb30.iloc[0]["Supply OM"] == ""
+    assert hb30.iloc[0]["Target RP Type"] == "" and hb30.iloc[0]["Supply RP Type"] == ""  # 缺 RP Type 欄留空
     assert det.iloc[0]["Target Shop Name"] == "接收店"
 
 
@@ -1082,12 +1091,14 @@ def test_detail_excel_sheets():
     headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
     assert headers == _HYBRID_TRANSFER_DETAIL_COLUMNS
     assert ws.freeze_panes == "A2"
-    assert ws.auto_filter.ref == "A1:J3"
-    assert ws.cell(row=2, column=10).number_format == "#,##0"
-    assert int(ws.cell(row=2, column=10).value) == 11  # M21:11（排序後首行）
+    assert ws.auto_filter.ref == "A1:L3"
+    assert ws.cell(row=2, column=8).number_format == "#,##0"
+    assert int(ws.cell(row=2, column=8).value) == 11  # M21:11（排序後首行）
+    assert ws.cell(row=2, column=6).value == "RF"  # Target RP Type
+    assert ws.cell(row=2, column=11).value == "RF"  # Supply RP Type（M21）
     ws_om = wb["簡易調貨明細 (同OM)"]
-    assert ws_om.auto_filter.ref == "A1:J2"
-    assert int(ws_om.cell(row=2, column=10).value) == 11
+    assert ws_om.auto_filter.ref == "A1:L2"
+    assert int(ws_om.cell(row=2, column=8).value) == 11
     # 無實際調貨 → 兩表寫「無符合資料」
     raw2, sc2, d2, d2o, c2, s2, _ = transform_hybrid(_df(_SCENARIO_NO_SUPPLY))
     buf2 = generate_excel_hybrid(raw2, sc2, d2, d2o, c2, s2)

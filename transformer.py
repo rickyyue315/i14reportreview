@@ -5553,12 +5553,13 @@ def _build_hybrid_diagnosis(raw: pd.DataFrame, variant: str = "free") -> pd.Data
     return df[ordered].reset_index(drop=True)
 
 
-# 簡易調貨明細欄序（一列一筆「來源店舖 → 接收店舖」調貨；欄名屬新契約，未經要求不得改動）
+# 簡易調貨明細欄序（一列一筆「來源店舖 → 接收店舖」調貨；RP Type 緊接對應 Shop Name，
+# 調貨數量置於 Supply Site Code 前作 Target／Supply 分隔；v1.22.0 起 12 欄）
 _HYBRID_TRANSFER_DETAIL_COLUMNS = [
     "Brand", "SKU", "SKU Desc",
-    "Target Site Code(接收店舖)", "Target Shop Name", "Target OM",
-    "Supply Site Code(調貨來源)", "Supply Shop Name", "Supply OM",
+    "Target Site Code(接收店舖)", "Target Shop Name", "Target RP Type", "Target OM",
     "調貨數量",
+    "Supply Site Code(調貨來源)", "Supply Shop Name", "Supply RP Type", "Supply OM",
 ]
 
 
@@ -5566,7 +5567,7 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
     """簡易調貨明細：只收錄「需要調貨=是」且實際有調入的列，把調貨來源字串
     （如「HB30:2; HB49:3」）逐段拆行，一列一筆來源店→接收店調貨。
     variant="om" 時改用同OM調貨欄位；同一接收列同一來源店重複出現時合併加總。
-    來源店名稱／OM 以 RAW 全量建立 Site Code 查找表補回，查不到留空。"""
+    來源店名稱／OM／RP Type 以 RAW 全量建立 Site Code 查找表補回，查不到留空。"""
     cols = _HYBRID_TRANSFER_DETAIL_COLUMNS
     if raw is None or raw.empty or "需要調貨" not in raw.columns:
         return pd.DataFrame(columns=cols)
@@ -5595,16 +5596,26 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
     else:
         name_all = _safe_default_series("", raw.index)
     om_all = raw.get("OM", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
+    rp_all = (
+        raw["RP Type"].fillna("").astype(str).str.strip().str.upper()
+        if "RP Type" in raw.columns
+        else _safe_default_series("", raw.index)
+    )
 
     name_map: dict[str, str] = {}
     om_map: dict[str, str] = {}
-    for site_v, name_v, om_v in zip(site_all.to_numpy(), name_all.to_numpy(), om_all.to_numpy()):
+    rp_map: dict[str, str] = {}
+    for site_v, name_v, om_v, rp_v in zip(
+        site_all.to_numpy(), name_all.to_numpy(), om_all.to_numpy(), rp_all.to_numpy()
+    ):
         if site_v == "":
             continue
         if name_v and site_v not in name_map:
             name_map[site_v] = str(name_v)
         if om_v and site_v not in om_map:
             om_map[site_v] = str(om_v)
+        if rp_v and site_v not in rp_map:
+            rp_map[site_v] = str(rp_v)
 
     rows = []
     for idx_pos, row in sel.iterrows():
@@ -5613,6 +5624,7 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
         if not target_name:
             target_name = name_map.get(site_v, "")
         target_om = str(row.get("OM", "")).strip() or om_map.get(site_v, "")
+        target_rp = str(row.get("RP Type", "")).strip().upper() or rp_map.get(site_v, "")
         per_supply: dict[str, int] = {}
         for part in str(row[src_col]).split(";"):
             part = part.strip()
@@ -5636,11 +5648,13 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
                 "SKU Desc": row.get("SKU Desc", ""),
                 "Target Site Code(接收店舖)": site_v,
                 "Target Shop Name": target_name,
+                "Target RP Type": target_rp,
                 "Target OM": target_om,
+                "調貨數量": qty_n,
                 "Supply Site Code(調貨來源)": supply_site,
                 "Supply Shop Name": name_map.get(supply_site, ""),
+                "Supply RP Type": rp_map.get(supply_site, ""),
                 "Supply OM": om_map.get(supply_site, ""),
-                "調貨數量": qty_n,
             })
     if not rows:
         return pd.DataFrame(columns=cols)

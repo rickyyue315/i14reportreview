@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.22.0 (2026-09-05)
+
+簡易調貨明細新增 Target／Supply RP Type 欄並調整欄序。
+
+- Update: 欄序改為 12 欄 `Brand / SKU / SKU Desc / Target Site Code(接收店舖) / Target Shop Name / Target RP Type / Target OM / 調貨數量 / Supply Site Code(調貨來源) / Supply Shop Name / Supply RP Type / Supply OM`——RP Type 緊接對應 Shop Name 之後；調貨數量移到 Supply Site Code(調貨來源) 前，分隔 Target 與 Supply 兩組欄位（Streamlit tab 與 Excel 兩工作表同步）
+- Update: `_build_hybrid_transfer_detail()` 新增 Site Code→RP Type 查找表（與 Shop Name／OM 同口徑，來源店查不到留空；接收店取自身列值），`_HYBRID_TRANSFER_DETAIL_COLUMNS` 契約同步
+- Update: `tests/test_hybrid_mode.py` 同步（欄序契約、ND 來源店 RP Type 帶出、缺 RP Type 欄留空、Excel 表頭／自動篩選 A1:L／調貨數量第 8 欄）；README／使用說明頁同步
+
 ## v1.21.0 (2026-09-05)
 
 Safety Stock x NetStock Review Buyer 合併表補回貨量與佔比欄。
