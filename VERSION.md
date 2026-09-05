@@ -1,5 +1,14 @@
 # 版本記錄
 
+## v1.18.0 (2026-09-05)
+
+Safety Stock x NetStock Review 新增 Buyer 統計與需要修改 Safety 統計。
+
+- New: 沿用 Stock Checking 的 Buyer 需調貨 SKU 統計（同 SKU 首個非空 Buyer，已刪除重複，按數量降序），於 Hybrid 看板、Review 摘要分頁與 Excel Review 摘要同步顯示
+- New: 新增 Buyer 需調整 Safety SKU 統計（母體為 Safety 設定不足＋過高，即有建議 Safety 設定值的列；同 SKU 首個非空 Buyer，已刪除重複；另含各 Buyer 的 Safety 建議調整量合計，淨額正=增加、負=減少），與需調貨統計並列顯示
+- Update: `transform_hybrid` stats 新增 `buyer_need_skus` 與 `buyer_safety_fix`（`_hybrid_stats_from_raw` 回退同口徑）；`generate_excel_hybrid` 的 Review 摘要在既有 ①②③ 區塊後另加 ④⑤ Buyer 表（7 工作表數目與既有區塊列位置不變）；Streamlit Hybrid 看板與 Review 摘要分頁同步新增兩表
+- Update: 新增 `tests/test_hybrid_buyer_stats.py`（×7：需調貨口徑等價、空白 Buyer 歸組、Safety 計數與金額對帳、空母體、回退一致、Excel 兩表位置與總計、空表不寫入）；共 216 項測試通過；使用說明頁同步
+
 ## v1.17.2 (2026-09-05)
 
 Safety Stock x NetStock Review 代碼審查修正（文獻一致性、統計口徑、顯式守衛與稽核欄）。

@@ -21,6 +21,7 @@ from transformer import (
     transform_hybrid, generate_excel_hybrid, _hybrid_dashboard_metrics,
     _hybrid_raw_display_columns, _build_hybrid_transfer_detail,
     _build_hybrid_safety_change_summary, _build_hybrid_safety_sku_detail,
+    _hybrid_buyer_need_stats, _hybrid_buyer_safety_stats,
     _HYBRID_SAFETY_DAYS_DEFAULT, _HYBRID_SAFETY_DAYS_MIN, _HYBRID_SAFETY_DAYS_MAX,
     _hybrid_safety_days_label,
 )
@@ -744,6 +745,40 @@ if uploaded_file is not None:
                         """, unsafe_allow_html=True)
                 st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
 
+            _hyb_buyer_need = (stats or {}).get("buyer_need_skus")
+            if _hyb_buyer_need is None:
+                try:
+                    _hyb_buyer_need = _hybrid_buyer_need_stats(raw_df)
+                except Exception:
+                    _hyb_buyer_need = []
+            _hyb_buyer_safety = (stats or {}).get("buyer_safety_fix")
+            if _hyb_buyer_safety is None:
+                try:
+                    _hyb_buyer_safety = _hybrid_buyer_safety_stats(raw_df)
+                except Exception:
+                    _hyb_buyer_safety = []
+            if _hyb_buyer_need:
+                st.markdown("#### 👤 Buyer 需調貨 SKU 統計")
+                _b_total = sum(c for _, c in _hyb_buyer_need)
+                _b_df = pd.DataFrame(_hyb_buyer_need, columns=["Buyer", "需調貨 SKU 數"])
+                _b_df["佔比"] = (_b_df["需調貨 SKU 數"] / _b_total * 100) if _b_total else 0.0
+                st.dataframe(
+                    _b_df, width='stretch', hide_index=True,
+                    column_config={"佔比": st.column_config.NumberColumn("佔比", format="%.1f%%")},
+                )
+                st.caption(f"共 {len(_hyb_buyer_need)} 個 Buyer 涉及 {_b_total:,} 個需調貨 SKU（已刪除重複；Buyer 取同 SKU 首個非空值，空白歸入「(未填 Buyer)」）。")
+            if _hyb_buyer_safety:
+                st.markdown("#### 🛡️ Buyer 需調整 Safety SKU 統計")
+                _s_total = sum(c for _, c, _ in _hyb_buyer_safety)
+                _s_df = pd.DataFrame(_hyb_buyer_safety, columns=["Buyer", "需調整 Safety SKU 數", "Safety 建議調整量合計"])
+                _s_df["佔比"] = (_s_df["需調整 Safety SKU 數"] / _s_total * 100) if _s_total else 0.0
+                _s_df = _s_df[["Buyer", "需調整 Safety SKU 數", "Safety 建議調整量合計", "佔比"]]
+                st.dataframe(
+                    _s_df, width='stretch', hide_index=True,
+                    column_config={"佔比": st.column_config.NumberColumn("佔比", format="%.1f%%")},
+                )
+                st.caption(f"共 {len(_hyb_buyer_safety)} 個 Buyer 涉及 {_s_total:,} 個需調整 Safety SKU（已刪除重複；母體為 Safety 設定不足＋過高；調整量合計為淨調整量，正=增加、負=減少）。")
+
             st.markdown('</div>', unsafe_allow_html=True)
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -809,6 +844,46 @@ if uploaded_file is not None:
                                "淨調整量 = 該 SKU 各列「Safety 建議調整量」加總。")
                 else:
                     st.info("無符合資料")
+
+                st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+                st.markdown("#### ④ Buyer 需調貨 SKU 統計（同 Stock Checking 口徑）")
+                _hyb_buyer_need_tab = (stats or {}).get("buyer_need_skus")
+                if _hyb_buyer_need_tab is None:
+                    try:
+                        _hyb_buyer_need_tab = _hybrid_buyer_need_stats(raw_df)
+                    except Exception:
+                        _hyb_buyer_need_tab = []
+                if _hyb_buyer_need_tab:
+                    _bt_total = sum(c for _, c in _hyb_buyer_need_tab)
+                    _bt_df = pd.DataFrame(_hyb_buyer_need_tab, columns=["Buyer", "需調貨 SKU 數"])
+                    _bt_df["佔比"] = (_bt_df["需調貨 SKU 數"] / _bt_total * 100) if _bt_total else 0.0
+                    st.dataframe(
+                        _bt_df, width='stretch', hide_index=True,
+                        column_config={"佔比": st.column_config.NumberColumn("佔比", format="%.1f%%")},
+                    )
+                    st.caption(f"共 {len(_hyb_buyer_need_tab)} 個 Buyer 涉及 {_bt_total:,} 個需調貨 SKU（已刪除重複；Buyer 取同 SKU 首個非空值）。")
+                else:
+                    st.info("無符合調貨條件的 Buyer 統計")
+
+                st.markdown("#### ⑤ Buyer 需調整 Safety SKU 統計")
+                _hyb_buyer_safety_tab = (stats or {}).get("buyer_safety_fix")
+                if _hyb_buyer_safety_tab is None:
+                    try:
+                        _hyb_buyer_safety_tab = _hybrid_buyer_safety_stats(raw_df)
+                    except Exception:
+                        _hyb_buyer_safety_tab = []
+                if _hyb_buyer_safety_tab:
+                    _st_total = sum(c for _, c, _ in _hyb_buyer_safety_tab)
+                    _st_df = pd.DataFrame(_hyb_buyer_safety_tab, columns=["Buyer", "需調整 Safety SKU 數", "Safety 建議調整量合計"])
+                    _st_df["佔比"] = (_st_df["需調整 Safety SKU 數"] / _st_total * 100) if _st_total else 0.0
+                    _st_df = _st_df[["Buyer", "需調整 Safety SKU 數", "Safety 建議調整量合計", "佔比"]]
+                    st.dataframe(
+                        _st_df, width='stretch', hide_index=True,
+                        column_config={"佔比": st.column_config.NumberColumn("佔比", format="%.1f%%")},
+                    )
+                    st.caption(f"共 {len(_hyb_buyer_safety_tab)} 個 Buyer 涉及 {_st_total:,} 個需調整 Safety SKU（已刪除重複；母體為 Safety 設定不足＋過高；調整量合計為淨調整量）。")
+                else:
+                    st.info("無需要修改 Safety 的 Buyer 統計")
             with tab_detail:
                 st.markdown("#### 簡易調貨明細（一列一筆來源店→接收店調貨；來源如 HB30:2; HB49:3 會拆成兩行）")
                 _dv = st.radio(

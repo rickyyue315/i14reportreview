@@ -5767,6 +5767,95 @@ def _build_hybrid_safety_sku_detail(raw: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values(["Brand", "SKU"], kind="stable").reset_index(drop=True)
 
 
+# ── Buyer 統計（欄名屬新契約，未經要求不得改動）──
+_HYBRID_BUYER_NEED_TITLE = "Buyer 需調貨 SKU 統計（按需調貨 SKU 數排序）"
+_HYBRID_BUYER_SAFETY_TITLE = "Buyer 需調整 Safety SKU 統計（按需調整 SKU 數排序）"
+
+
+def _hybrid_buyer_need_stats(raw: pd.DataFrame, need_series: pd.Series | None = None) -> list[tuple[str, int]]:
+    """Buyer 級統計：各 Buyer 涉及多少個「需要調貨」SKU（已刪除重複）。
+
+    與 Stock Checking 的 `_stock_checking_buyer_stats` 同口徑（Buyer 取同 SKU 首個非空值；
+    全空歸入「(未填 Buyer)」），供 Safety Stock x NetStock Review 沿用。
+    回傳 [(Buyer, 需調貨 SKU 數)]，按數量降序、同數按 Buyer 名排序。
+    """
+    if raw is None or raw.empty or "SKU" not in raw.columns:
+        return []
+    if need_series is None:
+        need_series = raw.get("需要調貨", _safe_default_series("", raw.index)).astype(str) == "是"
+    need_skus = set(raw.loc[need_series, "SKU"].dropna().unique())
+    if not need_skus:
+        return []
+    buyer = (
+        raw["Buyer"].fillna("").astype(str).str.strip()
+        if "Buyer" in raw.columns
+        else _safe_default_series("", raw.index)
+    )
+    tmp = pd.DataFrame({"_sku": raw["SKU"], "_buyer": buyer})
+    tmp = tmp[tmp["_sku"].isin(need_skus)]
+
+    def _first_nonempty(s: pd.Series) -> str:
+        s = s[s != ""]
+        return s.iloc[0] if len(s) else "(未填 Buyer)"
+
+    per_sku_buyer = tmp.groupby("_sku", sort=False)["_buyer"].agg(_first_nonempty)
+    counts = per_sku_buyer.value_counts()
+    return sorted(((str(b), int(c)) for b, c in counts.items()), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _hybrid_buyer_safety_stats(raw: pd.DataFrame) -> list[tuple[str, int, int]]:
+    """Buyer 級統計：各 Buyer 涉及多少個「需要修改 Safety」SKU（已刪除重複）。
+
+    母體為 Safety Review 屬「Safety 設定不足」或「Safety 設定過高」的列（即有
+    「建議 Safety 設定值」的列，與 Safety 調整方向分類的增加＋減少同母體）。
+    Buyer 取同 SKU 首個非空值（與需調貨統計同口徑）；全空歸入「(未填 Buyer)」。
+    調整量合計為該 Buyer 名下各需調整 SKU 的「Safety 建議調整量」列合計（四捨五入取整，
+    與交叉表／分類表同口徑；正=增加、負=減少）。
+    回傳 [(Buyer, 需調整 Safety SKU 數, Safety 建議調整量合計)]，
+    按 SKU 數降序、同數按 Buyer 名排序。
+    """
+    if raw is None or raw.empty or "SKU" not in raw.columns:
+        return []
+    diag = raw.get("Safety Review", _safe_default_series("", raw.index)).fillna("").astype(str)
+    fix_mask = diag.isin([_HYBRID_DIAG_UNDER, _HYBRID_DIAG_OVER])
+    if not bool(fix_mask.any()):
+        return []
+    chg = pd.to_numeric(
+        raw.get("Safety 建議調整量", _safe_default_series(np.nan, raw.index)), errors="coerce"
+    ).fillna(0.0)
+    buyer = (
+        raw["Buyer"].fillna("").astype(str).str.strip()
+        if "Buyer" in raw.columns
+        else _safe_default_series("", raw.index)
+    )
+    tmp = pd.DataFrame({
+        "_sku": raw.loc[fix_mask, "SKU"],
+        "_buyer": buyer.loc[fix_mask],
+        "_chg": chg.loc[fix_mask],
+    })
+    tmp = tmp[tmp["_sku"].notna()]
+    if tmp.empty:
+        return []
+
+    def _first_nonempty(s: pd.Series) -> str:
+        s = s[s != ""]
+        return s.iloc[0] if len(s) else "(未填 Buyer)"
+
+    per_sku_buyer = tmp.groupby("_sku", sort=False)["_buyer"].agg(_first_nonempty)
+    per_sku_chg = tmp.groupby("_sku", sort=False)["_chg"].sum()
+    per_buyer_skus: dict[str, int] = {}
+    per_buyer_chg: dict[str, float] = {}
+    for sku, b in per_sku_buyer.items():
+        b = str(b)
+        per_buyer_skus[b] = per_buyer_skus.get(b, 0) + 1
+        per_buyer_chg[b] = per_buyer_chg.get(b, 0.0) + float(per_sku_chg.loc[sku])
+    result = [
+        (b, int(per_buyer_skus[b]), int(round(per_buyer_chg[b])))
+        for b in per_buyer_skus
+    ]
+    return sorted(result, key=lambda kv: (-kv[1], kv[0]))
+
+
 def _hybrid_safety_days_from_raw(raw: pd.DataFrame, nature=None) -> dict[str, int]:
     """由 RAW 的「Safety 基準天數」欄還原各 Nature 實際採用的基準天數
     （該欄每列同一 Nature 恆定）；缺欄時退回預設 7 / 9 / 10。"""
@@ -5821,6 +5910,8 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
         "over_dec_total": int(round(float(chg[over].fillna(0).sum()))),
         "normal_rows": int((evt != "").sum()) - int(under.sum()) - int(over.sum()),
         "total_raw_rows": int(len(raw)),
+        "buyer_need_skus": _hybrid_buyer_need_stats(raw, need),
+        "buyer_safety_fix": _hybrid_buyer_safety_stats(raw),
     }
 
 
@@ -5983,8 +6074,13 @@ def transform_hybrid(
       欄位加「(同OM)」後綴）；Safety Review 與建議調整量兩變體相同，不受調貨限制影響。
     - Summary：附 Stock Checking 的 SKU 級彙總（各 Nature 庫存/月銷加總、TurnDay、佔比、
       強制調貨提示、存貨偏重提示），供查閱哪些 SKU 存貨偏重哪個 Nature。
+    - Buyer 統計：沿用 Stock Checking 的 Buyer 需調貨 SKU 統計（同 SKU 首個非空 Buyer，
+      已刪除重複），另加 Buyer 需調整 Safety SKU 統計（Safety 設定不足＋過高母體，
+      含各 Buyer 的調整量合計）。
     回傳 (raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warnings)；
-    stats["safety_days"] 為實際採用的各 Nature 基準天數。
+    stats["safety_days"] 為實際採用的各 Nature 基準天數；
+    stats["buyer_need_skus"] 為 [(Buyer, 需調貨 SKU 數)]；
+    stats["buyer_safety_fix"] 為 [(Buyer, 需調整 Safety SKU 數, Safety 建議調整量合計)]。
     """
     missing = validate_hybrid_input(df_input)
     if missing:
@@ -6296,6 +6392,8 @@ def transform_hybrid(
         "over_dec_total": int(round(float(np.nansum(chg[over_mask])))) if over_mask.any() else 0,
         "normal_rows": int(in_table.sum()) - int(under_mask.sum()) - int(over_mask.sum()),
         "total_raw_rows": int(n_rows),
+        "buyer_need_skus": _hybrid_buyer_need_stats(raw, need_series),
+        "buyer_safety_fix": _hybrid_buyer_safety_stats(raw),
     }
 
     if progress_callback:
@@ -6453,13 +6551,121 @@ def _write_hybrid_summary_block(ws, start_row, section_title, block, *, header_f
     return header_row + len(block) + 2
 
 
+def _write_hybrid_buyer_need_table(ws, buyer_stats, thin_border, header_fill,
+                                   header_font, bold_font, section_fill,
+                                   total_fill, center, start_row: int) -> int:
+    """Review 摘要的 Buyer 需調貨 SKU 統計表（Buyer／需調貨 SKU 數／佔比＋總計列）。
+
+    與 Stock Checking 的 `_write_stock_checking_buyer_table` 同格式（標題列合併、
+    0.0% 佔比、總計列粗體灰底）。buyer_stats 為 [(Buyer, 需調貨 SKU 數)]；
+    空集合時不寫入，回傳原 start_row。回傳下一個區塊的標題列號。
+    """
+    if not buyer_stats:
+        return start_row
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=3)
+    tc = ws.cell(row=start_row, column=1, value=_HYBRID_BUYER_NEED_TITLE)
+    tc.font = Font(bold=True, size=12, color="1E40AF")
+    tc.fill = section_fill
+    tc.alignment = Alignment(horizontal="left", vertical="center")
+    hr = start_row + 1
+    for col_idx, h in enumerate(("Buyer", "需調貨 SKU 數", "佔比"), 1):
+        cell = ws.cell(row=hr, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+        cell.border = thin_border
+    total_skus = sum(c for _, c in buyer_stats)
+    r = hr + 1
+    for buyer, cnt in buyer_stats:
+        c1 = ws.cell(row=r, column=1, value=buyer)
+        c1.border = thin_border
+        c2 = ws.cell(row=r, column=2, value=cnt)
+        c2.number_format = "#,##0"
+        c2.alignment = center
+        c2.border = thin_border
+        c3 = ws.cell(row=r, column=3, value=cnt / total_skus if total_skus else None)
+        c3.number_format = "0.0%"
+        c3.alignment = center
+        c3.border = thin_border
+        r += 1
+    for col_idx, v in ((1, "總計"), (2, total_skus), (3, 1.0 if total_skus else None)):
+        cell = ws.cell(row=r, column=col_idx, value=v)
+        cell.font = bold_font
+        cell.fill = total_fill
+        cell.border = thin_border
+        cell.alignment = center
+        if col_idx == 2:
+            cell.number_format = "#,##0"
+        elif col_idx == 3:
+            cell.number_format = "0.0%"
+    return r + 2
+
+
+def _write_hybrid_buyer_safety_table(ws, buyer_safety, thin_border, header_fill,
+                                     header_font, bold_font, section_fill,
+                                     total_fill, center, start_row: int) -> int:
+    """Review 摘要的 Buyer 需調整 Safety SKU 統計表
+    （Buyer／需調整 Safety SKU 數／Safety 建議調整量合計／佔比＋總計列）。
+
+    buyer_safety 為 [(Buyer, 需調整 Safety SKU 數, Safety 建議調整量合計)]，
+    按 SKU 數降序；佔比分母為各 Buyer 需調整 SKU 數合計；總計列的調整量為淨調整量。
+    空集合時不寫入，回傳原 start_row。回傳下一個區塊的標題列號。
+    """
+    if not buyer_safety:
+        return start_row
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=4)
+    tc = ws.cell(row=start_row, column=1, value=_HYBRID_BUYER_SAFETY_TITLE)
+    tc.font = Font(bold=True, size=12, color="1E40AF")
+    tc.fill = section_fill
+    tc.alignment = Alignment(horizontal="left", vertical="center")
+    hr = start_row + 1
+    for col_idx, h in enumerate(("Buyer", "需調整 Safety SKU 數", "Safety 建議調整量合計", "佔比"), 1):
+        cell = ws.cell(row=hr, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+        cell.border = thin_border
+    total_skus = sum(c for _, c, _ in buyer_safety)
+    total_chg = sum(v for _, _, v in buyer_safety)
+    r = hr + 1
+    for buyer, cnt, chg_total in buyer_safety:
+        c1 = ws.cell(row=r, column=1, value=buyer)
+        c1.border = thin_border
+        c2 = ws.cell(row=r, column=2, value=cnt)
+        c2.number_format = "#,##0"
+        c2.alignment = center
+        c2.border = thin_border
+        c3 = ws.cell(row=r, column=3, value=chg_total)
+        c3.number_format = "#,##0"
+        c3.alignment = center
+        c3.border = thin_border
+        c4 = ws.cell(row=r, column=4, value=cnt / total_skus if total_skus else None)
+        c4.number_format = "0.0%"
+        c4.alignment = center
+        c4.border = thin_border
+        r += 1
+    for col_idx, v in ((1, "總計"), (2, total_skus), (3, total_chg), (4, 1.0 if total_skus else None)):
+        cell = ws.cell(row=r, column=col_idx, value=v)
+        cell.font = bold_font
+        cell.fill = total_fill
+        cell.border = thin_border
+        cell.alignment = center
+        if col_idx in (2, 3):
+            cell.number_format = "#,##0"
+        elif col_idx == 4:
+            cell.number_format = "0.0%"
+    return r + 2
+
+
 def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None,
                                      raw: pd.DataFrame, thin_border, desc_font,
                                      progress_callback=None):
     """Review 摘要工作表：指標卡 4 排（第 4 排為同OM調貨對照；雙向調貨時另加第 5 排
     Tourist 轉出量）＋ ① Safety Review × Shop Nature 交叉表 ＋ ② Safety 調整方向分類
-    ＋ ③ Safety 調整明細（SKU 級彙總）。
-    ②③ 由 raw 即時彙算（Safety 建議不受 OM 限制影響，兩變體共用同一份統計）。"""
+    ＋ ③ Safety 調整明細（SKU 級彙總）＋ ④ Buyer 需調貨 SKU 統計 ＋ ⑤ Buyer 需調整
+    Safety SKU 統計。
+    ②③ 由 raw 即時彙算（Safety 建議不受 OM 限制影響，兩變體共用同一份統計）；
+    ④⑤ 與 Stock Checking 的 Buyer 統計同口徑（同 SKU 首個非空 Buyer，已刪除重複）。"""
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     bold_font = Font(bold=True, size=11)
@@ -6494,9 +6700,24 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
     next_row = _write_hybrid_summary_block(
         ws, next_row, "Safety 調整方向分類（增加 / 減少 / 不變）",
         _build_hybrid_safety_change_summary(raw), **_block_kw)
-    _write_hybrid_summary_block(
+    next_row = _write_hybrid_summary_block(
         ws, next_row, "Safety 調整明細（SKU 級彙總）",
         _build_hybrid_safety_sku_detail(raw), **_block_kw)
+
+    buyer_need = (stats or {}).get("buyer_need_skus")
+    if buyer_need is None:
+        buyer_need = _hybrid_buyer_need_stats(raw)
+    buyer_safety = (stats or {}).get("buyer_safety_fix")
+    if buyer_safety is None:
+        buyer_safety = _hybrid_buyer_safety_stats(raw)
+    _table_kw = dict(thin_border=thin_border, header_fill=header_fill,
+                     header_font=header_font, bold_font=bold_font,
+                     section_fill=section_fill, total_fill=total_fill,
+                     center=center)
+    if buyer_need:
+        next_row = _write_hybrid_buyer_need_table(ws, buyer_need, start_row=next_row, **_table_kw)
+    if buyer_safety:
+        next_row = _write_hybrid_buyer_safety_table(ws, buyer_safety, start_row=next_row, **_table_kw)
 
     if progress_callback:
         progress_callback(0.90, "Review 摘要完成...")
@@ -6564,7 +6785,8 @@ def generate_excel_hybrid(
     「由Tourist 店舖預計調出數量」）/
     調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) /
   Review 摘要（指標卡 4 排（雙向時 5 排）+ Safety Review × Shop Nature 交叉表
- + Safety 調整方向分類 + Safety 調整明細（SKU 級彙總））/
+ + Safety 調整方向分類 + Safety 調整明細（SKU 級彙總）
+ + Buyer 需調貨 SKU 統計 + Buyer 需調整 Safety SKU 統計）/
     簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)（一列一筆來源店→接收店調貨，來源字串已拆行）。
     雙向與否由 RAW 是否含「可轉出貨量 (Tourist)」欄推定。
     """
