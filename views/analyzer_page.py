@@ -23,6 +23,10 @@ from transformer import (
     _build_hybrid_safety_change_summary, _build_hybrid_safety_sku_detail,
     _hybrid_buyer_need_stats, _hybrid_buyer_safety_stats,
     _hybrid_buyer_combined_stats, _hybrid_buyer_combined_detail,
+    _build_stock_checking_shop_issues, _build_combined_shop_issues,
+    _build_hybrid_shop_issues,
+    _STOCK_CHECKING_SHOP_ISSUE_COLUMNS, _COMBINED_SHOP_ISSUE_COLUMNS,
+    _HYBRID_SHOP_ISSUE_COLUMNS,
     _HYBRID_SAFETY_DAYS_DEFAULT, _HYBRID_SAFETY_DAYS_MIN, _HYBRID_SAFETY_DAYS_MAX,
     _hybrid_safety_days_label,
     _HYBRID_DIMENSION_LABELS,
@@ -548,7 +552,7 @@ if uploaded_file is not None:
                 help="選擇特定 Site Code 過濾下方表格。僅影響 RAW 明細預覽。"
             )
 
-            tab1, tab2, tab3 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "🏪 By Shop 明細", "📄 RAW 原始明細"])
+            tab1, tab2, tab3, tab4 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "🏪 By Shop 明細", "🏪 店舖問題 SKU", "📄 RAW 原始明細"])
 
             with tab1:
                 st.markdown("#### 採購人員與品牌之 Safety Stock 交叉統計表")
@@ -571,6 +575,20 @@ if uploaded_file is not None:
                     st.info("By Shop 明細無法產生，請檢查資料。")
 
             with tab3:
+                st.markdown("#### 每間店舖需行動 SKU（問題＋建議方法）")
+                st.markdown("只收錄需行動列（Safety 需增加／減少、ND 退場），按店舖分組、店內按嚴重度排序：")
+                try:
+                    _ss_issues = _build_combined_shop_issues(raw_df)
+                except Exception:
+                    _ss_issues = None
+                if _ss_issues is not None and not _ss_issues.empty:
+                    _ss_cols = [c for c in _COMBINED_SHOP_ISSUE_COLUMNS if c in _ss_issues.columns]
+                    st.dataframe(_ss_issues[_ss_cols], width='stretch', hide_index=True)
+                    st.caption(f"共 {len(_ss_issues):,} 列需行動（只收需行動列，正常列不佔版面）。")
+                else:
+                    st.info("無符合資料")
+
+            with tab4:
                 st.markdown("#### RAW 原始資料庫存明細")
                 _filtered_raw = raw_df.copy()
                 if selected_site_code != "全部" and "Site Code" in _filtered_raw.columns:
@@ -822,10 +840,11 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_diag, tab_diag_om, tab_sc, tab_cross, tab_detail, tab_raw = st.tabs([
+            tab_diag, tab_diag_om, tab_sc, tab_issue, tab_cross, tab_detail, tab_raw = st.tabs([
                 "🧭 調貨 Review Safety Stock（不限OM）",
                 "🔗 調貨 Review Safety Stock（同OM）",
                 "📋 Summary（SKU 存貨偏重）",
+                "🏪 店舖問題 SKU",
                 "📊 Review 摘要（Safety 調整統計）",
                 "🧾 簡易調貨明細",
                 "📄 RAW 完整明細",
@@ -856,6 +875,19 @@ if uploaded_file is not None:
                     st.markdown("**全部 SKU Summary**")
                     st.dataframe(_style_inventory_skew(sc_summary), width='stretch', hide_index=True)
                     st.caption(f"共 {len(sc_summary):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = 某分組庫存佔比 ≥ 40% 且較銷量佔比高 ≥ 20 個百分點；偏重數值以橘色底色加強顯示。")
+                else:
+                    st.info("無符合資料")
+            with tab_issue:
+                st.markdown("#### 每間店舖需行動 SKU（問題＋建議方法）")
+                st.markdown("只收錄 Safety 設定不足／過高列（設定正常列不佔版面），按店舖分組、店內按嚴重度排序；同OM數值作對照欄：")
+                try:
+                    _hy_issues = _build_hybrid_shop_issues(raw_df)
+                except Exception:
+                    _hy_issues = None
+                if _hy_issues is not None and not _hy_issues.empty:
+                    _hy_cols = [c for c in _HYBRID_SHOP_ISSUE_COLUMNS if c in _hy_issues.columns]
+                    st.dataframe(_hy_issues[_hy_cols], width='stretch', hide_index=True)
+                    st.caption(f"共 {len(_hy_issues):,} 列需行動（Safety 設定不足＋過高；調入缺口另於建議方法加註）。")
                 else:
                     st.info("無符合資料")
             with tab_cross:
@@ -2740,13 +2772,30 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_sum, tab_raw = st.tabs(["📊 Summary (SKU 彙總)", "RAW 完整明細"])
+            tab_sum, tab_issue, tab_raw = st.tabs(["📊 Summary (SKU 彙總)", "🏪 店舖問題 SKU", "RAW 完整明細"])
             with tab_sum:
                 st.markdown("#### SKU 級 Summary：各 Shop Nature 庫存/月銷加總與 TurnDay、涉及店舖數、佔比 (%)、調貨提示與調出量")
                 st.markdown("即為 Excel 導出檔中「Summary」工作表之即時數據（加總/TurnDay 取整，TurnDay = 四捨五入到整數日；佔比 (%) = 該 Nature 加總 ÷ Tourist+Mix+Non Tourist 合計，頁面顯示小數、Excel 顯示為 %）：")
                 if summary_df is not None and not summary_df.empty:
                     st.dataframe(_style_inventory_skew(summary_df), width='stretch', hide_index=True)
                     st.caption(f"共 {len(summary_df):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = 某 Nature 庫存佔比 ≥ 40% 且較銷量佔比高 ≥ 20 個百分點；偏重數值以橘色底色加強顯示（Excel 同步）。")
+                else:
+                    st.info("無符合資料")
+            with tab_issue:
+                st.markdown("#### 每間店舖需行動 SKU（問題＋建議方法）")
+                st.markdown("只收錄需行動列（需要調入／可轉出供應），按店舖分組、店內按嚴重度排序：")
+                try:
+                    _sc_issues = _build_stock_checking_shop_issues(
+                        raw_df,
+                        turnday_threshold=int((stats or {}).get("turnday_threshold", 14)),
+                        d001_threshold=int((stats or {}).get("d001_threshold", 100)),
+                    )
+                except Exception:
+                    _sc_issues = None
+                if _sc_issues is not None and not _sc_issues.empty:
+                    _sc_cols = [c for c in _STOCK_CHECKING_SHOP_ISSUE_COLUMNS if c in _sc_issues.columns]
+                    st.dataframe(_sc_issues[_sc_cols], width='stretch', hide_index=True)
+                    st.caption(f"共 {len(_sc_issues):,} 列需行動（只收需行動列，正常列不佔版面）。")
                 else:
                     st.info("無符合資料")
             with tab_raw:

@@ -526,7 +526,7 @@ def test_generate_excel():
     buf = generate_excel_stock_checking(raw, summary)
     assert isinstance(buf, BytesIO)
     wb = load_workbook(buf, read_only=True)
-    assert wb.sheetnames == ["Summary", "RAW", "調貨分析摘要"]
+    assert wb.sheetnames == ["Summary", "RAW", "店舖問題 SKU", "調貨分析摘要"]
     ws = wb["Summary"]
     headers = [c.value for c in next(ws.iter_rows(min_row=5, max_row=5))]
     for col in ["Brand", "SKU", "Buyer", "Adj. SST", "強制調貨提示",

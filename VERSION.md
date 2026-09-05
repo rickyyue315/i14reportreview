@@ -1,5 +1,14 @@
 # 版本記錄
 
+## v1.24.0 (2026-09-05)
+
+Stock Checking、Safety Stock Review、Safety Stock x NetStock Review 各新增「店舖問題 SKU」分析（每間店舖需行動列：問題＋建議方法）。
+
+- New: 三模式各加一個「店舖問題 SKU」衍生表（只收需行動列，按店舖分組，店內按嚴重度排序；問題說明與建議方法為數量＋行動指引）——Stock Checking（需要調入／可轉出供應，缺口在同一列加註）、Safety Stock Review（Safety 需增加／減少、ND 退場；New SKU 標記不收錄）、Hybrid（只收 Safety 設定不足／過高，設定正常列排除；主表以不限OM為準，另附三個同OM對照欄）
+- New: `transformer.py` 新增 `_build_stock_checking_shop_issues()`／`_build_combined_shop_issues()`／`_build_hybrid_shop_issues()` 與三組欄序常數、共用 `_write_shop_issue_sheet()`（表頭、凍結、篩選、隔列底紋與 Review 主表同式；空表寫「無符合資料」）；`generate_excel_stock_checking()`／`generate_excel_combined()`／`generate_excel_hybrid()` 各加一個「店舖問題 SKU」工作表（Hybrid 置於兩個 Review 主表之後、Review 摘要之前，8 表；另兩模式置於 By Shop／Summary 之後、分析摘要之前）；現有計算、固定表頭與欄序零變動
+- New: Streamlit 三模式結果頁各加「🏪 店舖問題 SKU」分頁（即時由 raw 彙算，不新增持久化大表；空表顯示「無符合資料」）
+- Update: 新增 `tests/test_shop_issues.py`（×10：只收行動列、數量對帳、按店排序、缺口加註、空輸入、Excel 工作表契約）；既有 Excel 契約同步（Stock Checking 4 表、Safety 6 表、Hybrid 8 表）；共 242 項測試通過；README／使用說明頁同步
+
 ## v1.23.0 (2026-09-05)
 
 Summary 每個分類加入涉及店舖數量統計（三種分類維度同步，Stock Checking 亦同步）。

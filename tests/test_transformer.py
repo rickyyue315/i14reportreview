@@ -931,7 +931,7 @@ def test_fix15_excel_contains_summary_sheet():
     buf = generate_excel_combined(s, r, c)
 
     wb = openpyxl.load_workbook(BytesIO(buf.getvalue()))
-    assert wb.sheetnames == ["RAW", "Shop Stock Status", "By Shop", "SUMMARY", "Safety Stock 數據分析摘要"]
+    assert wb.sheetnames == ["RAW", "Shop Stock Status", "By Shop", "店舖問題 SKU", "SUMMARY", "Safety Stock 數據分析摘要"]
 
     ws = wb["SUMMARY"]
     col_a = [ws.cell(row=i, column=1).value for i in range(1, ws.max_row + 1)]

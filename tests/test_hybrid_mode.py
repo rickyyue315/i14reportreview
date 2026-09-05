@@ -528,7 +528,7 @@ def test_generate_excel_sheets_and_headers():
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
-        "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "Review 摘要",
+        "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]
     raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
@@ -957,7 +957,7 @@ def test_bidir_excel_headers_and_dashboard_rows():
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
-        "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "Review 摘要",
+        "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]
     raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
@@ -972,6 +972,12 @@ def test_bidir_excel_headers_and_dashboard_rows():
     off_headers = [c.value for c in next(wb_off["Summary"].iter_rows(min_row=5, max_row=5))]
     assert len(off_headers) == 29
     assert off_headers == sc_headers[:29]
+    ws = wb["店舖問題 SKU"]
+    assert [c.value for c in next(ws.iter_rows(min_row=3, max_row=3))][:11] == [
+        "Site Code", "Shop Name", "OM", "Shop Nature",
+        "Brand", "SKU", "SKU Desc", "Buyer",
+        "問題類型", "問題說明", "建議方法",
+    ]
     ws = wb["Review 摘要"]
     assert ws.cell(row=19, column=1).value == "Tourist 轉出量"
     assert ws.cell(row=20, column=1).value == stats["tourist_transfer"]
@@ -1254,9 +1260,9 @@ def test_excel_safety_blocks_appended_after_cross():
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     wb = load_workbook(buf)
     assert wb.sheetnames == [
-        "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "Review 摘要",
+        "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
-    ]  # 7 表契約不變，新統計只在「Review 摘要」內延伸
+    ]  # 8 表契約（新增店舖問題 SKU），新統計只在「Review 摘要」內延伸
     ws = wb["Review 摘要"]
     # ① 交叉表位置完全未變（單向：標題 19 / 表頭 20 / 資料 21–25）
     assert ws.cell(row=19, column=1).value == "Safety Review × Shop Nature 交叉表"

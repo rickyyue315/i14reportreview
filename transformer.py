@@ -1019,6 +1019,369 @@ def _write_summary_sheet(ws, change_summary, nd_summary, thin_border):
     _auto_width(ws)
 
 
+# ─── 店舖問題 SKU（每間店舖需行動列：問題＋建議方法）────────────────────────
+
+# 三張新表欄序（新契約：固定表頭，未經明確要求不得改動）
+_SHOP_ISSUE_BASE_COLUMNS = [
+    "Site Code", "Shop Name", "OM", "Shop Nature",
+    "Brand", "SKU", "SKU Desc", "Buyer",
+    "問題類型", "問題說明", "建議方法",
+]
+_STOCK_CHECKING_SHOP_ISSUE_NUM_COLUMNS = [
+    "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)",
+    "調入需求量 (補到14日)", "實際調入量", "調入缺口",
+    "可轉出貨量 (Mix)", "可轉出貨量 (Non Tourist)", "轉出量",
+    "調貨來源 (Site Code)",
+]
+_COMBINED_SHOP_ISSUE_NUM_COLUMNS = [
+    "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)", "Turnday (P90D Qty)",
+    "Adj. Safety Stock", "Recommend Safety Stock", "Safety Qty Change",
+    "Overstock Cap (X)", "OOS Floor (Y)",
+    "Recommendation of new Safety Qty / ND",
+]
+_HYBRID_SHOP_ISSUE_NUM_COLUMNS = [
+    "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)",
+    "Safety 基準天數", "Safety 周轉所需量",
+    "Adj. Safety Stock", "建議 Safety 設定值", "Safety 建議調整量",
+    "調入需求量 (補到14日)", "實際調入量", "調入缺口",
+    "可轉出貨量", "轉出量", "調貨來源 (Site Code)",
+    "實際調入量 (同OM)", "調入缺口 (同OM)", "轉出量 (同OM)",
+]
+_STOCK_CHECKING_SHOP_ISSUE_COLUMNS = _SHOP_ISSUE_BASE_COLUMNS + _STOCK_CHECKING_SHOP_ISSUE_NUM_COLUMNS
+_COMBINED_SHOP_ISSUE_COLUMNS = _SHOP_ISSUE_BASE_COLUMNS + _COMBINED_SHOP_ISSUE_NUM_COLUMNS
+_HYBRID_SHOP_ISSUE_COLUMNS = _SHOP_ISSUE_BASE_COLUMNS + _HYBRID_SHOP_ISSUE_NUM_COLUMNS
+
+# 店內問題嚴重度（數字越小越優先；缺口最緊急）
+_SHOP_ISSUE_SEVERITY = {
+    "調入缺口（來源不足）": 0,
+    "需要調入": 1,
+    "Safety 設定不足": 1,
+    "Safety 設定過高": 2,
+    "可轉出供應": 3,
+    "ND 退場": 3,
+}
+
+
+def _shop_name_lookup(raw: pd.DataFrame) -> dict[str, str]:
+    """Site Code → Shop Name 查找表（RAW 已由 Item_Shop 衍生 Shop Name；缺欄時回退解析）。"""
+    lookup: dict[str, str] = {}
+    if raw is None or raw.empty or "Site Code" not in raw.columns:
+        return lookup
+    site = raw["Site Code"].fillna("").astype(str).str.strip()
+    if "Shop Name" in raw.columns:
+        names = raw["Shop Name"].fillna("").astype(str).str.strip()
+    elif "Item_Shop" in raw.columns:
+        names = pd.Series(
+            [_extract_shop_name(raw["Item_Shop"].iloc[i], site.iloc[i]) for i in range(len(raw))],
+            index=raw.index,
+        )
+    else:
+        return lookup
+    for site_v, name_v in zip(site.to_numpy(), names.to_numpy()):
+        if site_v and name_v and site_v not in lookup:
+            lookup[site_v] = str(name_v)
+    return lookup
+
+
+def _shop_issue_base_frame(raw: pd.DataFrame, mask: pd.Series) -> pd.DataFrame:
+    """新表共用底：篩出需行動列並帶出識別欄（Site Code／Shop Name／OM／Nature／品項）。"""
+    sel = raw.loc[mask].copy()
+    if sel.empty:
+        return sel
+    if "Site Code" not in sel.columns:
+        sel["Site Code"] = ""
+    site = sel["Site Code"].fillna("").astype(str).str.strip()
+    sel["Site Code"] = site
+    names = _shop_name_lookup(raw)
+    if "Shop Name" in sel.columns:
+        own = sel["Shop Name"].fillna("").astype(str).str.strip()
+        sel["Shop Name"] = [o if o else names.get(s, "") for o, s in zip(own.to_numpy(), site.to_numpy())]
+    else:
+        sel["Shop Name"] = site.map(names).fillna("")
+    if "OM" not in sel.columns:
+        sel["OM"] = ""
+    else:
+        sel["OM"] = sel["OM"].fillna("").astype(str).str.strip()
+    if "Shop Nature" not in sel.columns:
+        sel["Shop Nature"] = ""
+    return sel
+
+
+def _build_stock_checking_shop_issues(
+    raw: pd.DataFrame,
+    turnday_threshold: int = 14,
+    d001_threshold: int = 100,
+) -> pd.DataFrame:
+    """Stock Checking 店舖問題表：只收需行動列（需要調入／可轉出供應）。
+
+    - 需要調入：`需要調貨 == 是`；調入缺口 > 0 時問題類型記為「調入缺口（來源不足）」。
+    - 可轉出供應：可轉出貨量或轉出量 > 0 且非需求列。
+    - 問題說明帶 SKU 級 Tourist 加總 TurnDay 與 D001 觸發原因；建議方法帶數量與行動指引。
+    - 排序：Site Code → 嚴重度 → Brand／SKU；門檻僅用於問題說明文字，不重算判定。
+    """
+    cols = _STOCK_CHECKING_SHOP_ISSUE_COLUMNS
+    if raw is None or raw.empty or "需要調貨" not in raw.columns:
+        return pd.DataFrame(columns=cols)
+    need = raw["需要調貨"].fillna("").astype(str).str.strip() == "是"
+    mix_avail = _safe_numeric(raw.get("可轉出貨量 (Mix)", _safe_default_series(0, raw.index)))
+    nt_avail = _safe_numeric(raw.get("可轉出貨量 (Non Tourist)", _safe_default_series(0, raw.index)))
+    donated = _safe_numeric(raw.get("轉出量", _safe_default_series(0, raw.index)))
+    gap = _safe_numeric(raw.get("調入缺口", _safe_default_series(0, raw.index)))
+    supply = (~need) & ((mix_avail > 0) | (nt_avail > 0) | (donated > 0))
+    mask = need | supply
+    if not bool(mask.any()):
+        return pd.DataFrame(columns=cols)
+    work = _shop_issue_base_frame(raw, mask)
+    need_w = work["需要調貨"].fillna("").astype(str).str.strip() == "是"
+    gap_w = _safe_numeric(work.get("調入缺口", _safe_default_series(0, work.index)))
+    ttd_w = pd.to_numeric(work.get("Tourist 加總 TurnDay", _safe_default_series(np.nan, work.index)), errors="coerce")
+    d001_w = work.get("D001 Net Stock Qty (CM)", _safe_default_series("", work.index))
+    demand_w = _safe_numeric(work.get("調入需求量 (補到14日)", _safe_default_series(0, work.index))).astype(int)
+    actual_w = _safe_numeric(work.get("實際調入量", _safe_default_series(0, work.index))).astype(int)
+    src_w = work.get("調貨來源 (Site Code)", _safe_default_series("", work.index)).fillna("").astype(str).str.strip()
+    mix_w = _safe_numeric(work.get("可轉出貨量 (Mix)", _safe_default_series(0, work.index))).astype(int)
+    nt_w = _safe_numeric(work.get("可轉出貨量 (Non Tourist)", _safe_default_series(0, work.index))).astype(int)
+    out_w = _safe_numeric(work.get("轉出量", _safe_default_series(0, work.index))).astype(int)
+
+    issue, desc, advice, sev = [], [], [], []
+    for i in range(len(work)):
+        if bool(need_w.iloc[i]):
+            ttd_txt = f"{float(ttd_w.iloc[i]):.1f} 日" if pd.notna(ttd_w.iloc[i]) else "未能計算"
+            d001_txt = str(d001_w.iloc[i]).strip() or "未能確認"
+            gap_n = int(gap_w.iloc[i])
+            if gap_n > 0:
+                issue.append("調入缺口（來源不足）")
+                desc.append(
+                    f"Tourist 加總 TurnDay {ttd_txt}低於門檻 {int(turnday_threshold)} 日，"
+                    f"D001 僅 {d001_txt} 件（門檻 {int(d001_threshold)} 件），需調入卻無足額來源"
+                )
+                src_txt = str(src_w.iloc[i]) or "無來源"
+                advice.append(
+                    f"建議調入 {int(demand_w.iloc[i])} 件（實際可調入 {int(actual_w.iloc[i])} 件，"
+                    f"缺口 {gap_n} 件，來源 {src_txt}），不足部分請追蹤 D001 補貨"
+                )
+                sev.append(_SHOP_ISSUE_SEVERITY["調入缺口（來源不足）"])
+            else:
+                issue.append("需要調入")
+                desc.append(
+                    f"Tourist 加總 TurnDay {ttd_txt}低於門檻 {int(turnday_threshold)} 日，"
+                    f"D001 僅 {d001_txt} 件（門檻 {int(d001_threshold)} 件），店舖庫存不足 14 日周轉"
+                )
+                src_txt = str(src_w.iloc[i]) or "無來源"
+                advice.append(
+                    f"建議調入 {int(demand_w.iloc[i])} 件（實際可調入 {int(actual_w.iloc[i])} 件，"
+                    f"來源 {src_txt}），請按調貨來源執行調撥"
+                )
+                sev.append(_SHOP_ISSUE_SEVERITY["需要調入"])
+        else:
+            issue.append("可轉出供應")
+            desc.append("店舖庫存超過 14 日周轉，可向缺貨店舖供應")
+            advice.append(
+                f"可轉出 Non Tourist {int(nt_w.iloc[i])} 件、Mix {int(mix_w.iloc[i])} 件"
+                f"（實際轉出 {int(out_w.iloc[i])} 件），請配合調貨來源執行轉出"
+            )
+            sev.append(_SHOP_ISSUE_SEVERITY["可轉出供應"])
+    work["問題類型"] = issue
+    work["問題說明"] = desc
+    work["建議方法"] = advice
+    work["_sev"] = sev
+    if "Brand" not in work.columns:
+        work["Brand"] = ""
+    if "SKU" not in work.columns:
+        work["SKU"] = ""
+    work = work.sort_values(["Site Code", "_sev", "Brand", "SKU"], kind="stable").drop(columns=["_sev"])
+    ordered = [c for c in cols if c in work.columns]
+    trailing = [c for c in work.columns if c not in ordered]
+    return work[ordered + trailing].reset_index(drop=True)
+
+
+def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
+    """Safety Stock Review 店舖問題表：只收 Safety 需調整與 ND 退場列。
+
+    - Safety 需增加／減少：`Safety Qty Change != 0`。
+    - ND 退場：`Recommendation of new Safety Qty / ND` 為 ND 系列或 0（已是 ND）；
+      `New SKU (3 Month)` 屬資訊標記，不收錄。
+    - Overstock／OOS 只作問題說明上下文，不單獨成列。
+    """
+    cols = _COMBINED_SHOP_ISSUE_COLUMNS
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=cols)
+    chg = pd.to_numeric(raw.get("Safety Qty Change", _safe_default_series(np.nan, raw.index)), errors="coerce").fillna(0)
+    nd_rec = raw.get("Recommendation of new Safety Qty / ND", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
+    is_new_sku = nd_rec == "New SKU (3 Month)"
+    is_nd_exit = nd_rec.str.startswith("ND") | (nd_rec == "0")
+    mask = ((chg != 0) | (is_nd_exit & ~is_new_sku)).fillna(False)
+    if not bool(mask.any()):
+        return pd.DataFrame(columns=cols)
+    work = _shop_issue_base_frame(raw, mask)
+    chg_w = pd.to_numeric(work.get("Safety Qty Change", _safe_default_series(0, work.index)), errors="coerce").fillna(0)
+    nd_w = work.get("Recommendation of new Safety Qty / ND", _safe_default_series("", work.index)).fillna("").astype(str).str.strip()
+    adj_w = pd.to_numeric(work.get("Adj. Safety Stock", _safe_default_series(np.nan, work.index)), errors="coerce")
+    rec_w = pd.to_numeric(work.get("Recommend Safety Stock", _safe_default_series(np.nan, work.index)), errors="coerce")
+    status_w = work.get("Shop Stock Status", _safe_default_series("", work.index)).fillna("").astype(str).str.strip()
+
+    issue, desc, advice, sev = [], [], [], []
+    for i in range(len(work)):
+        delta = float(chg_w.iloc[i])
+        rec_txt = nd_w.iloc[i]
+        adj_txt = f"{float(adj_w.iloc[i]):g}" if pd.notna(adj_w.iloc[i]) else "未能確認"
+        rec_val_txt = f"{float(rec_w.iloc[i]):g}" if pd.notna(rec_w.iloc[i]) else "未能確認"
+        status_txt = str(status_w.iloc[i]).strip()
+        status_suffix = f"，狀態為{status_txt}" if status_txt else ""
+        if delta > 0:
+            issue.append("Safety 設定不足")
+            desc.append(f"現時 Safety {adj_txt} 件低於建議 {rec_val_txt} 件（需增加 {delta:g} 件）{status_suffix}")
+            advice.append(f"建議將 Safety 由 {adj_txt} 件調整為 {rec_val_txt} 件（＋{delta:g}），請按建議值補足安全庫存")
+            sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定不足"])
+        elif delta < 0:
+            issue.append("Safety 設定過高")
+            desc.append(f"現時 Safety {adj_txt} 件高於建議 {rec_val_txt} 件（可減少 {abs(delta):g} 件）{status_suffix}")
+            advice.append(f"建議將 Safety 由 {adj_txt} 件調整為 {rec_val_txt} 件（{delta:g}），請按建議值調低安全庫存")
+            sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定過高"])
+        elif rec_txt.startswith("ND"):
+            issue.append("ND 退場")
+            desc.append(f"過去 90 日零銷售，建議轉為 ND 停補貨{status_suffix}（建議：{rec_txt}）")
+            advice.append(f"建議轉為 {rec_txt}，現有庫存全數轉出或退倉（現時 Safety {adj_txt} 件）")
+            sev.append(_SHOP_ISSUE_SEVERITY["ND 退場"])
+        else:
+            issue.append("ND 退場")
+            desc.append(f"RP Type 已是 ND，建議 Safety 維持 0 件{status_suffix}")
+            advice.append("已是 ND，無須補貨；現有庫存請按退倉建議處理")
+            sev.append(_SHOP_ISSUE_SEVERITY["ND 退場"])
+    work["問題類型"] = issue
+    work["問題說明"] = desc
+    work["建議方法"] = advice
+    work["_sev"] = sev
+    if "Brand" not in work.columns:
+        work["Brand"] = ""
+    if "SKU" not in work.columns:
+        work["SKU"] = ""
+    work = work.sort_values(["Site Code", "_sev", "Brand", "SKU"], kind="stable").drop(columns=["_sev"])
+    ordered = [c for c in cols if c in work.columns]
+    trailing = [c for c in work.columns if c not in ordered]
+    return work[ordered + trailing].reset_index(drop=True)
+
+
+def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
+    """Safety Stock x NetStock Review 店舖問題表：只收 Safety 設定不足／過高列。
+
+    - 母體與 Safety Review × 分類維度交叉表相同（事件類型非空），但設定正常列一律排除。
+    - 主表以不限OM事件為準，另附三個同OM對照欄；調入缺口 > 0 時在建議方法加註。
+    """
+    cols = _HYBRID_SHOP_ISSUE_COLUMNS
+    if raw is None or raw.empty or "事件類型" not in raw.columns:
+        return pd.DataFrame(columns=cols)
+    diag = raw.get("Safety Review", _safe_default_series("", raw.index)).fillna("").astype(str)
+    mask = diag.isin([_HYBRID_DIAG_UNDER, _HYBRID_DIAG_OVER])
+    if not bool(mask.any()):
+        return pd.DataFrame(columns=cols)
+    work = _shop_issue_base_frame(raw, mask)
+    diag_w = work.get("Safety Review", _safe_default_series("", work.index)).fillna("").astype(str)
+    days_w = pd.to_numeric(work.get(_HYBRID_SAFETY_DAYS_COLUMN, _safe_default_series(np.nan, work.index)), errors="coerce")
+    line_w = pd.to_numeric(work.get(_HYBRID_SAFETY_LINE_COLUMN, _safe_default_series(np.nan, work.index)), errors="coerce")
+    adj_w = pd.to_numeric(work.get("Adj. Safety Stock", _safe_default_series(np.nan, work.index)), errors="coerce")
+    sugg_w = pd.to_numeric(work.get("建議 Safety 設定值", _safe_default_series(np.nan, work.index)), errors="coerce")
+    chg_w = pd.to_numeric(work.get("Safety 建議調整量", _safe_default_series(np.nan, work.index)), errors="coerce")
+    evt_w = work.get("事件類型", _safe_default_series("", work.index)).fillna("").astype(str)
+    gap_w = _safe_numeric(work.get("調入缺口", _safe_default_series(0, work.index))).astype(int)
+    actual_w = _safe_numeric(work.get("實際調入量", _safe_default_series(0, work.index))).astype(int)
+    demand_w = _safe_numeric(work.get("調入需求量 (補到14日)", _safe_default_series(0, work.index))).astype(int)
+    out_w = _safe_numeric(work.get("轉出量", _safe_default_series(0, work.index))).astype(int)
+    src_w = work.get("調貨來源 (Site Code)", _safe_default_series("", work.index)).fillna("").astype(str).str.strip()
+
+    issue, desc, advice, sev = [], [], [], []
+    for i in range(len(work)):
+        days_txt = f"{float(days_w.iloc[i]):g} 日" if pd.notna(days_w.iloc[i]) else "未能確認"
+        line_txt = f"{float(line_w.iloc[i]):g}" if pd.notna(line_w.iloc[i]) else "未能確認"
+        adj_txt = f"{float(adj_w.iloc[i]):g}" if pd.notna(adj_w.iloc[i]) else "未能確認"
+        sugg_txt = f"{float(sugg_w.iloc[i]):g}" if pd.notna(sugg_w.iloc[i]) else "未能確認"
+        delta_txt = f"{float(chg_w.iloc[i]):g}" if pd.notna(chg_w.iloc[i]) else "未能確認"
+        evt_txt = str(evt_w.iloc[i]).strip()
+        if diag_w.iloc[i] == _HYBRID_DIAG_UNDER:
+            issue.append("Safety 設定不足")
+            desc.append(f"現時 Safety {adj_txt} 件低於周轉所需 {line_txt} 件（基準 {days_txt}；事件：{evt_txt}）")
+            text = f"建議將 Safety 由 {adj_txt} 件調整為 {sugg_txt} 件（{delta_txt}）"
+            if int(demand_w.iloc[i]) > 0:
+                src_txt = str(src_w.iloc[i]) or "無來源"
+                text += f"；另需調入 {int(demand_w.iloc[i])} 件（實際可調入 {int(actual_w.iloc[i])} 件，來源 {src_txt}）"
+            if int(gap_w.iloc[i]) > 0:
+                text += f"；尚有缺口 {int(gap_w.iloc[i])} 件，來源不足部分請追蹤 D001 補貨"
+            advice.append(text)
+            sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定不足"])
+        else:
+            issue.append("Safety 設定過高")
+            desc.append(f"現時 Safety {adj_txt} 件高於周轉所需 {line_txt} 件（基準 {days_txt}；事件：{evt_txt}）")
+            advice.append(
+                f"建議將 Safety 由 {adj_txt} 件調整為 {sugg_txt} 件（{delta_txt}），"
+                f"多餘存貨可轉出（實際轉出 {int(out_w.iloc[i])} 件），請配合調貨來源執行"
+            )
+            sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定過高"])
+    work["問題類型"] = issue
+    work["問題說明"] = desc
+    work["建議方法"] = advice
+    work["_sev"] = sev
+    avail_w = _safe_numeric(work.get("可轉出貨量 (Mix)", _safe_default_series(0, work.index)))
+    avail_nt = _safe_numeric(work.get("可轉出貨量 (Non Tourist)", _safe_default_series(0, work.index)))
+    avail_t = _safe_numeric(work.get("可轉出貨量 (Tourist)", _safe_default_series(0, work.index)))
+    work["可轉出貨量"] = (avail_w + avail_nt + avail_t).astype(int)
+    if "Brand" not in work.columns:
+        work["Brand"] = ""
+    if "SKU" not in work.columns:
+        work["SKU"] = ""
+    work = work.sort_values(["Site Code", "_sev", "Brand", "SKU"], kind="stable").drop(columns=["_sev"])
+    ordered = [c for c in cols if c in work.columns]
+    trailing = [c for c in work.columns if c not in ordered]
+    return work[ordered + trailing].reset_index(drop=True)
+
+
+def _write_shop_issue_sheet(ws, issue_df, *, title, progress_callback=None, progress_start=0.0, progress_end=0.0):
+    """店舖問題 SKU 工作表：店舖×SKU 逐列（僅含需行動列），問題類型置中、說明／建議靠左換行。"""
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    band_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    _text_keys = ["Brand", "SKU Desc", "Buyer", "問題說明", "建議方法", "調貨來源 (Site Code)"]
+
+    if issue_df is None or issue_df.empty:
+        ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=12, color="1E40AF")
+        ws.cell(row=3, column=1, value="無符合資料").font = Font(size=12)
+        _auto_width(ws)
+        return
+    headers = list(issue_df.columns)
+    ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=12, color="1E40AF")
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+        cell.border = thin_border
+    ws.row_dimensions[3].height = 30
+    total = len(issue_df)
+    for r_idx, (_, row) in enumerate(issue_df.iterrows()):
+        excel_row = r_idx + 4
+        is_band = (r_idx % 2 == 1)
+        for col_idx, h in enumerate(headers, 1):
+            val = row.get(h)
+            cell = ws.cell(row=excel_row, column=col_idx, value=None if pd.isna(val) else val)
+            cell.border = thin_border
+            cell.alignment = left_wrap if h in _text_keys else center
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and h not in _text_keys:
+                cell.number_format = "#,##0"
+            if is_band:
+                cell.fill = band_fill
+        if progress_callback and (r_idx % 200 == 0 or r_idx == total - 1):
+            p = progress_start + (progress_end - progress_start) * ((r_idx + 1) / max(total, 1))
+            progress_callback(p, f"寫入店舖問題 SKU ({r_idx+1}/{total})...")
+    ws.freeze_panes = "A4"
+    ws.auto_filter.ref = f"A3:{get_column_letter(len(headers))}{3 + total}"
+    _auto_width(ws)
+
+
 def generate_excel_combined(
     summary_df: pd.DataFrame,
     raw_df: pd.DataFrame,
@@ -1125,9 +1488,20 @@ def generate_excel_combined(
     _auto_width(ws_by_shop)
 
     if progress_callback:
+        progress_callback(0.85, "建立店舖問題 SKU 工作表...")
+
+    # ── Sheet 4: 店舖問題 SKU（每間店舖需行動列；空表寫「無符合資料」）──
+    ws_shop_issue = wb.create_sheet(title="店舖問題 SKU")
+    _write_shop_issue_sheet(
+        ws_shop_issue, _build_combined_shop_issues(raw_df),
+        title="店舖問題 SKU — 每間店舖需行動列（問題＋建議方法）",
+        progress_callback=progress_callback, progress_start=0.85, progress_end=0.86,
+    )
+
+    if progress_callback:
         progress_callback(0.86, "建立 SUMMARY 工作表...")
 
-    # ── Sheet 4: SUMMARY（Safety Qty Change 分類 / ND 建議分類 統計）──
+    # ── Sheet 5: SUMMARY（Safety Qty Change 分類 / ND 建議分類 統計）──
     change_summary, nd_summary = _build_combined_classification_summary(raw_df)
     ws_class_summary = wb.create_sheet(title="SUMMARY")
     _write_summary_sheet(ws_class_summary, change_summary, nd_summary, thin_border)
@@ -1135,7 +1509,7 @@ def generate_excel_combined(
     if progress_callback:
         progress_callback(0.88, "建立分析摘要工作表...")
 
-    # ── Sheet 4: Safety Stock 數據分析摘要 ──
+    # ── Sheet 6: Safety Stock 數據分析摘要 ──
     ws_dashboard = wb.create_sheet(title="Safety Stock 數據分析摘要")
 
     _total_row = summary_df[summary_df["Buyer"] == "總計"]
@@ -6994,13 +7368,14 @@ def generate_excel_hybrid(
     stats: dict | None = None,
     progress_callback=None,
 ) -> BytesIO:
-    """Safety Stock x NetStock Review 輸出（7 工作表，順序固定）：
+    """Safety Stock x NetStock Review 輸出（8 工作表，順序固定）：
     RAW（重新排列欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄；含不限OM與同OM兩套調貨結果；
     雙向時另含「可轉出貨量 (Tourist)」）/
     Summary（SKU 級彙總，按 stats["dimension"] 分類維度分組：nature 三組／rp 兩組／both 六組；
     各組加總/TurnDay/涉及店舖數/佔比、強制調貨提示、存貨偏重提示；nature 雙向時另加 AD 欄
     「由Tourist 店舖預計調出數量」）/
     調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM)（店舖×SKU 主表含 RP Type 欄）/
+    店舖問題 SKU（每間店舖需行動列：問題＋建議方法）/
   Review 摘要（指標卡 4 排（雙向時 5 排）+ Safety Review × 分類維度交叉表
  + Safety 調整方向分類 + Safety 調整明細（SKU 級彙總）
  + Buyer 統計（需調貨＋需調整 Safety 合併表））/
@@ -7052,12 +7427,23 @@ def generate_excel_hybrid(
 
     # ── Sheet 4: 調貨 Review Safety Stock（同OM）──
     ws_diag_om = wb.create_sheet(title="調貨 Review Safety Stock (同OM)")
-    _write_hybrid_diagnosis_sheet(ws_diag_om, diagnosis_om, progress_callback, progress_start=0.57, progress_end=0.73)
+    _write_hybrid_diagnosis_sheet(ws_diag_om, diagnosis_om, progress_callback, progress_start=0.57, progress_end=0.70)
+
+    if progress_callback:
+        progress_callback(0.71, "建立店舖問題 SKU...")
+
+    # ── Sheet 5: 店舖問題 SKU（只收 Safety 設定不足／過高；空表寫「無符合資料」）──
+    ws_shop_issue = wb.create_sheet(title="店舖問題 SKU")
+    _write_shop_issue_sheet(
+        ws_shop_issue, _build_hybrid_shop_issues(raw),
+        title="店舖問題 SKU — 每間店舖需行動列（問題＋建議方法）",
+        progress_callback=progress_callback, progress_start=0.71, progress_end=0.74,
+    )
 
     if progress_callback:
         progress_callback(0.75, "建立 Review 摘要...")
 
-    # ── Sheet 5: Review 摘要 ──
+    # ── Sheet 6: Review 摘要 ──
     ws_sum = wb.create_sheet(title="Review 摘要")
     _write_hybrid_diag_summary_sheet(ws_sum, diag_summary, stats, raw, thin_border, desc_font, progress_callback)
 
@@ -8283,6 +8669,8 @@ def transform_stock_checking(
 
     # ── 統計 ────────────────────────────────────────────────────────────────
     stats = {
+        "turnday_threshold": int(turnday_threshold),
+        "d001_threshold": int(d001_threshold),
         "need_rows": int(need_series.sum()),
         "need_skus": int(df.loc[need_series, "SKU"].nunique()) if need_series.any() else 0,
         "total_demand": int(df.loc[need_series, "調入需求量 (補到14日)"].sum()) if need_series.any() else 0,
@@ -8666,7 +9054,9 @@ def generate_excel_stock_checking(
     progress_callback=None,
 ) -> BytesIO:
     """Stock Checking 輸出：Summary（SKU 級彙總，偏重提示以醒目橘底加強顯示）
-    + RAW（重排欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄）+ 調貨分析摘要（Dashboard）。"""
+    + RAW（重排欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄）
+    + 店舖問題 SKU（每間店舖需行動列；空表寫「無符合資料」）
+    + 調貨分析摘要（Dashboard）。"""
     wb = Workbook()
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
@@ -8678,8 +9068,22 @@ def generate_excel_stock_checking(
     if progress_callback:
         progress_callback(0.35, "建立 RAW...")
     ws_raw = wb.create_sheet(title="RAW")
-    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.35, progress_end=0.85,
+    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.35, progress_end=0.80,
                      columns=_stock_checking_raw_display_columns(raw))
+
+    if progress_callback:
+        progress_callback(0.82, "建立店舖問題 SKU...")
+    ws_shop_issue = wb.create_sheet(title="店舖問題 SKU")
+    _write_shop_issue_sheet(
+        ws_shop_issue,
+        _build_stock_checking_shop_issues(
+            raw,
+            turnday_threshold=int((stats or {}).get("turnday_threshold", 14)),
+            d001_threshold=int((stats or {}).get("d001_threshold", 100)),
+        ),
+        title="店舖問題 SKU — 每間店舖需行動列（問題＋建議方法）",
+        progress_callback=progress_callback, progress_start=0.82, progress_end=0.86,
+    )
 
     if progress_callback:
         progress_callback(0.88, "建立調貨分析摘要工作表...")
