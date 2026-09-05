@@ -42,6 +42,8 @@ from transformer import (
     _build_hybrid_transfer_detail,
     _build_hybrid_safety_change_summary,
     _build_hybrid_safety_sku_detail,
+    _build_hybrid_diag_summary,
+    _hybrid_allocate_transfers,
 )
 
 BASE = {
@@ -1454,3 +1456,83 @@ def test_om_all_blank_warns():
     df["OM"] = None
     _, _, _, _, _, _, warns = transform_hybrid(df)
     assert any("OM" in w and "全欄空白" in w for w in warns)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 17. 審查修正回歸（v1.16.x）：Effective 月銷稽核欄／交叉表四捨五入／
+#     需求 Nature 自身除外守衛／重複列 warning 補自我調貨守衛說明
+# ──────────────────────────────────────────────────────────────────────────────
+EFF_MS = "Effective Shop Monthly Sold Qty (P90D)"
+
+
+def test_effective_monthly_sold_column_added_and_original_kept():
+    df = _df(_SCENARIO_A)
+    df.loc[df["Site Code"] == "T01", "Shop Monthly Sold Qty (P90D)"] = 0
+    raw, _, _, _, _, _, _ = transform_hybrid(df)
+    # 回補值（T01：120×30.5=3660 → 122.0）存 Effective 欄；原欄維持覆寫後值（契約）
+    assert float(_get(raw, "T01", EFF_MS)) == 122.0
+    assert float(_get(raw, "T01", "Shop Monthly Sold Qty (P90D)")) == 122.0
+    # 未回補列（N01 月銷 30.5 正常）Effective 欄與原值相同
+    assert float(_get(raw, "N01", EFF_MS)) == 30.5
+    # RAW 顯示欄序含 Effective 欄
+    assert EFF_MS in _hybrid_raw_display_columns(raw)
+
+
+def test_cross_table_sums_round_not_truncate():
+    # 小數調整量：cross 表合計須四捨五入（-0.5→-1、+0.5→0），與分類表／stats 同口徑
+    rows = [
+        {"SKU": 300, "Site Code": "T01", "Shop Nature": "Tourist", "OM": "OM1",
+         "Sold Qty (P90D)": 270.0, "Shop Stock Qty (CM)": 20.0,
+         "Shop Monthly Sold Qty (P90D)": 91.5, "Adj. Safety Stock": 28.5,
+         "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 300, "Site Code": "M01", "Shop Nature": "Mix", "OM": "OM1",
+         "Sold Qty (P90D)": 81.0, "Shop Stock Qty (CM)": 20.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 10.5,
+         "D001 Net Stock Qty (CM)": 10.0},
+    ]
+    raw, _, _, _, cross, _, _ = transform_hybrid(_df(rows), safety_days=_SD10)
+    # T01：所需量 ceil(270/90×10)=30、現有 28.5 → 調整量 +1.5；M01：所需量 ceil(81/90×10)=9、現有 10.5 → −1.5
+    assert float(_get(raw, "T01", "Safety 建議調整量")) == 1.5
+    assert float(_get(raw, "M01", "Safety 建議調整量")) == -1.5
+    row_under = cross[cross["Safety Review"] == "Safety 設定不足"].iloc[0]
+    row_over = cross[cross["Safety Review"] == "Safety 設定過高"].iloc[0]
+    # 舊 int() 截斷會得 +1／−1；四捨五入（round-half-even）應得 +2／−2，與分類表／stats 同口徑
+    assert int(row_under["Tourist 建議調整量合計"]) == 2 and int(row_under["合計 建議調整量"]) == 2
+    assert int(row_over["Mix 建議調整量合計"]) == -2 and int(row_over["合計 建議調整量"]) == -2
+    total = cross[cross["Safety Review"] == "總計"].iloc[0]
+    assert int(total["合計 建議調整量"]) == 0
+
+
+def test_nature_self_exclusion_guard_blocks_same_nature_source():
+    # 顯式防呆驗證：即使來源池被餵入同 Nature 超額量，需求列也不得由同 Nature 調入
+    sku = np.array(["9", "9"], dtype=object)
+    site = np.array(["A", "B"], dtype=object)
+    nature_arr = np.array(["Mix", "Mix"], dtype=object)
+    need = np.array([True, False])
+    demand = np.array([5.0, 0.0])
+    a, g, d, desc = _hybrid_allocate_transfers(
+        2, sku, site, need, demand, np.zeros(2), np.array([9.0, 9.0]),
+        nature_arr=nature_arr)
+    assert int(a.sum()) == 0 and int(g.sum()) == 5 and int(d.sum()) == 0 and desc[0] == ""
+    # 回退防呆：不傳 nature_arr 時維持舊行為（池資料自行把關）
+    a2, g2, d2, desc2 = _hybrid_allocate_transfers(
+        2, sku, site, need, demand, np.zeros(2), np.array([9.0, 9.0]))
+    assert int(a2.sum()) == 5 and int(d2.sum()) == 5 and "B:5" in desc2[0]
+
+
+def test_dup_rows_diff_site_warns_self_transfer_guard_gap():
+    # 同 SKU 同 Site Code 重複列 → warning 須說明自我調貨守衛以 Site Code 比對的破口
+    rows = [
+        {"SKU": 300, "Site Code": "T01", "Shop Nature": "Tourist", "OM": "OM1",
+         "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
+         "Shop Monthly Sold Qty (P90D)": 120.0, "Adj. Safety Stock": 30,
+         "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 300, "Site Code": "T01", "Shop Nature": "Tourist", "OM": "OM1",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 3,
+         "D001 Net Stock Qty (CM)": 10.0},
+    ]
+    _, _, _, _, _, _, warns = transform_hybrid(_df(rows))
+    dup_warn = [w for w in warns if "重複列" in w]
+    assert dup_warn and "自我調貨守衛" in dup_warn[0]
+

@@ -2,8 +2,14 @@
 
 ## v1.17.2 (2026-09-05)
 
-- 
+Safety Stock x NetStock Review 代碼審查修正（文獻一致性、統計口徑、顯式守衛與稽核欄）。
 
+- Fix: 「調貨段與 Stock Checking 完全同規則」宣稱改正為「同規則＋資料品質補正」——明列三處分岔（Shop Nature 正規化、月銷逐列回補、D001 逐列 Net→Stock fallback），同一份輸入在兩個模式的調貨結果可能有細微差異（本模式補正較嚴謹）；`transform_hybrid` docstring、Streamlit 模式說明與使用說明頁／README 同步
+- Fix: 「Review 摘要」① Safety Review × Shop Nature 交叉表的「建議調整量合計」由 `int()` 截斷改為四捨五入（round-half-even），與 ② Safety 調整方向分類／stats 合計同口徑（小數 Safety 設定時不再出現 ±1 差異）
+- Change: 「需求 Nature 自身除外」由池級歸零的隱式推論改為 `_hybrid_allocate_transfers` 的顯式守衛（新增選填 `nature_arr` 引數，預設 `None` 維持舊行為；`transform_hybrid` 不限OM／同OM 兩處呼叫傳入）；現行輸出零變化，屬防未來改動之防呆
+- New: RAW 新增 `Effective Shop Monthly Sold Qty (P90D)` 稽核欄（與 D001 Effective 欄同口徑）——月銷回補後的實際採用值，覆寫前原始值保留於原欄；加入 RAW 顯示欄序「庫存與銷售」組（Effective Shop… 置於 D001 欄前）
+- Change: `Site Code × SKU` 重複列 warning 補說明——重複列 Site Code 不同時，自我調貨守衛（以 Site Code 比對）無法辨識同店，同一實體店舖可能同時出現在調貨來源與接收端；`_build_hybrid_diagnosis` docstring 的「可轉出貨量」加總欄數改正為三 Nature（Tourist 欄僅雙向時存在）
+- Update: tests/test_hybrid_mode.py 新增第 17 節回歸測試 ×4（Effective 欄數值與欄序、交叉表 ±1.5 四捨五入對帳、同 Nature 來源守衛直測與向後相容、重複列 warning 文案）；共 209 項測試通過，README／使用說明頁同步
 ## v1.17.1 (2026-09-04)
 
 Safety Stock x NetStock Review 全面資料品質與結果一致性修正。

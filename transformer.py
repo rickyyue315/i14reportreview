@@ -5450,7 +5450,9 @@ def _transfer_input_consistency_warnings(df: pd.DataFrame) -> list[str]:
     if len(dup_sizes):
         out.append(
             f"偵測到「Site Code × SKU」重複列 {len(dup_sizes)} 組（共 {int(dup_sizes.sum())} 列；"
-            "正常輸入應為一店×一SKU一列），重複列會令同一店舖的庫存與銷量被多次計入，請檢查來源檔案。"
+            "正常輸入應為一店×一SKU一列），重複列會令同一店舖的庫存與銷量被多次計入；"
+            "重複列的 Site Code 不同時，自我調貨守衛（以 Site Code 比對）無法辨識同店，"
+            "同一實體店舖可能同時出現在調貨來源與接收端，請檢查來源檔案。"
         )
     nature = df.get("Shop Nature", _safe_default_series("", df.index))
     nature_norm = nature.fillna("").astype(str).str.strip().str.lower()
@@ -5472,7 +5474,8 @@ def _transfer_input_consistency_warnings(df: pd.DataFrame) -> list[str]:
 
 def _build_hybrid_diagnosis(raw: pd.DataFrame, variant: str = "free") -> pd.DataFrame:
     """調貨 Review 主表（店舖×SKU 逐列）：只收錄事件類型非空的列，
-    按 Brand / SKU / 事件類型 / Site Code 排序；「可轉出貨量」為 Mix 與 Non Tourist 兩欄加總。
+    按 Brand / SKU / 事件類型 / Site Code 排序；「可轉出貨量」為三 Nature 可轉出欄加總
+    （Tourist 欄僅雙向時存在）。
     variant="om" 時改用同OM調貨欄位並重算事件類型（轉出量=0 的來源列改列「可轉出未使用」）；
     Safety Review 與建議調整欄兩變體相同。"""
     if raw is None or raw.empty or "事件類型" not in raw.columns:
@@ -5630,7 +5633,8 @@ def _build_hybrid_diag_summary(raw: pd.DataFrame) -> pd.DataFrame:
         return {
             "列數": int(len(sub)),
             "SKU 數": int(sub["SKU"].nunique()) if "SKU" in sub.columns else 0,
-            "建議調整量合計": int(sub["_chg"].sum()),
+            # 先四捨五入再取整，與「Safety 調整方向分類」／stats 合計口徑一致
+            "建議調整量合計": int(round(float(sub["_chg"].sum()))),
         }
 
     _total_key = {"列數": "合計 列數", "SKU 數": "合計 SKU 數", "建議調整量合計": "合計 建議調整量"}
@@ -5878,10 +5882,13 @@ def _hybrid_allocate_transfers(
     mix_avail0: np.ndarray,
     om_arr: np.ndarray | None = None,
     tourist_avail0: np.ndarray | None = None,
+    nature_arr: np.ndarray | None = None,
 ):
     """調貨分配：按 SKU 彙總需求，來源池固定 Non Tourist → Mix → Tourist（tourist_avail0
     為 None 時不設 Tourist 池，即現行單向規則），需求列按需求量大→小依序分配。
     om_arr 非 None 時來源店須與需求列同 OM 才可轉出（同OM調貨）。
+    nature_arr 非 None 時來源列與需求列同 Shop Nature 一律排除（「需求 Nature 自身除外」
+    契約守衛；現行池級歸零已令同 Nature 來源恆為 0，此守衛為顯式防呆）。
     來源店與需求列同為一店（Site Code 相同）時一律排除，防止重複列資料異常造成自我調貨。
     回傳 (actual_np, gap_np, donate_np, desc_np)。"""
     actual_np = np.zeros(n_rows, dtype=int)
@@ -5918,6 +5925,8 @@ def _hybrid_allocate_transfers(
                         break
                     if site_arr[spos] == site_arr[row_pos]:
                         continue  # 自我調貨守衛：來源店＝需求店時排除（重複列資料異常防護）
+                    if nature_arr is not None and nature_arr[spos] == nature_arr[row_pos]:
+                        continue  # 需求 Nature 自身除外守衛（雙向契約，顯式防呆）
                     if om_arr is not None and om_arr[spos] != om_arr[row_pos]:
                         continue
                     avail_n = pool[spos]
@@ -5946,9 +5955,11 @@ def transform_hybrid(
 ):
     """Safety Stock x NetStock Review 核心轉換（調貨事件 Review Safety 設定）。
 
-    - 調貨段：與 Stock Checking 完全同規則（SKU 級加總 TurnDay、Nature 供應門檻、
-      14 日需求/可轉出、NT 優先→Mix 補足、需求量大→小）。**調貨段恆以 14 日為基準，
-      不受 safety_days 影響。**
+    - 調貨段：與 Stock Checking 同規則（SKU 級加總 TurnDay、Nature 供應門檻、
+      14 日需求/可轉出、NT 優先→Mix 補足、需求量大→小），另疊加本模式特有的
+      **資料品質補正**（Shop Nature 正規化、月銷逐列回補、D001 逐列 Net→Stock
+      fallback；回補口徑見各段 warning），故同一份輸入在兩個模式可能出現細微差異。
+      **調貨段恆以 14 日為基準，不受 safety_days 影響。**
     - Review 段（Safety 基準周轉天數，按 Shop Nature 分別設定）：
       Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 的基準天數)；
       safety_days 預設 {"Tourist": 7, "Mix": 9, "Non Tourist": 10}（UI 建議範圍 7–10 日）。
@@ -5961,11 +5972,13 @@ def transform_hybrid(
     - bidirectional=True（允許雙向調貨，預設 False 維持單向契約）：任何 Nature 缺貨
       （該 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且列需求 > 0）且其他任一 Nature
       有貨（加總 TurnDay ≥ 門檻）即標示需要調貨；新增 RAW 欄「可轉出貨量 (Tourist)」，
-      Tourist 列亦可作轉出來源；來源池順序固定 Non Tourist → Mix → Tourist。
+      Tourist 列亦可作轉出來源；來源池順序固定 Non Tourist → Mix → Tourist，
+      且「需求 Nature 自身除外」為分配層的顯式守衛（池級歸零另保證缺貨 Nature 不進入來源池）。
       Review 段對稱擴展：需要調入可出現在任何 Nature 列、實際轉出／可轉出未使用
       可出現在 Tourist 列（事件與診斷文字不變）。
     - 上下文欄位：調貨後庫存 = 原始 + 實際調入 − 轉出；
-      調貨後 TurnDay = 調貨後庫存 ÷ 月銷 × 30.5（月銷 0 留空）。
+      調貨後 TurnDay = 調貨後庫存 ÷ 月銷 × 30.5（月銷 0 留空；月銷為回補後值，
+      另存「Effective Shop Monthly Sold Qty (P90D)」稽核欄，原值保留於原欄）。
     - OM 變體：分配跑兩遍——不限OM（契約欄位）與同OM（來源店須與需求店同 OM，
       欄位加「(同OM)」後綴）；Safety Review 與建議調整量兩變體相同，不受調貨限制影響。
     - Summary：附 Stock Checking 的 SKU 級彙總（各 Nature 庫存/月銷加總、TurnDay、佔比、
@@ -6032,6 +6045,8 @@ def transform_hybrid(
             "已逐列以 Sold Qty (P90D) ÷ 90 × 30.5 換算月銷。"
         )
     msold_eff = msold_raw.where(~(msold_blank | msold_zero_conflict), sold_p90d / 90.0 * 30.5)
+    # 實際採用月銷另存 Effective 欄（與 D001 Effective 欄同口徑）；覆寫前保留原始輸入供稽核比對
+    df["Effective Shop Monthly Sold Qty (P90D)"] = msold_eff
     df["Shop Monthly Sold Qty (P90D)"] = msold_eff
 
     # D001：逐列 Net 優先、Stock 回補（兩者皆空白或非有限值視為空白），並保留 Effective 欄位供 RAW 稽核
@@ -6159,11 +6174,11 @@ def transform_hybrid(
     tourist_avail0 = df["可轉出貨量 (Tourist)"].to_numpy(dtype=float) if bidirectional else None
     actual_np, gap_np, donate_np, desc_np = _hybrid_allocate_transfers(
         n_rows, sku_arr, site_arr, need_mask, demand, nt_avail0, mix_avail0,
-        tourist_avail0=tourist_avail0,
+        tourist_avail0=tourist_avail0, nature_arr=nature.to_numpy(),
     )
     actual_om, gap_om, donate_om, desc_om = _hybrid_allocate_transfers(
         n_rows, sku_arr, site_arr, need_mask, demand, nt_avail0, mix_avail0, om_arr=om_arr,
-        tourist_avail0=tourist_avail0,
+        tourist_avail0=tourist_avail0, nature_arr=nature.to_numpy(),
     )
     df["實際調入量"] = actual_np
     df["調入缺口"] = gap_np
@@ -6497,6 +6512,7 @@ _HYBRID_RAW_DISPLAY_GROUPS = [
      "Turnday (P90D Qty)", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
      "Net Sales (M-2)", "Net Sales (M-1)", "Net Sales (CM - MTD)", "Excess Stock Qty",
      "Shop On Order PO Qty (CM)", "Shop Pending Receive",
+     "Effective Shop Monthly Sold Qty (P90D)",
      "D001 Net Stock Qty (CM)", "D001 Stock Qty (CM)", "D001 Effective Stock Qty (CM)"],
     ["Tourist 加總 TurnDay", "Mix 加總 TurnDay", "Non Tourist 加總 TurnDay",
      "需要調貨", "調入需求量 (補到14日)"],
