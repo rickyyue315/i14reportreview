@@ -1155,14 +1155,14 @@ def _d001_gap_advice(d001_qty: float, gap_n: int, is_warehouse: bool) -> str:
     """店舖問題表共用：調入缺口的跟進行動（只在缺口 > 0 時呼叫）。
 
     - Warehouse＋D001 有貨：可由 D001 補貨。
-    - Warehouse＋D001 無貨：D001 亦無貨，請向上游追貨。
+    - Warehouse＋D001 無貨：D001缺貨。
     - Vendor：不經 D001，請向供應商追貨。
     """
     if not is_warehouse:
         return "Vendor 貨不經 D001 請向供應商追貨"
     if d001_qty > 0:
         return f"D001 尚有 {d001_qty:g} 件可補貨，缺口部分請由 D001 補貨"
-    return "D001 亦無貨，缺口部分請向上游追貨"
+    return "D001缺貨"
 
 
 def _build_stock_checking_shop_issues(

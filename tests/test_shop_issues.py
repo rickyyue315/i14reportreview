@@ -254,7 +254,7 @@ def test_d001_gap_advice_warehouse_vendor():
         raw, turnday_threshold=stats["turnday_threshold"], d001_threshold=stats["d001_threshold"])
     assert "Supply Source" in issues.columns and "D001 Net Stock Qty (CM)" in issues.columns
     gap_advice = str(issues.loc[issues["問題類型"] == "調入缺口（來源不足）", "建議方法"].iloc[0])
-    assert "D001 亦無貨" in gap_advice and "向上游追貨" in gap_advice
+    assert gap_advice.endswith("D001缺貨")
     assert "Vendor" not in gap_advice
 
     df_vendor = pd.DataFrame([
