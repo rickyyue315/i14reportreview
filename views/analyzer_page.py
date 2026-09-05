@@ -847,7 +847,7 @@ if uploaded_file is not None:
                     st.info("無符合資料")
             _dim_label_applied = _HYBRID_DIMENSION_LABELS.get(applied_hybrid_dimension, "Shop Nature")
             with tab_sc:
-                st.markdown(f"#### SKU 級彙總（按 {_dim_label_applied} 分組）：各組庫存/月銷加總、TurnDay、佔比 (%)、強制調貨提示、存貨偏重提示")
+                st.markdown(f"#### SKU 級彙總（按 {_dim_label_applied} 分組）：各組庫存/月銷加總、TurnDay、涉及店舖數、佔比 (%)、強制調貨提示、存貨偏重提示")
                 if sc_summary is not None and not sc_summary.empty:
                     _skewed = sc_summary[sc_summary["存貨偏重提示"].fillna("").astype(str) != ""] if "存貨偏重提示" in sc_summary.columns else sc_summary.iloc[0:0]
                     if not _skewed.empty:
@@ -2742,7 +2742,7 @@ if uploaded_file is not None:
 
             tab_sum, tab_raw = st.tabs(["📊 Summary (SKU 彙總)", "RAW 完整明細"])
             with tab_sum:
-                st.markdown("#### SKU 級 Summary：各 Shop Nature 庫存/月銷加總與 TurnDay、佔比 (%)、調貨提示與調出量")
+                st.markdown("#### SKU 級 Summary：各 Shop Nature 庫存/月銷加總與 TurnDay、涉及店舖數、佔比 (%)、調貨提示與調出量")
                 st.markdown("即為 Excel 導出檔中「Summary」工作表之即時數據（加總/TurnDay 取整，TurnDay = 四捨五入到整數日；佔比 (%) = 該 Nature 加總 ÷ Tourist+Mix+Non Tourist 合計，頁面顯示小數、Excel 顯示為 %）：")
                 if summary_df is not None and not summary_df.empty:
                     st.dataframe(_style_inventory_skew(summary_df), width='stretch', hide_index=True)

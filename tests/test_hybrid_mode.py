@@ -176,8 +176,11 @@ def test_transfer_columns_equivalent_to_stock_checking():
         assert hy_stats[k] == sc_stats[k], k
     # Summary（含存貨偏重提示）與 Stock Checking 完全同格式同值
     assert list(hy_sc.columns) == list(sc_sum.columns)
-    for c in ("強制調貨提示", "存貨偏重提示", "Non Tourist 加總 - Shop Stock Qty (CM)"):
+    for c in ("強制調貨提示", "存貨偏重提示", "Non Tourist 加總 - Shop Stock Qty (CM)",
+              "Tourist 涉及店舖數", "Mix 涉及店舖數", "Non Tourist 涉及店舖數"):
         assert list(hy_sc[c].fillna("")) == list(sc_sum[c].fillna("")), c
+    assert int(hy_sc.iloc[0]["Tourist 涉及店舖數"]) == 1
+    assert int(hy_sc.iloc[0]["Non Tourist 涉及店舖數"]) == 1
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -541,23 +544,24 @@ def test_generate_excel_sheets_and_headers():
                     "建議 Safety 設定值", "Safety 建議調整量", "可轉出貨量", "轉出量", "調貨後庫存"]:
             assert col in headers, (sheet, col)
     sc_headers = [c.value for c in next(wb["Summary"].iter_rows(min_row=5, max_row=5))]
-    assert len(sc_headers) == 26
-    for col in ["Brand", "SKU", "強制調貨提示", "由Non Tourist 店舖預計調出數量", "存貨偏重提示"]:
+    assert len(sc_headers) == 29
+    for col in ["Brand", "SKU", "強制調貨提示", "由Non Tourist 店舖預計調出數量", "存貨偏重提示", "涉及店舖數"]:
         assert col in sc_headers
+    assert sc_headers.count("涉及店舖數") == 3
 
 
 def test_generate_excel_summary_skew_highlight():
-    # 偏重列：Z 提示欄與偏重 Nature 庫存佔比欄（Tourist=Q）以醒目橘底 FFC000 加強顯示
+    # 偏重列：AC 提示欄與偏重 Nature 庫存佔比欄（Tourist=T）以醒目橘底 FFC000 加強顯示
     raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, _ = transform_hybrid(_df(_BIDIR_B1), bidirectional=True)
     assert str(sc_summary.iloc[0]["存貨偏重提示"]).startswith("存貨偏重 Tourist")
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     ws = load_workbook(buf)["Summary"]
-    assert str(ws.cell(row=6, column=26).value).startswith("存貨偏重 Tourist")
-    assert str(ws.cell(row=6, column=26).fill.start_color.rgb).endswith("FFC000")
-    assert ws.cell(row=6, column=26).font.bold
-    assert str(ws.cell(row=6, column=17).fill.start_color.rgb).endswith("FFC000")  # Tourist 庫存 %
-    assert not str(ws.cell(row=6, column=19).fill.start_color.rgb).endswith("FFC000")  # Mix 未偏重
-    assert not str(ws.cell(row=6, column=21).fill.start_color.rgb).endswith("FFC000")  # NT 未偏重
+    assert str(ws.cell(row=6, column=29).value).startswith("存貨偏重 Tourist")
+    assert str(ws.cell(row=6, column=29).fill.start_color.rgb).endswith("FFC000")
+    assert ws.cell(row=6, column=29).font.bold
+    assert str(ws.cell(row=6, column=20).fill.start_color.rgb).endswith("FFC000")  # Tourist 庫存 %
+    assert not str(ws.cell(row=6, column=22).fill.start_color.rgb).endswith("FFC000")  # Mix 未偏重
+    assert not str(ws.cell(row=6, column=24).fill.start_color.rgb).endswith("FFC000")  # NT 未偏重
 
 
 def test_hybrid_raw_display_columns_helper():
@@ -959,15 +963,15 @@ def test_bidir_excel_headers_and_dashboard_rows():
     raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
     assert "可轉出貨量 (Tourist)" in raw_headers
     sc_headers = [c.value for c in next(wb["Summary"].iter_rows(min_row=5, max_row=5))]
-    assert len(sc_headers) == 27
-    assert sc_headers[26] == "由Tourist 店舖預計調出數量"
-    # 單向輸出 A–Z 契約欄序不動
+    assert len(sc_headers) == 30
+    assert sc_headers[29] == "由Tourist 店舖預計調出數量"
+    # 單向輸出 A–AC 契約欄序不動
     off_args = transform_hybrid(_df(_BIDIR_B1))
     buf_off = generate_excel_hybrid(*off_args[:5], off_args[5])
     wb_off = load_workbook(buf_off, read_only=True)
     off_headers = [c.value for c in next(wb_off["Summary"].iter_rows(min_row=5, max_row=5))]
-    assert len(off_headers) == 26
-    assert off_headers == sc_headers[:26]
+    assert len(off_headers) == 29
+    assert off_headers == sc_headers[:29]
     ws = wb["Review 摘要"]
     assert ws.cell(row=19, column=1).value == "Tourist 轉出量"
     assert ws.cell(row=20, column=1).value == stats["tourist_transfer"]
@@ -1676,11 +1680,13 @@ def test_rp_dimension_switches_summary_and_cross_columns():
     raw, sc, _, _, cross, stats, _ = transform_hybrid(_df(_SCENARIO_RP), dimension="rp")
     expected = [c for c in _stock_checking_summary_columns("rp") if c in sc.columns]
     assert list(sc.columns) == expected
-    for c in ("RF 加總 - Shop Stock Qty (CM)", "ND TurnDay",
+    for c in ("RF 加總 - Shop Stock Qty (CM)", "ND TurnDay", "RF 涉及店舖數", "ND 涉及店舖數",
               "RF 加總 - Shop Monthly Sold Qty (P90D) %",
               "由RF 店舖預計調出數量", "由ND 店舖預計調出數量"):
         assert c in sc.columns, c
     assert "Tourist 加總 - Shop Stock Qty (CM)" not in sc.columns
+    row = sc.iloc[0]
+    assert int(row["RF 涉及店舖數"]) == 2 and int(row["ND 涉及店舖數"]) == 1
     assert list(cross.columns) == _hybrid_diag_summary_columns("rp")
     assert cross["Safety Review"].tolist() == [
         "Safety 設定不足", "Safety 設定過高", "設定正常—缺貨非設定因素",
@@ -1705,6 +1711,8 @@ def test_both_dimension_same_numbers_with_six_group_columns():
     assert list(sc_b.columns) == expected_b
     assert "Tourist-RF 加總 - Shop Stock Qty (CM)" in sc_b.columns
     assert "Non Tourist-ND TurnDay" in sc_b.columns
+    assert "Tourist-RF 涉及店舖數" in sc_b.columns
+    assert int(sc_b.iloc[0]["Tourist-RF 涉及店舖數"]) == 1
     assert list(cross_b.columns) == _hybrid_diag_summary_columns("both")
     assert list(cross_b.columns)[1:4] == ["Tourist-RF 列數", "Tourist-RF SKU 數", "Tourist-RF 建議調整量合計"]
     t_n = cross_n.iloc[-1]
@@ -1720,24 +1728,26 @@ def test_nature_dimension_summary_contract_columns_unchanged():
 
 
 def test_excel_dimension_layouts():
-    # rp：Summary 群組標籤「RP Type」、強制調貨提示＝第 18 欄（G=2）；交叉表標題按維度
+    # rp：Summary 群組標籤「RP Type」、G=2 時強制調貨提示＝第 20 欄、偏重＝第 23 欄
     raw, sc, diag, diag_om, cross, stats, _ = transform_hybrid(_df(_SCENARIO_RP), dimension="rp")
     wb = load_workbook(generate_excel_hybrid(raw, sc, diag, diag_om, cross, stats))
     ws = wb["Summary"]
     assert ws.cell(row=3, column=8).value == "RP Type"
-    assert ws.cell(row=5, column=18).value == "強制調貨提示"
-    assert ws.cell(row=5, column=21).value == "存貨偏重提示"
+    assert ws.cell(row=5, column=20).value == "強制調貨提示"
+    assert ws.cell(row=5, column=23).value == "存貨偏重提示"
+    assert ws.cell(row=5, column=11).value == "涉及店舖數"
+    assert ws.cell(row=4, column=12).value == "ND"
     assert str(wb["Review 摘要"].cell(row=19, column=1).value) == "Safety Review × RP Type 交叉表"
-    # both：G=6 → 提示第 38 欄、偏重第 45 欄
+    # both：G=6 → 提示第 44 欄、偏重第 51 欄
     raw2, sc2, diag2, diag2_om, cross2, stats2, _ = transform_hybrid(_df(_SCENARIO_A), dimension="both")
     ws2 = load_workbook(generate_excel_hybrid(raw2, sc2, diag2, diag2_om, cross2, stats2))["Summary"]
     assert ws2.cell(row=3, column=8).value == "Shop Nature＋RP Type"
-    assert ws2.cell(row=5, column=38).value == "強制調貨提示"
-    assert ws2.cell(row=5, column=45).value == "存貨偏重提示"
-    # nature 預設：A–Z 契約欄序零變動
+    assert ws2.cell(row=5, column=44).value == "強制調貨提示"
+    assert ws2.cell(row=5, column=51).value == "存貨偏重提示"
+    # nature 預設：A–AC 契約欄序（提示第 26 欄、偏重第 29 欄）
     raw3, sc3, diag3, diag3_om, cross3, stats3, _ = transform_hybrid(_df(_SCENARIO_A))
     ws3 = load_workbook(generate_excel_hybrid(raw3, sc3, diag3, diag3_om, cross3, stats3))["Summary"]
     assert ws3.cell(row=3, column=8).value == "Shop Nature"
-    assert ws3.cell(row=5, column=23).value == "強制調貨提示"
-    assert ws3.cell(row=5, column=26).value == "存貨偏重提示"
+    assert ws3.cell(row=5, column=26).value == "強制調貨提示"
+    assert ws3.cell(row=5, column=29).value == "存貨偏重提示"
 

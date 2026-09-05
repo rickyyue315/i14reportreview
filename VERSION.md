@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.23.0 (2026-09-05)
+
+Summary 每個分類加入涉及店舖數量統計（三種分類維度同步，Stock Checking 亦同步）。
+
+- Change（**破壞性**）: `_build_stock_checking_summary()` 每組加總區新增「涉及店舖數」欄（置於該組 TurnDay 之後；同 SKU 同組 Site Code 不重複計數，空白 Site Code 不計，與加總同母體）——nature 加 3 欄（29 欄，A–AC）、rp 加 2 欄、both 加 6 欄；`_stock_checking_summary_columns()`／`_STOCK_CHECKING_SUMMARY_COLUMNS`／`_write_stock_checking_summary_sheet()` 同步（加總區由每組 3 欄改為 4 欄，佔比／提示／調出欄位自動後移；TurnDay 與佔比活公式不受影響；雙向 Tourist 欄改為 AD）
+- Update: Excel 第 5 列按現行格式輸出簡短欄名「涉及店舖數」（各組重複）；第 4 列各分組合併改為 4 欄；Streamlit 結果頁 Summary 標題與使用說明頁同步；README／使用說明頁同步
+- Update: `tests/test_stock_checking.py` 同步（店舖數值、空白排除、29 欄契約、欄位位置、橘底欄號）＋ `tests/test_hybrid_mode.py` 同步（三維度欄位切換、Excel 欄號、等價對帳）；共 232 項測試通過；README／使用說明頁同步
+
 ## v1.22.0 (2026-09-05)
 
 簡易調貨明細新增 Target／Supply RP Type 欄並調整欄序。

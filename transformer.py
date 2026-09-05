@@ -6998,7 +6998,7 @@ def generate_excel_hybrid(
     RAW（重新排列欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄；含不限OM與同OM兩套調貨結果；
     雙向時另含「可轉出貨量 (Tourist)」）/
     Summary（SKU 級彙總，按 stats["dimension"] 分類維度分組：nature 三組／rp 兩組／both 六組；
-    各組加總/TurnDay/佔比、強制調貨提示、存貨偏重提示；nature 雙向時另加 AA 欄
+    各組加總/TurnDay/涉及店舖數/佔比、強制調貨提示、存貨偏重提示；nature 雙向時另加 AD 欄
     「由Tourist 店舖預計調出數量」）/
     調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM)（店舖×SKU 主表含 RP Type 欄）/
   Review 摘要（指標卡 4 排（雙向時 5 排）+ Safety Review × 分類維度交叉表
@@ -7036,7 +7036,7 @@ def generate_excel_hybrid(
     if progress_callback:
         progress_callback(0.25, "建立 SKU Summary（存貨偏重提示）...")
 
-    # ── Sheet 2: Summary（SKU 級彙總，按分類維度分組；雙向時另加 AA 欄；偏重提示以醒目橘底加強顯示）──
+    # ── Sheet 2: Summary（SKU 級彙總，按分類維度分組；雙向時另加 AD 欄；偏重提示以醒目橘底加強顯示）──
     ws_sc = wb.create_sheet(title="Summary")
     _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38, bidirectional=_bidirectional, highlight_skew=True, dimension=_dim)
 
@@ -7933,13 +7933,16 @@ def _stock_checking_buyer_stats(raw: pd.DataFrame, need_series: pd.Series | None
     return sorted(((str(b), int(c)) for b, c in counts.items()), key=lambda kv: (-kv[1], kv[0]))
 
 
-# Stock Checking／混合 nature 維度的 Summary A–Z 契約欄序基準
+# Stock Checking／混合 nature 維度的 Summary A–AC 契約欄序基準
 # （由 _stock_checking_summary_columns("nature") 產生，測試對帳用）
 _STOCK_CHECKING_SUMMARY_COLUMNS = [
     "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Supply Source", "D001 Net Stock Qty (CM)",
     "Tourist 加總 - Shop Stock Qty (CM)", "Tourist 加總 - Shop Monthly Sold Qty (P90D)", "Tourist TurnDay",
+    "Tourist 涉及店舖數",
     "Mix 加總 - Shop Stock Qty (CM)", "Mix 加總 - Shop Monthly Sold Qty (P90D)", "Mix TurnDay",
+    "Mix 涉及店舖數",
     "Non Tourist 加總 - Shop Stock Qty (CM)", "Non Tourist 加總 - Shop Monthly Sold Qty (P90D)", "Non Tourist TurnDay",
+    "Non Tourist 涉及店舖數",
     "Tourist 加總 - Shop Stock Qty (CM) %", "Tourist 加總 - Shop Monthly Sold Qty (P90D) %",
     "Mix 加總 - Shop Stock Qty (CM) %", "Mix 加總 - Shop Monthly Sold Qty (P90D) %",
     "Non Tourist 加總 - Shop Stock Qty (CM) %", "Non Tourist 加總 - Shop Monthly Sold Qty (P90D) %",
@@ -7951,7 +7954,9 @@ _STOCK_CHECKING_SUMMARY_COLUMNS = [
 def _stock_checking_summary_columns(dimension: str = "nature", bidirectional: bool = False) -> list[str]:
     """Summary 欄序（按分類維度切換分組欄位）：
     nature＝三 Nature（現行契約，含雙向時末尾「由Tourist 店舖預計調出數量」）；
-    rp＝RF／ND 兩組；both＝六組（Tourist-RF … Non Tourist-ND）。"""
+    rp＝RF／ND 兩組；both＝六組（Tourist-RF … Non Tourist-ND）。
+    每組加總區為加總庫存／加總月銷／TurnDay／涉及店舖數四欄（店舖數＝同 SKU 同組
+    Site Code 不重複計數，空白 Site Code 不計）。"""
     dim = _hybrid_dimension(dimension)
     groups = _hybrid_dimension_groups(dim)
     cols = ["Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Supply Source", "D001 Net Stock Qty (CM)"]
@@ -7960,6 +7965,7 @@ def _stock_checking_summary_columns(dimension: str = "nature", bidirectional: bo
             f"{gname} 加總 - Shop Stock Qty (CM)",
             f"{gname} 加總 - Shop Monthly Sold Qty (P90D)",
             f"{gname} TurnDay",
+            f"{gname} 涉及店舖數",
         ]
     for gname in groups:
         cols += [
@@ -7987,6 +7993,8 @@ def _build_stock_checking_summary(
     - 按分類維度分組（dimension：nature 三組／rp 兩組 RF／ND／both 六組）加總
       Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)，
       TurnDay = 加總庫存 ÷ 加總月銷 × 30.5（月銷為 0 時留空）；除佔比外一律取整顯示
+    - 各組涉及店舖數：同 SKU 同組的 Site Code 不重複計數（空白 Site Code 不計），
+      與加總同母體，置於該組 TurnDay 之後
     - 各組佔比 (%)：該組加總 ÷ 全部分組加總合計（0-1 小數，Excel 以 0.00% 顯示；
       合計為 0 時留空；nature 維度僅計 Tourist / Mix / Non Tourist 精確比對）
     - 強制調貨提示：該 SKU 有任何店舖列被標示「需要調貨」時顯示「需要調貨」
@@ -7994,7 +8002,7 @@ def _build_stock_checking_summary(
       「存貨偏重 {分組}（庫存 x% / 銷量 y%）」，多組以；分隔（差距大者在前）
     - 由 X 店舖預計調出數量 = 該 SKU 對應分組來源店的「轉出量」加總；
       nature 維度：Non Tourist / Mix 固定、bidirectional=True 時另加「由Tourist 店舖預計調出數量」
-      （置於欄序最後，A–Z 契約欄位不動）；rp／both 維度：每個分組各一欄
+      （置於欄序最後，A–AC 契約欄位不動）；rp／both 維度：每個分組各一欄
     """
     if raw is None or raw.empty:
         return pd.DataFrame()
@@ -8022,6 +8030,7 @@ def _build_stock_checking_summary(
     df["_msold"] = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, df.index)))
     df["_transfer"] = _safe_numeric(df.get("轉出量", _safe_default_series(0, df.index)))
     df["_need"] = df.get("需要調貨", _safe_default_series("", df.index)).astype(str) == "是"
+    df["_site"] = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
 
     def _first_text(series):
         s = series.dropna().astype(str).str.strip()
@@ -8061,6 +8070,7 @@ def _build_stock_checking_summary(
             row[f"{grp_name} 加總 - Shop Stock Qty (CM)"] = int(round(stock_sum))
             row[f"{grp_name} 加總 - Shop Monthly Sold Qty (P90D)"] = int(round(msold_sum))
             row[f"{grp_name} TurnDay"] = int(round(stock_sum / msold_sum * 30.5)) if msold_sum > 0 else None
+            row[f"{grp_name} 涉及店舖數"] = int(gn.loc[gn["_site"] != "", "_site"].nunique())
             # nature 維度維持現行契約（Tourist 欄僅雙向時存在）；rp／both 每組各一欄
             if dim != "nature" or grp_name != "Tourist" or bidirectional:
                 row[f"由{grp_name} 店舖預計調出數量"] = int(gn["_transfer"].sum())
@@ -8301,13 +8311,14 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
 
     欄位配置按分類維度分組數 G（nature 3／rp 2／both 6）動態排列：
     - A-G：Brand / SKU / SKU Desc / Buyer / Adj. SST / Supply Source / D001
-    - H 起：各分組加總庫存 / 加總月銷 / TurnDay ×G（整數顯示，TurnDay 活公式四捨五入到整數日）
+    - H 起：各分組加總庫存 / 加總月銷 / TurnDay / 涉及店舖數 ×G（整數顯示，TurnDay 活公式四捨五入到整數日）
     - 其後：各分組佔比 (%) ×G（活公式，0.00% 顯示；合計 0 留空）
     - 其後：強制調貨提示 / 各分組預計調出數量（nature 維度＝NT、Mix 兩欄固定順序，
-      雙向時「由Tourist」欄附於存貨偏重提示之後，A–Z 契約欄序不動；rp／both 維度＝每組各一欄）
+      雙向時「由Tourist」欄附於存貨偏重提示之後，A–AC 契約欄序不動；rp／both 維度＝每組各一欄）
     - 最後：存貨偏重提示
 
-    nature 維度（預設）之欄位號與舊版完全一致（佔比 Q-V、提示 W、調出 X-Y、偏重 Z、雙向 AA）。
+    nature 維度（預設）之欄位號與 v1.22 版一致再各組加一欄涉及店舖數
+    （加總區每組 4 欄；佔比 T–Y、提示 Z、調出 AA–AB、偏重 AC、雙向 AD）。
     highlight_skew=True 時，存貨偏重提示非空的列以醒目橘底（FFC000）加強顯示
     提示欄與偏重分組的庫存佔比欄。
     """
@@ -8315,7 +8326,7 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     groups = _hybrid_dimension_groups(dim)
     G = len(groups)
     base_col = 8
-    pct_start = base_col + 3 * G
+    pct_start = base_col + 4 * G
     tip_col = pct_start + 2 * G
     if dim == "nature":
         out_keys = ["由Non Tourist 店舖預計調出數量", "由Mix 店舖預計調出數量"]
@@ -8357,9 +8368,9 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     _style_merge(3, base_col, pct_start - 1, block_label, header_font, PatternFill(fill_type=None))
     _style_merge(3, pct_start, tip_col - 1, pct_label, header_font, PatternFill(fill_type=None))
 
-    # Row 4: 各分組標籤 — 加總區（橫向合併 3 欄）+ 佔比區（橫向合併 2 欄）
+    # Row 4: 各分組標籤 — 加總區（橫向合併 4 欄）+ 佔比區（橫向合併 2 欄）
     for i, gname in enumerate(groups):
-        _style_merge(4, base_col + i * 3, base_col + i * 3 + 2, gname, nature_font, nature_fill)
+        _style_merge(4, base_col + i * 4, base_col + i * 4 + 3, gname, nature_font, nature_fill)
     for i, gname in enumerate(groups):
         _style_merge(4, pct_start + i * 2, pct_start + i * 2 + 1, gname, nature_font, pct_fill)
 
@@ -8368,7 +8379,7 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
         "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Supply Source", "D001 Net Stock Qty (CM)",
     ]
     for _ in groups:
-        _headers += ["加總 - Shop Stock Qty (CM)", "加總 - Shop Monthly Sold Qty (P90D)", "TurnDay"]
+        _headers += ["加總 - Shop Stock Qty (CM)", "加總 - Shop Monthly Sold Qty (P90D)", "TurnDay", "涉及店舖數"]
     for _ in groups:
         _headers += ["加總 - Shop Stock Qty (CM) %", "加總 - Shop Monthly Sold Qty (P90D) %"]
     _headers += ["強制調貨提示"] + out_keys + ["存貨偏重提示"] + tail_keys
@@ -8392,8 +8403,8 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
 
     total = len(summary)
     n_cols = len(_headers)
-    _stock_letters = [get_column_letter(base_col + i * 3) for i in range(G)]
-    _sold_letters = [get_column_letter(base_col + i * 3 + 1) for i in range(G)]
+    _stock_letters = [get_column_letter(base_col + i * 4) for i in range(G)]
+    _sold_letters = [get_column_letter(base_col + i * 4 + 1) for i in range(G)]
     for r_idx, (_, row) in enumerate(summary.iterrows()):
         excel_row = r_idx + 6
         is_band = (r_idx % 2 == 1)
@@ -8412,16 +8423,19 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
                 cell.number_format = "#,##0"
             if is_band:
                 cell.fill = band_fill
-        # 各分組加總與 TurnDay（整數；TurnDay 活公式四捨五入）
+        # 各分組加總、TurnDay 與涉及店舖數（整數；TurnDay 活公式四捨五入）
         for i, gname in enumerate(groups):
-            bcol = base_col + i * 3
+            bcol = base_col + i * 4
             stock = row.get(f"{gname} 加總 - Shop Stock Qty (CM)", 0)
             msold = row.get(f"{gname} 加總 - Shop Monthly Sold Qty (P90D)", 0)
+            nshop = row.get(f"{gname} 涉及店舖數", 0)
             c_stock = ws.cell(row=excel_row, column=bcol,
                               value=int(stock) if pd.notna(stock) else None)
             c_sold = ws.cell(row=excel_row, column=bcol + 1,
                              value=int(msold) if pd.notna(msold) else None)
-            for cc in (c_stock, c_sold):
+            c_nshop = ws.cell(row=excel_row, column=bcol + 3,
+                              value=int(nshop) if pd.notna(nshop) else None)
+            for cc in (c_stock, c_sold, c_nshop):
                 cc.number_format = "#,##0"
                 cc.border = thin_border
                 cc.alignment = center
@@ -8486,7 +8500,7 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
                     _pc = ws.cell(row=excel_row, column=pct_start + i * 2)
                     _pc.fill = skew_fill
                     _pc.font = skew_font
-        # nature 維度雙向：由Tourist 店舖預計調出數量（附於最後，A–Z 契約欄序不動）
+        # nature 維度雙向：由Tourist 店舖預計調出數量（附於最後，A–AC 契約欄序不動）
         for j, key in enumerate(tail_keys):
             val = row.get(key, 0)
             cell = ws.cell(row=excel_row, column=hint_col + 1 + j,

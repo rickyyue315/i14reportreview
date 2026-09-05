@@ -340,6 +340,10 @@ def test_summary_one_row_per_sku_and_nature_sums():
     assert row300["Mix 加總 - Shop Stock Qty (CM)"] == 25
     assert row300["Non Tourist 加總 - Shop Stock Qty (CM)"] == 50  # 20 + 30
     assert row300["Non Tourist 加總 - Shop Monthly Sold Qty (P90D)"] == 80  # 30 + 50
+    # 涉及店舖數：同 SKU 同組 Site Code 不重複計數
+    assert int(row300["Tourist 涉及店舖數"]) == 1
+    assert int(row300["Mix 涉及店舖數"]) == 1
+    assert int(row300["Non Tourist 涉及店舖數"]) == 2
     assert "由Tourist 店舖預計調出數量" not in summary.columns
     # Buyer / Adj. SST 在 SKU Desc 之後（同 SKU 首個非空值）
     assert list(summary.columns).index("Buyer") == list(summary.columns).index("SKU Desc") + 1
@@ -351,6 +355,26 @@ def test_summary_one_row_per_sku_and_nature_sums():
     assert abs(row300["Tourist 加總 - Shop Monthly Sold Qty (P90D) %"] - 0.5) < 1e-9
     assert abs(row300["Mix 加總 - Shop Stock Qty (CM) %"] - round(25 / 122, 4)) < 1e-9
     assert abs(row300["Non Tourist 加總 - Shop Monthly Sold Qty (P90D) %"] - round(80 / 240, 4)) < 1e-9
+
+
+def test_summary_shop_count_blank_site_excluded():
+    # 空白 Site Code 不計入涉及店舖數；同店重複列不重複計數
+    df = _df([
+        {"SKU": 310, "Site Code": "T01", "Shop Nature": "Tourist",
+         "Shop Monthly Sold Qty (P90D)": 30.0, "Shop Stock Qty (CM)": 10.0},
+        {"SKU": 310, "Site Code": "T01", "Shop Nature": "Tourist",
+         "Shop Monthly Sold Qty (P90D)": 30.0, "Shop Stock Qty (CM)": 5.0},
+        {"SKU": 310, "Site Code": "", "Shop Nature": "Tourist",
+         "Shop Monthly Sold Qty (P90D)": 30.0, "Shop Stock Qty (CM)": 7.0},
+        {"SKU": 310, "Site Code": "M01", "Shop Nature": "Mix",
+         "Shop Monthly Sold Qty (P90D)": 40.0, "Shop Stock Qty (CM)": 10.0},
+    ])
+    _, summary, _, _ = transform_stock_checking(df)
+    row = summary[summary["SKU"] == "310"].iloc[0]
+    assert int(row["Tourist 涉及店舖數"]) == 1
+    assert int(row["Mix 涉及店舖數"]) == 1
+    assert int(row["Non Tourist 涉及店舖數"]) == 0
+    assert list(summary.columns).index("Tourist 涉及店舖數") == list(summary.columns).index("Tourist TurnDay") + 1
 
 
 def test_summary_transfer_prompt_and_transfer_out_sums():
@@ -471,10 +495,10 @@ def test_generate_excel_summary_skew_highlighted():
     assert str(summary.iloc[0]["存貨偏重提示"]).startswith("存貨偏重 Non Tourist")
     buf = generate_excel_stock_checking(raw, summary)
     ws = load_workbook(buf)["Summary"]
-    assert str(ws.cell(row=6, column=26).fill.start_color.rgb).endswith("FFC000")  # Z 提示欄
-    assert str(ws.cell(row=6, column=21).fill.start_color.rgb).endswith("FFC000")  # U NT 庫存佔比欄
-    assert ws.cell(row=6, column=21).font.bold
-    assert not str(ws.cell(row=6, column=17).fill.start_color.rgb).endswith("FFC000")  # Q Tourist 未偏重
+    assert str(ws.cell(row=6, column=29).fill.start_color.rgb).endswith("FFC000")  # AC 提示欄
+    assert str(ws.cell(row=6, column=24).fill.start_color.rgb).endswith("FFC000")  # X NT 庫存佔比欄
+    assert ws.cell(row=6, column=24).font.bold
+    assert not str(ws.cell(row=6, column=20).fill.start_color.rgb).endswith("FFC000")  # T Tourist 未偏重
 
 
 def test_summary_sorted_by_brand_sku():
@@ -511,20 +535,31 @@ def test_generate_excel():
     # Buyer / Adj. SST 緊隨 SKU Desc 之後
     assert headers.index("Buyer") == headers.index("SKU Desc") + 1
     assert headers.index("Adj. SST") == headers.index("SKU Desc") + 2
-    # 共 26 欄（Z = 存貨偏重提示）；Q-V 為佔比欄（%），其餘數值欄取整
-    assert len(headers) == 26
+    # 各組 TurnDay 之後緊隨涉及店舖數（第 5 列為簡短欄名，各組重複出現）
+    assert headers.count("涉及店舖數") == 3
+    assert headers.count("TurnDay") == 3
+    assert headers[10] == "涉及店舖數" and headers[9] == "TurnDay"
+    assert headers[14] == "涉及店舖數" and headers[13] == "TurnDay"
+    assert headers[18] == "涉及店舖數" and headers[17] == "TurnDay"
+    # 共 29 欄（AC = 存貨偏重提示）；T–Y 為佔比欄（%），其餘數值欄取整
+    assert len(headers) == 29
     assert ws.max_row >= 6
     wb2 = load_workbook(buf, data_only=False)
     ws2 = wb2["Summary"]
-    # H,I 加總取整格式；J TurnDay 為 ROUND 活公式；Q 佔比為 % 格式
+    # H,I 加總取整格式；J TurnDay 為 ROUND 活公式；K 涉及店舖數取整；T 佔比為 % 格式
     assert ws2.cell(row=6, column=8).number_format == "#,##0"
     assert ws2.cell(row=6, column=9).number_format == "#,##0"
     assert str(ws2.cell(row=6, column=10).value).startswith("=ROUND(")
     assert ws2.cell(row=6, column=10).number_format == "#,##0"
-    assert ws2.cell(row=6, column=17).number_format == "0.00%"
+    assert ws2.cell(row=6, column=11).number_format == "#,##0"
+    assert ws2.cell(row=6, column=20).number_format == "0.00%"
     # 群組標題
     assert ws2.cell(row=3, column=8).value == "Shop Nature"
-    assert ws2.cell(row=3, column=17).value == "各 Nature 佔比 (%)"
+    assert ws2.cell(row=3, column=20).value == "各 Nature 佔比 (%)"
+    # 加總區各分組合併 4 欄、佔比區各分組合併 2 欄
+    assert ws2.cell(row=4, column=8).value == "Tourist"
+    assert ws2.cell(row=4, column=12).value == "Mix"
+    assert ws2.cell(row=5, column=11).value == "涉及店舖數"
     ws_raw = wb["RAW"]
     raw_headers = [c.value for c in next(ws_raw.iter_rows(min_row=1, max_row=1))]
     for col in ["需要調貨", "調入需求量 (補到14日)", "實際調入量", "可轉出貨量 (Non Tourist)", "調貨來源 (Site Code)"]:
