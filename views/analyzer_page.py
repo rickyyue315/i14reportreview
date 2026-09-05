@@ -25,6 +25,7 @@ from transformer import (
     _hybrid_buyer_combined_stats,
     _HYBRID_SAFETY_DAYS_DEFAULT, _HYBRID_SAFETY_DAYS_MIN, _HYBRID_SAFETY_DAYS_MAX,
     _hybrid_safety_days_label,
+    _HYBRID_DIMENSION_LABELS,
 )
 import time
 import traceback
@@ -62,19 +63,23 @@ def _release_os_memory():
 
 
 def _style_inventory_skew(df: pd.DataFrame):
-    """Summary 顯示：存貨偏重提示非空時，以醒目橘底加強顯示提示欄與偏重 Nature 的庫存佔比欄。"""
+    """Summary 顯示：存貨偏重提示非空時，以醒目橘底加強顯示提示欄與偏重分組的庫存佔比欄。
+    分組名稱按提示文字解析（Shop Nature 三組／RP Type 兩組／Nature＋RP Type 六組通用）。"""
     hint_col = "存貨偏重提示"
     if df is None or df.empty or hint_col not in df.columns:
         return df
+
+    import re as _re
 
     def _row_styles(row):
         hint = str(row.get(hint_col, "") or "")
         styles = [""] * len(row)
         if hint.strip():
             targets = {hint_col}
-            for nat in ("Tourist", "Mix", "Non Tourist"):
-                if f"存貨偏重 {nat}" in hint:
-                    targets.add(f"{nat} 加總 - Shop Stock Qty (CM) %")
+            for grp in _re.findall(r"存貨偏重 ([^（]+)（", hint):
+                col = f"{grp.strip()} 加總 - Shop Stock Qty (CM) %"
+                if col in row.index:
+                    targets.add(col)
             for i, col in enumerate(row.index):
                 if col in targets:
                     styles[i] = "background-color: #FFC000; font-weight: 700"
@@ -112,7 +117,7 @@ with st.sidebar:
     共用及各模式必要欄位會按目前選擇的分析模式檢核。
 
     OOS／Safety Stock Review 會使用 `Shop Stock Status` 等模式專用欄位；
-    **Safety Stock x NetStock Review** 專用必要欄位為 `Buyer / Brand / SKU / Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D)`，不要求 `Shop Stock Status`。
+    **Safety Stock x NetStock Review** 專用必要欄位為 `Buyer / Brand / SKU / Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D)`，不要求 `Shop Stock Status`；另建議包含 `RP Type`（RF＝可補貨／ND＝不可補貨，ND 列不作調貨需求方；缺失時全部列按 RF 處理並退回 Shop Nature 維度）。
     """, unsafe_allow_html=True)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -587,7 +592,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。另附 SKU 級 **Summary**（各 Nature 庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
+        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）或 Shop Nature＋RP Type 分類，影響需求方過濾與 Summary／交叉表分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -603,6 +608,27 @@ if uploaded_file is not None:
                 min_value=0, max_value=1000000, value=100, step=10, key="hy_d001",
                 help="當 D001 Net Stock Qty (CM) 低於此值且需求 Nature 加總 TurnDay 低於門檻時，才標示需要調貨。"
             )
+        _hybrid_dim_options = {
+            "🏬 以 Shop Nature 分類（預設）": "nature",
+            "🏷️ 以 RP Type 分類": "rp",
+            "🔀 以 Shop Nature＋RP Type 分類": "both",
+        }
+        _hybrid_dim_label = st.radio(
+            "🗂️ 分類維度",
+            options=list(_hybrid_dim_options),
+            index=0,
+            horizontal=True,
+            key="hy_dim",
+            help="決定調貨需求方過濾與 Summary／Review 摘要交叉表的分組欄位；"
+                 "TurnDay 池與 Safety 基準天數恆按 Shop Nature（Tourist／Mix／Non Tourist）設定，不隨維度改變。\n"
+                 "以 Shop Nature 分類：需求方＝Tourist 且 RP Type＝RF 的店舖；供應方＝Mix／Non Tourist（有貨即可轉出，不論 RF／ND）。\n"
+                 "以 RP Type 分類：需求方＝任何 Nature 且 RF 的店舖（Mix／Non Tourist 缺貨亦可調入，含同 Nature 店間再平衡）；"
+                 "供應方維持 Mix／Non Tourist。\n"
+                 "以 Shop Nature＋RP Type 分類：計算與預設相同，Summary／交叉表按 6 組（如 Tourist-RF、Mix-ND）呈現。\n"
+                 "RP Type 為 ND（不可補貨）的店舖列一律不作需求方（仍可作供應方）；其他／空白值歸入 ND 並列 warning；"
+                 "來源缺「RP Type」欄時全部列按 RF 處理並退回 Shop Nature 維度。"
+        )
+        _dimension = _hybrid_dim_options[_hybrid_dim_label]
         st.markdown("**🛡️ Safety 基準周轉天數（按 Shop Nature 分別設定；與調貨段的 14 日線互不影響）**")
         _sd_cols = st.columns(3)
         _sd_help = ("Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 此天數)。此天數只決定 Safety Stock 的 Review 基準線，"
@@ -637,18 +663,36 @@ if uploaded_file is not None:
                  "來源優先序固定 Non Tourist → Mix → Tourist。"
         )
         _current_hybrid_params = build_hybrid_params(
-            turnday_threshold, d001_threshold, _safety_days, bidirectional
+            turnday_threshold, d001_threshold, _safety_days, bidirectional, _dimension
         )
         if bidirectional:
             st.caption(
                 f"🔁 雙向調貨觸發：該 SKU **任一 Nature 加總 TurnDay < {int(turnday_threshold)} 日** 且 **D001 < {int(d001_threshold)} 件**，"
-                "且**其他任一 Nature 加總 TurnDay ≥ 門檻**（有貨可調）→ 該 Nature 缺貨店舖標示需要調貨；"
-                "調入補到 14 日周轉，來源固定 Non Tourist → Mix → Tourist 依序轉出（需求 Nature 自身一律排除——池級歸零與分配層守衛雙重保證）。"
+                "且**其他任一 Nature 加總 TurnDay ≥ 門檻**（有貨可調）→ 該 Nature 缺貨店舖（RP Type＝RF）標示需要調貨；"
+                "調入補到 14 日周轉，來源固定 Non Tourist → Mix → Tourist 依序轉出（需求 Nature 自身一律排除——池級歸零與分配層守衛雙重保證；"
+                "「以 RP Type 分類」維度例外——允許同 Nature 店間再平衡）。"
             )
         else:
             st.caption(
                 f"🔁 調貨觸發（同 Stock Checking）：該 SKU 的 **Tourist 加總 TurnDay < {int(turnday_threshold)} 日** 且 **D001 < {int(d001_threshold)} 件**，"
                 "且 Mix / Non Tourist 至少一個 Nature 加總 TurnDay ≥ 門檻（有貨可調）。調入補到 14 日周轉，NT 優先再由 Mix 補足。"
+            )
+        if _dimension == "rp":
+            st.caption(
+                f"🏷️ 目前維度＝以 RP Type 分類：需求方＝**任何 Nature 且 RP Type＝RF** 的缺貨店舖"
+                f"（該 Nature 加總 TurnDay < {int(turnday_threshold)} 日 且 D001 < {int(d001_threshold)} 件 且補到 14 日需求 > 0 且同 SKU 有貨可調，"
+                "允許同 Nature 店間再平衡）；供應方維持 Mix／Non Tourist（ND 店可轉出）；"
+                "ND 列一律不作需求方。Summary 與交叉表按 RF／ND 分組。"
+            )
+        elif _dimension == "both":
+            st.caption(
+                "🔀 目前維度＝Shop Nature＋RP Type：調貨計算與預設相同（需求 Tourist-RF、供應 Mix／Non Tourist），"
+                "Summary 與交叉表按 6 組（Tourist-RF、Tourist-ND、Mix-RF、Mix-ND、Non Tourist-RF、Non Tourist-ND）呈現。"
+            )
+        else:
+            st.caption(
+                "🏬 目前維度＝以 Shop Nature 分類（預設）：需求方僅 Tourist 且 RP Type＝RF 的店舖"
+                "（ND 列不作需求方，仍可作供應方）；Summary 與交叉表按 Tourist／Mix／Non Tourist 分組。"
             )
         st.caption(
             f"🧭 Review 基準：Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 基準天數)，"
@@ -680,6 +724,7 @@ if uploaded_file is not None:
                     d001_threshold=int(d001_threshold),
                     bidirectional=bool(bidirectional),
                     safety_days=_safety_days,
+                    dimension=_dimension,
                     progress_callback=_cb_transform,
                 )
                 buf = generate_excel_hybrid(
@@ -718,11 +763,13 @@ if uploaded_file is not None:
             stats = st.session_state.hybrid_stats
             excel_data = st.session_state.hybrid_excel_data
             applied_hybrid_days = (stats or {}).get("safety_days") or _safety_days
+            applied_hybrid_dimension = (stats or {}).get("dimension") or _dimension
             applied_hybrid_params = st.session_state.get("hybrid_params") or build_hybrid_params(
                 (stats or {}).get("turnday_threshold", turnday_threshold),
                 (stats or {}).get("d001_threshold", d001_threshold),
                 applied_hybrid_days,
                 (stats or {}).get("bidirectional", bidirectional),
+                applied_hybrid_dimension,
             )
             hybrid_is_stale = hybrid_params_changed(applied_hybrid_params, _current_hybrid_params)
             if hybrid_is_stale:
@@ -798,8 +845,9 @@ if uploaded_file is not None:
                     st.caption(f"共 {len(diagnosis_om):,} 列（按 Brand / SKU / 事件類型 / Site Code 排序）。")
                 else:
                     st.info("無符合資料")
+            _dim_label_applied = _HYBRID_DIMENSION_LABELS.get(applied_hybrid_dimension, "Shop Nature")
             with tab_sc:
-                st.markdown("#### SKU 級彙總（同 Stock Checking Summary）：各 Nature 庫存/月銷加總、TurnDay、佔比 (%)、強制調貨提示、存貨偏重提示")
+                st.markdown(f"#### SKU 級彙總（按 {_dim_label_applied} 分組）：各組庫存/月銷加總、TurnDay、佔比 (%)、強制調貨提示、存貨偏重提示")
                 if sc_summary is not None and not sc_summary.empty:
                     _skewed = sc_summary[sc_summary["存貨偏重提示"].fillna("").astype(str) != ""] if "存貨偏重提示" in sc_summary.columns else sc_summary.iloc[0:0]
                     if not _skewed.empty:
@@ -807,11 +855,11 @@ if uploaded_file is not None:
                         st.dataframe(_style_inventory_skew(_skewed), width='stretch', hide_index=True)
                     st.markdown("**全部 SKU Summary**")
                     st.dataframe(_style_inventory_skew(sc_summary), width='stretch', hide_index=True)
-                    st.caption(f"共 {len(sc_summary):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = 某 Nature 庫存佔比 ≥ 40% 且較銷量佔比高 ≥ 20 個百分點；偏重數值以橘色底色加強顯示。")
+                    st.caption(f"共 {len(sc_summary):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = 某分組庫存佔比 ≥ 40% 且較銷量佔比高 ≥ 20 個百分點；偏重數值以橘色底色加強顯示。")
                 else:
                     st.info("無符合資料")
             with tab_cross:
-                st.markdown("#### ① Safety Review × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計）")
+                st.markdown(f"#### ① Safety Review × {_dim_label_applied} 交叉表（列數 / SKU 數 / 建議調整量合計）")
                 if diag_summary is not None and not diag_summary.empty:
                     st.dataframe(diag_summary, width='stretch', hide_index=True)
                 else:

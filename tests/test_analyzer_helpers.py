@@ -21,6 +21,17 @@ def test_hybrid_params_snapshot_and_stale_detection():
         15, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False))
 
 
+def test_hybrid_params_dimension_default_and_stale_detection():
+    base = build_hybrid_params(14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False)
+    assert base["dimension"] == "nature"  # 預設維度（舊呼叫未傳維度仍相容）
+    assert not hybrid_params_changed(base, build_hybrid_params(
+        14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False, "nature"))
+    assert hybrid_params_changed(base, build_hybrid_params(
+        14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False, "rp"))
+    assert hybrid_params_changed(base, build_hybrid_params(
+        14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False, "both"))
+
+
 def test_site_code_options_are_canonical_strings():
     assert canonical_site_codes([1002, "1001", " 1002 ", None, "", " B01 "]) == ["1001", "1002", "B01"]
 

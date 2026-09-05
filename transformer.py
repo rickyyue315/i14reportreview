@@ -5281,6 +5281,33 @@ _HYBRID_DIAG_ORDER = [
 _HYBRID_EVENT_ORDER = {_HYBRID_EVENT_NEED_IN: 0, _HYBRID_EVENT_DONATED: 1, _HYBRID_EVENT_DONOR: 2}
 _HYBRID_DIAG_NATURES = ["Tourist", "Mix", "Non Tourist"]
 
+# ── 分類維度（需求方過濾與彙總分組；TurnDay 池與 Safety 基準天數恆按 Shop Nature）──
+# nature：以 Shop Nature 分類（預設；需求方 Tourist-RF）
+# rp：以 RP Type 分類（需求方任何 Nature 的 RF 列，供應方維持 Mix／Non Tourist，允許同 Nature 互調）
+# both：以 Shop Nature＋RP Type 分類（6 組；計算同 nature 模式，僅分組顯示不同）
+_HYBRID_DIMENSIONS = ("nature", "rp", "both")
+_HYBRID_DIMENSION_LABELS = {"nature": "Shop Nature", "rp": "RP Type", "both": "Shop Nature＋RP Type"}
+_HYBRID_RP_GROUPS = ("RF", "ND")
+_HYBRID_COMBINED_GROUPS = tuple(
+    f"{n}-{r}" for n in ("Tourist", "Mix", "Non Tourist") for r in _HYBRID_RP_GROUPS
+)
+
+
+def _hybrid_dimension(dimension) -> str:
+    """分類維度正規化：非法值退回預設 nature，不拋錯（沿用 _hybrid_safety_days 風格）。"""
+    d = str(dimension or "nature").strip().lower()
+    return d if d in _HYBRID_DIMENSIONS else "nature"
+
+
+def _hybrid_dimension_groups(dimension) -> tuple[str, ...]:
+    """分類維度對應的彙總分組名稱（Summary／交叉表欄位按此切換）。"""
+    d = _hybrid_dimension(dimension)
+    if d == "rp":
+        return _HYBRID_RP_GROUPS
+    if d == "both":
+        return _HYBRID_COMBINED_GROUPS
+    return tuple(_HYBRID_DIAG_NATURES)
+
 # ── Safety 基準周轉天數（Review 線；與調貨段的 14 日線分開，Safety 不跟隨存貨周轉）──
 _HYBRID_SAFETY_DAYS_DEFAULT = {"Tourist": 7, "Mix": 9, "Non Tourist": 10}
 _HYBRID_SAFETY_DAYS_MIN = 7
@@ -5373,8 +5400,9 @@ _HYBRID_SAFETY_SKU_COLUMNS = [
 ]
 
 # 「調貨 Review Safety Stock」主表欄序（店舖×SKU 逐列；RAW 則輸出全部欄位 + Review 欄）
+# RP Type 為正規化後值（RF／ND），來源缺「RP Type」欄時該欄不出現（主表退回 25 欄）
 _HYBRID_DIAG_COLUMNS = [
-    "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Site Code", "OM", "Shop Nature",
+    "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Site Code", "OM", "Shop Nature", "RP Type",
     "事件類型", "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)",
     _HYBRID_SAFETY_DAYS_COLUMN, _HYBRID_SAFETY_LINE_COLUMN, "Adj. Safety Stock", "Safety Review",
     "建議 Safety 設定值", "Safety 建議調整量",
@@ -5427,6 +5455,23 @@ def _normalize_hybrid_nature(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     )
     df["Shop Nature"] = out
     return df, mapped
+
+
+def _normalize_hybrid_rp_type(df: pd.DataFrame) -> tuple[pd.DataFrame, int, bool]:
+    """RP Type 正規化（混合模式固定規則；RF＝可補貨、ND＝不可補貨）：
+    strip + 大寫後 RF→RF、ND→ND；其餘（含 Other、空白、大小寫差異）一律→ ND
+    （保守歸類為不可補貨：不作調貨需求方，但仍可作供應方）。
+    回傳 (已正規化 df, 被映射的非標準列數, 來源是否含「RP Type」欄)——
+    欄缺失時不改 df（RAW 不虛構欄位），由呼叫方退回 nature 維度並列 warning。
+    """
+    if "RP Type" not in df.columns:
+        return df, 0, False
+    df = df.copy()
+    raw = df["RP Type"].fillna("").astype(str).str.strip().str.upper()
+    known = raw.isin(["RF", "ND"])
+    mapped = int((~known).sum())
+    df["RP Type"] = np.where(raw == "RF", "RF", "ND")
+    return df, mapped, True
 
 
 def _transfer_input_consistency_warnings(df: pd.DataFrame) -> list[str]:
@@ -5607,17 +5652,36 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
     return out
 
 
-def _hybrid_diag_summary_columns() -> list[str]:
+def _hybrid_diag_summary_columns(dimension: str = "nature") -> list[str]:
     cols = ["Safety Review"]
-    for n in _HYBRID_DIAG_NATURES:
-        cols += [f"{n} 列數", f"{n} SKU 數", f"{n} 建議調整量合計"]
+    for g in _hybrid_dimension_groups(dimension):
+        cols += [f"{g} 列數", f"{g} SKU 數", f"{g} 建議調整量合計"]
     cols += ["合計 列數", "合計 SKU 數", "合計 建議調整量"]
     return cols
 
 
-def _build_hybrid_diag_summary(raw: pd.DataFrame) -> pd.DataFrame:
-    """Safety Review × Shop Nature 交叉表（列數 / SKU 數 / 建議調整量合計），含總計列。"""
-    cols = _hybrid_diag_summary_columns()
+def _hybrid_group_key_series(df: pd.DataFrame, dimension: str) -> pd.Series:
+    """依分類維度產生每列的分組鍵（nature→Shop Nature；rp→RP Type；both→Nature-RP）。
+    RP Type 為正規化後值；缺欄時一律按 RF（可補貨）處理，與 transform_hybrid 同口徑。"""
+    d = _hybrid_dimension(dimension)
+    nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    if d == "nature":
+        return nature
+    rp = (
+        df["RP Type"].fillna("").astype(str).str.strip().str.upper()
+        if "RP Type" in df.columns
+        else _safe_default_series("RF", df.index)
+    )
+    rp = pd.Series(np.where(rp == "RF", "RF", "ND"), index=df.index)
+    if d == "rp":
+        return rp
+    return nature + "-" + rp
+
+
+def _build_hybrid_diag_summary(raw: pd.DataFrame, dimension: str = "nature") -> pd.DataFrame:
+    """Safety Review × 分類維度（預設 Shop Nature）交叉表（列數 / SKU 數 / 建議調整量合計），含總計列。"""
+    cols = _hybrid_diag_summary_columns(dimension)
+    groups = _hybrid_dimension_groups(dimension)
     if raw is None or raw.empty or "事件類型" not in raw.columns:
         return pd.DataFrame(columns=cols)
     df = raw[raw["事件類型"].fillna("").astype(str) != ""].copy()
@@ -5626,7 +5690,7 @@ def _build_hybrid_diag_summary(raw: pd.DataFrame) -> pd.DataFrame:
     df["_chg"] = pd.to_numeric(
         df.get("Safety 建議調整量", _safe_default_series(np.nan, df.index)), errors="coerce"
     ).fillna(0)
-    nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    grp = _hybrid_group_key_series(df, dimension)
     diag = df["Safety Review"].fillna("").astype(str)
 
     def _agg(sub: pd.DataFrame) -> dict:
@@ -5643,16 +5707,16 @@ def _build_hybrid_diag_summary(raw: pd.DataFrame) -> pd.DataFrame:
     for d in _HYBRID_DIAG_ORDER:
         sub_d = df[diag == d]
         row = {"Safety Review": d}
-        for n in _HYBRID_DIAG_NATURES:
-            for k, v in _agg(sub_d[nature.loc[sub_d.index] == n]).items():
-                row[f"{n} {k}"] = v
+        for g in groups:
+            for k, v in _agg(sub_d[grp.loc[sub_d.index] == g]).items():
+                row[f"{g} {k}"] = v
         for k, v in _agg(sub_d).items():
             row[_total_key[k]] = v
         rows.append(row)
     total_row = {"Safety Review": "總計"}
-    for n in _HYBRID_DIAG_NATURES:
-        for k, v in _agg(df[nature == n]).items():
-            total_row[f"{n} {k}"] = v
+    for g in groups:
+        for k, v in _agg(df[grp == g]).items():
+            total_row[f"{g} {k}"] = v
     for k, v in _agg(df).items():
         total_row[_total_key[k]] = v
     rows.append(total_row)
@@ -5911,6 +5975,7 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
     donor = evt.isin([_HYBRID_EVENT_DONATED, _HYBRID_EVENT_DONOR])
     return {
         "safety_days": _hybrid_safety_days_from_raw(raw, nature),
+        "dimension": "nature",
         "need_rows": int(need.sum()),
         "need_skus": int(raw.loc[need, "SKU"].nunique()) if need.any() else 0,
         "total_demand": int(_safe_numeric(raw.get("調入需求量 (補到14日)", _safe_default_series(0, raw.index))).sum()),
@@ -6066,10 +6131,22 @@ def transform_hybrid(
     d001_threshold: int = 100,
     bidirectional: bool = False,
     safety_days: dict | None = None,
+    dimension: str = "nature",
     progress_callback=None,
 ):
     """Safety Stock x NetStock Review 核心轉換（調貨事件 Review Safety 設定）。
 
+    - 分類維度（dimension，預設 "nature" 維持現行契約）：
+      "nature"＝以 Shop Nature 分類；"rp"＝以 RP Type 分類；"both"＝Shop Nature＋RP Type（6 組）。
+      維度決定需求方過濾與 Summary／交叉表分組，**不改變 TurnDay 池與 Safety 基準天數
+      （兩者恆按 Shop Nature）**。RP Type 正規化：RF＝可補貨、ND＝不可補貨；
+      其他／空白歸 ND 並列 warning。來源缺「RP Type」欄時全部列按 RF 處理
+      （ND 排除規則無法套用）、維度退回 nature 並列 warning。
+      需求方一律排除 ND 列（ND 不作調入方，仍可作供應方）——三種維度皆適用：
+      nature／both 需求方為 Tourist-RF；rp 需求方為任何 Nature 的 RF 列，
+      且取消「需求 Nature 自身除外」守衛與池級歸零（允許同 Nature 店間再平衡）。
+      供應方三種維度皆維持 Mix／Non Tourist（勾選雙向時另加 Tourist）。
+      非法維度值退回 nature，不拋錯。
     - 調貨段：與 Stock Checking 同規則（SKU 級加總 TurnDay、Nature 供應門檻、
       14 日需求/可轉出、NT 優先→Mix 補足、需求量大→小），另疊加本模式特有的
       **資料品質補正**（Shop Nature 正規化、月銷逐列回補、D001 逐列 Net→Stock
@@ -6096,13 +6173,15 @@ def transform_hybrid(
       另存「Effective Shop Monthly Sold Qty (P90D)」稽核欄，原值保留於原欄）。
     - OM 變體：分配跑兩遍——不限OM（契約欄位）與同OM（來源店須與需求店同 OM，
       欄位加「(同OM)」後綴）；Safety Review 與建議調整量兩變體相同，不受調貨限制影響。
-    - Summary：附 Stock Checking 的 SKU 級彙總（各 Nature 庫存/月銷加總、TurnDay、佔比、
-      強制調貨提示、存貨偏重提示），供查閱哪些 SKU 存貨偏重哪個 Nature。
+    - Summary：附 Stock Checking 的 SKU 級彙總（按分類維度分組：nature 三組／rp 兩組／
+      both 六組；庫存/月銷加總、TurnDay、佔比、強制調貨提示、存貨偏重提示），
+      供查閱哪些 SKU 存貨偏重哪個分組。
     - Buyer 統計：沿用 Stock Checking 的 Buyer 需調貨 SKU 統計（同 SKU 首個非空 Buyer，
       已刪除重複），另加 Buyer 需調整 Safety SKU 統計（Safety 設定不足＋過高母體，
       含各 Buyer 的調整量合計）。
     回傳 (raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warnings)；
     stats["safety_days"] 為實際採用的各 Nature 基準天數；
+    stats["dimension"] 為實際採用的分類維度（rp 欄缺失退回 nature 時亦為 nature）；
     stats["buyer_need_skus"] 為 [(Buyer, 需調貨 SKU 數)]；
     stats["buyer_safety_fix"] 為 [(Buyer, 需調整 Safety SKU 數, Safety 建議調整量合計)]。
     """
@@ -6129,6 +6208,26 @@ def transform_hybrid(
     if mapped_other:
         warnings.append(f"有 {mapped_other} 列 Shop Nature 無法辨識（Other / 空白 / 其他非標準值），已正規化為 Non Tourist。")
     warnings.extend(_transfer_input_consistency_warnings(df))
+
+    # ── 分類維度與 RP Type 正規化（RF＝可補貨、ND＝不可補貨；ND 列不作調貨需求方）──
+    dim = _hybrid_dimension(dimension)
+    df, mapped_rp, rp_present = _normalize_hybrid_rp_type(df)
+    if not rp_present:
+        warnings.append(
+            "來源檔案缺少「RP Type」欄位，ND 列排除規則無法套用（全部列按可補貨 RF 處理）"
+            + ("，分類維度已退回 Shop Nature。" if dim != "nature" else "。")
+        )
+        dim = "nature"
+    elif mapped_rp:
+        warnings.append(
+            f"有 {mapped_rp} 列 RP Type 無法辨識（非 RF／ND 或空白），已正規化為 ND"
+            "（不可補貨：不作調貨需求方，仍可作供應方）。"
+        )
+    is_rf = (
+        (df["RP Type"] == "RF").to_numpy()
+        if rp_present
+        else np.ones(len(df), dtype=bool)
+    )
 
     idx = df.index
     nature = df["Shop Nature"]
@@ -6225,41 +6324,70 @@ def transform_hybrid(
     for label, td in (("Tourist", sku_tourist_turnday), ("Mix", sku_mix_turnday), ("Non Tourist", sku_nt_turnday)):
         df[f"{label} 加總 TurnDay"] = np.round(np.where(np.isfinite(td), td, np.nan), 2)
 
+    per_row_excess = np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d))
     mix_pool_ok = sku_mix_turnday >= turnday_threshold
     nt_pool_ok = sku_nt_turnday >= turnday_threshold
-    mix_excess = np.where(mix_pool_ok, np.where(is_mix, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0), 0)
-    nt_excess = np.where(nt_pool_ok, np.where(is_nt, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0), 0)
+    if dim == "rp":
+        # RP Type 模式：允許同 Nature 店間再平衡——不作池級歸零，可轉出量按逐列 14 日超額計
+        mix_excess = np.where(is_mix, per_row_excess, 0)
+        nt_excess = np.where(is_nt, per_row_excess, 0)
+    else:
+        mix_excess = np.where(mix_pool_ok, np.where(is_mix, per_row_excess, 0), 0)
+        nt_excess = np.where(nt_pool_ok, np.where(is_nt, per_row_excess, 0), 0)
     df["可轉出貨量 (Mix)"] = mix_excess.astype(int)
     df["可轉出貨量 (Non Tourist)"] = nt_excess.astype(int)
 
     demand = np.maximum(0, np.ceil(ideal_14d) - cm_stock_val)
     d001_np = eff_d001.to_numpy(dtype=float)
     ttd_np = pd.Series(sku_tourist_turnday, index=idx).to_numpy(dtype=float)
-    if bidirectional:
-        # 對稱三向：任何 Nature 缺貨（加總 TurnDay < 門檻）且其他任一 Nature 有貨即為需求方；
-        # Tourist 亦可作轉出來源（來源池順序固定 NT → Mix → Tourist）
-        tourist_pool_ok = sku_tourist_turnday >= turnday_threshold
+    mtd_np = pd.Series(sku_mix_turnday, index=idx).to_numpy(dtype=float)
+    ntd_np = pd.Series(sku_nt_turnday, index=idx).to_numpy(dtype=float)
+    # 每列所屬 Nature 的 SKU 級加總 TurnDay（rp 模式需求判定用；仍按 Shop Nature 口徑）
+    nature_td_np = np.select([is_tourist, is_mix], [ttd_np, mtd_np], default=ntd_np)
+    tourist_pool_ok = sku_tourist_turnday >= turnday_threshold
+    if dim == "rp":
+        # 需求方＝任何 Nature 的 RF 列（ND 一律不作需求）；有貨可調＝同 SKU 任一列有超額
+        # （含同 Nature 店間再平衡，故不以他 Nature 池級門檻為前提）；
+        # 供應池維持 Mix／Non Tourist（雙向時另加 Tourist）
+        if bidirectional:
+            tourist_excess = np.where(is_tourist, per_row_excess, 0)
+            df["可轉出貨量 (Tourist)"] = tourist_excess.astype(int)
+        else:
+            tourist_excess = np.zeros(len(df))
+        supply_avail = mix_excess + nt_excess + tourist_excess
+        sku_supply = pd.Series(supply_avail, index=idx).groupby(sku_key).transform("sum").to_numpy(dtype=float)
+        need_mask = (
+            is_rf
+            & (nature_td_np < turnday_threshold)
+            & (d001_np < d001_threshold)
+            & (demand > 0)
+            & (sku_supply > 0)
+        )
+    elif bidirectional:
+        # 對稱三向：任何 Nature 缺貨（加總 TurnDay < 門檻）且其他任一 Nature 有貨即為需求方
+        # （ND 列一律不作需求）；Tourist 亦可作轉出來源（來源池順序固定 NT → Mix → Tourist）
         tourist_excess = np.where(
             tourist_pool_ok,
-            np.where(is_tourist, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0),
+            np.where(is_tourist, per_row_excess, 0),
             0,
         )
         df["可轉出貨量 (Tourist)"] = tourist_excess.astype(int)
-        mtd_np = pd.Series(sku_mix_turnday, index=idx).to_numpy(dtype=float)
-        ntd_np = pd.Series(sku_nt_turnday, index=idx).to_numpy(dtype=float)
         need_mask = (
             (
                 (is_tourist & (ttd_np < turnday_threshold) & (mix_pool_ok | nt_pool_ok))
                 | (is_mix & (mtd_np < turnday_threshold) & (nt_pool_ok | tourist_pool_ok))
                 | (is_nt & (ntd_np < turnday_threshold) & (mix_pool_ok | tourist_pool_ok))
             )
+            & is_rf
             & (d001_np < d001_threshold)
             & (demand > 0)
         )
     else:
         tourist_excess = np.zeros(len(df))
+        # 需求方＝Tourist-RF（ND 列一律不作需求）；both 維度計算與本分支完全相同，僅分組顯示不同
         need_mask = (
             is_tourist
+            & is_rf
             & (ttd_np < turnday_threshold)
             & (d001_np < d001_threshold)
             & (demand > 0)
@@ -6289,16 +6417,19 @@ def transform_hybrid(
         df["OM"] = om_arr
 
     # ── 調貨分配：不限OM（現行契約欄位）＋ 同OM（來源店與需求店同 OM 才可轉出）──
+    # rp 維度取消「需求 Nature 自身除外」守衛（允許同 Nature 店間再平衡）；
+    # nature／both 維度維持守衛（池級歸零＋分配層守衛雙重保證）
     nt_avail0 = df["可轉出貨量 (Non Tourist)"].to_numpy(dtype=float)
     mix_avail0 = df["可轉出貨量 (Mix)"].to_numpy(dtype=float)
     tourist_avail0 = df["可轉出貨量 (Tourist)"].to_numpy(dtype=float) if bidirectional else None
+    _guard_nature = None if dim == "rp" else nature.to_numpy()
     actual_np, gap_np, donate_np, desc_np = _hybrid_allocate_transfers(
         n_rows, sku_arr, site_arr, need_mask, demand, nt_avail0, mix_avail0,
-        tourist_avail0=tourist_avail0, nature_arr=nature.to_numpy(),
+        tourist_avail0=tourist_avail0, nature_arr=_guard_nature,
     )
     actual_om, gap_om, donate_om, desc_om = _hybrid_allocate_transfers(
         n_rows, sku_arr, site_arr, need_mask, demand, nt_avail0, mix_avail0, om_arr=om_arr,
-        tourist_avail0=tourist_avail0, nature_arr=nature.to_numpy(),
+        tourist_avail0=tourist_avail0, nature_arr=_guard_nature,
     )
     df["實際調入量"] = actual_np
     df["調入缺口"] = gap_np
@@ -6310,10 +6441,12 @@ def transform_hybrid(
     df["調貨來源 (同OM)"] = desc_om
 
     if not need_mask.any():
-        if bidirectional:
-            warnings.append("沒有符合調貨條件的 SKU（任何 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且補到 14 日周轉的需求 > 0 且有貨可調）。")
+        if dim == "rp":
+            warnings.append("沒有符合調貨條件的 RF 列（任何 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且補到 14 日周轉的需求 > 0 且有貨可調；ND 列不作需求方）。")
+        elif bidirectional:
+            warnings.append("沒有符合調貨條件的 SKU（任何 Nature 的 RF 列加總 TurnDay < 門檻 且 D001 < 門檻 且補到 14 日周轉的需求 > 0 且有貨可調）。")
         else:
-            warnings.append("沒有符合調貨條件的 Tourist SKU（加總 TurnDay < 門檻 且 D001 < 門檻 且補到 14 日周轉的需求 > 0 且有貨可調）。")
+            warnings.append("沒有符合調貨條件的 Tourist RF SKU（加總 TurnDay < 門檻 且 D001 < 門檻 且補到 14 日周轉的需求 > 0 且有貨可調；ND 列不作需求方）。")
 
     if progress_callback:
         progress_callback(0.45, "Review Safety 設定...")
@@ -6382,11 +6515,12 @@ def transform_hybrid(
         progress_callback(0.55, "建立 Review 表...")
     diagnosis = _build_hybrid_diagnosis(raw)
     diagnosis_om = _build_hybrid_diagnosis(raw, variant="om")
-    diag_summary = _build_hybrid_diag_summary(raw)
-    sc_summary = _build_stock_checking_summary(raw, bidirectional=bidirectional)
+    diag_summary = _build_hybrid_diag_summary(raw, dimension=dim)
+    sc_summary = _build_stock_checking_summary(raw, bidirectional=bidirectional, dimension=dim)
 
     stats = {
         "safety_days": dict(_safety_days),
+        "dimension": dim,
         "turnday_threshold": int(turnday_threshold),
         "d001_threshold": int(d001_threshold),
         "need_rows": int(need_series.sum()),
@@ -6405,6 +6539,7 @@ def transform_hybrid(
         "bidirectional": bool(bidirectional),
         "donated_rows_om": int((donor_mask & (donate_om > 0)).sum()),
         "mapped_other_rows": int(mapped_other),
+        "mapped_rp_rows": int(mapped_rp),
         "donor_rows": int(donor_mask.sum()),
         "donated_rows": int(donated_mask.sum()),
         "donor_unused_rows": int(donor_unused_mask.sum()),
@@ -6627,7 +6762,8 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
                                      raw: pd.DataFrame, thin_border, desc_font,
                                      progress_callback=None):
     """Review 摘要工作表：指標卡 4 排（第 4 排為同OM調貨對照；雙向調貨時另加第 5 排
-    Tourist 轉出量）＋ ① Safety Review × Shop Nature 交叉表 ＋ ② Safety 調整方向分類
+    Tourist 轉出量）＋ ① Safety Review × 分類維度交叉表（維度由 stats["dimension"] 推定，
+    預設 Shop Nature）＋ ② Safety 調整方向分類
     ＋ ③ Safety 調整明細（SKU 級彙總）＋ ④ Buyer 統計（需調貨＋需調整 Safety 合併表）。
     ②③ 由 raw 即時彙算（Safety 建議不受 OM 限制影響，兩變體共用同一份統計）；
     ④ 與 Stock Checking 的 Buyer 統計同口徑（同 SKU 首個非空 Buyer，已刪除重複）。"""
@@ -6660,8 +6796,9 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
     _block_kw = dict(header_fill=header_fill, header_font=header_font, bold_font=bold_font,
                      section_fill=section_fill, total_fill=total_fill, thin_border=thin_border,
                      center=center, left_wrap=left_wrap)
+    _dim = _hybrid_dimension((stats or {}).get("dimension"))
     next_row = _write_hybrid_summary_block(
-        ws, table_start - 1, "Safety Review × Shop Nature 交叉表", cross, **_block_kw)
+        ws, table_start - 1, f"Safety Review × {_HYBRID_DIMENSION_LABELS[_dim]} 交叉表", cross, **_block_kw)
     next_row = _write_hybrid_summary_block(
         ws, next_row, "Safety 調整方向分類（增加 / 減少 / 不變）",
         _build_hybrid_safety_change_summary(raw), **_block_kw)
@@ -6745,24 +6882,27 @@ def generate_excel_hybrid(
     """Safety Stock x NetStock Review 輸出（7 工作表，順序固定）：
     RAW（重新排列欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄；含不限OM與同OM兩套調貨結果；
     雙向時另含「可轉出貨量 (Tourist)」）/
-    Summary（SKU 級彙總：各 Nature 加總/TurnDay/佔比、強制調貨提示、存貨偏重提示；雙向時另加 AA 欄
+    Summary（SKU 級彙總，按 stats["dimension"] 分類維度分組：nature 三組／rp 兩組／both 六組；
+    各組加總/TurnDay/佔比、強制調貨提示、存貨偏重提示；nature 雙向時另加 AA 欄
     「由Tourist 店舖預計調出數量」）/
-    調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) /
-  Review 摘要（指標卡 4 排（雙向時 5 排）+ Safety Review × Shop Nature 交叉表
+    調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM)（店舖×SKU 主表含 RP Type 欄）/
+  Review 摘要（指標卡 4 排（雙向時 5 排）+ Safety Review × 分類維度交叉表
  + Safety 調整方向分類 + Safety 調整明細（SKU 級彙總）
  + Buyer 統計（需調貨＋需調整 Safety 合併表））/
     簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)（一列一筆來源店→接收店調貨，來源字串已拆行）。
-    雙向與否由 RAW 是否含「可轉出貨量 (Tourist)」欄推定。
+    雙向與否由 RAW 是否含「可轉出貨量 (Tourist)」欄推定；分類維度由 stats["dimension"] 推定
+    （缺失時退回 nature）。
     """
     if diagnosis is None:
         diagnosis = _build_hybrid_diagnosis(raw)
     if diagnosis_om is None:
         diagnosis_om = _build_hybrid_diagnosis(raw, variant="om")
+    _dim = _hybrid_dimension((stats or {}).get("dimension"))
     if diag_summary is None:
-        diag_summary = _build_hybrid_diag_summary(raw)
+        diag_summary = _build_hybrid_diag_summary(raw, dimension=_dim)
     _bidirectional = raw is not None and "可轉出貨量 (Tourist)" in raw.columns
     if sc_summary is None:
-        sc_summary = _build_stock_checking_summary(raw, bidirectional=_bidirectional)
+        sc_summary = _build_stock_checking_summary(raw, bidirectional=_bidirectional, dimension=_dim)
     wb = Workbook()
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
@@ -6781,9 +6921,9 @@ def generate_excel_hybrid(
     if progress_callback:
         progress_callback(0.25, "建立 SKU Summary（存貨偏重提示）...")
 
-    # ── Sheet 2: Summary（SKU 級彙總，與 Stock Checking 同格式；雙向時另加 AA 欄；偏重提示以醒目橘底加強顯示）──
+    # ── Sheet 2: Summary（SKU 級彙總，按分類維度分組；雙向時另加 AA 欄；偏重提示以醒目橘底加強顯示）──
     ws_sc = wb.create_sheet(title="Summary")
-    _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38, bidirectional=_bidirectional, highlight_skew=True)
+    _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38, bidirectional=_bidirectional, highlight_skew=True, dimension=_dim)
 
     if progress_callback:
         progress_callback(0.40, "建立調貨 Review 主表 (不限OM)...")
@@ -7678,6 +7818,8 @@ def _stock_checking_buyer_stats(raw: pd.DataFrame, need_series: pd.Series | None
     return sorted(((str(b), int(c)) for b, c in counts.items()), key=lambda kv: (-kv[1], kv[0]))
 
 
+# Stock Checking／混合 nature 維度的 Summary A–Z 契約欄序基準
+# （由 _stock_checking_summary_columns("nature") 產生，測試對帳用）
 _STOCK_CHECKING_SUMMARY_COLUMNS = [
     "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Supply Source", "D001 Net Stock Qty (CM)",
     "Tourist 加總 - Shop Stock Qty (CM)", "Tourist 加總 - Shop Monthly Sold Qty (P90D)", "Tourist TurnDay",
@@ -7691,29 +7833,75 @@ _STOCK_CHECKING_SUMMARY_COLUMNS = [
 ]
 
 
-def _build_stock_checking_summary(raw: pd.DataFrame, bidirectional: bool = False) -> pd.DataFrame:
+def _stock_checking_summary_columns(dimension: str = "nature", bidirectional: bool = False) -> list[str]:
+    """Summary 欄序（按分類維度切換分組欄位）：
+    nature＝三 Nature（現行契約，含雙向時末尾「由Tourist 店舖預計調出數量」）；
+    rp＝RF／ND 兩組；both＝六組（Tourist-RF … Non Tourist-ND）。"""
+    dim = _hybrid_dimension(dimension)
+    groups = _hybrid_dimension_groups(dim)
+    cols = ["Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Supply Source", "D001 Net Stock Qty (CM)"]
+    for gname in groups:
+        cols += [
+            f"{gname} 加總 - Shop Stock Qty (CM)",
+            f"{gname} 加總 - Shop Monthly Sold Qty (P90D)",
+            f"{gname} TurnDay",
+        ]
+    for gname in groups:
+        cols += [
+            f"{gname} 加總 - Shop Stock Qty (CM) %",
+            f"{gname} 加總 - Shop Monthly Sold Qty (P90D) %",
+        ]
+    cols += ["強制調貨提示"]
+    if dim == "nature":
+        cols += ["由Non Tourist 店舖預計調出數量", "由Mix 店舖預計調出數量"]
+    else:
+        cols += [f"由{gname} 店舖預計調出數量" for gname in groups]
+    cols += ["存貨偏重提示"]
+    if dim == "nature" and bidirectional:
+        cols += ["由Tourist 店舖預計調出數量"]
+    return cols
+
+
+def _build_stock_checking_summary(
+    raw: pd.DataFrame, bidirectional: bool = False, dimension: str = "nature"
+) -> pd.DataFrame:
     """SKU 級 Summary（參考 By SKUxShop_Stock Checking_Output 格式）：
 
     - 每個 SKU 一列：Brand / SKU / SKU Desc / Buyer / Adj. SST / Supply Source / D001 Net Stock Qty (CM)
       （Buyer、Adj. SST 取同 SKU 首個非空值作代表）
-    - 各 Shop Nature（Tourist / Mix / Non Tourist）加總 Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)，
+    - 按分類維度分組（dimension：nature 三組／rp 兩組 RF／ND／both 六組）加總
+      Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)，
       TurnDay = 加總庫存 ÷ 加總月銷 × 30.5（月銷為 0 時留空）；除佔比外一律取整顯示
-    - 各 Nature 佔比 (%)：該 Nature 加總 ÷ 三個 Nature 加總合計（0-1 小數，Excel 以 0.00% 顯示；
-      合計為 0 時留空；僅計 Tourist / Mix / Non Tourist 精確比對，其他值不計入分子分母）
+    - 各組佔比 (%)：該組加總 ÷ 全部分組加總合計（0-1 小數，Excel 以 0.00% 顯示；
+      合計為 0 時留空；nature 維度僅計 Tourist / Mix / Non Tourist 精確比對）
     - 強制調貨提示：該 SKU 有任何店舖列被標示「需要調貨」時顯示「需要調貨」
-    - 存貨偏重提示：某 Nature 庫存佔比 ≥ 40% 且庫存佔比 − 銷量佔比 ≥ 20 個百分點 →
-      「存貨偏重 {Nature}（庫存 x% / 銷量 y%）」，多個 Nature 以；分隔（差距大者在前）
-    - 由 Non Tourist / Mix 店舖預計調出數量 = 該 SKU 對應 Nature 來源店的「轉出量」加總；
-      bidirectional=True 時另加「由Tourist 店舖預計調出數量」（置於欄序最後，A–Z 契約欄位不動）
+    - 存貨偏重提示：某分組庫存佔比 ≥ 40% 且庫存佔比 − 銷量佔比 ≥ 20 個百分點 →
+      「存貨偏重 {分組}（庫存 x% / 銷量 y%）」，多組以；分隔（差距大者在前）
+    - 由 X 店舖預計調出數量 = 該 SKU 對應分組來源店的「轉出量」加總；
+      nature 維度：Non Tourist / Mix 固定、bidirectional=True 時另加「由Tourist 店舖預計調出數量」
+      （置於欄序最後，A–Z 契約欄位不動）；rp／both 維度：每個分組各一欄
     """
     if raw is None or raw.empty:
         return pd.DataFrame()
+    dim = _hybrid_dimension(dimension)
+    groups = _hybrid_dimension_groups(dim)
     df = raw.copy()
     df["_sku"] = df["SKU"]
     df = df[df["_sku"].notna()]
     if df.empty:
         return pd.DataFrame()
     df["_nature"] = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    if dim == "nature":
+        df["_grp"] = df["_nature"]
+    else:
+        rp = (
+            df["RP Type"].fillna("").astype(str).str.strip().str.upper()
+            if "RP Type" in df.columns
+            else _safe_default_series("RF", df.index)
+        )
+        df["_grp"] = pd.Series(np.where(rp == "RF", "RF", "ND"), index=df.index)
+        if dim == "both":
+            df["_grp"] = df["_nature"] + "-" + df["_grp"]
     df["_brand"] = df.get("Brand", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     df["_stock"] = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
     df["_msold"] = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, df.index)))
@@ -7749,45 +7937,47 @@ def _build_stock_checking_summary(raw: pd.DataFrame, bidirectional: bool = False
             d001 = g[d001_source].dropna()
             row["D001 Net Stock Qty (CM)"] = d001.iloc[0] if len(d001) else None
         _sums: dict[str, tuple[float, float]] = {}
-        for nat in ("Tourist", "Mix", "Non Tourist"):
-            gn = g[g["_nature"] == nat]
+        for grp_name in groups:
+            gn = g[g["_grp"] == grp_name]
             stock_sum = float(gn["_stock"].sum())
             msold_sum = float(gn["_msold"].sum())
-            _sums[nat] = (stock_sum, msold_sum)
+            _sums[grp_name] = (stock_sum, msold_sum)
             # 整數顯示（% 除外）：庫存本為整數；月銷四捨五入到整數；TurnDay 四捨五入到整數日
-            row[f"{nat} 加總 - Shop Stock Qty (CM)"] = int(round(stock_sum))
-            row[f"{nat} 加總 - Shop Monthly Sold Qty (P90D)"] = int(round(msold_sum))
-            row[f"{nat} TurnDay"] = int(round(stock_sum / msold_sum * 30.5)) if msold_sum > 0 else None
-            if nat != "Tourist" or bidirectional:
-                row[f"由{nat} 店舖預計調出數量"] = int(gn["_transfer"].sum())
-        # 各 Nature 佔比（分母 = 三個 Nature 加總合計；合計為 0 留空）
+            row[f"{grp_name} 加總 - Shop Stock Qty (CM)"] = int(round(stock_sum))
+            row[f"{grp_name} 加總 - Shop Monthly Sold Qty (P90D)"] = int(round(msold_sum))
+            row[f"{grp_name} TurnDay"] = int(round(stock_sum / msold_sum * 30.5)) if msold_sum > 0 else None
+            # nature 維度維持現行契約（Tourist 欄僅雙向時存在）；rp／both 每組各一欄
+            if dim != "nature" or grp_name != "Tourist" or bidirectional:
+                row[f"由{grp_name} 店舖預計調出數量"] = int(gn["_transfer"].sum())
+        # 各組佔比（分母 = 全部分組加總合計；合計為 0 留空）
         _total_stock = sum(v[0] for v in _sums.values())
         _total_msold = sum(v[1] for v in _sums.values())
-        for nat in ("Tourist", "Mix", "Non Tourist"):
-            stock_sum, msold_sum = _sums[nat]
-            row[f"{nat} 加總 - Shop Stock Qty (CM) %"] = (
+        for grp_name in groups:
+            stock_sum, msold_sum = _sums[grp_name]
+            row[f"{grp_name} 加總 - Shop Stock Qty (CM) %"] = (
                 round(stock_sum / _total_stock, 4) if _total_stock > 0 else None
             )
-            row[f"{nat} 加總 - Shop Monthly Sold Qty (P90D) %"] = (
+            row[f"{grp_name} 加總 - Shop Monthly Sold Qty (P90D) %"] = (
                 round(msold_sum / _total_msold, 4) if _total_msold > 0 else None
             )
         row["強制調貨提示"] = "需要調貨" if bool(g["_need"].any()) else ""
-        # 存貨偏重提示：某 Nature 庫存佔比 ≥ 40% 且（庫存佔比 − 銷量佔比）≥ 20 個百分點
+        # 存貨偏重提示：某分組庫存佔比 ≥ 40% 且（庫存佔比 − 銷量佔比）≥ 20 個百分點
         _hints: list[tuple[float, str]] = []
         if _total_stock > 0:
-            for nat in ("Tourist", "Mix", "Non Tourist"):
-                stock_sum, msold_sum = _sums[nat]
+            for grp_name in groups:
+                stock_sum, msold_sum = _sums[grp_name]
                 s_share = stock_sum / _total_stock
                 v_share = (msold_sum / _total_msold) if _total_msold > 0 else 0.0
                 if s_share >= 0.40 and (s_share - v_share) >= 0.20:
                     _hints.append((s_share - v_share,
-                                   f"存貨偏重 {nat}（庫存 {s_share:.1%} / 銷量 {v_share:.1%}）"))
+                                   f"存貨偏重 {grp_name}（庫存 {s_share:.1%} / 銷量 {v_share:.1%}）"))
         row["存貨偏重提示"] = "；".join(h for _, h in sorted(_hints, key=lambda t: -t[0]))
         rows.append(row)
 
     summary = pd.DataFrame(rows)
     summary = summary.sort_values(["Brand", "SKU"], kind="stable").reset_index(drop=True)
-    ordered = [c for c in _STOCK_CHECKING_SUMMARY_COLUMNS if c in summary.columns]
+    ordered = _stock_checking_summary_columns(dim, bidirectional=bidirectional)
+    ordered = [c for c in ordered if c in summary.columns]
     trailing = [c for c in summary.columns if c not in ordered]
     return summary[ordered + trailing]
 
@@ -7991,33 +8181,38 @@ def transform_stock_checking(
     return df, summary, stats, warnings
 
 
-_STOCK_CHECKING_SUMMARY_SHEET_HEADERS = [
-    "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Supply Source", "D001 Net Stock Qty (CM)",
-    "加總 - Shop Stock Qty (CM)", "加總 - Shop Monthly Sold Qty (P90D)", "TurnDay",
-    "加總 - Shop Stock Qty (CM)", "加總 - Shop Monthly Sold Qty (P90D)", "TurnDay",
-    "加總 - Shop Stock Qty (CM)", "加總 - Shop Monthly Sold Qty (P90D)", "TurnDay",
-    "加總 - Shop Stock Qty (CM) %", "加總 - Shop Monthly Sold Qty (P90D) %",
-    "加總 - Shop Stock Qty (CM) %", "加總 - Shop Monthly Sold Qty (P90D) %",
-    "加總 - Shop Stock Qty (CM) %", "加總 - Shop Monthly Sold Qty (P90D) %",
-    "強制調貨提示", "由Non Tourist 店舖預計調出數量", "由Mix 店舖預計調出數量",
-    "存貨偏重提示",
-]
-
-
-def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30, bidirectional: bool = False, highlight_skew: bool = False):
+def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30, bidirectional: bool = False, highlight_skew: bool = False, dimension: str = "nature"):
     """Summary 工作表：SKU 級彙總（雙列表頭模仿 By SKUxShop_Stock Checking_Output 樞紐佈局）。
 
-    欄位配置（A-Z，共 26 欄）：
+    欄位配置按分類維度分組數 G（nature 3／rp 2／both 6）動態排列：
     - A-G：Brand / SKU / SKU Desc / Buyer / Adj. SST / Supply Source / D001
-    - H-P：各 Nature 加總庫存 / 加總月銷 / TurnDay（整數顯示，TurnDay 活公式四捨五入到整數日）
-    - Q-V：各 Nature 佔比 (%) = 該 Nature 加總 ÷ 三 Nature 合計（活公式，0.00% 顯示；合計 0 留空）
-    - W-Y：強制調貨提示 / 由NT 調出 / 由Mix 調出
-    - Z：存貨偏重提示（庫存佔比 ≥ 40% 且與銷量佔比差 ≥ 20 個百分點的 Nature）
-    - AA（僅 bidirectional=True）：由Tourist 店舖預計調出數量（A-Z 契約欄序不動）
+    - H 起：各分組加總庫存 / 加總月銷 / TurnDay ×G（整數顯示，TurnDay 活公式四捨五入到整數日）
+    - 其後：各分組佔比 (%) ×G（活公式，0.00% 顯示；合計 0 留空）
+    - 其後：強制調貨提示 / 各分組預計調出數量（nature 維度＝NT、Mix 兩欄固定順序，
+      雙向時「由Tourist」欄附於存貨偏重提示之後，A–Z 契約欄序不動；rp／both 維度＝每組各一欄）
+    - 最後：存貨偏重提示
 
+    nature 維度（預設）之欄位號與舊版完全一致（佔比 Q-V、提示 W、調出 X-Y、偏重 Z、雙向 AA）。
     highlight_skew=True 時，存貨偏重提示非空的列以醒目橘底（FFC000）加強顯示
-    提示欄（Z）與偏重 Nature 的庫存佔比欄（Q/S/U）。
+    提示欄與偏重分組的庫存佔比欄。
     """
+    dim = _hybrid_dimension(dimension)
+    groups = _hybrid_dimension_groups(dim)
+    G = len(groups)
+    base_col = 8
+    pct_start = base_col + 3 * G
+    tip_col = pct_start + 2 * G
+    if dim == "nature":
+        out_keys = ["由Non Tourist 店舖預計調出數量", "由Mix 店舖預計調出數量"]
+        tail_keys = ["由Tourist 店舖預計調出數量"] if bidirectional else []
+        block_label, pct_label = "Shop Nature", "各 Nature 佔比 (%)"
+    else:
+        out_keys = [f"由{g} 店舖預計調出數量" for g in groups]
+        tail_keys = []
+        block_label = _HYBRID_DIMENSION_LABELS[dim]
+        pct_label = f"各 {block_label} 佔比 (%)"
+    hint_col = tip_col + 1 + len(out_keys)
+
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
@@ -8043,20 +8238,25 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
             cell.font = font
         ws.cell(row=row, column=c1, value=value)
 
-    # Row 3: Shop Nature 群組標籤（H-P）+ 佔比群組（Q-V）
-    _style_merge(3, 8, 16, "Shop Nature", header_font, PatternFill(fill_type=None))
-    _style_merge(3, 17, 22, "各 Nature 佔比 (%)", header_font, PatternFill(fill_type=None))
+    # Row 3: 分組群組標籤 + 佔比群組
+    _style_merge(3, base_col, pct_start - 1, block_label, header_font, PatternFill(fill_type=None))
+    _style_merge(3, pct_start, tip_col - 1, pct_label, header_font, PatternFill(fill_type=None))
 
-    # Row 4: 各 Nature 標籤 — 加總區（橫向合併 3 欄）+ 佔比區（橫向合併 2 欄）
-    for col_start, label in ((8, "Tourist"), (11, "Mix"), (14, "Non Tourist")):
-        _style_merge(4, col_start, col_start + 2, label, nature_font, nature_fill)
-    for col_start, label in ((17, "Tourist"), (19, "Mix"), (21, "Non Tourist")):
-        _style_merge(4, col_start, col_start + 1, label, nature_font, pct_fill)
+    # Row 4: 各分組標籤 — 加總區（橫向合併 3 欄）+ 佔比區（橫向合併 2 欄）
+    for i, gname in enumerate(groups):
+        _style_merge(4, base_col + i * 3, base_col + i * 3 + 2, gname, nature_font, nature_fill)
+    for i, gname in enumerate(groups):
+        _style_merge(4, pct_start + i * 2, pct_start + i * 2 + 1, gname, nature_font, pct_fill)
 
     # Row 5: 欄位標題
-    _headers = list(_STOCK_CHECKING_SUMMARY_SHEET_HEADERS)
-    if bidirectional:
-        _headers.append("由Tourist 店舖預計調出數量")
+    _headers = [
+        "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Supply Source", "D001 Net Stock Qty (CM)",
+    ]
+    for _ in groups:
+        _headers += ["加總 - Shop Stock Qty (CM)", "加總 - Shop Monthly Sold Qty (P90D)", "TurnDay"]
+    for _ in groups:
+        _headers += ["加總 - Shop Stock Qty (CM) %", "加總 - Shop Monthly Sold Qty (P90D) %"]
+    _headers += ["強制調貨提示"] + out_keys + ["存貨偏重提示"] + tail_keys
     for col_idx, h in enumerate(_headers, 1):
         cell = ws.cell(row=5, column=col_idx, value=h)
         cell.font = header_font
@@ -8077,6 +8277,8 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
 
     total = len(summary)
     n_cols = len(_headers)
+    _stock_letters = [get_column_letter(base_col + i * 3) for i in range(G)]
+    _sold_letters = [get_column_letter(base_col + i * 3 + 1) for i in range(G)]
     for r_idx, (_, row) in enumerate(summary.iterrows()):
         excel_row = r_idx + 6
         is_band = (r_idx % 2 == 1)
@@ -8095,14 +8297,14 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
                 cell.number_format = "#,##0"
             if is_band:
                 cell.fill = band_fill
-        # H-P：各 Nature 加總與 TurnDay（整數；TurnDay 活公式四捨五入）
-        for i, nat in enumerate(("Tourist", "Mix", "Non Tourist")):
-            base_col = 8 + i * 3
-            stock = row.get(f"{nat} 加總 - Shop Stock Qty (CM)", 0)
-            msold = row.get(f"{nat} 加總 - Shop Monthly Sold Qty (P90D)", 0)
-            c_stock = ws.cell(row=excel_row, column=base_col,
+        # 各分組加總與 TurnDay（整數；TurnDay 活公式四捨五入）
+        for i, gname in enumerate(groups):
+            bcol = base_col + i * 3
+            stock = row.get(f"{gname} 加總 - Shop Stock Qty (CM)", 0)
+            msold = row.get(f"{gname} 加總 - Shop Monthly Sold Qty (P90D)", 0)
+            c_stock = ws.cell(row=excel_row, column=bcol,
                               value=int(stock) if pd.notna(stock) else None)
-            c_sold = ws.cell(row=excel_row, column=base_col + 1,
+            c_sold = ws.cell(row=excel_row, column=bcol + 1,
                              value=int(msold) if pd.notna(msold) else None)
             for cc in (c_stock, c_sold):
                 cc.number_format = "#,##0"
@@ -8110,75 +8312,69 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
                 cc.alignment = center
                 if is_band:
                     cc.fill = band_fill
-            s_letter = get_column_letter(base_col)
-            m_letter = get_column_letter(base_col + 1)
+            s_letter = get_column_letter(bcol)
+            m_letter = get_column_letter(bcol + 1)
             if msold is not None and pd.notna(msold) and float(msold) > 0:
-                c_td = ws.cell(row=excel_row, column=base_col + 2,
+                c_td = ws.cell(row=excel_row, column=bcol + 2,
                                value=f"=ROUND({s_letter}{excel_row}/{m_letter}{excel_row}*30.5,0)")
             else:
-                c_td = ws.cell(row=excel_row, column=base_col + 2, value=None)
+                c_td = ws.cell(row=excel_row, column=bcol + 2, value=None)
             c_td.number_format = "#,##0"
             c_td.border = thin_border
             c_td.alignment = center
             if is_band:
                 c_td.fill = band_fill
-        # Q-V：各 Nature 佔比 (%) 活公式（分母 = 三 Nature 合計；合計 0 留空）
-        # 庫存合計 = H+K+N；月銷合計 = I+L+O
-        _stock_total = f"(H{excel_row}+K{excel_row}+N{excel_row})"
-        _sold_total = f"(I{excel_row}+L{excel_row}+O{excel_row})"
-        for col_idx, num_letter, denom in (
-            (17, "H", _stock_total),   # Tourist 庫存 %
-            (18, "I", _sold_total),    # Tourist 月銷 %
-            (19, "K", _stock_total),   # Mix 庫存 %
-            (20, "L", _sold_total),    # Mix 月銷 %
-            (21, "N", _stock_total),   # Non Tourist 庫存 %
-            (22, "O", _sold_total),    # Non Tourist 月銷 %
-        ):
-            denom_bare = denom.strip("()")
-            c_pct = ws.cell(row=excel_row, column=col_idx,
-                            value=f'=IF({denom_bare}=0,"",{num_letter}{excel_row}/{denom})')
-            c_pct.number_format = "0.00%"
-            c_pct.border = thin_border
-            c_pct.alignment = center
-            if is_band:
-                c_pct.fill = band_fill
-        # W-Y：提示與調出量
+        # 各分組佔比 (%) 活公式（分母 = 全部分組合計；合計 0 留空）
+        _stock_total = "(" + "+".join(f"{L}{excel_row}" for L in _stock_letters) + ")"
+        _sold_total = "(" + "+".join(f"{L}{excel_row}" for L in _sold_letters) + ")"
+        for i, gname in enumerate(groups):
+            for j, (num_letter, denom) in enumerate(((_stock_letters[i], _stock_total), (_sold_letters[i], _sold_total))):
+                denom_bare = denom.strip("()")
+                c_pct = ws.cell(row=excel_row, column=pct_start + i * 2 + j,
+                                value=f'=IF({denom_bare}=0,"",{num_letter}{excel_row}/{denom})')
+                c_pct.number_format = "0.00%"
+                c_pct.border = thin_border
+                c_pct.alignment = center
+                if is_band:
+                    c_pct.fill = band_fill
+        # 強制調貨提示
         tip = row.get("強制調貨提示", "")
-        cell = ws.cell(row=excel_row, column=23, value=tip if tip else None)
+        cell = ws.cell(row=excel_row, column=tip_col, value=tip if tip else None)
         cell.border = thin_border
         cell.alignment = center
         if is_band:
             cell.fill = band_fill
-        for col_idx, key in ((24, "由Non Tourist 店舖預計調出數量"), (25, "由Mix 店舖預計調出數量")):
+        # 各分組預計調出數量
+        for j, key in enumerate(out_keys):
             val = row.get(key, 0)
-            cell = ws.cell(row=excel_row, column=col_idx,
+            cell = ws.cell(row=excel_row, column=tip_col + 1 + j,
                            value=int(val) if pd.notna(val) else None)
             cell.number_format = "#,##0"
             cell.border = thin_border
             cell.alignment = center
             if is_band:
                 cell.fill = band_fill
-        # Z：存貨偏重提示
+        # 存貨偏重提示
         hint = row.get("存貨偏重提示", "")
         hint = "" if pd.isna(hint) else str(hint)
-        cell = ws.cell(row=excel_row, column=26, value=hint if hint else None)
+        cell = ws.cell(row=excel_row, column=hint_col, value=hint if hint else None)
         cell.border = thin_border
         cell.alignment = left_wrap
         if is_band:
             cell.fill = band_fill
-        # 偏重數值以醒目橘底加強顯示（提示欄 + 偏重 Nature 的庫存佔比欄）
+        # 偏重數值以醒目橘底加強顯示（提示欄 + 偏重分組的庫存佔比欄）
         if hint and highlight_skew:
             cell.fill = skew_fill
             cell.font = skew_font
-            for _nat, _pct_col in (("Tourist", 17), ("Mix", 19), ("Non Tourist", 21)):
-                if f"存貨偏重 {_nat}" in hint:
-                    _pc = ws.cell(row=excel_row, column=_pct_col)
+            for i, gname in enumerate(groups):
+                if f"存貨偏重 {gname}" in hint:
+                    _pc = ws.cell(row=excel_row, column=pct_start + i * 2)
                     _pc.fill = skew_fill
                     _pc.font = skew_font
-        # AA（僅雙向）：由Tourist 店舖預計調出數量
-        if bidirectional:
-            val = row.get("由Tourist 店舖預計調出數量", 0)
-            cell = ws.cell(row=excel_row, column=27,
+        # nature 維度雙向：由Tourist 店舖預計調出數量（附於最後，A–Z 契約欄序不動）
+        for j, key in enumerate(tail_keys):
+            val = row.get(key, 0)
+            cell = ws.cell(row=excel_row, column=hint_col + 1 + j,
                            value=int(val) if pd.notna(val) else None)
             cell.number_format = "#,##0"
             cell.border = thin_border

@@ -8,12 +8,14 @@ def build_hybrid_params(
     d001_threshold: int,
     safety_days: dict,
     bidirectional: bool,
+    dimension: str = "nature",
 ) -> dict:
     return {
         "turnday_threshold": int(turnday_threshold),
         "d001_threshold": int(d001_threshold),
         "safety_days": {str(key): int(value) for key, value in dict(safety_days).items()},
         "bidirectional": bool(bidirectional),
+        "dimension": str(dimension),
     }
 
 

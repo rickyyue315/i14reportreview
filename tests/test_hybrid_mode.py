@@ -13,6 +13,9 @@
 - 「Review 摘要」的三個統計區塊同母體（事件類型非空的列）：① Safety Review × Shop Nature 交叉表、
   ② Safety 調整方向分類（增加／減少／不變）、③ Safety 調整明細（SKU 級彙總）；②③ 於 v1.16.0 新增，
   由 RAW 即時彙算，不受 OM 限制影響，且不改動 transform_hybrid／generate_excel_hybrid 簽名
+- 分類維度（v1.20.0）：nature（預設，需求方 Tourist-RF）／rp（需求方任何 Nature 的 RF 列，
+  取消同 Nature 守衛與池級歸零）／both（計算同 nature，Summary／交叉表按 6 組顯示）；
+  ND 列一律不作需求方（仍可作供應）；TurnDay 與 Safety 基準天數恆按 Shop Nature
 """
 import warnings
 warnings.filterwarnings("ignore")
@@ -44,6 +47,14 @@ from transformer import (
     _build_hybrid_safety_sku_detail,
     _build_hybrid_diag_summary,
     _hybrid_allocate_transfers,
+    _hybrid_dimension,
+    _hybrid_dimension_groups,
+    _HYBRID_RP_GROUPS,
+    _HYBRID_COMBINED_GROUPS,
+    _hybrid_diag_summary_columns,
+    _stock_checking_summary_columns,
+    _STOCK_CHECKING_SUMMARY_COLUMNS,
+    _normalize_hybrid_rp_type,
 )
 
 BASE = {
@@ -1374,7 +1385,7 @@ def test_main_table_contract_names_safety_columns():
     assert _HYBRID_SAFETY_DAYS_COLUMN in _HYBRID_DIAG_COLUMNS
     assert "14日周轉所需量" not in _HYBRID_DIAG_COLUMNS
     raw, _, diagnosis, _, _, _, _ = transform_hybrid(_df(_SCENARIO_A))
-    assert list(diagnosis.columns) == _HYBRID_DIAG_COLUMNS  # 主表 25 欄契約完整
+    assert list(diagnosis.columns) == _HYBRID_DIAG_COLUMNS  # 主表 26 欄契約完整（含 RP Type）
     display = _hybrid_raw_display_columns(raw)
     assert _HYBRID_SAFETY_LINE_COLUMN in display and _HYBRID_SAFETY_DAYS_COLUMN in display
     assert display.index(_HYBRID_SAFETY_DAYS_COLUMN) < display.index(_HYBRID_SAFETY_LINE_COLUMN)
@@ -1535,4 +1546,187 @@ def test_dup_rows_diff_site_warns_self_transfer_guard_gap():
     _, _, _, _, _, _, warns = transform_hybrid(_df(rows))
     dup_warn = [w for w in warns if "重複列" in w]
     assert dup_warn and "自我調貨守衛" in dup_warn[0]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 18. 分類維度（v1.20.0）：Shop Nature（預設）／RP Type／Shop Nature＋RP Type
+#     ND 列一律不作需求方（仍可作供應）；rp 維度需求＝任何 Nature 的 RF 列，
+#     取消同 Nature 守衛與池級歸零；both 維度計算同 nature、僅分組顯示不同
+# ──────────────────────────────────────────────────────────────────────────────
+def _rp_rows(base_rows):
+    return [dict(r) for r in base_rows]
+
+
+def test_dimension_normalization_and_groups():
+    assert _hybrid_dimension("RP") == "rp"
+    assert _hybrid_dimension("Both") == "both"
+    assert _hybrid_dimension(None) == "nature"
+    assert _hybrid_dimension("bogus") == "nature"
+    assert _hybrid_dimension_groups("nature") == ("Tourist", "Mix", "Non Tourist")
+    assert _hybrid_dimension_groups("rp") == _HYBRID_RP_GROUPS
+    assert _hybrid_dimension_groups("both") == _HYBRID_COMBINED_GROUPS
+    assert _HYBRID_COMBINED_GROUPS == (
+        "Tourist-RF", "Tourist-ND", "Mix-RF", "Mix-ND", "Non Tourist-RF", "Non Tourist-ND")
+
+
+def test_normalize_hybrid_rp_type_rules():
+    df = pd.DataFrame({"RP Type": ["rf", " ND ", "Other", None, "RF"]})
+    out, mapped, present = _normalize_hybrid_rp_type(df)
+    assert present and mapped == 2  # Other 與 None 歸 ND
+    assert list(out["RP Type"]) == ["RF", "ND", "ND", "ND", "RF"]
+    df2 = pd.DataFrame({"X": [1]})
+    _, mapped2, present2 = _normalize_hybrid_rp_type(df2)
+    assert not present2 and mapped2 == 0
+
+
+def test_nd_tourist_row_never_demand_in_default_mode():
+    rows = _rp_rows(_SCENARIO_A)
+    rows[0]["RP Type"] = "ND"  # T01 Tourist ND → 不作需求方
+    raw, _, _, _, _, stats, warns = transform_hybrid(_df(rows))
+    assert stats["need_rows"] == 0
+    assert _get(raw, "T01", "需要調貨") == ""
+    assert int(_get(raw, "T01", "調入需求量 (補到14日)")) == 0
+    assert any("沒有符合調貨條件" in w for w in warns)
+
+
+def test_nd_row_can_still_supply_in_default_mode():
+    rows = _rp_rows(_SCENARIO_A)
+    rows[1]["RP Type"] = "ND"  # N01 Non Tourist ND → 仍可作供應來源
+    raw, _, _, _, _, stats, _ = transform_hybrid(_df(rows))
+    assert stats["need_rows"] == 1
+    assert _get(raw, "N01", "事件類型") == "實際轉出"
+    assert int(_get(raw, "N01", "轉出量")) == 9  # T01 需求 ceil(360/90×14)−47 = 9
+    assert "N01:9" in _get(raw, "T01", "調貨來源 (Site Code)")
+
+
+def test_unknown_rp_normalized_to_nd_with_warning():
+    rows = _rp_rows(_SCENARIO_A)
+    rows[0]["RP Type"] = "Other"
+    raw, _, _, _, _, stats, warns = transform_hybrid(_df(rows))
+    assert any("RP Type" in w and "ND" in w for w in warns)
+    assert stats["need_rows"] == 0  # Other→ND→不作需求
+    assert _get(raw, "T01", "RP Type") == "ND"
+
+
+def test_missing_rp_type_column_falls_back_to_nature():
+    df = _df(_SCENARIO_A).drop(columns=["RP Type"])
+    raw, _, diagnosis, _, _, stats, warns = transform_hybrid(df, dimension="rp")
+    assert any("缺少「RP Type」" in w and "退回" in w for w in warns)
+    assert stats["dimension"] == "nature"
+    assert stats["need_rows"] == 1  # 全部列按 RF 處理，維持舊行為
+    assert "RP Type" not in raw.columns  # RAW 不虛構欄位
+    assert "RP Type" not in diagnosis.columns and len(diagnosis.columns) == 25
+
+
+# Mix 池整體缺貨（加總 TurnDay < 14）但 M02 有超額——rp 維度允許同 Nature 店間再平衡
+_SCENARIO_RP = [
+    {"SKU": 400, "Site Code": "M01", "Shop Nature": "Mix", "RP Type": "RF",
+     "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 20.0,
+     "Shop Monthly Sold Qty (P90D)": 160.0, "Adj. Safety Stock": 20,
+     "D001 Net Stock Qty (CM)": 10.0},
+    {"SKU": 400, "Site Code": "M02", "Shop Nature": "Mix", "RP Type": "ND",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 60.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 30,
+     "D001 Net Stock Qty (CM)": 10.0},
+    {"SKU": 400, "Site Code": "N01", "Shop Nature": "Non Tourist", "RP Type": "RF",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 20.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 20,
+     "D001 Net Stock Qty (CM)": 10.0},
+]
+
+
+def test_rp_mode_allows_same_nature_rebalance_and_all_rf_demand():
+    # nature 維度：無 Tourist 列 → 無需求
+    _, _, _, _, _, stats_n, _ = transform_hybrid(_df(_SCENARIO_RP))
+    assert stats_n["need_rows"] == 0
+    # rp 維度：M01（Mix-RF，池 TurnDay 12.8 < 14）轉為需求方，
+    # 由 N01（NT-RF 超額 6）與同 Nature 的 M02（ND 超額 46）補足 36 件
+    raw, _, _, _, _, stats, _ = transform_hybrid(_df(_SCENARIO_RP), dimension="rp")
+    assert stats["dimension"] == "rp"
+    assert stats["need_rows"] == 1
+    assert _get(raw, "M01", "需要調貨") == "是"
+    assert int(_get(raw, "M01", "調入需求量 (補到14日)")) == 36
+    assert int(_get(raw, "M01", "實際調入量")) == 36 and int(_get(raw, "M01", "調入缺口")) == 0
+    src = _get(raw, "M01", "調貨來源 (Site Code)")
+    assert "N01:6" in src and "M02:30" in src  # NT 優先、同 Nature（Mix-ND）補足
+    # rp 維度不作池級歸零：Mix 池低於門檻時 M02 仍有可轉出量
+    assert int(_get(raw, "M02", "可轉出貨量 (Mix)")) == 46
+
+
+def test_rp_mode_nd_rows_never_demand():
+    rows = _rp_rows(_SCENARIO_RP)
+    rows[0]["RP Type"] = "ND"  # M01 轉 ND → rp 維度下不作需求
+    raw, _, _, _, _, stats, _ = transform_hybrid(_df(rows), dimension="rp")
+    assert stats["need_rows"] == 0
+    assert _get(raw, "M01", "需要調貨") == ""
+
+
+def test_rp_dimension_switches_summary_and_cross_columns():
+    raw, sc, _, _, cross, stats, _ = transform_hybrid(_df(_SCENARIO_RP), dimension="rp")
+    expected = [c for c in _stock_checking_summary_columns("rp") if c in sc.columns]
+    assert list(sc.columns) == expected
+    for c in ("RF 加總 - Shop Stock Qty (CM)", "ND TurnDay",
+              "RF 加總 - Shop Monthly Sold Qty (P90D) %",
+              "由RF 店舖預計調出數量", "由ND 店舖預計調出數量"):
+        assert c in sc.columns, c
+    assert "Tourist 加總 - Shop Stock Qty (CM)" not in sc.columns
+    assert list(cross.columns) == _hybrid_diag_summary_columns("rp")
+    assert cross["Safety Review"].tolist() == [
+        "Safety 設定不足", "Safety 設定過高", "設定正常—缺貨非設定因素",
+        "設定正常—過剩非設定因素", "總計"]
+    total = cross[cross["Safety Review"] == "總計"].iloc[0]
+    assert int(total["RF 列數"]) == 2 and int(total["ND 列數"]) == 1  # M01/N01 RF、M02 ND
+    assert int(total["合計 列數"]) == 3
+    # 由ND 轉出 30（M02）、由RF 轉出 6（N01）
+    row = sc.iloc[0]
+    assert int(row["由ND 店舖預計調出數量"]) == 30 and int(row["由RF 店舖預計調出數量"]) == 6
+
+
+def test_both_dimension_same_numbers_with_six_group_columns():
+    df = _df(_SCENARIO_A)
+    raw_n, sc_n, _, _, cross_n, stats_n, _ = transform_hybrid(df)
+    raw_b, sc_b, _, _, cross_b, stats_b, _ = transform_hybrid(df, dimension="both")
+    assert stats_b["dimension"] == "both"
+    # 計算與預設完全相同（需求方皆為 Tourist-RF）
+    for c in ("需要調貨", "實際調入量", "轉出量", "調入缺口", "事件類型"):
+        assert list(raw_n[c]) == list(raw_b[c]), c
+    expected_b = [c for c in _stock_checking_summary_columns("both") if c in sc_b.columns]
+    assert list(sc_b.columns) == expected_b
+    assert "Tourist-RF 加總 - Shop Stock Qty (CM)" in sc_b.columns
+    assert "Non Tourist-ND TurnDay" in sc_b.columns
+    assert list(cross_b.columns) == _hybrid_diag_summary_columns("both")
+    assert list(cross_b.columns)[1:4] == ["Tourist-RF 列數", "Tourist-RF SKU 數", "Tourist-RF 建議調整量合計"]
+    t_n = cross_n.iloc[-1]
+    t_b = cross_b.iloc[-1]
+    assert int(t_b["合計 列數"]) == int(t_n["合計 列數"]) == 3
+    assert int(t_b["Tourist-RF 列數"]) == 1 and int(t_b["Tourist-ND 列數"]) == 0
+
+
+def test_nature_dimension_summary_contract_columns_unchanged():
+    assert _stock_checking_summary_columns("nature") == _STOCK_CHECKING_SUMMARY_COLUMNS
+    assert _stock_checking_summary_columns("nature", bidirectional=True) == (
+        _STOCK_CHECKING_SUMMARY_COLUMNS + ["由Tourist 店舖預計調出數量"])
+
+
+def test_excel_dimension_layouts():
+    # rp：Summary 群組標籤「RP Type」、強制調貨提示＝第 18 欄（G=2）；交叉表標題按維度
+    raw, sc, diag, diag_om, cross, stats, _ = transform_hybrid(_df(_SCENARIO_RP), dimension="rp")
+    wb = load_workbook(generate_excel_hybrid(raw, sc, diag, diag_om, cross, stats))
+    ws = wb["Summary"]
+    assert ws.cell(row=3, column=8).value == "RP Type"
+    assert ws.cell(row=5, column=18).value == "強制調貨提示"
+    assert ws.cell(row=5, column=21).value == "存貨偏重提示"
+    assert str(wb["Review 摘要"].cell(row=19, column=1).value) == "Safety Review × RP Type 交叉表"
+    # both：G=6 → 提示第 38 欄、偏重第 45 欄
+    raw2, sc2, diag2, diag2_om, cross2, stats2, _ = transform_hybrid(_df(_SCENARIO_A), dimension="both")
+    ws2 = load_workbook(generate_excel_hybrid(raw2, sc2, diag2, diag2_om, cross2, stats2))["Summary"]
+    assert ws2.cell(row=3, column=8).value == "Shop Nature＋RP Type"
+    assert ws2.cell(row=5, column=38).value == "強制調貨提示"
+    assert ws2.cell(row=5, column=45).value == "存貨偏重提示"
+    # nature 預設：A–Z 契約欄序零變動
+    raw3, sc3, diag3, diag3_om, cross3, stats3, _ = transform_hybrid(_df(_SCENARIO_A))
+    ws3 = load_workbook(generate_excel_hybrid(raw3, sc3, diag3, diag3_om, cross3, stats3))["Summary"]
+    assert ws3.cell(row=3, column=8).value == "Shop Nature"
+    assert ws3.cell(row=5, column=23).value == "強制調貨提示"
+    assert ws3.cell(row=5, column=26).value == "存貨偏重提示"
 

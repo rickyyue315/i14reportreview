@@ -1,5 +1,19 @@
 # 版本記錄
 
+## v1.20.0 (2026-09-05)
+
+Safety Stock x NetStock Review 新增分類維度選擇（Shop Nature／RP Type／Shop Nature＋RP Type，預設 Shop Nature），並加入 ND 列不作調貨需求方規則。
+
+- New: 結果頁參數區新增「🗂️ 分類維度」三選一（預設「以 Shop Nature 分類」）——決定調貨需求方過濾與 Summary／Review 摘要交叉表的分組欄位；**TurnDay 池與 Safety 基準周轉天數恆按 Shop Nature（Tourist／Mix／Non Tourist）設定，不隨維度改變**（RP Type 語意＝該店舖可否補貨：RF＝可補貨、ND＝不可補貨）
+- Change（**破壞性**）: 調貨需求方一律排除 RP Type＝ND 的店舖列（ND 不作調入方，仍可作供應方轉出）——三種維度皆適用；預設 Shop Nature 模式下 Tourist-ND 缺貨列由「會標示需要調貨」改為「不標示」；RP Type 其他／空白值歸入 ND 並列 warning（保守視為不可補貨）
+- New: 「以 RP Type 分類」維度——需求方擴展為任何 Nature 的 RF 列（Mix／Non Tourist 缺貨亦可調入），並取消「需求 Nature 自身除外」分配守衛與池級歸零（允許同 Nature 店間再平衡，可轉出貨量按逐列 14 日超額計）；供應方維持 Mix／Non Tourist（雙向時另加 Tourist）
+- New: 「以 Shop Nature＋RP Type 分類」維度——調貨計算與預設模式完全相同（需求方 Tourist-RF），僅 Summary 與交叉表改按 6 組（Tourist-RF／Tourist-ND／Mix-RF／Mix-ND／Non Tourist-RF／Non Tourist-ND）分組呈現
+- Change: Summary 欄位按維度切換分組（nature 三組＝現行 A–Z 契約欄序零變動；rp 兩組；both 六組），存貨偏重提示與橘底高亮同步支援新分組名稱；Review 摘要 ① 交叉表標題與欄位按維度切換（「Safety Review × RP Type 交叉表」／「× Shop Nature＋RP Type」）；「調貨 Review Safety Stock」主表新增 `RP Type` 欄（25→26 欄；來源缺「RP Type」欄時主表退回 25 欄）
+- Change: 來源缺「RP Type」欄時全部列按 RF 處理（ND 排除規則無法套用）、維度退回 nature 並列 warning；非法維度值退回 nature 不拋錯
+- Update: `transform_hybrid()` 新增 `dimension` 參數（位於 `progress_callback` 之前、以關鍵字傳入；回傳仍 7 元組，stats 新增 `dimension`／`mapped_rp_rows`）；新增 `_hybrid_dimension()`／`_hybrid_dimension_groups()`／`_normalize_hybrid_rp_type()`／`_stock_checking_summary_columns()` 與 `_HYBRID_DIMENSIONS`／`_HYBRID_DIMENSION_LABELS`／`_HYBRID_RP_GROUPS`／`_HYBRID_COMBINED_GROUPS` 常數；`_build_hybrid_diag_summary()`／`_build_stock_checking_summary()`／`_write_stock_checking_summary_sheet()` 新增 `dimension` 參數（預設 nature，Stock Checking 輸出零變動）；`generate_excel_hybrid()` 簽名不變（維度由 stats 推定）；`build_hybrid_params()` 納入維度並參與過期偵測
+- Update: Streamlit——hybrid 區新增維度 radio（key `hy_dim`）與各維度觸發說明 caption、模式總說明與 Summary／交叉表分頁標題按維度顯示；`_style_inventory_skew()` 改為解析提示文字中的分組名稱（三維度通用）
+- Update: tests/test_hybrid_mode.py 新增第 18 節 ×11（維度正規化、RP 正規化規則、預設模式 ND 不作需求／仍可供應、未知 RP 值 warning、缺 RP 欄退回、rp 同 Nature 再平衡與全 RF 需求、rp 維度 ND 永不需求、rp／both 分組欄位切換、both 計算對帳 nature、nature 契約欄序零變動、Excel 三維度欄位配置）；test_analyzer_helpers.py 新增維度偵測 ×1；共 230 項測試通過；README／使用說明頁同步
+
 ## v1.19.0 (2026-09-05)
 
 Safety Stock x NetStock Review Buyer 統計合併為單一對照表。
