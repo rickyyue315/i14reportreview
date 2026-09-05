@@ -112,7 +112,7 @@ MODES = [
 3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Adj. Safety Stock
 4. **Recommend Safety Stock Turnday** = 建議值 ÷ (P90D 月均 ÷ 30)，與來源「Turnday (P90D Qty)」同口徑（P90D 日均），可直接對比現時與建議的周轉日數；P90D 月均 = 0 時留空（無周轉意義），建議值 = 0 顯示 0（零覆蓋）
 5. **Safety Qty Change** = 建議 Safety Stock − Z（正數=增加、負數=減少、零=不變），並輸出「Safety Qty Change 分類」欄（增加 / 減少 / 不變；「只可增加」模式下不會出現「減少」）
-6. **New SKU 保護** — Launch Date 距今 90 天內（≈3 個月）的列排除「P90D 0 Sales → Safety=0/ND」override（新品未出單屬上架時間問題），改走正常 X/Y 計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)；Launch Date 缺失或無法解析時視為非新品
+6. **New SKU 保護** — Launch Date 距 MTD 截止日期 90 天內（≈3 個月）的列排除「P90D 0 Sales → Safety=0/ND」override（新品未出單屬上架時間問題），改走正常 X/Y 計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)；Launch Date 缺失或無法解析時視為非新品
 7. **計算模式** — 「只可增加」：全表只有增加或保持原有 Safety，ND / P90D 0 Sales 的歸零+ND 退場建議不套用（ND 欄僅保留 New SKU 標記）；「可加可減」：允許減少並套用退場建議（ND 列 → 0；P90D 0 Sales 舊品 → ND 建議，並依 Adj. MCH1 / Adj. SST 加註：02 - MAKE UP → ND(02 - MAKE UP)、03 - Private Label 系 → ND(Private Label)、兩者皆是 → ND(Private Label - MAKE UP)）
 8. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
 9. **SUMMARY 工作表** — 統計 Safety Qty Change 分類（增加 / 減少 / 不變）與 Recommendation of new Safety Qty / ND 分類（空白維持 / New SKU / 0 已是 ND / ND 系列加註）各行數與 SKU 數；總計列 SKU 數為全表不重複 SKU（同一 SKU 可跨分類）
@@ -191,7 +191,8 @@ Tourist 缺貨、Mix/NT 調撥計算：
 - 可選擇 **分類維度**（預設「以 Shop Nature 分類」）：① 以 Shop Nature 分類——需求方＝Tourist 且 RP Type＝RF；② 以 RP Type 分類——需求方＝任何 Nature 的 RF 列（Mix／Non Tourist 缺貨亦可調入，允許同 Nature 店間再平衡）；③ 以 Shop Nature＋RP Type 分類——計算同 ①，Summary／交叉表按 6 組（如 Tourist-RF、Mix-ND）呈現。RP Type 語意＝該店舖可否補貨（RF＝可補貨、ND＝不可補貨）；**ND 列一律不作調貨需求方（仍可作供應方）**；TurnDay 池與 Safety 基準天數恆按 Shop Nature，不隨維度改變
 - 可勾選 **「允許雙向調貨」**（預設關閉）：存貨偏重遊客區而其他區域賣得好時，任何 Nature 缺貨店舖均可調入、遊客區店舖亦可轉出（來源固定 Non Tourist → Mix → Tourist，需求 Nature 自身一律排除；「以 RP Type 分類」維度例外——允許同 Nature 互調）；本選項只適用於本模式，Stock Checking 仍為單向
 - 需調入列：現有 Adj. Safety Stock < Safety 周轉所需量 → 「Safety 設定不足」；有貨可轉出列（實際轉出或可轉出未使用）：現有設定 > 所需量 → 「Safety 設定過高」，並給出建議調整值與調整量；OM 限制只影響調貨分配，**Safety Review 與建議調整兩變體相同**
-- 新增「🏪 店舖問題 SKU」：每間店舖需行動列（只收 Safety 設定不足／過高，另加 Past 90 Days 0 Sales 轉 ND 候選——M-2／M-1／CM-MTD／P90D 皆零銷售且有庫存，上市 90 天內新品、需要調貨列與 ND 列除外；設定正常列排除；調入缺口在建議方法加註，建議方法只計涉及來源店舖數量，不重複列出店號），按店舖分組、店內按嚴重度排序；主表以不限OM為準，另顯示 Supply Source、D001 Net Stock Qty (CM) 與三個同OM對照欄；缺口跟進按供貨來源分支 — Warehouse＋D001 有貨由 D001 補貨、Warehouse＋D001 無貨寫 D001缺貨、Vendor 貨向供應商追貨
+- 新增「🏪 店舖問題 SKU」：每間店舖需行動列（只收 Safety 設定不足／過高，另加 Past 90 Days 0 Sales 轉 ND 候選——M-2／M-1／CM-MTD／P90D 皆零銷售且有庫存，距參考日期 90 天內新品、需要調貨列與 ND 列除外；設定正常列排除；調入缺口在建議方法加註，建議方法只計涉及來源店舖數量，不重複列出店號），按店舖分組、店內按嚴重度排序；主表以不限OM為準，另顯示 Supply Source、D001 Net Stock Qty (CM) 與三個同OM對照欄；缺口跟進按供貨來源分支 — Warehouse＋D001 有貨由 D001 補貨、Warehouse＋D001 無貨寫 D001缺貨、Vendor 貨向供應商追貨
+- 參考日期：新增「📅 參考日期」輸入（預設昨日），New SKU 判定（Launch Date 起 90 天內視為新品）以此日期起計，與報表數據口徑一致
 - Shop Nature 固定全三種；Other/空白/大小寫差異一律正規化為 Non Tourist；RP Type 其他/空白值歸入 ND 並列 warning（來源缺「RP Type」欄時全部列按 RF 處理並退回 Shop Nature 維度）；混合必要欄位嚴格檢核（不再要求 Sold Qty (CM - MTD)）；OM 為選填欄位（缺失時同OM＝不限OM＋warning）
 - 輸出：RAW（欄位按可讀性重排——識別→品項屬性→庫存與銷售→SKU 級判定→Review 結果→調貨 (不限OM)→調貨 (同OM)→其他；不顯示「Item_Shop」與所有含「Value」的金額欄）/ Summary（SKU 級彙總，按所選分類維度分組：nature 三組／rp 兩組 RF／ND／both 六組，各組庫存/月銷加總、TurnDay、涉及店舖數（同 SKU 同組 Site Code 不重複計數，空白不計）、佔比，含存貨偏重提示——偏重提示欄與偏重分組的庫存佔比欄以醒目橘底加強顯示；nature 雙向時另加「由Tourist 店舖預計調出數量」欄）/ 調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM)（店舖×SKU 主表含 RP Type 欄）/ 店舖問題 SKU（每間店舖需行動列：問題＋建議方法）/ Review 摘要（指標卡 16 項（雙向時 18 項）+ ① Review × 分類維度交叉表 + ② Safety 調整方向分類（增加／減少／不變）+ ③ Safety 調整明細（SKU 級彙總）+ ④ Buyer 統計（需調貨＋需調整 Safety 合併表））/ 簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)（一列一筆來源店→接收店調貨，來源如「HB30:2; HB49:3」拆成兩行）共 8 個工作表；結果頁另有「🏪 店舖問題 SKU」tab 與「🧾 簡易調貨明細」tab（可切換不限OM／同OM）與「📊 Review 摘要（Safety 調整統計）」tab（①②③④ 四張表）
       """,

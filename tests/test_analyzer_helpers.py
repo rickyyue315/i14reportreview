@@ -24,12 +24,30 @@ def test_hybrid_params_snapshot_and_stale_detection():
 def test_hybrid_params_dimension_default_and_stale_detection():
     base = build_hybrid_params(14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False)
     assert base["dimension"] == "nature"  # 預設維度（舊呼叫未傳維度仍相容）
+    assert base["ref_date"] == ""  # 未傳參考日期時為空字串
     assert not hybrid_params_changed(base, build_hybrid_params(
         14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False, "nature"))
     assert hybrid_params_changed(base, build_hybrid_params(
         14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False, "rp"))
     assert hybrid_params_changed(base, build_hybrid_params(
         14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False, "both"))
+
+
+def test_hybrid_params_ref_date_stale_detection():
+    import datetime
+    base = build_hybrid_params(
+        14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False, "nature",
+        datetime.date(2026, 8, 3))
+    assert base["ref_date"] == "2026-08-03"
+    assert not hybrid_params_changed(base, build_hybrid_params(
+        14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False, "nature",
+        datetime.date(2026, 8, 3)))
+    assert hybrid_params_changed(base, build_hybrid_params(
+        14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False, "nature",
+        datetime.date(2026, 8, 4)))
+    # 舊快照缺 ref_date 鍵時不誤報（向後相容）
+    legacy = {k: v for k, v in base.items() if k != "ref_date"}
+    assert not hybrid_params_changed(legacy, dict(legacy))
 
 
 def test_site_code_options_are_canonical_strings():

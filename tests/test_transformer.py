@@ -541,6 +541,40 @@ def test_fix10_new_sku_normal_rows_marked_but_calc_unchanged():
     assert out["Recommendation of new Safety Qty / ND"].tolist()[0] == "New SKU (3 Month)"
 
 
+def test_fix10_ref_date_shifts_new_sku_boundary():
+    """ref_date 傳入時，新品 90 天邊界以參考日期起計（預設為今天）."""
+    ref = datetime.date(2026, 8, 3)
+    launch = (ref - datetime.timedelta(days=85)).strftime("%Y/%m/%d")
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 0,
+         "Sold Qty (CM - MTD)": 0.0, "Launch Date": launch},
+    ])
+    out_ref = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30,
+        safety_mode="allow_both", ref_date=ref,
+    )
+    assert out_ref["Recommendation of new Safety Qty / ND"].tolist()[0] == "New SKU (3 Month)"
+    out_default = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    assert out_default["Recommendation of new Safety Qty / ND"].tolist()[0] == "ND"
+
+
+def test_fix10_ref_date_invalid_raises():
+    """無法解析的 ref_date 直接報錯（避免靜默用錯基準）."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 10,
+         "Sold Qty (CM - MTD)": 8.0, "Launch Date": _launch_date(10)},
+    ])
+    with pytest.raises(ValueError):
+        _add_combined_recommendation_columns(
+            df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30,
+            safety_mode="allow_both", ref_date="not-a-date",
+        )
+
+
 # ── Fix #11: Recommend Safety Stock Turnday 欄位 ────────────────────────────
 # 與來源「Turnday (P90D Qty)」同口徑（P90D 日均）：
 # = Recommend Safety Stock ÷ (Shop Monthly Sold Qty (P90D) ÷ 30)；

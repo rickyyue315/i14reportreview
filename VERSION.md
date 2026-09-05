@@ -1,5 +1,12 @@
 # 版本記錄
 
+## v1.27.0 (2026-09-05)
+
+New SKU 判定改以 MTD 截止日期為基準（Safety Stock Review 與 Safety Stock x NetStock Review 同步）。
+
+- Change: Safety Stock Review 沿用既有「📅 MTD 日期」作為新品保護參考日期（`transform_combined()`／`_add_combined_recommendation_columns()` 新增 `ref_date` 參數；預設今天，向後相容）；混合模式新增「📅 參考日期」輸入（預設昨日，`transform_hybrid()`／`_hybrid_p90d_zero_sales_mask()`／`_build_hybrid_shop_issues()` 新增 `ref_date` 參數，`stats["ref_date"]` 回顯，`build_hybrid_params()` 納入過期偵測；`generate_excel_hybrid()` 由 stats 還原）
+- Update: 新增 `_normalize_ref_date()`（None 退回今天；date／datetime／Timestamp／字串皆可；非法值報錯）；新增測試 ×6（combined 邊界位移與非法值、hybrid 遮罩位移／stats 回顯／問題表、params 過期偵測與舊快照相容）；共 257 項測試通過；README／使用說明頁同步
+
 ## v1.26.0 (2026-09-05)
 
 Safety Stock x NetStock Review 店舖問題表新增 Past 90 Days 0 Sales 轉 ND 提示。

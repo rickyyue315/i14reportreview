@@ -425,6 +425,7 @@ if uploaded_file is not None:
                     mtd_days=mtd_days,
                     month_total_days=month_total_days,
                     safety_mode=safety_mode_value,
+                    ref_date=mtd_date,
                 )
                 buf = generate_excel_combined(summary_df, raw_df, categories, progress_callback=_cb_excel)
                 st.session_state.combined_processed = True
@@ -680,8 +681,15 @@ if uploaded_file is not None:
                  "新增「可轉出貨量 (Tourist)」與 Summary「由Tourist 店舖預計調出數量」欄位，"
                  "來源優先序固定 Non Tourist → Mix → Tourist。"
         )
+        hy_ref_date = st.date_input(
+            "📅 參考日期（New SKU 判定基準；Launch Date 起 90 天內視為新品）",
+            value=datetime.now().date() - timedelta(days=1),
+            key="hy_ref_date",
+            help="Past 90 Days 0 Sales 轉 ND 候選的新品保護以此日期起計 90 天（Launch Date 在此日期前 90 天內視為新品，不作 ND 提示）。預設為昨日，與報表數據口徑一致。",
+        )
         _current_hybrid_params = build_hybrid_params(
-            turnday_threshold, d001_threshold, _safety_days, bidirectional, _dimension
+            turnday_threshold, d001_threshold, _safety_days, bidirectional, _dimension,
+            hy_ref_date,
         )
         if bidirectional:
             st.caption(
@@ -744,6 +752,7 @@ if uploaded_file is not None:
                     safety_days=_safety_days,
                     dimension=_dimension,
                     progress_callback=_cb_transform,
+                    ref_date=hy_ref_date,
                 )
                 buf = generate_excel_hybrid(
                     raw_df, sc_summary, diagnosis, diagnosis_om, diag_summary, _stats,
@@ -782,12 +791,17 @@ if uploaded_file is not None:
             excel_data = st.session_state.hybrid_excel_data
             applied_hybrid_days = (stats or {}).get("safety_days") or _safety_days
             applied_hybrid_dimension = (stats or {}).get("dimension") or _dimension
+            try:
+                applied_hybrid_ref = pd.to_datetime((stats or {}).get("ref_date")).date() if (stats or {}).get("ref_date") else hy_ref_date
+            except (TypeError, ValueError):
+                applied_hybrid_ref = hy_ref_date
             applied_hybrid_params = st.session_state.get("hybrid_params") or build_hybrid_params(
                 (stats or {}).get("turnday_threshold", turnday_threshold),
                 (stats or {}).get("d001_threshold", d001_threshold),
                 applied_hybrid_days,
                 (stats or {}).get("bidirectional", bidirectional),
                 applied_hybrid_dimension,
+                applied_hybrid_ref,
             )
             hybrid_is_stale = hybrid_params_changed(applied_hybrid_params, _current_hybrid_params)
             if hybrid_is_stale:
@@ -879,9 +893,14 @@ if uploaded_file is not None:
                     st.info("無符合資料")
             with tab_issue:
                 st.markdown("#### 每間店舖需行動 SKU（問題＋建議方法）")
-                st.markdown("只收錄 Safety 設定不足／過高列與 Past 90 Days 0 Sales 轉 ND 候選（四期皆零銷售且有庫存，新品除外；設定正常列不佔版面），按店舖分組、店內按嚴重度排序；同OM數值作對照欄：")
                 try:
-                    _hy_issues = _build_hybrid_shop_issues(raw_df)
+                    _hy_ref_txt = pd.to_datetime((stats or {}).get("ref_date")).date().isoformat()
+                except (TypeError, ValueError):
+                    _hy_ref_txt = ""
+                _hy_ref_note = f"（參考日期 {_hy_ref_txt} 起 90 天內上市視為新品）" if _hy_ref_txt else ""
+                st.markdown(f"只收錄 Safety 設定不足／過高列與 Past 90 Days 0 Sales 轉 ND 候選（四期皆零銷售且有庫存，新品除外{_hy_ref_note}；設定正常列不佔版面），按店舖分組、店內按嚴重度排序；同OM數值作對照欄：")
+                try:
+                    _hy_issues = _build_hybrid_shop_issues(raw_df, ref_date=(stats or {}).get("ref_date"))
                 except Exception:
                     _hy_issues = None
                 if _hy_issues is not None and not _hy_issues.empty:

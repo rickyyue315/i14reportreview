@@ -169,6 +169,24 @@ def _nature_rate_arr(shop_nature, default_rate, tourist_rate, mix_rate):
     return arr
 
 
+def _normalize_ref_date(ref_date) -> datetime.date:
+    """New SKU 參考日期正規化：None／缺值退回今天；datetime 取日期部分；
+    字串經 `pd.to_datetime` 解析；其餘型別直接回傳錯誤。"""
+    if ref_date is None:
+        return datetime.date.today()
+    if isinstance(ref_date, datetime.datetime):
+        return ref_date.date()
+    if isinstance(ref_date, datetime.date):
+        return ref_date
+    if isinstance(ref_date, pd.Timestamp):
+        return ref_date.date()
+    if isinstance(ref_date, str):
+        parsed = pd.to_datetime(ref_date.strip(), errors="coerce")
+        if pd.notna(parsed):
+            return parsed.date()
+    raise ValueError(f"參考日期「{ref_date}」無法解析為日期，請傳入 date 或 YYYY-MM-DD 字串。")
+
+
 def _parse_launch_dates(launch_raw: pd.Series) -> pd.Series:
     """Launch Date 原始字串 → datetime（自動推斷 + 常見格式重試，無法解析為 NaT）。"""
     launch_dt = pd.to_datetime(launch_raw, errors="coerce")
@@ -476,7 +494,8 @@ def _annotate_nd_recommendation(nd_rec, df):
 
 
 def _add_combined_recommendation_columns(
-    df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode="increase_only"
+    df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode="increase_only",
+    ref_date=None,
 ):
     df = df.copy()
 
@@ -562,15 +581,17 @@ def _add_combined_recommendation_columns(
     is_nd = rp_type == "ND"
     is_p90d_0 = status_col == "Overstock (P90D 0 Sales)"
 
-    # 新品保護：Launch Date 距今 90 天內（≈3 個月）視為 New SKU。新品未出單是上架
+    # 新品保護：Launch Date 距參考日期 90 天內（≈3 個月）視為 New SKU。新品未出單是上架
     # 時間問題而非滯銷證據，排除「P90D 0 Sales → Safety=0/ND」override，改走正常
     # X/Y 計算；Launch Date 缺欄位、缺值或無法解析時一律視為非新品（維持原行為）。
+    # 參考日期預設為今天，建議傳入 MTD 截止日期（與報表數據口徑一致）。
+    _ref = _normalize_ref_date(ref_date)
     if "Launch Date" in df.columns:
         _launch_raw = df["Launch Date"].fillna("").astype(str).str.strip()
         _launch_dt = _parse_launch_dates(_launch_raw)
         is_new_sku = (
             _launch_dt.notna()
-            & (_launch_dt >= pd.Timestamp(datetime.date.today()) - pd.Timedelta(days=90))
+            & (_launch_dt >= pd.Timestamp(_ref) - pd.Timedelta(days=90))
         ).values
     else:
         is_new_sku = np.zeros(len(df), dtype=bool)
@@ -781,6 +802,7 @@ def transform_combined(
     mtd_days: int | None = None,
     month_total_days: int | None = None,
     safety_mode: str = "increase_only",
+    ref_date=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str], list[str]]:
     missing = validate_input(df_input)
     if missing:
@@ -807,7 +829,8 @@ def transform_combined(
         df = _compute_raw_extra_columns(df)
 
     raw = _add_combined_recommendation_columns(
-        df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode=safety_mode
+        df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode=safety_mode,
+        ref_date=ref_date,
     )
 
     status_col = raw["Shop Stock Status"].fillna("")
@@ -1325,12 +1348,12 @@ def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
     return work[[c for c in cols if c in work.columns]].reset_index(drop=True)
 
 
-def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
+def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
     """Safety Stock x NetStock Review 店舖問題表：Safety 設定不足／過高＋ND 退場列。
 
     - 母體為 Safety 需調整列（不足／過高）加上 Past 90 Days 0 Sales 轉 ND 候選
-      （四期銷售皆 ≤ 0 且有庫存、上市 90 天內新品與需要調貨列除外，見
-      `_hybrid_p90d_zero_sales_mask`）；設定正常列一律排除。
+      （四期銷售皆 ≤ 0 且有庫存、距參考日期 90 天內新品與需要調貨列除外，見
+      `_hybrid_p90d_zero_sales_mask`；參考日期預設為今天，建議傳入 MTD 截止日期）；設定正常列一律排除。
     - 已屬不足／過高且同時符合零銷售的列保留原問題類型，建議方法末尾加註；
       僅零銷售的列以「ND 退場」收錄（每店×SKU 最多一列）。
     - 主表以不限OM事件為準，另附三個同OM對照欄；調入缺口 > 0 時在建議方法加註。
@@ -1340,7 +1363,7 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     diag = raw.get("Safety Review", _safe_default_series("", raw.index)).fillna("").astype(str)
     mask = diag.isin([_HYBRID_DIAG_UNDER, _HYBRID_DIAG_OVER])
-    zero_mask, _ = _hybrid_p90d_zero_sales_mask(raw)
+    zero_mask, _ = _hybrid_p90d_zero_sales_mask(raw, ref_date=ref_date)
     zero_mask = zero_mask.reindex(raw.index, fill_value=False).fillna(False).astype(bool)
     nd_only_mask = zero_mask & ~mask.fillna(False).to_numpy()
     combined = mask.fillna(False).to_numpy() | nd_only_mask.to_numpy()
@@ -5994,13 +6017,14 @@ _HYBRID_P90D_ZERO_SALES_COLUMNS = [
 _HYBRID_P90D_ZERO_SALES_ANNOTATION = "另符合 Past 90 Days 0 Sales，建議檢視是否轉 ND 停補貨"
 
 
-def _hybrid_p90d_zero_sales_mask(raw: pd.DataFrame) -> tuple[pd.Series, list[str]]:
+def _hybrid_p90d_zero_sales_mask(raw: pd.DataFrame, ref_date=None) -> tuple[pd.Series, list[str]]:
     """混合模式零銷售轉 ND 候選遮罩（僅店舖問題表提示用，不改主表）。
 
     口徑與獨立 Past 90 Days 0 Sales 模式一致：四期銷售皆 ≤ 0 且店舖有庫存
     （NaN 視為 0；負數視為 ≤ 0；`Shop Stock Qty (LM)` 欄存在時須 LM／CM 皆 > 0，
-    缺欄時僅以 CM > 0 判定）。另作新品保護（`Launch Date` 距今 90 天內排除，
-    重用 `_parse_launch_dates`；缺欄／缺值／無法解析視為非新品）與防呆排除
+    缺欄時僅以 CM > 0 判定）。另作新品保護（`Launch Date` 距參考日期 90 天內排除，
+    重用 `_parse_launch_dates`；缺欄／缺值／無法解析視為非新品；參考日期預設為今天，
+    建議傳入 MTD 截止日期）與防呆排除
     （`需要調貨=是` 列、非 RF 列不納入；`RP Type` 缺欄時沿用全 RF 口徑）。
     四個銷售欄任一缺失時回傳全 False＋一條 warning（不停止、不拋錯）。
     """
@@ -6027,8 +6051,9 @@ def _hybrid_p90d_zero_sales_mask(raw: pd.DataFrame) -> tuple[pd.Series, list[str
         mask &= (stock_lm > 0).fillna(False)
     if "Launch Date" in raw.columns:
         launch_dt = _parse_launch_dates(raw["Launch Date"].fillna("").astype(str).str.strip())
+        _ref = _normalize_ref_date(ref_date)
         is_new_sku = launch_dt.notna() & (
-            launch_dt >= pd.Timestamp(datetime.date.today()) - pd.Timedelta(days=90)
+            launch_dt >= pd.Timestamp(_ref) - pd.Timedelta(days=90)
         )
         mask &= ~is_new_sku.fillna(False).to_numpy()
     need = raw.get("需要調貨", _safe_default_series("", idx)).fillna("").astype(str).str.strip() == "是"
@@ -6730,6 +6755,7 @@ def transform_hybrid(
     safety_days: dict | None = None,
     dimension: str = "nature",
     progress_callback=None,
+    ref_date=None,
 ):
     """Safety Stock x NetStock Review 核心轉換（調貨事件 Review Safety 設定）。
 
@@ -6776,6 +6802,9 @@ def transform_hybrid(
     - Buyer 統計：沿用 Stock Checking 的 Buyer 需調貨 SKU 統計（同 SKU 首個非空 Buyer，
       已刪除重複），另加 Buyer 需調整 Safety SKU 統計（Safety 設定不足＋過高母體，
       含各 Buyer 的調整量合計）。
+    - 零銷售轉 ND 提示：Past 90 Days 0 Sales 候選（四期銷售皆 ≤ 0 且有庫存）於
+      「店舖問題 SKU」以 ND 退場提示（距參考日期 90 天內新品除外）；參考日期
+      ref_date 預設為今天，建議傳入 MTD 截止日期（與報表數據口徑一致）。
     回傳 (raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warnings)；
     stats["safety_days"] 為實際採用的各 Nature 基準天數；
     stats["dimension"] 為實際採用的分類維度（rp 欄缺失退回 nature 時亦為 nature）；
@@ -7110,7 +7139,8 @@ def transform_hybrid(
 
     if progress_callback:
         progress_callback(0.55, "建立 Review 表...")
-    _zero_mask, _zero_warnings = _hybrid_p90d_zero_sales_mask(raw)
+    _ref_date = _normalize_ref_date(ref_date)
+    _zero_mask, _zero_warnings = _hybrid_p90d_zero_sales_mask(raw, ref_date=_ref_date)
     warnings.extend(_zero_warnings)
     if bool(_zero_mask.any()):
         warnings.append(
@@ -7125,6 +7155,7 @@ def transform_hybrid(
     stats = {
         "safety_days": dict(_safety_days),
         "dimension": dim,
+        "ref_date": _ref_date.isoformat(),
         "turnday_threshold": int(turnday_threshold),
         "d001_threshold": int(d001_threshold),
         "need_rows": int(need_series.sum()),
@@ -7543,6 +7574,12 @@ def generate_excel_hybrid(
     if diagnosis_om is None:
         diagnosis_om = _build_hybrid_diagnosis(raw, variant="om")
     _dim = _hybrid_dimension((stats or {}).get("dimension"))
+    _ref_date = None
+    try:
+        if stats and stats.get("ref_date"):
+            _ref_date = _normalize_ref_date(stats.get("ref_date"))
+    except ValueError:
+        _ref_date = None
     if diag_summary is None:
         diag_summary = _build_hybrid_diag_summary(raw, dimension=_dim)
     _bidirectional = raw is not None and "可轉出貨量 (Tourist)" in raw.columns
@@ -7590,7 +7627,7 @@ def generate_excel_hybrid(
     # ── Sheet 5: 店舖問題 SKU（Safety 設定不足／過高＋ND 退場；空表寫「無符合資料」）──
     ws_shop_issue = wb.create_sheet(title="店舖問題 SKU")
     _write_shop_issue_sheet(
-        ws_shop_issue, _build_hybrid_shop_issues(raw),
+        ws_shop_issue, _build_hybrid_shop_issues(raw, ref_date=_ref_date),
         title="店舖問題 SKU — 每間店舖需行動列（問題＋建議方法）",
         progress_callback=progress_callback, progress_start=0.71, progress_end=0.74,
     )
