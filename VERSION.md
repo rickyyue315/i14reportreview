@@ -1,5 +1,19 @@
 # 版本記錄
 
+## v1.17.2 (2026-09-05)
+
+- 
+
+## v1.17.1 (2026-09-04)
+
+Safety Stock x NetStock Review 全面資料品質與結果一致性修正。
+
+- Fix: hybrid 輸入不再要求未參與計算的 `Shop Stock Status`；店舖庫存、銷售、月銷及 Safety 設定拒絕非有限值，店舖庫存與 Safety 設定另拒絕負數，小數庫存仍拒絕；負數銷售按 0 處理並列 warning，避免錯誤釋放供應
+- Fix: 月銷空白／非數值／負數，以及月銷為 0 但 P90D 有正數銷售時，按 P90D 換算月銷並列 warning，避免加總 TurnDay 變 `inf` 反而擋掉調貨；Summary D001 改顯示實際採用的有效值，與觸發判定一致
+- Change: Safety 基準天數維持 7–10 建議範圍：越界數值箝制並列 warning；非整數浮點直接拒絕，不再靜默截斷；Nature 警告改為店舖層級描述，新增 OM 全欄空白 warning
+- Fix: Streamlit 保存執行時參數 snapshot；設定變更後顯示 warning 並停用下載，結果標籤使用最後一次執行的基準；Site Code 選項與篩選統一字串 canonical 化
+- Update: tests/test_hybrid_mode.py（`_SD14` 改合法 `_SD10` 並重算期望；新增第 16 節輸入邊界測試；Safety days 箝制／拒絕測試）、新增 tests/test_analyzer_helpers.py；README／使用說明頁同步
+
 ## v1.17.0 (2026-09-04)
 
 Safety Stock x NetStock Review：**Safety 設定不再跟隨存貨（調貨）周轉天數**，改為按 Shop Nature 的可調基準天數。

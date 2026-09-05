@@ -5260,7 +5260,7 @@ def generate_excel_stock_impact(
 
 
 _HYBRID_REQUIRED = [
-    "Buyer", "Brand", "SKU", "Shop Stock Status",
+    "Buyer", "Brand", "SKU",
     "Shop Nature", "Site Code", "Shop Stock Qty (CM)",
     "Sold Qty (P90D)", "Adj. Safety Stock",
     "Shop Monthly Sold Qty (P90D)",
@@ -5291,26 +5291,71 @@ _HYBRID_SAFETY_LINE_COLUMN = "Safety 周轉所需量"
 _HYBRID_SAFETY_DAYS_COLUMN = "Safety 基準天數"
 
 
-def _hybrid_safety_days(safety_days: dict | None = None) -> dict[str, int]:
-    """Safety 基準天數 — 以預設（Tourist 7 / Mix 9 / Non Tourist 10）為底，覆寫傳入值；
-    未知 Nature、非數值或非正整數的項目一律忽略（退回預設）。"""
+def _hybrid_safety_days(safety_days: dict | None = None) -> tuple[dict[str, int], list[str]]:
+    """Safety 基準天數 — 以預設值為底，覆寫傳入的整數值。
+
+    未知 Nature、非數值維持忽略（退回預設）；0 以下拒收；範圍外數值箝制進
+    7–10 並回報 warning；非整數浮點直接拒絕，避免靜默截斷。
+    回傳 (實際天數, warnings)。
+    """
     days = dict(_HYBRID_SAFETY_DAYS_DEFAULT)
+    warnings: list[str] = []
     for key, val in (safety_days or {}).items():
         name = str(key).strip()
         if name not in days:
             continue
+        if isinstance(val, bool):
+            raise ValueError(f"Safety 基準天數「{name}」必須為整數，不得為布林值。")
         try:
-            n = int(val)
+            numeric = float(val)
         except (TypeError, ValueError):
             continue
-        if n > 0:
-            days[name] = n
-    return days
+        if not np.isfinite(numeric) or not numeric.is_integer():
+            raise ValueError(f"Safety 基準天數「{name}」必須為整數。")
+        n = int(numeric)
+        if n <= 0:
+            continue
+        if n < _HYBRID_SAFETY_DAYS_MIN or n > _HYBRID_SAFETY_DAYS_MAX:
+            clamped = min(max(n, _HYBRID_SAFETY_DAYS_MIN), _HYBRID_SAFETY_DAYS_MAX)
+            warnings.append(
+                f"Safety 基準天數「{name}」輸入 {n} 日超出建議範圍，已箝制為 {clamped} 日。"
+            )
+            days[name] = clamped
+            continue
+        days[name] = n
+    return days, warnings
 
 
 def _hybrid_safety_days_label(days: dict[str, int]) -> str:
     """基準天數的文字描述（供指標卡說明、warning 與 UI 使用）。"""
     return " / ".join(f"{n} {int(days[n])} 日" for n in _HYBRID_DIAG_NATURES)
+
+
+def _hybrid_numeric_column(
+    df: pd.DataFrame,
+    column: str,
+    index,
+    *,
+    allow_negative: bool = False,
+    nonfinite_as_missing: bool = False,
+) -> pd.Series:
+    """Hybrid 專用數值欄位清理（只在 hybrid 路徑使用，不動全域 _safe_numeric）。
+
+    空白／非數值保留為 NaN 供各欄 fallback；負數與非有限值依政策處理：
+    allow_negative=False 時負數直接拒絕；nonfinite_as_missing=True 時非有限值
+    視為缺值（供 D001 fallback），否則拒絕。
+    """
+    values = pd.to_numeric(df.get(column, _safe_default_series(np.nan, index)), errors="coerce")
+    raw_values = values.to_numpy(dtype=float)
+    nonfinite_mask = ~np.isnan(raw_values) & ~np.isfinite(raw_values)
+    if nonfinite_mask.any():
+        if nonfinite_as_missing:
+            values = values.mask(pd.Series(nonfinite_mask, index=values.index))
+        else:
+            raise ValueError(f"「{column}」包含無限大或其他非有限數值，請修正來源資料後再執行。")
+    if not allow_negative and bool(((raw_values < 0) & ~np.isnan(raw_values)).any()):
+        raise ValueError(f"「{column}」不可為負數，請修正來源資料後再執行。")
+    return values
 
 # ── Safety 調整統計（欄名屬新契約，未經要求不得改動）──
 _HYBRID_SAFETY_CHANGE_COLUMNS = ["分類", "列數", "SKU 數", "Safety 建議調整量合計", "說明"]
@@ -5389,9 +5434,10 @@ def _transfer_input_consistency_warnings(df: pd.DataFrame) -> list[str]:
 
     - 「Site Code × SKU」重複列：正常輸入粒度為一店×一SKU一列，重複列會令
       同一店舖的庫存與銷量被多次計入；
-    - 同一店舖的「Shop Nature」在不同列之間不一致：同店同 SKU 同時存在 Tourist 列
-      與 Mix / Non Tourist 列時，該店可能同時成為調入方與調出方；
+    - 同一店舖的「Shop Nature」在不同列之間不一致：Shop Nature 應為店舖層級屬性，
+      同一店舖不應同時出現 Tourist 與非 Tourist 列；
       調貨分配已排除同店來源，自我調貨（調貨來源＝自己店舖）不會發生。
+    - OM 欄存在但全欄空白：同OM分組無法區分店群，結果會等同全部店舖使用同一群組。
     """
     out: list[str] = []
     if "Site Code" not in df.columns or "SKU" not in df.columns:
@@ -5415,9 +5461,12 @@ def _transfer_input_consistency_warnings(df: pd.DataFrame) -> list[str]:
         suffix = f" 等 {len(bad_sites)} 間店舖" if len(bad_sites) > 5 else ""
         out.append(
             f"店舖 {shown}{suffix} 的「Shop Nature」在不同列之間不一致；"
-            "同一店舖對同一 SKU 同時出現 Tourist 與非 Tourist 列時，可能同時成為調入方與調出方"
-            "（調貨分配已排除同店來源，不會出現自我調貨），請檢查來源資料。"
+            "Shop Nature 應為店舖層級固定屬性，請檢查來源資料。"
         )
+    if "OM" in df.columns:
+        om = df["OM"].fillna("").astype(str).str.strip()
+        if len(df) and bool((om == "").all()):
+            out.append("來源檔案的「OM」欄全欄空白，同OM調貨結果會等同全部店舖使用同一群組。")
     return out
 
 
@@ -5717,7 +5766,7 @@ def _build_hybrid_safety_sku_detail(raw: pd.DataFrame) -> pd.DataFrame:
 def _hybrid_safety_days_from_raw(raw: pd.DataFrame, nature=None) -> dict[str, int]:
     """由 RAW 的「Safety 基準天數」欄還原各 Nature 實際採用的基準天數
     （該欄每列同一 Nature 恆定）；缺欄時退回預設 7 / 9 / 10。"""
-    days = _hybrid_safety_days({})
+    days, _ = _hybrid_safety_days({})
     if raw is None or raw.empty or _HYBRID_SAFETY_DAYS_COLUMN not in raw.columns:
         return days
     if nature is None:
@@ -5951,25 +6000,41 @@ def transform_hybrid(
     idx = df.index
     nature = df["Shop Nature"]
 
-    sold_p90d = _safe_numeric(df.get("Sold Qty (P90D)", _safe_default_series(0, idx)))
+    sold_raw = _hybrid_numeric_column(df, "Sold Qty (P90D)", idx, allow_negative=True)
+    n_sold_invalid = int(sold_raw.isna().sum())
+    n_sold_negative = int((sold_raw < 0).fillna(False).sum())
+    if n_sold_invalid:
+        warnings.append(f"有 {n_sold_invalid} 列「Sold Qty (P90D)」空白或非數值，已視為 0。")
+    if n_sold_negative:
+        warnings.append(f"有 {n_sold_negative} 列「Sold Qty (P90D)」為負數，已按 0 計算。")
+    sold_p90d = sold_raw.mask(sold_raw < 0, 0.0).fillna(0.0)
 
-    # 庫存量必須為整數（件數）；空白視為 0，小數直接拒絕避免取整後守恆失真
-    cm_stock_raw = pd.to_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(np.nan, idx)), errors="coerce")
+    # 庫存量必須為整數（件數）；空白視為 0，小數、負數、非有限值直接拒絕避免守恆失真
+    cm_stock_raw = _hybrid_numeric_column(df, "Shop Stock Qty (CM)", idx)
     nonint = cm_stock_raw.notna() & (cm_stock_raw != np.floor(cm_stock_raw))
     if nonint.any():
         raise ValueError("「Shop Stock Qty (CM)」必須為整數件數，發現小數值，請修正來源資料後再執行。")
     cm_stock = cm_stock_raw.fillna(0.0)
     df["Shop Stock Qty (CM)"] = cm_stock
 
-    # 月銷：單列空白逐列以 Sold Qty (P90D) ÷ 90 × 30.5 換算（避免加總 TurnDay 誤判為 inf）
-    msold_raw = pd.to_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(np.nan, idx)), errors="coerce")
-    n_ms_blank = int(msold_raw.isna().sum())
-    if n_ms_blank:
-        warnings.append(f"有 {n_ms_blank} 列「Shop Monthly Sold Qty (P90D)」空白，已逐列以 Sold Qty (P90D) ÷ 90 × 30.5 換算月銷。")
-    msold_eff = msold_raw.where(msold_raw.notna(), sold_p90d / 90.0 * 30.5)
+    # 月銷空白、非數值、負數，或月銷為 0 但 P90D 有正數銷售時，逐列以 P90D 換算
+    msold_raw = _hybrid_numeric_column(df, "Shop Monthly Sold Qty (P90D)", idx, allow_negative=True)
+    n_ms_negative = int((msold_raw < 0).fillna(False).sum())
+    if n_ms_negative:
+        warnings.append(f"有 {n_ms_negative} 列「Shop Monthly Sold Qty (P90D)」為負數，已改用 P90D 換算。")
+    msold_raw = msold_raw.mask(msold_raw < 0)
+    msold_blank = msold_raw.isna()
+    msold_zero_conflict = msold_raw.eq(0) & sold_p90d.gt(0)
+    n_ms_fallback = int((msold_blank | msold_zero_conflict).sum())
+    if n_ms_fallback:
+        warnings.append(
+            f"有 {n_ms_fallback} 列「Shop Monthly Sold Qty (P90D)」空白或為 0 但 P90D 有銷售，"
+            "已逐列以 Sold Qty (P90D) ÷ 90 × 30.5 換算月銷。"
+        )
+    msold_eff = msold_raw.where(~(msold_blank | msold_zero_conflict), sold_p90d / 90.0 * 30.5)
     df["Shop Monthly Sold Qty (P90D)"] = msold_eff
 
-    # D001：逐列 Net 優先、Stock 回補（兩者皆空白視為 0），並保留 Effective 欄位供 RAW 稽核
+    # D001：逐列 Net 優先、Stock 回補（兩者皆空白或非有限值視為空白），並保留 Effective 欄位供 RAW 稽核
     avail_now = set(df.columns)
     net_d001_col = _resolve_column_name("D001 Net Stock Qty (CM)", avail_now)
     stock_d001_col = _resolve_column_name("D001 Stock Qty (CM)", avail_now)
@@ -5978,11 +6043,17 @@ def transform_hybrid(
             warnings.append("來源檔案缺少「D001 Net Stock Qty (CM)」，D001 以「D001 Stock Qty (CM)」取代。")
         else:
             warnings.append("來源檔案缺少「D001 Net Stock Qty (CM)」與「D001 Stock Qty (CM)」，D001 一律視為 0（D001 低於門檻的判定將全數成立）。")
-    net_d001_s = pd.to_numeric(df.get(net_d001_col, _safe_default_series(np.nan, idx)), errors="coerce") if net_d001_col else _safe_default_series(np.nan, idx)
-    stock_d001_s = pd.to_numeric(df.get(stock_d001_col, _safe_default_series(np.nan, idx)), errors="coerce") if stock_d001_col else _safe_default_series(np.nan, idx)
+    net_d001_s = (
+        _hybrid_numeric_column(df, net_d001_col, idx, allow_negative=True, nonfinite_as_missing=True)
+        if net_d001_col else _safe_default_series(np.nan, idx)
+    )
+    stock_d001_s = (
+        _hybrid_numeric_column(df, stock_d001_col, idx, allow_negative=True, nonfinite_as_missing=True)
+        if stock_d001_col else _safe_default_series(np.nan, idx)
+    )
     n_d001_blank = int(net_d001_s.isna().sum()) if net_d001_col else 0
     if n_d001_blank:
-        warnings.append(f"有 {n_d001_blank} 列「D001 Net Stock Qty (CM)」空白，已逐列改用「D001 Stock Qty (CM)」回補（兩者皆空白視為 0）。")
+        warnings.append(f"有 {n_d001_blank} 列「D001 Net Stock Qty (CM)」空白或非有限值，已逐列改用「D001 Stock Qty (CM)」回補（兩者皆空白視為 0）。")
     eff_d001 = net_d001_s.where(net_d001_s.notna(), stock_d001_s).fillna(0.0)
     df["D001 Effective Stock Qty (CM)"] = eff_d001.astype(int)
 
@@ -5995,7 +6066,8 @@ def transform_hybrid(
     no_sale_has_stock = (sold_val <= 0) & (cm_stock_val > 0)
     ideal_14d = sold_val / 90.0 * 14
     # Safety 基準天數（按 Nature）— 只用於 Review 段；調貨段一律用上面的 14 日
-    _safety_days = _hybrid_safety_days(safety_days)
+    _safety_days, _safety_day_warnings = _hybrid_safety_days(safety_days)
+    warnings.extend(_safety_day_warnings)
     safety_days_np = np.select(
         [is_tourist, is_mix, is_nt],
         [float(_safety_days["Tourist"]), float(_safety_days["Mix"]), float(_safety_days["Non Tourist"])],
@@ -6114,11 +6186,11 @@ def transform_hybrid(
 
     # ── 調貨事件 Review（Safety 基準天數按 Nature；Review 與建議調整不受 OM 限制影響）──
     safety_line = np.maximum(0, np.ceil(np.maximum(0, sold_val / 90.0 * safety_days_np)))
-    adj_s = pd.to_numeric(raw.get("Adj. Safety Stock", _safe_default_series(np.nan, idx)), errors="coerce")
+    adj_s = _hybrid_numeric_column(raw, "Adj. Safety Stock", idx)
     n_adj_blank = int(adj_s.isna().sum())
     if n_adj_blank:
         warnings.append(f"有 {n_adj_blank} 列「Adj. Safety Stock」空白或非數值，Review 時已視為 0。")
-    adj_val = np.nan_to_num(adj_s.to_numpy(dtype=float), nan=0.0)
+    adj_val = adj_s.fillna(0.0).to_numpy(dtype=float)
 
     flagged_skus = set(sku_arr[need_mask])
     transferable_np = mix_excess + nt_excess + (tourist_excess if bidirectional else 0)
@@ -6180,6 +6252,8 @@ def transform_hybrid(
 
     stats = {
         "safety_days": dict(_safety_days),
+        "turnday_threshold": int(turnday_threshold),
+        "d001_threshold": int(d001_threshold),
         "need_rows": int(need_series.sum()),
         "need_skus": int(raw.loc[need_series, "SKU"].nunique()) if need_series.any() else 0,
         "total_demand": int(raw.loc[need_series, "調入需求量 (補到14日)"].sum()) if need_series.any() else 0,
@@ -7464,8 +7538,13 @@ def _build_stock_checking_summary(raw: pd.DataFrame, bidirectional: bool = False
             row["Adj. SST"] = _first_text(g["Adj. SST"].fillna("").astype(str))
         if "Supply Source" in g.columns:
             row["Supply Source"] = _first_text(g["Supply Source"])
-        if "D001 Net Stock Qty (CM)" in g.columns:
-            d001 = g["D001 Net Stock Qty (CM)"].dropna()
+        d001_source = (
+            "D001 Effective Stock Qty (CM)"
+            if "D001 Effective Stock Qty (CM)" in g.columns
+            else "D001 Net Stock Qty (CM)"
+        )
+        if d001_source in g.columns:
+            d001 = g[d001_source].dropna()
             row["D001 Net Stock Qty (CM)"] = d001.iloc[0] if len(d001) else None
         _sums: dict[str, tuple[float, float]] = {}
         for nat in ("Tourist", "Mix", "Non Tourist"):

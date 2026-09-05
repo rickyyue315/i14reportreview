@@ -30,6 +30,12 @@ import gc
 from openpyxl import load_workbook
 from io import BytesIO
 from version import __version__
+from views.analyzer_helpers import (
+    build_hybrid_params,
+    canonical_site_codes,
+    filter_by_site_code,
+    hybrid_params_changed,
+)
 
 def _process_rss_mb():
     """讀取目前行程的實體記憶體用量 (MB)。僅 Linux（如 Zeabur 容器）有效，其他平台回傳 None。"""
@@ -91,8 +97,8 @@ with st.sidebar:
     st.markdown("""
     1. 📥 **準備來源檔案**：確認您的 Excel 檔案（By SKUxShop）包含必要欄位。
     2. 📂 **上傳檔案**：將 Excel 拖曳至右側上傳區域。
-    3. 🎯 **選擇模式**：於主頁面頂端選擇 Overstock Review 或 OOS Review。
-    4. 🔧 **設定參數**：根據模式需要，調整 MTD 日期、Shop Nature Rate 等進階選項。
+    3. 🎯 **選擇模式**：於主頁面頂端選擇分析模式（包括 Stock Checking 及 Safety Stock x NetStock Review）。
+    4. 🔧 **設定參數**：根據模式需要，調整 MTD 日期、Shop Nature Rate、調貨門檻或 Safety 基準天數等進階選項。
     5. ⚙️ **執行轉換**：點擊「執行報表轉換與分析」，系統將自動過濾、計算並產生彙總表。
     6. 💾 **下載成果**：於視覺化看板中即時查閱統計資訊，並一鍵導出美化後的 Excel 報表。
     """)
@@ -101,16 +107,10 @@ with st.sidebar:
     
     st.markdown("### 🔍 必要欄位檢核標準")
     st.markdown("""
-    為確保計算正確，來源檔案必須包含以下欄位：
-    - ✅ **Buyer** <span style="color:#0077a3;font-size:0.8em">(採購人員)</span>
-    - ✅ **Brand** <span style="color:#0077a3;font-size:0.8em">(品牌名稱)</span>
-    - ✅ **SKU** <span style="color:#0077a3;font-size:0.8em">(品號編碼)</span>
-    - ✅ **Shop Stock Status** <span style="color:#0077a3;font-size:0.8em">(庫存狀態明細)</span>
+    共用及各模式必要欄位會按目前選擇的分析模式檢核。
 
-    OOS Review 額外建議欄位（非必要，缺少時將顯示提示）：
-    - 📌 **Sold Qty (CM - MTD)** <span style="color:#f59e0b;font-size:0.8em">(月度銷售)</span>
-    - 📌 **Adj. Safety Stock** <span style="color:#f59e0b;font-size:0.8em">(現有安全庫存)</span>
-    - 📌 **Shop Nature** <span style="color:#f59e0b;font-size:0.8em">(店鋪性質)</span>
+    OOS／Safety Stock Review 會使用 `Shop Stock Status` 等模式專用欄位；
+    **Safety Stock x NetStock Review** 專用必要欄位為 `Buyer / Brand / SKU / Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D)`，不要求 `Shop Stock Status`。
     """, unsafe_allow_html=True)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -163,7 +163,7 @@ MODE_KEYS = {
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "sku_soh_summary": None, "excel_data": None, "warnings": []},
     "Past 90 Days 0 Sales": {"prefix": "p90ds_", "processed": False, "summary_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "Stock Checking": {"prefix": "stock_chk_", "processed": False, "summary_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
-    "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "sc_summary": None, "diagnosis": None, "diagnosis_om": None, "diag_summary": None, "stats": None, "excel_data": None, "warnings": []},
+    "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "sc_summary": None, "diagnosis": None, "diagnosis_om": None, "diag_summary": None, "stats": None, "excel_data": None, "params": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -387,7 +387,7 @@ if uploaded_file is not None:
         )
         safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
 
-        _all_site_codes = sorted(df_input["Site Code"].dropna().unique()) if "Site Code" in df_input.columns else []
+        _all_site_codes = canonical_site_codes(df_input["Site Code"]) if "Site Code" in df_input.columns else []
 
         if st.button("⚙️ 執行報表轉換與分析", type="primary", width='stretch'):
             _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
@@ -567,7 +567,7 @@ if uploaded_file is not None:
                 st.markdown("#### RAW 原始資料庫存明細")
                 _filtered_raw = raw_df.copy()
                 if selected_site_code != "全部" and "Site Code" in _filtered_raw.columns:
-                    _filtered_raw = _filtered_raw[_filtered_raw["Site Code"].astype(str).str.strip() == selected_site_code]
+                    _filtered_raw = filter_by_site_code(_filtered_raw, selected_site_code)
                 st.dataframe(_filtered_raw.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
@@ -634,6 +634,9 @@ if uploaded_file is not None:
                  "新增「可轉出貨量 (Tourist)」與 Summary「由Tourist 店舖預計調出數量」欄位，"
                  "來源優先序固定 Non Tourist → Mix → Tourist。"
         )
+        _current_hybrid_params = build_hybrid_params(
+            turnday_threshold, d001_threshold, _safety_days, bidirectional
+        )
         if bidirectional:
             st.caption(
                 f"🔁 雙向調貨觸發：該 SKU **任一 Nature 加總 TurnDay < {int(turnday_threshold)} 日** 且 **D001 < {int(d001_threshold)} 件**，"
@@ -689,6 +692,7 @@ if uploaded_file is not None:
                 st.session_state.hybrid_diag_summary = diag_summary
                 st.session_state.hybrid_stats = _stats
                 st.session_state.hybrid_excel_data = buf
+                st.session_state.hybrid_params = _current_hybrid_params
                 st.session_state.hybrid_warnings = _warnings
             except Exception as e:
                 _prog2.empty()
@@ -711,6 +715,16 @@ if uploaded_file is not None:
             diag_summary = st.session_state.hybrid_diag_summary
             stats = st.session_state.hybrid_stats
             excel_data = st.session_state.hybrid_excel_data
+            applied_hybrid_days = (stats or {}).get("safety_days") or _safety_days
+            applied_hybrid_params = st.session_state.get("hybrid_params") or build_hybrid_params(
+                (stats or {}).get("turnday_threshold", turnday_threshold),
+                (stats or {}).get("d001_threshold", d001_threshold),
+                applied_hybrid_days,
+                (stats or {}).get("bidirectional", bidirectional),
+            )
+            hybrid_is_stale = hybrid_params_changed(applied_hybrid_params, _current_hybrid_params)
+            if hybrid_is_stale:
+                st.warning("目前設定已與最後一次執行結果不同，請重新執行後再下載報表；以下結果仍為最後一次執行內容。")
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 🔀 Safety Stock x NetStock Review 分析摘要 (Hybrid Dashboard)")
@@ -744,7 +758,7 @@ if uploaded_file is not None:
             ])
             with tab_diag:
                 st.markdown("#### 店舖×SKU 逐列 Review — 不限OM調貨（需要調入／實際轉出／可轉出未使用；"
-                            f"Safety 基準 {_hybrid_safety_days_label(_safety_days)}，與調貨的 14 日線獨立）")
+                            f"Safety 基準 {_hybrid_safety_days_label(applied_hybrid_days)}，與調貨的 14 日線獨立）")
                 if diagnosis is not None and not diagnosis.empty:
                     st.dataframe(diagnosis, width='stretch', hide_index=True)
                     st.caption(f"共 {len(diagnosis):,} 列（按 Brand / SKU / 事件類型 / Site Code 排序）。")
@@ -827,6 +841,7 @@ if uploaded_file is not None:
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
+                disabled=hybrid_is_stale,
                 width='stretch',
             )
     elif mode == "Stock Impact Analysis":
@@ -2134,7 +2149,7 @@ if uploaded_file is not None:
 
             st.markdown('</div>', unsafe_allow_html=True)
 
-            _all_site_codes = sorted(df_input["Site Code"].dropna().unique()) if "Site Code" in df_input.columns else []
+            _all_site_codes = canonical_site_codes(df_input["Site Code"]) if "Site Code" in df_input.columns else []
             selected_site_code = st.selectbox(
                 "🏪 選擇 Site Code 檢視明細",
                 options=["全部"] + _all_site_codes,
@@ -2155,7 +2170,7 @@ if uploaded_file is not None:
                 st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽（RP Type=ND：Warehouse 建議退倉、Vendor 標記「另有安排」）：")
                 _filtered_raw = raw_df.copy()
                 if selected_site_code != "全部" and "Site Code" in _filtered_raw.columns:
-                    _filtered_raw = _filtered_raw[_filtered_raw["Site Code"].astype(str).str.strip() == selected_site_code]
+                    _filtered_raw = filter_by_site_code(_filtered_raw, selected_site_code)
                 st.dataframe(_filtered_raw.head(50), width='stretch')
                 st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
