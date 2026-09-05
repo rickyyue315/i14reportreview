@@ -237,6 +237,50 @@ def test_advice_does_not_repeat_source_sites():
     assert "間來源店舖" in str(hy_under["建議方法"])
 
 
+def test_d001_gap_advice_warehouse_vendor():
+    """缺口跟進按 Supply Source 與 D001 實際貨量分支；兩欄必須顯示。"""
+    sc_base = [
+        _sc_row(**{"SKU": 200, "Site Code": "T01", "Shop Nature": "Tourist",
+                   "Sold Qty (P90D)": 720.0, "Shop Stock Qty (CM)": 92.0,
+                   "D001 Net Stock Qty (CM)": 0.0, "Supply Source": "Warehouse"}),
+        _sc_row(**{"SKU": 200, "Site Code": "N01", "Shop Nature": "Non Tourist",
+                   "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 19.0,
+                   "Supply Source": "Warehouse"}),
+    ]
+    df = pd.DataFrame(sc_base)
+    df = df.drop(columns=["Shop Monthly Sold Qty (P90D)"], errors="ignore")
+    raw, _, stats, _ = transform_stock_checking(df)
+    issues = _build_stock_checking_shop_issues(
+        raw, turnday_threshold=stats["turnday_threshold"], d001_threshold=stats["d001_threshold"])
+    assert "Supply Source" in issues.columns and "D001 Net Stock Qty (CM)" in issues.columns
+    gap_advice = str(issues.loc[issues["問題類型"] == "調入缺口（來源不足）", "建議方法"].iloc[0])
+    assert "D001 亦無貨" in gap_advice and "向上游追貨" in gap_advice
+    assert "Vendor" not in gap_advice
+
+    df_vendor = pd.DataFrame([
+        _sc_row(**{"SKU": 200, "Site Code": "T01", "Shop Nature": "Tourist",
+                   "Sold Qty (P90D)": 720.0, "Shop Stock Qty (CM)": 92.0,
+                   "D001 Net Stock Qty (CM)": 10.0, "Supply Source": "Vendor"}),
+        _sc_row(**{"SKU": 200, "Site Code": "N01", "Shop Nature": "Non Tourist",
+                   "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 19.0,
+                   "Supply Source": "Vendor"}),
+    ]).drop(columns=["Shop Monthly Sold Qty (P90D)"], errors="ignore")
+    raw_v, _, stats_v, _ = transform_stock_checking(df_vendor)
+    issues_v = _build_stock_checking_shop_issues(
+        raw_v, turnday_threshold=stats_v["turnday_threshold"], d001_threshold=stats_v["d001_threshold"])
+    gap_advice_v = str(issues_v.loc[issues_v["問題類型"] == "調入缺口（來源不足）", "建議方法"].iloc[0])
+    assert "Vendor 貨不經 D001" in gap_advice_v and "供應商追貨" in gap_advice_v
+
+    hy_raw, _, _, _, _, _, _ = transform_hybrid(
+        pd.DataFrame([
+            _hy_row(**{**r, "Supply Source": "Warehouse", "D001 Net Stock Qty (CM)": 0.0})
+            for r in _HY_SCENARIO
+        ]),
+        safety_days={"Tourist": 10, "Mix": 10, "Non Tourist": 10})
+    hy_issues = _build_hybrid_shop_issues(hy_raw)
+    assert "Supply Source" in hy_issues.columns and "D001 Net Stock Qty (CM)" in hy_issues.columns
+
+
 def test_hybrid_shop_issues_empty_inputs():
     for frame in (_build_hybrid_shop_issues(None),
                   _build_hybrid_shop_issues(pd.DataFrame()),

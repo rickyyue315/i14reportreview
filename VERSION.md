@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.25.1 (2026-09-05)
+
+店舖問題 SKU 顯示 Supply Source 與 D001 Net Stock Qty (CM)，缺口跟進按供貨來源分支。
+
+- New: Stock Checking 與 Hybrid 店舖問題表新增「Supply Source」與「D001 Net Stock Qty (CM)」欄（置於店舖庫存之前）；D001 數量取與觸發判定一致的實際採用值（Hybrid 用逐列 Effective 值）
+- Change: 調入缺口的跟進行動不再一律寫追蹤 D001 補貨 — Warehouse＋D001 有貨才由 D001 補貨；Warehouse＋D001 無貨改為向上游追貨；Vendor 貨不經 D001 改為向供應商追貨（Vendor 由供應商直送店舖，D001 有無貨與其無關）
+- Update: 新增 `_d001_available_qty()`／`_is_warehouse_supply()`／`_d001_gap_advice()` 共用分支；`tests/test_shop_issues.py` 新增 Warehouse／Vendor 分支測試（×1）；共 245 項測試通過；README／使用說明頁同步
+
 ## v1.25.0 (2026-09-05)
 
 使用說明頁新增「圖解操作流程」（實際畫面擷圖：先選模式，再上傳檔案）。

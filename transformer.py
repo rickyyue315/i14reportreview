@@ -1028,6 +1028,7 @@ _SHOP_ISSUE_BASE_COLUMNS = [
     "問題類型", "問題說明", "建議方法",
 ]
 _STOCK_CHECKING_SHOP_ISSUE_NUM_COLUMNS = [
+    "Supply Source", "D001 Net Stock Qty (CM)",
     "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)",
     "調入需求量 (補到14日)", "實際調入量", "調入缺口",
     "可轉出貨量 (Mix)", "可轉出貨量 (Non Tourist)", "轉出量",
@@ -1040,6 +1041,7 @@ _COMBINED_SHOP_ISSUE_NUM_COLUMNS = [
     "Recommendation of new Safety Qty / ND",
 ]
 _HYBRID_SHOP_ISSUE_NUM_COLUMNS = [
+    "Supply Source", "D001 Net Stock Qty (CM)",
     "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)",
     "Safety 基準天數", "Safety 周轉所需量",
     "Adj. Safety Stock", "建議 Safety 設定值", "Safety 建議調整量",
@@ -1122,6 +1124,47 @@ def _count_transfer_sources(src: str) -> int:
     return count
 
 
+def _d001_available_qty(raw: pd.DataFrame) -> pd.Series:
+    """店舖問題表共用：逐列實際採用的 D001 數量。
+
+    優先序與觸發判定一致 — Stock Checking 用 Net→Stock→0；Hybrid 用逐列
+    Net→Stock→0 的 Effective 值（缺欄時退回 Net→0）。非數值視為 0。
+    """
+    idx = raw.index
+    if "D001 Effective Stock Qty (CM)" in raw.columns:
+        return pd.to_numeric(raw["D001 Effective Stock Qty (CM)"], errors="coerce").fillna(0.0)
+    net_col = _resolve_column_name("D001 Net Stock Qty (CM)", set(raw.columns))
+    stock_col = _resolve_column_name("D001 Stock Qty (CM)", set(raw.columns))
+    net = pd.to_numeric(raw[net_col], errors="coerce") if net_col else _safe_default_series(np.nan, idx)
+    stock = pd.to_numeric(raw[stock_col], errors="coerce") if stock_col else _safe_default_series(np.nan, idx)
+    return net.where(net.notna(), stock).fillna(0.0)
+
+
+def _is_warehouse_supply(raw: pd.DataFrame) -> pd.Series:
+    """店舖問題表共用：Supply Source 是否為 Warehouse（大小寫與前後空白不敏感）。
+
+    只有 Warehouse 由 D001 供貨；Vendor 由供應商直送店舖，D001 有無貨與其無關；
+    缺欄或空白一律視為非 Warehouse（保守：不作 D001 相關建議）。
+    """
+    if "Supply Source" not in raw.columns:
+        return pd.Series(False, index=raw.index)
+    return raw["Supply Source"].fillna("").astype(str).str.strip().str.lower() == "warehouse"
+
+
+def _d001_gap_advice(d001_qty: float, gap_n: int, is_warehouse: bool) -> str:
+    """店舖問題表共用：調入缺口的跟進行動（只在缺口 > 0 時呼叫）。
+
+    - Warehouse＋D001 有貨：可由 D001 補貨。
+    - Warehouse＋D001 無貨：D001 亦無貨，請向上游追貨。
+    - Vendor：不經 D001，請向供應商追貨。
+    """
+    if not is_warehouse:
+        return "Vendor 貨不經 D001 請向供應商追貨"
+    if d001_qty > 0:
+        return f"D001 尚有 {d001_qty:g} 件可補貨，缺口部分請由 D001 補貨"
+    return "D001 亦無貨，缺口部分請向上游追貨"
+
+
 def _build_stock_checking_shop_issues(
     raw: pd.DataFrame,
     turnday_threshold: int = 14,
@@ -1147,10 +1190,18 @@ def _build_stock_checking_shop_issues(
     if not bool(mask.any()):
         return pd.DataFrame(columns=cols)
     work = _shop_issue_base_frame(raw, mask)
+    if "Supply Source" not in work.columns:
+        work["Supply Source"] = raw.get("Supply Source", _safe_default_series("", work.index))
+    if "D001 Net Stock Qty (CM)" not in work.columns:
+        net_col = _resolve_column_name("D001 Net Stock Qty (CM)", set(raw.columns))
+        if net_col is not None:
+            work["D001 Net Stock Qty (CM)"] = raw[net_col]
     need_w = work["需要調貨"].fillna("").astype(str).str.strip() == "是"
     gap_w = _safe_numeric(work.get("調入缺口", _safe_default_series(0, work.index)))
     ttd_w = pd.to_numeric(work.get("Tourist 加總 TurnDay", _safe_default_series(np.nan, work.index)), errors="coerce")
+    d001_qty_w = _d001_available_qty(raw).loc[work.index]
     d001_w = work.get("D001 Net Stock Qty (CM)", _safe_default_series("", work.index))
+    warehouse_w = _is_warehouse_supply(raw).loc[work.index]
     demand_w = _safe_numeric(work.get("調入需求量 (補到14日)", _safe_default_series(0, work.index))).astype(int)
     actual_w = _safe_numeric(work.get("實際調入量", _safe_default_series(0, work.index))).astype(int)
     src_w = work.get("調貨來源 (Site Code)", _safe_default_series("", work.index)).fillna("").astype(str).str.strip()
@@ -1173,7 +1224,8 @@ def _build_stock_checking_shop_issues(
                 src_n = _count_transfer_sources(str(src_w.iloc[i]))
                 advice.append(
                     f"建議調入 {int(demand_w.iloc[i])} 件（實際可調入 {int(actual_w.iloc[i])} 件，"
-                    f"缺口 {gap_n} 件，涉及 {src_n} 間來源店舖），不足部分請追蹤 D001 補貨"
+                    f"缺口 {gap_n} 件，涉及 {src_n} 間來源店舖）；"
+                    f"{_d001_gap_advice(float(d001_qty_w.iloc[i]), gap_n, bool(warehouse_w.iloc[i]))}"
                 )
                 sev.append(_SHOP_ISSUE_SEVERITY["調入缺口（來源不足）"])
             else:
@@ -1287,6 +1339,12 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
     if not bool(mask.any()):
         return pd.DataFrame(columns=cols)
     work = _shop_issue_base_frame(raw, mask)
+    if "Supply Source" not in work.columns:
+        work["Supply Source"] = raw.get("Supply Source", _safe_default_series("", work.index))
+    if "D001 Net Stock Qty (CM)" not in work.columns:
+        net_col = _resolve_column_name("D001 Net Stock Qty (CM)", set(raw.columns))
+        if net_col is not None:
+            work["D001 Net Stock Qty (CM)"] = raw[net_col]
     diag_w = work.get("Safety Review", _safe_default_series("", work.index)).fillna("").astype(str)
     days_w = pd.to_numeric(work.get(_HYBRID_SAFETY_DAYS_COLUMN, _safe_default_series(np.nan, work.index)), errors="coerce")
     line_w = pd.to_numeric(work.get(_HYBRID_SAFETY_LINE_COLUMN, _safe_default_series(np.nan, work.index)), errors="coerce")
@@ -1299,6 +1357,8 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
     demand_w = _safe_numeric(work.get("調入需求量 (補到14日)", _safe_default_series(0, work.index))).astype(int)
     out_w = _safe_numeric(work.get("轉出量", _safe_default_series(0, work.index))).astype(int)
     src_w = work.get("調貨來源 (Site Code)", _safe_default_series("", work.index)).fillna("").astype(str).str.strip()
+    d001_qty_w = _d001_available_qty(raw).loc[work.index]
+    warehouse_w = _is_warehouse_supply(raw).loc[work.index]
 
     issue, desc, advice, sev = [], [], [], []
     for i in range(len(work)):
@@ -1316,7 +1376,8 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
                 src_n = _count_transfer_sources(str(src_w.iloc[i]))
                 text += f"；另需調入 {int(demand_w.iloc[i])} 件（實際可調入 {int(actual_w.iloc[i])} 件，涉及 {src_n} 間來源店舖）"
             if int(gap_w.iloc[i]) > 0:
-                text += f"；尚有缺口 {int(gap_w.iloc[i])} 件，來源不足部分請追蹤 D001 補貨"
+                text += (f"；尚有缺口 {int(gap_w.iloc[i])} 件，"
+                         f"{_d001_gap_advice(float(d001_qty_w.iloc[i]), int(gap_w.iloc[i]), bool(warehouse_w.iloc[i]))}")
             advice.append(text)
             sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定不足"])
         else:
