@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.25.0 (2026-09-05)
+
+使用說明頁新增「圖解操作流程」（實際畫面擷圖：先選模式，再上傳檔案）。
+
+- New: `views/usage_page.py` 新增「🖼️ 圖解操作流程」區塊（`st.image` ×2：步驟 1 選擇分析模式、步驟 2 拖曳 By SKUxShop Excel 至上傳區域），系統操作流程同步改為先選模式再上傳（與實際 UI 順序一致）
+- New: 新增 `assets/guide/` 實際擷圖（`01_mode_select_annotated.png`／`02_upload_annotated.png` 紅框＋繁體中文標籤）與 `scripts/annotate_guide.py` 標註腳本（Pillow＋微軟正黑體，重跑即可更新標註）
+- Update: 共 244 項測試通過；README／使用說明頁同步
+
 ## v1.24.1 (2026-09-05)
 
 店舖問題 SKU 的建議方法不再重複列出調貨來源店號，只計涉及來源店舖數量（店號留給「調貨來源 (Site Code)」／「調貨來源 (同OM)」欄）。

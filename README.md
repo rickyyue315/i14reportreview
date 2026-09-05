@@ -7,11 +7,11 @@
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / Safety Stock Review / Stock Checking / Safety Stock x NetStock Review |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / Stock Checking / Safety Stock x NetStock Review |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
-| Stock Checking 分析 | D001 倉庫少貨且 Tourist 鋪 Turnday < 門檻 → 標示調貨需求，從 Mix / Non Tourist 店分配可轉出貨量（Non Tourist 優先）；Summary 另以佔比差額標示「存貨偏重」的 Nature（存貨集中但銷量不高，偏重數值以醒目橘底加強顯示）；RAW 按可讀性重排欄序，不顯示 Item_Shop 與 Value 金額欄；另附「店舖問題 SKU」（每間店舖需行動列：需要調入／可轉出供應，問題＋建議方法） |
+| Stock Checking 分析 | D001 倉庫少貨且 Tourist 店舖 Turnday < 門檻 → 標示調貨需求，從 Mix / Non Tourist 店舖分配可轉出貨量（Non Tourist 優先）；Summary 另以佔比差額標示「存貨偏重」的 Nature（存貨集中但銷量不高，偏重數值以醒目橘底加強顯示）；RAW 按可讀性重排欄序，不顯示 Item_Shop 與 Value 金額欄；另附「店舖問題 SKU」（每間店舖需行動列：需要調入／可轉出供應，問題＋建議方法；建議方法只計涉及來源店舖數量，不重複列出店號） |
 | Safety Stock x NetStock | 沿用 Stock Checking 調貨引擎，以 **Safety 基準周轉天數（按 Nature，預設 Tourist 7 / Mix 9 / Non Tourist 10，可調 7–10）** Review 調貨事件是否因 Safety Stock 設定不足／過高，輸出店舖×SKU Review 主表與建議調整量；Safety 基準與調貨的 14 日線互相獨立；調貨分不限OM與同OM兩套對照（OM 限制不影響 Safety 建議）；可選擇**分類維度**（預設 Shop Nature，可改 RP Type 或 Shop Nature＋RP Type；ND 列一律不作調貨需求方、仍可作供應）；可勾選「允許雙向調貨」讓任何 Nature 缺貨皆可調入、遊客區店舖亦可轉出；「Review 摘要」另提供 **Safety 調整方向分類**（增加／減少／不變）與 **SKU 級 Safety 調整明細** |
 | 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式、調貨門檻、Safety 基準周轉天數（按 Nature）、分類維度（Shop Nature／RP Type／Shop Nature＋RP Type） |
 | 視覺化看板 | 即時顯示統計指標與交叉分析表 |
@@ -85,7 +85,7 @@ OOS Review 建議額外包含：
 |------|------|
 | Sold Qty (CM - MTD) | 月度銷售數量 |
 | Adj. Safety Stock | 現有安全庫存量 |
-| Shop Nature | 店鋪性質（Tourist / Mix / Non Tourist） |
+| Shop Nature | 店舖性質（Tourist / Mix / Non Tourist） |
 
 Safety Stock x NetStock Review 另建議包含 `RP Type`（RF＝可補貨／ND＝不可補貨）——ND 列不作調貨需求方、RP Type／混合分類維度均依賴此欄；缺失時全部列按 RF 處理並退回 Shop Nature 維度（列 warning，不停止）。
 
@@ -119,7 +119,7 @@ Safety Stock x NetStock Review 另建議包含 `RP Type`（RF＝可補貨／ND�
 3. **Vendor 貨**：標記「另有安排」，不可退倉 `transfer = 0`
 4. ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（如 Warehouse - Overstock、Vendor - Normal）
 
-輸出包含 RAW、Shop Stock Status、By Shop、ND SKU 數據分析摘要共 4 個工作表。
+輸出包含 RAW、Shop Stock Status、By Shop、ND SKU數據分析摘要共 4 個工作表。
 
 ### Safety Stock Review
 
@@ -184,7 +184,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 | RAW | 完整明細資料（含所有原始及計算欄位；Stock Checking 與混合模式另重排欄序，不顯示 Item_Shop 與 Value 金額欄） |
 | 店舖問題 SKU | 每間店舖需行動列（問題＋建議方法；Stock Checking／Safety Stock Review／混合模式） |
 | Shop Stock Status | 採購人員 x 品牌之庫存異常交叉統計表 |
-| By Shop | 各店鋪層級之彙總分析 |
+| By Shop | 各店舖層級之彙總分析 |
 | SUMMARY | 分類統計 — Safety Qty Change 分類（增加/減少/不變）與 ND 建議分類（Safety Stock Review） |
 | 分析摘要 | 數據看板 — 關鍵指標總覽 |
 | Summary | SKU 級調貨彙總 — 庫存/月銷加總、TurnDay、涉及店舖數、佔比、調貨提示、存貨偏重提示（分組庫存佔比 ≥40% 且較銷量佔比高 ≥20 個百分點的分組；店舖數為同 SKU 同組 Site Code 不重複計數，空白不計；混合模式按所選分類維度分組——nature 三組／rp 兩組 RF／ND／both 六組；Stock Checking 與混合模式的 Summary 均以醒目橘底加強顯示偏重提示與偏重分組的庫存佔比欄）（Stock Checking 及混合模式） |

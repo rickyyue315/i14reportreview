@@ -334,7 +334,7 @@ if uploaded_file is not None:
             options=SHOP_NATURE_OPTIONS,
             default=SHOP_NATURE_OPTIONS,
             key="ss_natures",
-            help="選擇要處理的店鋪性質，預設全選。只處理部分類型時（如只選 Tourist），其他類型的列會從報表剔除。注意：Non Tourist 選項同時涵蓋 Shop Nature 為「Other」的店（與倍率邏輯一致，非 Tourist/Mix 一律按 Non Tourist 的 Rate 計算）；全部取消選取會導致無資料可處理。"
+            help="選擇要處理的店舖性質，預設全選。只處理部分類型時（如只選 Tourist），其他類型的列會從報表剔除。注意：Non Tourist 選項同時涵蓋 Shop Nature 為「Other」的店（與倍率邏輯一致，非 Tourist/Mix 一律按 Non Tourist 的 Rate 計算）；全部取消選取會導致無資料可處理。"
         )
 
         with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
@@ -1738,7 +1738,7 @@ if uploaded_file is not None:
                 options=SHOP_NATURE_OPTIONS,
                 default=SHOP_NATURE_OPTIONS,
                 key="oo_natures",
-                help="選擇要處理的店鋪性質。預設全選所有類型。"
+                help="選擇要處理的店舖性質。預設全選所有類型。"
             )
 
         _is_overstock_mode = (mode == "Overstock Review")
