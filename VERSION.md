@@ -1,5 +1,9 @@
 # 版本記錄
 
+## v1.27.1 (2026-09-06)
+
+- 
+
 ## v1.27.0 (2026-09-05)
 
 New SKU 判定改以 MTD 截止日期為基準（Safety Stock Review 與 Safety Stock x NetStock Review 同步）。

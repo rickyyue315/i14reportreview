@@ -24,11 +24,11 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# 2b. 圖解操作流程（實際畫面擷圖）
-st.markdown("### 🖼️ 圖解操作流程")
-st.caption("以下為實際操作畫面：先選模式，再上傳檔案。")
-st.image("assets/guide/01_mode_select_annotated.png", caption="步驟 1：於主頁面頂端選擇分析模式", width="stretch")
-st.image("assets/guide/02_upload_annotated.png", caption="步驟 2：將 By SKUxShop Excel 拖曳至上傳區域", width="stretch")
+# 2b. 圖解操作流程（收合於展開區塊，避免進入頁面時即載入圖片拖慢顯示）
+with st.expander("🖼️ 圖解操作流程（實際畫面擷圖）", expanded=False):
+    st.caption("以下為實際操作畫面：先選模式，再上傳檔案。")
+    st.image("assets/guide/01_mode_select_annotated.png", caption="步驟 1：於主頁面頂端選擇分析模式", width="stretch")
+    st.image("assets/guide/02_upload_annotated.png", caption="步驟 2：將 By SKUxShop Excel 拖曳至上傳區域", width="stretch")
 
 # 3. 各模式說明與計算規則（每個模式一個收合區塊）
 st.markdown("### 🎯 各模式說明與核心計算規則")

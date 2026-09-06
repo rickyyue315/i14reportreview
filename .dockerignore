@@ -7,3 +7,12 @@ __pycache__
 i14-calculator
 VERSION.md
 .kilo
+.pytest_cache
+.venv
+venv
+nul
+*.xlsx
+tests/
+scripts/
+assets/guide/01_mode_select.png
+assets/guide/02_upload.png
