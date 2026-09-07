@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.29.0 (2026-09-07)
+
+Safety Stock x NetStock Review「Safety 設定過高」列的下調建議補底 3 件（SAP MOQ：Safety 1–2 件難以補貨，I14 原檔無 MOQ 欄）。
+
+- New: `transform_hybrid()` 過高列改以**生效基準**判定與給建議——所需量 ≥ 1 且現有設定 ≥ 3 件者生效基準 = max(所需量, 3)（補底不高於現值：現有 3 件而所需 1–2 件者補底後相等，改判「設定正常—過剩非設定因素」，不出現調整量 0 的假動作列）；現有設定本身只有 1–2 件者維持原所需量（不強制上調到 3）；所需量 = 0（P90D 零銷售）的歸零建議屬退場，不受保底影響；「Safety 設定不足」列屬 TurnDay 驅動上調，一律照原所需量（含上調至 1–2 件）
+- Change: 新增常數 `_HYBRID_SAFETY_MIN_KEEP = 3`；「Safety 周轉所需量」欄維持原所需量作稽核口徑，保底只體現在「建議 Safety 設定值／Safety 建議調整量」；stats（under/over/normal 列數與合計）、① 交叉表、② 調整方向分類、③ SKU 級調整明細、④ Buyer 統計、店舖問題 SKU 建議文字與指標卡說明均由 RAW 欄／新 mask 彙算自動跟隨；Safety Stock Review、Stock Checking 與 Overstock Review 輸出零變動（SSR 下調建議原已經 Overstock 上限 X 保底 3 件，維持現行「計算結果最低 3 件」口徑；Stock Checking 無 Safety 建議欄）
+- Update: 新增 `tests/test_hybrid_mode.py` 第 19 節保底測試 ×6（補底至 3／補底後相等改判正常／現有 1–2 件保留原建議／上調不受保底／列集合與合計對帳／②③ 統計一致性）；`test_no_sale_donor_suggests_zero` 加註歸零不受保底；共 263 項測試通過；README／使用說明頁／結果頁 caption 同步
+
 ## v1.28.0 (2026-09-07)
 
 「Adj. Safety Stock」於所有報表與頁面統一顯示為「Safety Stock (現時)」，避免誤會為系統建議值。

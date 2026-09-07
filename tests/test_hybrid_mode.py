@@ -4,8 +4,10 @@
 - 調貨段與 transform_stock_checking 同規則（SKU 級加總 TurnDay、Nature 供應門檻、14 日目標、NT→Mix）；
   調貨段恆用 14 日，**不受 safety_days 影響**
 - 需要調入列：Adj. Safety Stock < Safety 周轉所需量 → Safety 設定不足
-- 已標示 SKU 的 Mix/NT 有貨列：Adj. Safety Stock > 所需量 → Safety 設定過高
-- 建議 Safety 設定值 = 所需量；Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）
+- 已標示 SKU 的 Mix/NT 有貨列：Adj. Safety Stock > 生效基準（所需量經下調補底）→ Safety 設定過高
+- 建議 Safety 設定值 = 所需量（不足列）／生效基準（過高列，下調補底 3 件：現有 ≥ 3 件者建議最低 3、
+  現有 1–2 件不強制上調、周轉所需量 = 0 的歸零退場建議不設保底；見第 19 節）；
+  Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）
 - 調貨分兩變體：不限OM（契約欄位）與同OM（來源店與需求店同 OM，欄位加「(同OM)」後綴）；
   OM 限制只影響分配，Safety Review 與建議調整兩變體相同
 - Shop Nature：Other/空白/大小寫差異一律正規化為 Non Tourist
@@ -255,6 +257,7 @@ def test_no_sale_donor_suggests_zero():
     assert _get(raw, "N02", "事件類型") == "實際轉出"
     assert int(_get(raw, "N02", "Safety 周轉所需量")) == 0
     assert _get(raw, "N02", "Safety Review") == "Safety 設定過高"
+    # 所需量 = 0（零銷售歸零屬退場）不設保底 3（v1.29.0 補底規則明確排除）
     assert int(_get(raw, "N02", "建議 Safety 設定值")) == 0
     assert float(_get(raw, "N02", "Safety 建議調整量")) == -5
     assert stats["total_gap"] == 8  # 需求 28 − NT 全數可轉出 20
@@ -1758,4 +1761,90 @@ def test_excel_dimension_layouts():
     assert ws3.cell(row=3, column=8).value == "Shop Nature"
     assert ws3.cell(row=5, column=26).value == "強制調貨提示"
     assert ws3.cell(row=5, column=29).value == "存貨偏重提示"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 19. 下調建議補底 3 件（SAP MOQ：Safety 1–2 件難以補貨；v1.29.0）
+# 規則：過高列所需量 ≥ 1 且現有 ≥ 3 件 → 建議最低 3 件（現有 3 件補底後相等 → 設定正常）；
+#       現有 1–2 件 → 維持原所需量（不強制上調到 3）；所需量 = 0（零銷售歸零）不設保底；
+#       不足列（TurnDay 驅動上調）一律照原所需量；「Safety 周轉所需量」欄維持原值作稽核。
+# 預設基準天數：Tourist 7 / Mix 9 / Non Tourist 10。
+# ──────────────────────────────────────────────────────────────────────────────
+_MIN3_ROWS = [
+    {"SKU": 600, "Site Code": "T06", "Shop Nature": "Tourist",
+     "Sold Qty (P90D)": 18.0, "Shop Stock Qty (CM)": 0.0,
+     "Shop Monthly Sold Qty (P90D)": 6.1, "Adj. Safety Stock": 0},
+    # NT 池加總 TurnDay = 90 ÷ 91.5 × 30.5 = 30.0 ≥ 14 → 有貨可調
+    {"SKU": 600, "Site Code": "N06", "Shop Nature": "Non Tourist",
+     "Sold Qty (P90D)": 9.0, "Shop Stock Qty (CM)": 30.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 10},   # 所需 1 → 補底 3
+    {"SKU": 600, "Site Code": "N07", "Shop Nature": "Non Tourist",
+     "Sold Qty (P90D)": 10.0, "Shop Stock Qty (CM)": 30.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 3},    # 所需 2 → 補底後 = 現值 → 正常
+    {"SKU": 600, "Site Code": "N08", "Shop Nature": "Non Tourist",
+     "Sold Qty (P90D)": 9.0, "Shop Stock Qty (CM)": 30.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 2},    # 現有 1–2 件 → 維持所需 1
+]
+
+
+def _min3_raw_and_stats():
+    raw, _, _, _, _, stats, _ = transform_hybrid(_df(_MIN3_ROWS))
+    return raw, stats
+
+
+def test_min3_floor_applies_to_over_rows():
+    raw, _ = _min3_raw_and_stats()
+    assert int(_get(raw, "N06", "Safety 周轉所需量")) == 1  # 稽核欄維持原所需量
+    assert _get(raw, "N06", "Safety Review") == "Safety 設定過高"
+    assert int(_get(raw, "N06", "建議 Safety 設定值")) == 3  # 10 → 補底 3（而非 1）
+    assert float(_get(raw, "N06", "Safety 建議調整量")) == -7
+
+
+def test_min3_floor_equal_current_becomes_normal():
+    raw, stats = _min3_raw_and_stats()
+    assert int(_get(raw, "N07", "Safety 周轉所需量")) == 2
+    assert _get(raw, "N07", "Safety Review") == "設定正常—過剩非設定因素"  # 補底 3 = 現值，不出現 0 調整量假動作
+    assert pd.isna(_get(raw, "N07", "建議 Safety 設定值"))
+    assert pd.isna(_get(raw, "N07", "Safety 建議調整量"))
+    assert stats["normal_rows"] == 1
+
+
+def test_min3_floor_never_forces_low_current_up():
+    raw, _ = _min3_raw_and_stats()
+    assert _get(raw, "N08", "Safety Review") == "Safety 設定過高"
+    assert int(_get(raw, "N08", "建議 Safety 設定值")) == 1  # 現有 2 件 → 維持原所需量，不強制調到 3
+    assert float(_get(raw, "N08", "Safety 建議調整量")) == -1
+
+
+def test_min3_floor_not_applied_to_increase_rows():
+    raw, _ = _min3_raw_and_stats()
+    assert int(_get(raw, "T06", "Safety 周轉所需量")) == 2  # ceil(18/90×7)
+    assert _get(raw, "T06", "Safety Review") == "Safety 設定不足"
+    assert int(_get(raw, "T06", "建議 Safety 設定值")) == 2  # TurnDay 驅動上調照常（目標 1–2 件不合保底）
+    assert float(_get(raw, "T06", "Safety 建議調整量")) == 2
+
+
+def test_min3_stats_population_matches_masks():
+    # 過高列＝N06＋N08（N07 補底後轉正常）、不足列＝T06；合計與調整量一致
+    raw, stats = _min3_raw_and_stats()
+    assert stats["under_rows"] == 1 and stats["over_rows"] == 2
+    assert stats["under_inc_total"] == 2 and stats["over_dec_total"] == -8
+
+
+def test_min3_stats_and_safety_tables_consistent():
+    raw, stats = _min3_raw_and_stats()
+    frame = _build_hybrid_safety_change_summary(raw)
+    cat = _cat_rows(frame)
+    assert int(cat["增加"]["列數"]) == 1 and int(cat["增加"]["Safety 建議調整量合計"]) == stats["under_inc_total"] == 2
+    assert int(cat["減少"]["列數"]) == 2 and int(cat["減少"]["Safety 建議調整量合計"]) == stats["over_dec_total"] == -8
+    assert int(cat["不變"]["列數"]) == 1 and int(cat["不變"]["Safety 建議調整量合計"]) == 0
+    detail = _build_hybrid_safety_sku_detail(raw)
+    assert len(detail) == 1
+    r = detail.iloc[0]
+    assert int(r["Review 列數"]) == 4
+    assert int(r["需增加店舖數"]) == 1 and int(r["需減少店舖數"]) == 2 and int(r["設定正常店舖數"]) == 1
+    # 調整列（T06/N06/N08）：現有 0+10+2、建議 2+3+1
+    assert int(r["現有 Safety 設定合計（調整列）"]) == 12
+    assert int(r["建議 Safety 設定合計（調整列）"]) == 6
+    assert int(r["淨調整量"]) == -6
 

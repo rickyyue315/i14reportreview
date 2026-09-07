@@ -5862,6 +5862,10 @@ _HYBRID_SAFETY_DAYS_MAX = 10
 _HYBRID_SAFETY_LINE_COLUMN = "Safety 周轉所需量"
 # 每列實際採用的基準天數（Echo 自參數，供導出檔稽核與回退彙總）
 _HYBRID_SAFETY_DAYS_COLUMN = "Safety 基準天數"
+# 下調建議補底件數 — SAP MOQ 設定使 Safety 1–2 件難以補貨（I14 原檔無 MOQ 欄），
+# 故「Safety 設定過高」列的下調建議最低補至 3 件；現有設定 ≤ 2 件不強制上調
+# （補底不得高於現值）、周轉所需量 = 0 的歸零退場建議不受保底影響。
+_HYBRID_SAFETY_MIN_KEEP = 3
 
 
 def _hybrid_safety_days(safety_days: dict | None = None) -> tuple[dict[str, int], list[str]]:
@@ -6709,7 +6713,7 @@ def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
     row3 = [
         ("Safety 設定不足列數", g("under_rows"), "現有設定低於「Safety 周轉所需量」的調入列數（基準天數按 Nature）", "ef4444"),
         ("不足建議增加合計", g("under_inc_total"), "設定不足列的 Safety 建議調整量合計（正=增加）", "10b981"),
-        ("Safety 設定過高列數", g("over_rows"), "現有設定高於「Safety 周轉所需量」的轉出列數（基準天數按 Nature）", "f59e0b"),
+        ("Safety 設定過高列數", g("over_rows"), "現有設定高於生效基準（所需量補底 3 件，零銷售歸零除外）的轉出列數（基準天數按 Nature）", "f59e0b"),
         ("過高建議減少合計", g("over_dec_total"), "設定過高列的 Safety 建議調整量合計（負=減少）", "3b82f6"),
     ]
     row4 = [
@@ -6834,9 +6838,14 @@ def transform_hybrid(
       Safety 設定不跟隨存貨周轉（調貨）天數，兩段基準各自獨立。
       Tourist 需調入列：現有 Adj. Safety Stock < 所需量 → Safety 設定不足；
       已標示 SKU 的有貨列（實際轉出或可轉出未使用）：
-      現有設定 > 所需量 → Safety 設定過高；等於邊界一律視為設定正常。
-      建議 Safety 設定值 = Safety 周轉所需量（僅不足/過高列），
-      Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）。
+      現有設定 > 生效基準 → Safety 設定過高；等於邊界一律視為設定正常。
+      生效基準（下調補底，SAP MOQ 理據，見 _HYBRID_SAFETY_MIN_KEEP）：所需量 = 0 的
+      歸零退場建議不設保底；所需量 ≥ 1 且現有 ≥ 3 件者補底至 max(所需量, 3)
+      （補底不高於現值，現有 3 件而所需 1–2 件者改判設定正常）；現有 1–2 件
+      維持原所需量，不強制上調到 3。
+      建議 Safety 設定值 = 不足列取所需量、過高列取生效基準（僅不足/過高列），
+      Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）；
+      「Safety 周轉所需量」欄維持原所需量作稽核口徑，保底只體現在建議值與調整量。
     - bidirectional=True（允許雙向調貨，預設 False 維持單向契約）：任何 Nature 缺貨
       （該 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且列需求 > 0）且其他任一 Nature
       有貨（加總 TurnDay ≥ 門檻）即標示需要調貨；新增 RAW 欄「可轉出貨量 (Tourist)」，
@@ -7150,8 +7159,23 @@ def transform_hybrid(
     donated_mask = donor_mask & (donate_np > 0)
     donor_unused_mask = donor_mask & ~donated_mask
 
+    # 下調建議補底（SAP MOQ：Safety 1–2 件難以補貨）—「設定過高」列的生效基準
+    # eff_line：所需量 = 0（P90D 零銷售，歸零屬退場）不設保底；
+    # 所需量 ≥ 1 且現有 ≥ 3 件 → max(所需量, 3)（補底不得高於現值，
+    # 現有 3 件而所需 1–2 件者補底後相等 → 改判設定正常，不出現 0 調整量假動作）；
+    # 現有 ≤ 2 件 → 維持原所需量（本身 1–2 件不強制上調到 3）。
+    # 「設定不足」列屬 TurnDay 驅動上調，一律照原所需量，不受保底影響。
+    eff_line = np.where(
+        safety_line <= 0,
+        safety_line,
+        np.where(
+            adj_val >= _HYBRID_SAFETY_MIN_KEEP,
+            np.maximum(safety_line, _HYBRID_SAFETY_MIN_KEEP),
+            safety_line,
+        ),
+    )
     under_mask = need_mask & (adj_val < safety_line)
-    over_mask = donor_mask & (adj_val > safety_line)
+    over_mask = donor_mask & (adj_val > eff_line)
     in_table = need_mask | donor_mask
 
     event = np.full(n_rows, "", dtype=object)
@@ -7167,9 +7191,10 @@ def transform_hybrid(
     sugg = np.full(n_rows, np.nan)
     chg = np.full(n_rows, np.nan)
     line_col[in_table] = safety_line[in_table]
+    sugg[under_mask] = safety_line[under_mask]
+    sugg[over_mask] = eff_line[over_mask]
     fix_mask = under_mask | over_mask
-    sugg[fix_mask] = safety_line[fix_mask]
-    chg[fix_mask] = safety_line[fix_mask] - adj_val[fix_mask]
+    chg[fix_mask] = sugg[fix_mask] - adj_val[fix_mask]
 
     stock_after = cm_stock_val + actual_np - donate_np
     td_after = np.full(n_rows, np.nan)

@@ -612,7 +612,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於所需量 → 「Safety 設定過高」，並給出建議調整值與調整量。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）或 Shop Nature＋RP Type 分類，影響需求方過濾與 Summary／交叉表分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
+        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）或 Shop Nature＋RP Type 分類，影響需求方過濾與 Summary／交叉表分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -725,7 +725,9 @@ if uploaded_file is not None:
             f"🧭 Review 基準：Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 基準天數)，"
             f"目前基準 = {_hybrid_safety_days_label(_safety_days)}；"
             "調入列現有設定 < 所需量 → 「Safety 設定不足」；"
-            "轉出列現有設定 > 所需量 → 「Safety 設定過高」；建議 Safety 設定值 = 所需量（僅不足／過高列給建議）。"
+            "轉出列現有設定 > 生效基準 → 「Safety 設定過高」；建議 Safety 設定值 = 不足列取所需量、"
+            "過高列取生效基準（僅不足／過高列給建議）。下調生效基準補底 3 件（SAP MOQ：Safety 1–2 件難補貨）："
+            "現有 ≥ 3 件者最低建議 3 件、現有 1–2 件不強制上調、零銷售歸零不受保底；上調建議照常。"
             "此基準不影響調貨需求與可轉出貨量（固定 14 日）。"
         )
 
