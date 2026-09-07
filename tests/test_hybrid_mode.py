@@ -273,7 +273,8 @@ def test_blank_adj_safety_treated_as_zero_with_warning():
     raw, sc_summary, _, _, _, _, warns = transform_hybrid(_df(rows), safety_days=_SD10)
     assert _get(raw, "T05", "Safety Review") == "Safety 設定不足"  # 0 < 10
     assert int(_get(raw, "T05", "建議 Safety 設定值")) == 10
-    assert any("Adj. Safety Stock" in w for w in warns)
+    # 顯示名一律為 Safety Stock (現時)（＝ 來源檔案的 Adj. Safety Stock），故警告亦用顯示名
+    assert any("Safety Stock (現時)" in w for w in warns)
 
 
 def test_non_event_rows_blank():

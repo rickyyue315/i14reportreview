@@ -13,6 +13,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 REQUIRED_COLUMNS = ["Buyer", "Brand", "SKU", "Shop Stock Status"]
 
+# Adj. Safety Stock 顯示／來源名稱契約：
+# - 來源檔案欄名（內部運算一律沿用）：Adj. Safety Stock
+# - 使用者可見輸出（Excel／UI，一律顯示）：Safety Stock (現時)
+# - 輸入相容：同時接受上述兩名；Safety Stock (現時) 一律視為來源檔案的 Adj. Safety Stock。
+_ADJ_SAFETY_SOURCE_COL = "Adj. Safety Stock"
+_ADJ_SAFETY_DISPLAY_COL = "Safety Stock (現時)"
+_SAFETY_DISPLAY_NAMES = {_ADJ_SAFETY_SOURCE_COL: _ADJ_SAFETY_DISPLAY_COL}
+
 RAW_COLUMN_ORDER_NAMES = [
     "Item_Shop",
     "SKU",
@@ -120,9 +128,45 @@ COMBINED_RAW_COLS = [
 def _resolve_column_name(name: str, available: set[str]) -> str | None:
     stripped = name.strip()
     for col in available:
-        if col.strip() == stripped:
+        if isinstance(col, str) and col.strip() == stripped:
             return col
+    # Adj. Safety Stock 別名相容：內部一律以來源名運算，但同時接受顯示名輸入
+    #（Safety Stock (現時) ＝ 來源檔案的 Adj. Safety Stock）。
+    if stripped == _ADJ_SAFETY_SOURCE_COL:
+        for col in available:
+            if isinstance(col, str) and col.strip() == _ADJ_SAFETY_DISPLAY_COL:
+                return col
     return None
+
+
+def _display_safety_header(name: str) -> str:
+    """使用者可見表頭：內部來源名轉顯示名（避免誤會為系統建議值）。"""
+    return _SAFETY_DISPLAY_NAMES.get(name, name)
+
+
+def _standardize_safety_column(df: pd.DataFrame) -> pd.DataFrame:
+    """輸入別名正規化：Safety Stock (現時) 視為來源檔案的 Adj. Safety Stock。
+
+    內部運算一律以「Adj. Safety Stock」為正規欄名；顯示層才轉為「Safety Stock (現時)」。
+    - 只有顯示名時：rename 為來源名，之後的任何讀取或變動皆沿用來源語意；
+    - 兩者並存時：保留來源名，移除顯示名避免重複語意。
+    """
+    cols = list(df.columns)
+    src_col = None
+    disp_col = None
+    for c in cols:
+        if not isinstance(c, str):
+            continue
+        s = c.strip()
+        if s == _ADJ_SAFETY_SOURCE_COL and src_col is None:
+            src_col = c
+        elif s == _ADJ_SAFETY_DISPLAY_COL and disp_col is None:
+            disp_col = c
+    if disp_col is not None and src_col is None:
+        return df.rename(columns={disp_col: _ADJ_SAFETY_SOURCE_COL})
+    if disp_col is not None and src_col is not None:
+        return df.drop(columns=[disp_col])
+    return df
 
 
 def _reorder_raw_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -427,7 +471,7 @@ def _add_recommendation_columns(df: pd.DataFrame, rates: dict | None = None) -> 
 
 
 def _clean_dataframe(df_input: pd.DataFrame, shop_natures: list[str] | None = None, progress_callback=None) -> pd.DataFrame:
-    df = df_input.dropna(subset=["Buyer"])
+    df = _standardize_safety_column(df_input).dropna(subset=["Buyer"])
     if progress_callback:
         progress_callback(0.1, "清理資料中...")
     _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
@@ -810,10 +854,13 @@ def transform_combined(
 
     warnings = []
 
+    # Safety 來源欄相容檢查：顯示名一律視為來源名（Safety Stock (現時) = 來源檔案的 Adj. Safety Stock）
+    _adj_avail = set(df_input.columns) | {_resolve_column_name(_ADJ_SAFETY_SOURCE_COL, set(df_input.columns))}
     _optional_cols = ["Adj. Safety Stock", "Sold Qty (CM - MTD)", "Shop Monthly Sold Qty (P90D)", "Shop Nature"]
     for _col in _optional_cols:
-        if _col not in df_input.columns:
-            warnings.append(f"缺少可選欄位「{_col}」，建議值將可能不準確")
+        _label = _display_safety_header(_col)
+        if _resolve_column_name(_col, _adj_avail) is None:
+            warnings.append(f"缺少可選欄位「{_label}」，建議值將可能不準確")
 
     if progress_callback:
         progress_callback(0.05, "驗證通過")
@@ -916,8 +963,7 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
         raw_df = raw_df[avail]
 
     raw_cols = list(raw_df.columns)
-    _display_names = {"Adj. Safety Stock": "Safety Stock (現時)"}
-    header_row = [_display_names.get(c, c) for c in raw_cols]
+    header_row = [_display_safety_header(c) for c in raw_cols]
     ws.append(header_row)
 
     total_raw = len(raw_df)
@@ -1472,8 +1518,9 @@ def _write_shop_issue_sheet(ws, issue_df, *, title, progress_callback=None, prog
         _auto_width(ws)
         return
     headers = list(issue_df.columns)
+    header_labels = [_display_safety_header(h) for h in headers]
     ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=12, color="1E40AF")
-    for col_idx, h in enumerate(headers, 1):
+    for col_idx, h in enumerate(header_labels, 1):
         cell = ws.cell(row=3, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
@@ -1681,10 +1728,13 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
 
     warnings = []
 
+    # Safety 來源欄相容檢查：顯示名一律視為來源名（Safety Stock (現時) = 來源檔案的 Adj. Safety Stock）
+    _adj_avail = set(df_input.columns) | {_resolve_column_name(_ADJ_SAFETY_SOURCE_COL, set(df_input.columns))}
     _optional_cols = ["Adj. Safety Stock", "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)"]
     for _col in _optional_cols:
-        if _col not in df_input.columns:
-            warnings.append(f"缺少可選欄位「{_col}」，建議值與轉移數量將全為 0")
+        _label = _display_safety_header(_col)
+        if _resolve_column_name(_col, _adj_avail) is None:
+            warnings.append(f"缺少可選欄位「{_label}」，建議值與轉移數量將全為 0")
 
     if progress_callback:
         progress_callback(0.05, "\u9a57\u8b49\u901a\u904e")
@@ -2562,12 +2612,15 @@ def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=Non
 
     warnings = []
 
+    # Safety 來源欄相容檢查：顯示名一律視為來源名（Safety Stock (現時) = 來源檔案的 Adj. Safety Stock）
+    _adj_avail = set(df_input.columns) | {_resolve_column_name(_ADJ_SAFETY_SOURCE_COL, set(df_input.columns))}
     _optional_cols = ["Adj. Safety Stock", "Shop Stock Qty (CM)", "Sold Qty (CM - MTD)", "Shop Stock Status"]
     if oos_calc_mode == "p90d":
         _optional_cols.append("Shop Monthly Sold Qty (P90D)")
     for _col in _optional_cols:
-        if _col not in df_input.columns:
-            warnings.append(f"缺少可選欄位「{_col}」，建議值與轉移數量將全為 0")
+        _label = _display_safety_header(_col)
+        if _resolve_column_name(_col, _adj_avail) is None:
+            warnings.append(f"缺少可選欄位「{_label}」，建議值與轉移數量將全為 0")
 
     if progress_callback:
         progress_callback(0.05, "驗證通過")
@@ -5914,7 +5967,7 @@ def validate_hybrid_input(df_input: pd.DataFrame) -> list[str]:
 def _canonicalize_hybrid_columns(df_input: pd.DataFrame) -> pd.DataFrame:
     """混合模式入口：將所有字串欄名 strip 後統一運算（只偵測不改名的情況，
     例如「Buyer 」帶前後空格時先通過驗證、後續取值卻 KeyError）。"""
-    df = df_input.copy()
+    df = _standardize_safety_column(df_input)
     mapping: dict[str, str] = {}
     counts: dict[str, int] = {}
     for col in df.columns:
@@ -6813,7 +6866,7 @@ def transform_hybrid(
     """
     missing = validate_hybrid_input(df_input)
     if missing:
-        raise ValueError(f"缺少混合模式必要欄位: {', '.join(missing)}")
+        raise ValueError(f"缺少混合模式必要欄位: {', '.join(_display_safety_header(m) for m in missing)}")
     df_input = _canonicalize_hybrid_columns(df_input)
     if progress_callback:
         progress_callback(0.05, "驗證通過")
@@ -7083,7 +7136,7 @@ def transform_hybrid(
     adj_s = _hybrid_numeric_column(raw, "Adj. Safety Stock", idx)
     n_adj_blank = int(adj_s.isna().sum())
     if n_adj_blank:
-        warnings.append(f"有 {n_adj_blank} 列「Adj. Safety Stock」空白或非數值，Review 時已視為 0。")
+        warnings.append(f"有 {n_adj_blank} 列「{_display_safety_header('Adj. Safety Stock')}」空白或非數值，Review 時已視為 0。")
     adj_val = adj_s.fillna(0.0).to_numpy(dtype=float)
 
     flagged_skus = set(sku_arr[need_mask])
@@ -7213,7 +7266,8 @@ def _write_hybrid_diagnosis_sheet(ws, diagnosis: pd.DataFrame, progress_callback
     _decimal_keys = {"調貨後 TurnDay": "0.0", "Safety 建議調整量": "#,##0.##"}
 
     headers = list(diagnosis.columns)
-    for col_idx, h in enumerate(headers, 1):
+    header_labels = [_display_safety_header(h) for h in headers]
+    for col_idx, h in enumerate(header_labels, 1):
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill

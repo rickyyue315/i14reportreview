@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from transformer import (
     transform, generate_excel, validate_input, _resolve_column_name,
+    _display_safety_header,
     transform_oos, generate_excel_oos,
     transform_carry, generate_excel_carry,
     transform_combined, generate_excel_combined,
@@ -121,7 +122,7 @@ with st.sidebar:
     共用及各模式必要欄位會按目前選擇的分析模式檢核。
 
     OOS／Safety Stock Review 會使用 `Shop Stock Status` 等模式專用欄位；
-    **Safety Stock x NetStock Review** 專用必要欄位為 `Buyer / Brand / SKU / Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D)`，不要求 `Shop Stock Status`；另建議包含 `RP Type`（RF＝可補貨／ND＝不可補貨，ND 列不作調貨需求方；缺失時全部列按 RF 處理並退回 Shop Nature 維度）。
+    **Safety Stock x NetStock Review** 專用必要欄位為 `Buyer / Brand / SKU / Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Safety Stock (現時)／Adj. Safety Stock（兩者皆接受，語意相同） / Shop Monthly Sold Qty (P90D)`，不要求 `Shop Stock Status`；另建議包含 `RP Type`（RF＝可補貨／ND＝不可補貨，ND 列不作調貨需求方；缺失時全部列按 RF 處理並退回 Shop Nature 維度）。
     """, unsafe_allow_html=True)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -584,7 +585,7 @@ if uploaded_file is not None:
                     _ss_issues = None
                 if _ss_issues is not None and not _ss_issues.empty:
                     _ss_cols = [c for c in _COMBINED_SHOP_ISSUE_COLUMNS if c in _ss_issues.columns]
-                    st.dataframe(_ss_issues[_ss_cols], width='stretch', hide_index=True)
+                    st.dataframe(_ss_issues[_ss_cols].rename(columns=_display_safety_header), width='stretch', hide_index=True)
                     st.caption(f"共 {len(_ss_issues):,} 列需行動（只收需行動列，正常列不佔版面）。")
                 else:
                     st.info("無符合資料")
@@ -594,7 +595,7 @@ if uploaded_file is not None:
                 _filtered_raw = raw_df.copy()
                 if selected_site_code != "全部" and "Site Code" in _filtered_raw.columns:
                     _filtered_raw = filter_by_site_code(_filtered_raw, selected_site_code)
-                st.dataframe(_filtered_raw.head(50), width='stretch')
+                st.dataframe(_filtered_raw.head(50).rename(columns=_display_safety_header), width='stretch')
                 st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -867,14 +868,14 @@ if uploaded_file is not None:
                 st.markdown("#### 店舖×SKU 逐列 Review — 不限OM調貨（需要調入／實際轉出／可轉出未使用；"
                             f"Safety 基準 {_hybrid_safety_days_label(applied_hybrid_days)}，與調貨的 14 日線獨立）")
                 if diagnosis is not None and not diagnosis.empty:
-                    st.dataframe(diagnosis, width='stretch', hide_index=True)
+                    st.dataframe(diagnosis.rename(columns=_display_safety_header), width='stretch', hide_index=True)
                     st.caption(f"共 {len(diagnosis):,} 列（按 Brand / SKU / 事件類型 / Site Code 排序）。")
                 else:
                     st.info("無符合資料")
             with tab_diag_om:
                 st.markdown("#### 店舖×SKU 逐列 Review — 同OM調貨（來源店須與需求店同 OM；Safety Review 與建議調整不受 OM 限制影響）")
                 if diagnosis_om is not None and not diagnosis_om.empty:
-                    st.dataframe(diagnosis_om, width='stretch', hide_index=True)
+                    st.dataframe(diagnosis_om.rename(columns=_display_safety_header), width='stretch', hide_index=True)
                     st.caption(f"共 {len(diagnosis_om):,} 列（按 Brand / SKU / 事件類型 / Site Code 排序）。")
                 else:
                     st.info("無符合資料")
@@ -905,7 +906,7 @@ if uploaded_file is not None:
                     _hy_issues = None
                 if _hy_issues is not None and not _hy_issues.empty:
                     _hy_cols = [c for c in _HYBRID_SHOP_ISSUE_COLUMNS if c in _hy_issues.columns]
-                    st.dataframe(_hy_issues[_hy_cols], width='stretch', hide_index=True)
+                    st.dataframe(_hy_issues[_hy_cols].rename(columns=_display_safety_header), width='stretch', hide_index=True)
                     st.caption(f"共 {len(_hy_issues):,} 列需行動（Safety 設定不足＋過高＋ND 退場；調入缺口另於建議方法加註）。")
                 else:
                     st.info("無符合資料")
@@ -981,7 +982,7 @@ if uploaded_file is not None:
                 st.markdown("#### RAW 原始資料（Review 欄位已附於每一列；不顯示 Item_Shop 與 Value 金額欄）")
                 _display_cols = [c for c in _hybrid_raw_display_columns(raw_df) if c in raw_df.columns]
                 _display = raw_df[_display_cols]
-                st.dataframe(_display.head(50), width='stretch')
+                st.dataframe(_display.head(50).rename(columns=_display_safety_header), width='stretch')
                 st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料（已按可讀性重排欄序）將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -2048,7 +2049,7 @@ if uploaded_file is not None:
             with tab2:
                 st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
                 st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽：")
-                st.dataframe(raw_df.head(50), width='stretch')
+                st.dataframe(raw_df.head(50).rename(columns=_display_safety_header), width='stretch')
                 st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -2168,7 +2169,7 @@ if uploaded_file is not None:
             with tab2:
                 st.markdown("#### RAW 原始資料庫存明細 (前 50 筆)")
                 st.markdown("此表為過濾與重整後，完整導出之明細資料數據預覽：")
-                st.dataframe(raw_df.head(50), width='stretch')
+                st.dataframe(raw_df.head(50).rename(columns=_display_safety_header), width='stretch')
                 st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -2325,7 +2326,7 @@ if uploaded_file is not None:
                 _filtered_raw = raw_df.copy()
                 if selected_site_code != "全部" and "Site Code" in _filtered_raw.columns:
                     _filtered_raw = filter_by_site_code(_filtered_raw, selected_site_code)
-                st.dataframe(_filtered_raw.head(50), width='stretch')
+                st.dataframe(_filtered_raw.head(50).rename(columns=_display_safety_header), width='stretch')
                 st.caption(f"僅顯示前 50 筆（{'全部' if selected_site_code == '全部' else selected_site_code}），完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -2429,7 +2430,7 @@ if uploaded_file is not None:
                 else:
                     st.info("無 Adj. MCH1 樞紐資料")
             with tab4:
-                st.dataframe(raw_df.head(50), width='stretch')
+                st.dataframe(raw_df.head(50).rename(columns=_display_safety_header), width='stretch')
                 st.caption(f"僅顯示前 50 筆 RAW 明細，完整 {len(raw_df):,} 筆將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -2578,7 +2579,7 @@ if uploaded_file is not None:
                 st.dataframe(summary_right, width='stretch', hide_index=True)
             with tab2:
                 st.markdown("#### RAW 原始資料明細（前 50 筆）")
-                st.dataframe(raw_df.head(50), width='stretch')
+                st.dataframe(raw_df.head(50).rename(columns=_display_safety_header), width='stretch')
                 st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -2657,7 +2658,7 @@ if uploaded_file is not None:
             with tab_raw:
                 st.markdown("#### RAW 原始明細（前 50 筆）")
                 if raw_df is not None and not raw_df.empty:
-                    st.dataframe(raw_df.head(50), width='stretch')
+                    st.dataframe(raw_df.head(50).rename(columns=_display_safety_header), width='stretch')
                     st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
                 else:
                     st.info("無符合資料")
@@ -2821,7 +2822,7 @@ if uploaded_file is not None:
                 st.markdown("#### RAW 原始資料（調貨計算欄位已附於每一列；不顯示 Item_Shop 與 Value 金額欄）")
                 _display_cols = [c for c in _stock_checking_raw_display_columns(raw_df) if c in raw_df.columns]
                 _display = raw_df[_display_cols]
-                st.dataframe(_display.head(50), width='stretch')
+                st.dataframe(_display.head(50).rename(columns=_display_safety_header), width='stretch')
                 st.caption(f"僅顯示前 50 筆，完整 {total_rows:,} 筆資料（已按可讀性重排欄序）將包含在下載的 Excel 報表中。")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)

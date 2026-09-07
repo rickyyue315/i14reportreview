@@ -1,8 +1,13 @@
 # 版本記錄
 
-## v1.27.1 (2026-09-06)
+## v1.28.0 (2026-09-07)
 
-- 
+「Adj. Safety Stock」於所有報表與頁面統一顯示為「Safety Stock (現時)」，避免誤會為系統建議值。
+
+- Change: 新增名稱契約常數 `_ADJ_SAFETY_SOURCE_COL`／`_ADJ_SAFETY_DISPLAY_COL` 與 `_display_safety_header()`／`_standardize_safety_column()`（transformer 頂部）——來源檔案欄名 `Adj. Safety Stock` 為內部正規欄名（所有運算與 dataframe 讀取沿用），使用者可見輸出（Excel 表頭／Streamlit 表格／警告文字）一律顯示 `Safety Stock (現時)`；`Safety Stock (現時) ＝ 來源檔案的 Adj. Safety Stock` 語意固定
+- New: 輸入別名相容——`_clean_dataframe()` 與 `_canonicalize_hybrid_columns()` 入口先正規化：上傳檔只有「Safety Stock (現時)」時自動改回來源名運算，兩名並存時保留來源名；`_resolve_column_name()` 支援雙名互認（缺欄報錯訊息亦用顯示名）
+- Update: 表頭顯示名套用至 `_write_raw_sheet`（全部模式 RAW）、`_write_hybrid_diagnosis_sheet`（調貨 Review 主表）、`_write_shop_issue_sheet`（店舖問題 SKU）；`views/analyzer_page.py` 各 RAW／主表／店舖問題預覽以 `rename(columns=_display_safety_header)` 顯示；缺少可選欄位／空白非數值等 warning 改用顯示名
+- Update: README／使用說明頁／側欄檢核標準同步標明「Safety Stock (現時) ＝ 來源檔案的 Adj. Safety Stock（並非系統建議值；系統建議值為『建議 Safety 設定值』欄）」；`tests/test_hybrid_mode.py` 空白 warning 斷言改查顯示名；共 257 項測試通過
 
 ## v1.27.0 (2026-09-05)
 

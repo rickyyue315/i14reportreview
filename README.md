@@ -84,7 +84,7 @@ OOS Review 建議額外包含：
 | 欄位 | 說明 |
 |------|------|
 | Sold Qty (CM - MTD) | 月度銷售數量 |
-| Adj. Safety Stock | 現有安全庫存量 |
+| Adj. Safety Stock | 現有安全庫存量（報表內顯示為 Safety Stock (現時)，並非系統建議值；輸入欄名兩名皆接受，語意相同） |
 | Shop Nature | 店舖性質（Tourist / Mix / Non Tourist） |
 
 Safety Stock x NetStock Review 另建議包含 `RP Type`（RF＝可補貨／ND＝不可補貨）——ND 列不作調貨需求方、RP Type／混合分類維度均依賴此欄；缺失時全部列按 RF 處理並退回 Shop Nature 維度（列 warning，不停止）。
@@ -125,9 +125,9 @@ Safety Stock x NetStock Review 另建議包含 `RP Type`（RF＝可補貨／ND�
 
 全面審查各 SKU×Shop 的安全庫存設定，結合 Overstock Cap 與 OOS Floor 計算平衡建議值：
 
-1. **Overstock Cap (X)** — 基於月均銷售與 Overstock Rate 計算庫存上限，上限不超過現有 Adj. Safety Stock
+1. **Overstock Cap (X)** — 基於月均銷售與 Overstock Rate 計算庫存上限，上限不超過現有 Safety 設定（Safety Stock (現時)，即來源檔案的 Adj. Safety Stock）
 2. **OOS Floor (Y)** — 基於月銷預估與 OOS Rate 計算缺貨底線，最低 3；月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均（加權混合：月初以穩定的 P90D 為主，避免頭幾日線性外推失真，月尾收斂至 MTD；P90D 缺值時退回純 MTD 線性外推）
-3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Adj. Safety Stock
+3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Safety 設定（Safety Stock (現時)，即來源檔案的 Adj. Safety Stock）
 4. **Recommend Safety Stock Turnday** — 建議值的周轉日數 = 建議值 ÷ (P90D 月均 ÷ 30)，與來源「Turnday (P90D Qty)」同口徑；P90D 月均 = 0 時留空
 5. **Safety Qty Change** = 建議值 − Z（正數=增加、負數=減少、零=不變）
 6. **New SKU 保護** — Launch Date 距今 90 天內的列排除「P90D 0 Sales → Safety=0/ND」override，改走正常 X/Y 計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)（Launch Date 缺失或無法解析時視為非新品）
@@ -166,13 +166,13 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
    - **允許雙向調貨（UI 勾選，預設關閉）** — 針對「存貨偏重遊客區而其他區域缺貨」場景：任何 Nature 缺貨（該 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且個別店補到 14 日需求 > 0 且該列 RP Type＝RF）且其他任一 Nature 有貨（加總 TurnDay ≥ 門檻）即標示需要調貨；RAW 另加「可轉出貨量 (Tourist)」，遊客區店舖亦可轉出，來源優先序固定 **Non Tourist → Mix → Tourist**，需求 Nature 自身一律排除（分配層顯式守衛＋池級歸零雙重保證；「以 RP Type 分類」維度例外——允許同 Nature 互調）；缺貨 Nature 的超額列一律不可轉出（池級歸零）；未勾選時輸出欄位與數值與單向完全一致。雙向只適用於本模式，Stock Checking 仍為單向（只向遊客區調入）
  2. **Review 基準** — `Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 的基準天數)`（無銷售列為 0）；基準天數按 Nature 於 UI 分別設定（預設 Tourist 7 / Mix 9 / Non Tourist 10，可調 7–10），與調貨觸發門檻及 14 日調貨線**完全無關** — 改變基準天數不會影響任何調貨欄位（`調入需求量 (補到14日)` / `實際調入量` / `調入缺口` / `轉出量` / `可轉出貨量` / `調貨後庫存` / `調貨後 TurnDay` 及其同OM變體）；RAW 與主表另逐列回顯 `Safety 基準天數` 供稽核
 3. **事件列與 Review**：
-   - `需要調入`（需要調貨=是 的列；單向只出現在 Tourist-RF，雙向任何 Nature 的 RF，rp 維度任何 Nature 的 RF）：現有 Adj. Safety Stock < 所需量 → `Safety 設定不足`；否則 `設定正常—缺貨非設定因素`
+   - `需要調入`（需要調貨=是 的列；單向只出現在 Tourist-RF，雙向任何 Nature 的 RF，rp 維度任何 Nature 的 RF）：現有 Safety Stock (現時) < 所需量 → `Safety 設定不足`；否則 `設定正常—缺貨非設定因素`
    - `實際轉出`／`可轉出未使用`（已標示調貨 SKU 的有貨列——單向為 Mix / Non Tourist 列，雙向含 Tourist 列，ND 列亦可為來源——轉出量 > 0 或可轉出貨量 > 0）：現有設定 > 所需量 → `Safety 設定過高`；否則 `設定正常—過剩非設定因素`；等於邊界一律視為正常；未標示調貨的 SKU 不入 Review
    - `建議 Safety 設定值 = Safety 周轉所需量`（僅不足／過高列）；`Safety 建議調整量 = 建議值 − 現有設定`（正=增加、負=減少）
 4. **上下文欄位** — `調貨後庫存 = Shop Stock Qty (CM) + 實際調入量 − 轉出量`；`調貨後 TurnDay = 調貨後庫存 ÷ Shop Monthly Sold Qty (P90D) × 30.5`（月銷 0 留空；月銷為回補後值，實際採用值另存 `Effective Shop Monthly Sold Qty (P90D)` 稽核欄）；同OM變體另存「(同OM)」後綴欄。OM 限制只影響調貨分配與事件標籤（實際轉出／可轉出未使用），**Safety Review 與建議調整量兩變體完全相同**（不受調貨限制影響）
 5. **OM 欄位** — 選填；來源檔案缺「OM」欄時「同OM調貨」退化為與不限OM相同（全部店舖同一群組）並列 warning；OM 空白列歸入「(未填OM)」群組
 6. **Shop Nature** — 固定保留三種；Other / 空白 / 大小寫差異一律正規化為 Non Tourist（映射列數列入 warning）；不做母體篩選 — 調貨供需需要同時看到 Tourist 需求與 Mix/Non Tourist 來源
-7. **輸入檢核** — 混合必要欄位嚴格檢核：`Buyer / Brand / SKU / Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D)`，不要求未參與計算的 `Shop Stock Status`，缺任一即停止；`RP Type` 為選填欄位（缺失時 ND 排除規則無法套用、全部列按 RF 處理並退回 Shop Nature 維度，列 warning）；欄名前後空格自動正規化。`Shop Stock Qty (CM)` 必須為非負整數件數（小數、負數、非有限值即拒絕）；店舖銷售、月銷及 Safety 設定的非有限值即拒絕，負數銷售按 0 處理並列 warning。月銷空白／非數值／負數，以及月銷為 0 但 P90D 有正數銷售時，逐列以 `Sold Qty (P90D) ÷ 90 × 30.5` 回補並列 warning；D001 逐列以 Net → Stock 回補（兩者皆空白或非有限值視為 0，負 Net 值保留），Summary 顯示實際採用的有效值；Adj. Safety Stock 空白或非數值時，Review 視為 0 並列 warning；「Site Code × SKU」重複列、同店 Shop Nature 不一致、OM 全欄空白均列 warning（正常輸入應為一店×一SKU一列）
+7. **輸入檢核** — 混合必要欄位嚴格檢核：`Buyer / Brand / SKU / Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Safety Stock (現時) 或 Adj. Safety Stock（兩名皆接受，語意相同：Safety Stock (現時) ＝ 來源檔案的 Adj. Safety Stock；報表內一律顯示 Safety Stock (現時)） / Shop Monthly Sold Qty (P90D)`，不要求未參與計算的 `Shop Stock Status`，缺任一即停止；`RP Type` 為選填欄位（缺失時 ND 排除規則無法套用、全部列按 RF 處理並退回 Shop Nature 維度，列 warning）；欄名前後空格自動正規化。`Shop Stock Qty (CM)` 必須為非負整數件數（小數、負數、非有限值即拒絕）；店舖銷售、月銷及 Safety 設定的非有限值即拒絕，負數銷售按 0 處理並列 warning。月銷空白／非數值／負數，以及月銷為 0 但 P90D 有正數銷售時，逐列以 `Sold Qty (P90D) ÷ 90 × 30.5` 回補並列 warning；D001 逐列以 Net → Stock 回補（兩者皆空白或非有限值視為 0，負 Net 值保留），Summary 顯示實際採用的有效值；Safety Stock (現時) 空白或非數值時，Review 視為 0 並列 warning；「Site Code × SKU」重複列、同店 Shop Nature 不一致、OM 全欄空白均列 warning（正常輸入應為一店×一SKU一列）
 8. **RAW 稽核欄位** — 新增 `D001 Effective Stock Qty (CM)`（實際採用的 D001 值）與原始 D001 Stock，以便核查 fallback
 
 輸出包含 **8 個工作表**：RAW（按可讀性重排欄序——識別→品項屬性→庫存與銷售→SKU 級判定→Review 結果→調貨 (不限OM)→調貨 (同OM)→其他原始欄；不顯示「Item_Shop」與所有含「Value」的金額欄；非事件列 Review 欄留空；雙向時另含「可轉出貨量 (Tourist)」）、Summary（SKU 級彙總，按所選分類維度分組——nature 三組與 Stock Checking 同格式同值（A–AC 契約欄序：各組加總庫存／加總月銷／TurnDay／涉及店舖數，店舖數為同 SKU 同組 Site Code 不重複計數，空白不計）、rp 兩組（RF／ND）、both 六組：各組庫存/月銷加總、TurnDay、涉及店舖數、佔比、強制調貨提示、存貨偏重提示，偏重提示欄與偏重分組的庫存佔比欄以醒目橘底加強顯示；nature 雙向時末尾另加「由Tourist 店舖預計調出數量」欄）、調貨 Review Safety Stock (不限OM) 與 調貨 Review Safety Stock (同OM)（店舖×SKU 逐列主表，含 Site Code／OM／Shop Nature／RP Type，按 Brand / SKU / 事件類型 / Site Code 排序；Safety Review 欄兩表相同）、店舖問題 SKU（每間店舖需行動列：Safety 設定不足／過高＋Past 90 Days 0 Sales 轉 ND 候選（M-2／M-1／CM-MTD／P90D 皆零銷售且有庫存，距參考日期 90 天內新品、需要調貨列與 ND 列除外；重疊列保留原問題類型並加註）；按店舖分組、店內按嚴重度排序；主表以不限OM為準，另附 Supply Source、D001 Net Stock Qty (CM) 與三個同OM對照欄；調入缺口在建議方法加註，缺口跟進按供貨來源分支 — Warehouse＋D001 有貨由 D001 補貨、Warehouse＋D001 無貨寫 D001缺貨、Vendor 貨向供應商追貨；參考日期由「📅 參考日期」輸入決定，預設昨日）、Review 摘要（指標卡——第 4 排為同OM調貨對照、雙向時另加第 5 排 Tourist 轉出量 + Safety Review × 分類維度交叉表（欄位按維度切換：nature 三組／rp 兩組／both 六組）：列數 / SKU 數 / 建議調整量合計，含總計列；其下另加 **Safety 調整方向分類**（增加 / 減少 / 不變 × 列數 / SKU 數 / Safety 建議調整量合計，含總計列）與 **Safety 調整明細（SKU 級彙總）**：Brand / SKU / SKU Desc / Buyer / Review 列數 / 需增加店舖數 / 需減少店舖數 / 設定正常店舖數 / 現有 Safety 設定合計（調整列）/ 建議 Safety 設定合計（調整列）/ 淨調整量，按 Brand / SKU 排序；兩個 Safety 統計區塊與交叉表同母體（事件類型非空的列），且不受 OM 限制、調貨方向與分類維度影響）、簡易調貨明細 (不限OM) 與 簡易調貨明細 (同OM)（一列一筆「來源店舖 → 接收店舖」調貨：Brand / SKU / SKU Desc / Target Site Code(接收店舖) / Target Shop Name / Target RP Type / Target OM / 調貨數量 / Supply Site Code(調貨來源) / Supply Shop Name / Supply RP Type / Supply OM；RP Type 緊接對應 Shop Name，調貨數量置於來源欄前分隔 Target 與 Supply；調貨來源如「HB30:2; HB49:3」會拆成兩行；只收錄實際有調入的列）。
