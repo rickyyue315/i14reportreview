@@ -1,5 +1,30 @@
 # 版本記錄
 
+## v1.32.0 (2026-09-07)
+
+Safety Stock x NetStock Review OM 正規化：空白 OM 自成「空白」群組，OM 大小寫不敏感。RAW「OM」欄空白值改顯示「空白」（舊版顯示「(未填OM)」），大小寫變體合併為一組（顯示沿用首見原值）；舊維度計算零變動。
+
+- New: 新增 `_HYBRID_OM_BLANK_LABEL`（「空白」）與 `_normalize_hybrid_om()`（去空格、空白成組、大小寫不敏感、顯示沿用首見原值）；同OM調貨比對改用小寫鍵（Ivy＝ivy 跨大小寫可互調）；`_hybrid_om_groups_from_values()` 等佔位字串統一改用常數
+- Change: om／nature_om 退回條件改按來源是否全空判斷（缺欄或全欄空白才退回），真實 OM 名恰為「空白」時不再誤退回；部分空白只列一次歸組 warning（全欄空白時由退回 warning 涵蓋，不再重複）
+- Fix: Streamlit 存貨偏重高亮改由欄位反推群組名（不再以正則解析提示文字，群組名含全形括號時仍可正確高亮，與 Excel 同步）
+- Update: 新增第 22 節測試 ×4（正規化規則、空白成組不退回、大小寫合併與跨大小寫同OM調貨、保留字不誤退回）＋既有佔位斷言更新；README／使用說明頁同步
+
+## v1.31.1 (2026-09-07)
+
+Safety Stock x NetStock Review 參數區新增存貨偏重提示門檻說明（隨分類維度即時切換＋完整對照），避免日後忘記各維度門檻。
+
+- New: 結果頁參數區分類維度下方新增「📦 存貨偏重提示門檻」caption——前半為目前所選維度的門檻（`_hybrid_skew_hint_text()`），後半為五個維度的完整對照；計算邏輯與輸出零變動
+
+## v1.31.0 (2026-09-07)
+
+Safety Stock x NetStock Review 分類維度由三選一擴為五選一，新增「以 OM 分類」（`om`）與「以 Shop Nature＋OM 分類」（`nature_om`）。**非破壞性**——兩個新維度計算與預設完全相同（需求方 Tourist-RF，池級歸零與同 Nature 守衛照舊；TurnDay 池與 Safety 基準天數恆按 Shop Nature），僅 Summary 與 Review 摘要交叉表改按 OM 或 Nature×OM 動態分組；舊維度輸出欄位與數值零變動。
+
+- New: `_HYBRID_DIMENSIONS` 新增 `om`／`nature_om`，`_HYBRID_DIMENSION_LABELS` 新增 `om: OM`／`nature_om: Shop Nature＋OM`；新增 `_hybrid_om_groups_from_values()`（OM 欄去除前後空格、空白歸入「(未填OM)」、按字串排序）、`_hybrid_skew_thresholds()`／`_hybrid_skew_hint_text()`（存貨偏重門檻按維度切換：nature／rp／both 沿用 40%／20pp，om 用 25%／12pp，nature_om 用 12%／8pp）；`_hybrid_dimension_groups()` 新增 `om_groups` 參數（om 回傳動態名單，nature_om 回傳完整笛卡兒積 Nature 外層×OM 內層）
+- New: `_hybrid_group_key_series()`、`_hybrid_diag_summary_columns()`、`_build_hybrid_diag_summary()`、`_stock_checking_summary_columns()`、`_build_stock_checking_summary()`、`_write_stock_checking_summary_sheet()` 新增 `om_groups` 參數（缺省時由 raw 即時推導；寫入層另由 Summary 欄位反推 `_hybrid_om_groups_from_summary_columns()`）；`transform_hybrid()` stats 新增 `om_groups`（排序後名單），`generate_excel_hybrid()` 由 stats 還原、缺失時由 raw 推導；`_hybrid_stats_from_raw()` 同步補算
+- Change: 來源缺「RP Type」欄時僅 rp／both 維度退回 nature（om／nature_om 分組不依賴 RP Type，不退回）；來源缺「OM」欄或全欄空白時 om／nature_om 退回 nature 並列 warning；非法維度值維持退回 nature
+- New: 結果頁參數區「🗂️ 分類維度」擴為五選一（預設維持 Shop Nature，新選項置後）＋ OM 維度 caption 說明；存貨偏重提示 caption 改按所選維度顯示門檻；`build_hybrid_params()` 無需改簽名（dimension 為字串透傳，過期偵測自動涵蓋新值）
+- Update: 新增 `tests/test_hybrid_mode.py` 第 21 節 OM 維度測試 ×11（正規化與動態分組、OM 名單規則、門檻與提示文字、om／nature_om 與 nature 數值一致性、笛卡兒積欄位、缺 OM 欄與全空白退回、缺 RP 欄不退回、新門檻觸發、Excel 版面與回退重建）；共 288 項測試通過；README／使用說明頁同步
+
 ## v1.30.0 (2026-09-07)
 
 Safety Stock x NetStock Review 新增「ND 優先轉出」開關（預設關閉）：同一 Shop Nature 池內，RP Type＝ND（不可補貨）的來源店先於 RF 店轉出。**非破壞性**——未勾選時輸出欄位與數值與 v1.29.0 完全一致。

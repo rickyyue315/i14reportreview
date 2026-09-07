@@ -11,7 +11,7 @@
 - 調貨分兩變體：不限OM（契約欄位）與同OM（來源店與需求店同 OM，欄位加「(同OM)」後綴）；
   OM 限制只影響分配，Safety Review 與建議調整兩變體相同
 - Shop Nature：Other/空白/大小寫差異一律正規化為 Non Tourist
-- 輸出 7 工作表：RAW / Summary / 調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) / Review 摘要 / 簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)
+- 輸出 8 工作表：RAW / Summary / 調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) / 店舖問題 SKU / Review 摘要 / 簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)
 - 「Review 摘要」的三個統計區塊同母體（事件類型非空的列）：① Safety Review × Shop Nature 交叉表、
   ② Safety 調整方向分類（增加／減少／不變）、③ Safety 調整明細（SKU 級彙總）；②③ 於 v1.16.0 新增，
   由 RAW 即時彙算，不受 OM 限制影響，且不改動 transform_hybrid／generate_excel_hybrid 簽名
@@ -51,6 +51,10 @@ from transformer import (
     _hybrid_allocate_transfers,
     _hybrid_dimension,
     _hybrid_dimension_groups,
+    _hybrid_om_groups_from_values,
+    _normalize_hybrid_om,
+    _hybrid_skew_thresholds,
+    _hybrid_skew_hint_text,
     _HYBRID_RP_GROUPS,
     _HYBRID_COMBINED_GROUPS,
     _hybrid_diag_summary_columns,
@@ -357,14 +361,14 @@ def test_missing_om_column_warns_and_equals_free():
     df = _df(_SCENARIO_A).drop(columns=["OM"])
     raw, sc_summary, diagnosis, diagnosis_om, _, stats, warns = transform_hybrid(df)
     assert any("OM" in w for w in warns)
-    assert (raw["OM"] == "(未填OM)").all()  # 缺欄時 RAW／主表補「(未填OM)」群組
+    assert (raw["OM"] == "空白").all()  # 缺欄時 RAW／主表補「空白」群組
     assert list(diagnosis["轉出量"]) == list(diagnosis_om["轉出量"])
     assert stats["nt_transfer_om"] == stats["nt_transfer"]
 
 
 def test_blank_om_grouped_as_unfilled():
     rows = [dict(r) for r in _SCENARIO_OM]
-    rows[2]["OM"] = None  # M11 OM 空白 → (未填OM)，與 T11 (Ivy) 不同組 → 同OM無來源
+    rows[2]["OM"] = None  # M11 OM 空白 → 空白組，與 T11 (Ivy) 不同組 → 同OM無來源
     raw, sc_summary, _, _, _, stats, warns = transform_hybrid(_df(rows))
     assert any("OM" in w and "空白" in w for w in warns)
     assert int(_get(raw, "T11", "實際調入量 (同OM)")) == 0
@@ -2072,3 +2076,227 @@ def test_allocate_nd_priority_applies_to_tourist_pool():
         3, sku, site, need, demand, zero, zero, tourist_avail0=tou, nature_arr=nature, nd_priority=nd)
     assert desc_on[0] == "T01:3; T02:7"
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 21. OM 分類維度：以 OM 分類（om）／以 Shop Nature＋OM 分類（nature_om）
+#     計算與 nature 完全相同（需求 Tourist-RF，池級歸零與同 Nature 守衛照舊），
+#     僅 Summary／交叉表分組不同；OM 名單為動態（排序後不重複值，空白自成「空白」組，大小寫不敏感）；
+#     缺 OM 欄或全欄空白時退回 nature；存貨偏重門檻按維度下調
+# ──────────────────────────────────────────────────────────────────────────────
+def test_om_dimension_normalization_and_dynamic_groups():
+    assert _hybrid_dimension("OM") == "om"
+    assert _hybrid_dimension("Nature_OM") == "nature_om"
+    assert _hybrid_dimension("bogus") == "nature"
+    assert _hybrid_dimension_groups("om", om_groups=("B", "A")) == ("A", "B")
+    assert _hybrid_dimension_groups("nature_om", om_groups=("B", "A")) == (
+        "Tourist-A", "Tourist-B", "Mix-A", "Mix-B", "Non Tourist-A", "Non Tourist-B")
+    # om_groups 缺省時退回單一群組（呼叫端應傳入實際名單）
+    assert _hybrid_dimension_groups("om") == ("空白",)
+    assert _hybrid_dimension_groups("nature_om") == (
+        "Tourist-空白", "Mix-空白", "Non Tourist-空白")
+
+
+def test_om_groups_from_values_rules():
+    assert _hybrid_om_groups_from_values(["B", " A ", "B", None, ""]) == ("A", "B", "空白")
+    assert _hybrid_om_groups_from_values(pd.Series(["Ivy", "Max", "Ivy"])) == ("Ivy", "Max")
+    assert _hybrid_om_groups_from_values([]) == ("空白",)
+
+
+def test_om_skew_thresholds_and_hint_text():
+    assert _hybrid_skew_thresholds("nature") == (0.40, 0.20)
+    assert _hybrid_skew_thresholds("rp") == (0.40, 0.20)
+    assert _hybrid_skew_thresholds("both") == (0.40, 0.20)
+    assert _hybrid_skew_thresholds("om") == (0.25, 0.12)
+    assert _hybrid_skew_thresholds("nature_om") == (0.12, 0.08)
+    assert "25%" in _hybrid_skew_hint_text("om") and "12" in _hybrid_skew_hint_text("om")
+    assert "12%" in _hybrid_skew_hint_text("nature_om") and "8" in _hybrid_skew_hint_text("nature_om")
+
+
+def test_om_dimension_same_numbers_as_nature():
+    df = _df(_SCENARIO_OM)
+    raw_n, sc_n, _, _, cross_n, stats_n, _ = transform_hybrid(df)
+    raw_o, sc_o, _, _, cross_o, stats_o, _ = transform_hybrid(df, dimension="om")
+    assert stats_o["dimension"] == "om"
+    assert stats_o["om_groups"] == ["Ivy", "Max"]
+    # 計算與預設完全相同（需求方皆為 Tourist-RF；NaN 視為相等）
+    for c in ("需要調貨", "實際調入量", "轉出量", "調入缺口", "事件類型",
+              "Safety Review", "建議 Safety 設定值", "Safety 建議調整量"):
+        for x, y in zip(list(raw_n[c]), list(raw_o[c])):
+            if pd.isna(x) and pd.isna(y):
+                continue
+            assert x == y, c
+    assert stats_o["need_rows"] == stats_n["need_rows"] == 1
+    # Summary 按 OM 分組：Ivy 兩店、Max 一店
+    expected = [c for c in _stock_checking_summary_columns("om", om_groups=("Ivy", "Max")) if c in sc_o.columns]
+    assert list(sc_o.columns) == expected
+    assert "Tourist 加總 - Shop Stock Qty (CM)" not in sc_o.columns
+    row = sc_o.iloc[0]
+    assert int(row["Ivy 涉及店舖數"]) == 2 and int(row["Max 涉及店舖數"]) == 1
+    assert int(row["由Max 店舖預計調出數量"]) == int(raw_o.loc[raw_o["OM"] == "Max", "轉出量"].sum())
+    assert int(row["由Ivy 店舖預計調出數量"]) == int(raw_o.loc[raw_o["OM"] == "Ivy", "轉出量"].sum())
+    # 交叉表按 OM 分組，合計與 nature 一致
+    assert list(cross_o.columns) == _hybrid_diag_summary_columns("om", om_groups=("Ivy", "Max"))
+    t_o = cross_o[cross_o["Safety Review"] == "總計"].iloc[0]
+    t_n = cross_n[cross_n["Safety Review"] == "總計"].iloc[0]
+    assert int(t_o["合計 列數"]) == int(t_n["合計 列數"]) == 3
+    assert int(t_o["Ivy 列數"]) == 2 and int(t_o["Max 列數"]) == 1
+
+
+def test_nature_om_dimension_cartesian_columns():
+    df = _df(_SCENARIO_OM)
+    raw_n, _, _, _, cross_n, stats_n, _ = transform_hybrid(df)
+    raw_c, sc_c, _, _, cross_c, stats_c, _ = transform_hybrid(df, dimension="nature_om")
+    assert stats_c["dimension"] == "nature_om"
+    assert stats_c["om_groups"] == ["Ivy", "Max"]
+    for c in ("需要調貨", "實際調入量", "轉出量", "調入缺口", "事件類型"):
+        assert list(raw_n[c]) == list(raw_c[c]), c
+    assert stats_c["need_rows"] == stats_n["need_rows"] == 1
+    groups = ("Tourist-Ivy", "Tourist-Max", "Mix-Ivy", "Mix-Max",
+              "Non Tourist-Ivy", "Non Tourist-Max")
+    expected = [c for c in _stock_checking_summary_columns("nature_om", om_groups=("Ivy", "Max")) if c in sc_c.columns]
+    assert list(sc_c.columns) == expected
+    assert "Tourist-Ivy 加總 - Shop Stock Qty (CM)" in sc_c.columns
+    assert "Non Tourist-Max TurnDay" in sc_c.columns
+    assert "Tourist-Ivy 涉及店舖數" in sc_c.columns
+    row = sc_c.iloc[0]
+    assert int(row["Tourist-Ivy 涉及店舖數"]) == 1
+    assert int(row["Mix-Ivy 涉及店舖數"]) == 1
+    assert int(row["Non Tourist-Max 涉及店舖數"]) == 1
+    assert int(row["Tourist-Max 涉及店舖數"]) == 0
+    assert list(cross_c.columns) == _hybrid_diag_summary_columns("nature_om", om_groups=("Ivy", "Max"))
+    assert list(cross_c.columns)[1:4] == ["Tourist-Ivy 列數", "Tourist-Ivy SKU 數", "Tourist-Ivy 建議調整量合計"]
+    t_c = cross_c[cross_c["Safety Review"] == "總計"].iloc[0]
+    t_n = cross_n[cross_n["Safety Review"] == "總計"].iloc[0]
+    assert int(t_c["合計 列數"]) == int(t_n["合計 列數"]) == 3
+    assert int(t_c["Tourist-Ivy 列數"]) == 1 and int(t_c["Mix-Ivy 列數"]) == 1
+    assert int(t_c["Non Tourist-Max 列數"]) == 1
+
+
+def test_missing_om_column_falls_back_to_nature():
+    df = _df(_SCENARIO_OM).drop(columns=["OM"])
+    _, _, _, _, _, stats_o, warns_o = transform_hybrid(df, dimension="om")
+    assert any("OM" in w and "退回" in w for w in warns_o)
+    assert stats_o["dimension"] == "nature"
+    _, _, _, _, _, stats_c, warns_c = transform_hybrid(df, dimension="nature_om")
+    assert any("OM" in w and "退回" in w for w in warns_c)
+    assert stats_c["dimension"] == "nature"
+
+
+def test_all_blank_om_falls_back_to_nature():
+    df = _df(_SCENARIO_OM)
+    df["OM"] = ""
+    _, _, _, _, _, stats, warns = transform_hybrid(df, dimension="om")
+    assert any("OM" in w and "退回" in w for w in warns)
+    assert stats["dimension"] == "nature"
+
+
+def test_om_dimension_survives_missing_rp_type():
+    # OM 分組不依賴 RP Type：缺 RP 欄時 om 維度不退回（全部列按 RF 處理）
+    df = _df(_SCENARIO_OM).drop(columns=["RP Type"])
+    raw, _, _, _, _, stats, warns = transform_hybrid(df, dimension="om")
+    assert stats["dimension"] == "om"
+    assert stats["need_rows"] == 1
+    assert "RP Type" not in raw.columns
+
+
+def test_om_skew_hint_uses_lower_threshold():
+    # O1 庫存佔比 50%（≥25%）且較銷量佔比高約 47 個百分點（≥12pp）→ om 維度提示；
+    # 原 40%／20pp 門檻下 nature 維度（全 Tourist，庫存與銷量佔比皆 100%）不提示
+    rows = [
+        {"SKU": 700, "Site Code": "S01", "OM": "O1", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 18.0, "Shop Stock Qty (CM)": 60.0,
+         "Shop Monthly Sold Qty (P90D)": 6.1, "Adj. Safety Stock": 5,
+         "D001 Net Stock Qty (CM)": 500.0},
+    ]
+    for i, om in enumerate(["O2", "O3", "O4", "O5", "O6", "O7"], start=2):
+        rows.append({"SKU": 700, "Site Code": f"S0{i}", "OM": om, "Shop Nature": "Tourist",
+                     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 10.0,
+                     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 5,
+                     "D001 Net Stock Qty (CM)": 500.0})
+    _, sc_o, _, _, _, stats_o, _ = transform_hybrid(_df(rows), dimension="om")
+    assert stats_o["dimension"] == "om"
+    hint = str(sc_o.iloc[0]["存貨偏重提示"])
+    assert "存貨偏重 O1" in hint
+    _, sc_n, _, _, _, _, _ = transform_hybrid(_df(rows))
+    assert str(sc_n.iloc[0]["存貨偏重提示"]) == ""
+
+
+def test_excel_om_layouts():
+    # om（G=2）：群組標籤「OM」、提示第 20 欄、偏重第 23 欄
+    raw, sc, diag, diag_om, cross, stats, _ = transform_hybrid(_df(_SCENARIO_OM), dimension="om")
+    wb = load_workbook(generate_excel_hybrid(raw, sc, diag, diag_om, cross, stats))
+    ws = wb["Summary"]
+    assert ws.cell(row=3, column=8).value == "OM"
+    assert ws.cell(row=5, column=20).value == "強制調貨提示"
+    assert ws.cell(row=5, column=23).value == "存貨偏重提示"
+    assert ws.cell(row=4, column=8).value == "Ivy"
+    assert ws.cell(row=4, column=12).value == "Max"
+    assert str(wb["Review 摘要"].cell(row=19, column=1).value) == "Safety Review × OM 交叉表"
+    # nature_om（_SCENARIO_A 全 OM1，G=3）：標籤「Shop Nature＋OM」、提示第 26 欄、偏重第 30 欄
+    raw2, sc2, diag2, diag2_om, cross2, stats2, _ = transform_hybrid(_df(_SCENARIO_A), dimension="nature_om")
+    ws2 = load_workbook(generate_excel_hybrid(raw2, sc2, diag2, diag2_om, cross2, stats2))["Summary"]
+    assert ws2.cell(row=3, column=8).value == "Shop Nature＋OM"
+    assert ws2.cell(row=5, column=26).value == "強制調貨提示"
+    assert ws2.cell(row=5, column=30).value == "存貨偏重提示"
+    assert str(load_workbook(generate_excel_hybrid(raw2, sc2, diag2, diag2_om, cross2, stats2))["Review 摘要"].cell(row=19, column=1).value) == "Safety Review × Shop Nature＋OM 交叉表"
+
+
+def test_excel_om_fallback_rebuilds_from_raw():
+    # generate_excel_hybrid 未傳預建表時，由 stats om_groups（或 raw）重建動態欄位
+    raw, _, _, _, _, stats, _ = transform_hybrid(_df(_SCENARIO_OM), dimension="nature_om")
+    assert stats["om_groups"] == ["Ivy", "Max"]
+    wb = load_workbook(generate_excel_hybrid(raw, None, None, None, None, stats))
+    ws = wb["Summary"]
+    assert ws.cell(row=3, column=8).value == "Shop Nature＋OM"
+    assert ws.cell(row=4, column=8).value == "Tourist-Ivy"
+    # stats 缺 om_groups 時由 raw 即時推導
+    stats2 = dict(stats)
+    del stats2["om_groups"]
+    wb2 = load_workbook(generate_excel_hybrid(raw, None, None, None, None, stats2))
+    assert wb2["Summary"].cell(row=4, column=8).value == "Tourist-Ivy"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 22. OM 空白成組與大小寫不敏感（v1.32.0）：空白 OM 自成「空白」群組
+#     （部分空白不退回）；OM 大小寫不敏感（Ivy＝ivy，顯示沿用首見原值，
+#     同OM調貨跨大小寫可互調）；真實 OM 名恰為「空白」時不誤退回
+# ──────────────────────────────────────────────────────────────────────────────
+def test_normalize_hybrid_om_blank_group_and_case_insensitive():
+    disp, groups = _normalize_hybrid_om(pd.Series(["Ivy", "ivy", " IVY ", None, ""]))
+    assert list(disp) == ["Ivy", "Ivy", "Ivy", "空白", "空白"]
+    assert groups == ("Ivy", "空白")
+
+
+def test_mixed_blank_om_forms_blank_group_without_fallback():
+    rows = [dict(r) for r in _SCENARIO_OM]
+    rows[2]["OM"] = None  # M11 OM 空白 → 空白組
+    raw, sc, _, _, cross, stats, warns = transform_hybrid(_df(rows), dimension="om")
+    assert stats["dimension"] == "om"  # 部分空白不退回
+    assert stats["om_groups"] == ["Ivy", "Max", "空白"]
+    assert any("空白" in w for w in warns)
+    expected = [c for c in _stock_checking_summary_columns("om", om_groups=("Ivy", "Max", "空白")) if c in sc.columns]
+    assert list(sc.columns) == expected
+    assert int(sc.iloc[0]["空白 涉及店舖數"]) == 1
+    total = cross[cross["Safety Review"] == "總計"].iloc[0]
+    assert int(total["空白 列數"]) == 1 and int(total["合計 列數"]) == 3
+
+
+def test_om_case_insensitive_grouping_and_transfer():
+    rows = [dict(r) for r in _SCENARIO_OM]
+    rows[2]["OM"] = "ivy"  # M11 與 T11 (Ivy) 同組（大小寫不敏感）
+    raw, _, _, _, _, stats, _ = transform_hybrid(_df(rows), dimension="om")
+    assert stats["dimension"] == "om"
+    assert stats["om_groups"] == ["Ivy", "Max"]  # 顯示沿用首見原值
+    assert _get(raw, "M11", "OM") == "Ivy"
+    # 同OM調貨跨大小寫成功：T11 需求 9 件由同組 M11（Mix 超額 11 件）全數補足
+    assert int(_get(raw, "T11", "實際調入量 (同OM)")) == 9
+    assert int(_get(raw, "T11", "調入缺口 (同OM)")) == 0
+
+
+def test_literal_blank_label_om_does_not_fallback():
+    # 真實 OM 名恰為「空白」且來源非空 → 不可誤判為全欄空白而退回
+    rows = [dict(r) for r in _SCENARIO_A]
+    for r in rows:
+        r["OM"] = "空白"
+    _, _, _, _, _, stats, _ = transform_hybrid(_df(rows), dimension="om")
+    assert stats["dimension"] == "om"
+    assert stats["om_groups"] == ["空白"]

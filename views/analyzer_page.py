@@ -31,6 +31,7 @@ from transformer import (
     _HYBRID_SAFETY_DAYS_DEFAULT, _HYBRID_SAFETY_DAYS_MIN, _HYBRID_SAFETY_DAYS_MAX,
     _hybrid_safety_days_label,
     _HYBRID_DIMENSION_LABELS,
+    _hybrid_skew_hint_text,
 )
 import time
 import traceback
@@ -74,17 +75,17 @@ def _style_inventory_skew(df: pd.DataFrame):
     if df is None or df.empty or hint_col not in df.columns:
         return df
 
-    import re as _re
-
     def _row_styles(row):
         hint = str(row.get(hint_col, "") or "")
         styles = [""] * len(row)
         if hint.strip():
             targets = {hint_col}
-            for grp in _re.findall(r"存貨偏重 ([^（]+)（", hint):
-                col = f"{grp.strip()} 加總 - Shop Stock Qty (CM) %"
-                if col in row.index:
-                    targets.add(col)
+            # 由欄位反推群組名（不以正則解析提示文字，避免群組名含全形括號時截斷）
+            _suffix = " 加總 - Shop Stock Qty (CM) %"
+            for col in row.index:
+                if isinstance(col, str) and col.endswith(_suffix):
+                    if f"存貨偏重 {col[:-len(_suffix)]}" in hint:
+                        targets.add(col)
             for i, col in enumerate(row.index):
                 if col in targets:
                     styles[i] = "background-color: #FFC000; font-weight: 700"
@@ -612,7 +613,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）或 Shop Nature＋RP Type 分類，影響需求方過濾與 Summary／交叉表分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
+        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM 或 Shop Nature＋OM 分類；其中 OM 兩個維度計算與預設相同，僅 Summary／交叉表改按 OM 或 Nature×OM 分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -632,6 +633,8 @@ if uploaded_file is not None:
             "🏬 以 Shop Nature 分類（預設）": "nature",
             "🏷️ 以 RP Type 分類": "rp",
             "🔀 以 Shop Nature＋RP Type 分類": "both",
+            "🗺️ 以 OM 分類": "om",
+            "🧩 以 Shop Nature＋OM 分類": "nature_om",
         }
         _hybrid_dim_label = st.radio(
             "🗂️ 分類維度",
@@ -645,8 +648,11 @@ if uploaded_file is not None:
                  "以 RP Type 分類：需求方＝任何 Nature 且 RF 的店舖（Mix／Non Tourist 缺貨亦可調入，含同 Nature 店間再平衡）；"
                  "供應方維持 Mix／Non Tourist。\n"
                  "以 Shop Nature＋RP Type 分類：計算與預設相同，Summary／交叉表按 6 組（如 Tourist-RF、Mix-ND）呈現。\n"
+                 "以 OM 分類：計算與預設相同，Summary／交叉表按來源 OM 欄的不重複值分組呈現。\n"
+                 "以 Shop Nature＋OM 分類：計算與預設相同，Summary／交叉表按 Nature×OM 組合（如 Tourist-XXX）呈現。\n"
                  "RP Type 為 ND（不可補貨）的店舖列一律不作需求方（仍可作供應方）；其他／空白值歸入 ND 並列 warning；"
-                 "來源缺「RP Type」欄時全部列按 RF 處理並退回 Shop Nature 維度。"
+                 "來源缺「RP Type」欄時全部列按 RF 處理並退回 Shop Nature 維度（OM 維度不退回）。"
+                 "來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature 維度。"
         )
         _dimension = _hybrid_dim_options[_hybrid_dim_label]
         st.markdown("**🛡️ Safety 基準周轉天數（按 Shop Nature 分別設定；與調貨段的 14 日線互不影響）**")
@@ -742,11 +748,26 @@ if uploaded_file is not None:
                 "🔀 目前維度＝Shop Nature＋RP Type：調貨計算與預設相同（需求 Tourist-RF、供應 Mix／Non Tourist），"
                 "Summary 與交叉表按 6 組（Tourist-RF、Tourist-ND、Mix-RF、Mix-ND、Non Tourist-RF、Non Tourist-ND）呈現。"
             )
+        elif _dimension == "om":
+            st.caption(
+                "🗺️ 目前維度＝以 OM 分類：調貨計算與預設相同（需求 Tourist-RF、供應 Mix／Non Tourist），"
+                "Summary 與交叉表按來源 OM 欄的不重複值分組呈現；來源缺「OM」欄或全欄空白時退回 Shop Nature 維度。"
+            )
+        elif _dimension == "nature_om":
+            st.caption(
+                "🧩 目前維度＝Shop Nature＋OM：調貨計算與預設相同（需求 Tourist-RF、供應 Mix／Non Tourist），"
+                "Summary 與交叉表按 Nature×OM 組合（如 Tourist-XXX）呈現；來源缺「OM」欄或全欄空白時退回 Shop Nature 維度。"
+            )
         else:
             st.caption(
                 "🏬 目前維度＝以 Shop Nature 分類（預設）：需求方僅 Tourist 且 RP Type＝RF 的店舖"
                 "（ND 列不作需求方，仍可作供應方）；Summary 與交叉表按 Tourist／Mix／Non Tourist 分組。"
             )
+        st.caption(
+            f"📦 存貨偏重提示門檻（隨分類維度切換，目前維度：{_hybrid_skew_hint_text(_dimension)}；"
+            "觸發的分組以醒目橘底加強顯示）——完整對照：Shop Nature／RP Type／Nature＋RP Type 為庫存佔比 ≥ 40% 且差距 ≥ 20 個百分點；"
+            "OM 為 ≥ 25% 且差距 ≥ 12 個百分點；Nature＋OM 為 ≥ 12% 且差距 ≥ 8 個百分點。"
+        )
         st.caption(
             f"🧭 Review 基準：Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 基準天數)，"
             f"目前基準 = {_hybrid_safety_days_label(_safety_days)}；"
@@ -919,7 +940,7 @@ if uploaded_file is not None:
                         st.dataframe(_style_inventory_skew(_skewed), width='stretch', hide_index=True)
                     st.markdown("**全部 SKU Summary**")
                     st.dataframe(_style_inventory_skew(sc_summary), width='stretch', hide_index=True)
-                    st.caption(f"共 {len(sc_summary):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = 某分組庫存佔比 ≥ 40% 且較銷量佔比高 ≥ 20 個百分點；偏重數值以橘色底色加強顯示。")
+                    st.caption(f"共 {len(sc_summary):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = {_hybrid_skew_hint_text(applied_hybrid_dimension)}；偏重數值以橘色底色加強顯示。")
                 else:
                     st.info("無符合資料")
             with tab_issue:

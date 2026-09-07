@@ -5831,8 +5831,26 @@ _HYBRID_DIAG_NATURES = ["Tourist", "Mix", "Non Tourist"]
 # nature：以 Shop Nature 分類（預設；需求方 Tourist-RF）
 # rp：以 RP Type 分類（需求方任何 Nature 的 RF 列，供應方維持 Mix／Non Tourist，允許同 Nature 互調）
 # both：以 Shop Nature＋RP Type 分類（6 組；計算同 nature 模式，僅分組顯示不同）
-_HYBRID_DIMENSIONS = ("nature", "rp", "both")
-_HYBRID_DIMENSION_LABELS = {"nature": "Shop Nature", "rp": "RP Type", "both": "Shop Nature＋RP Type"}
+# om：以 OM 分類（動態 OM 名單；計算同 nature 模式，僅分組顯示不同）
+# nature_om：以 Shop Nature＋OM 分類（3×N 組；計算同 nature 模式，僅分組顯示不同）
+_HYBRID_DIMENSIONS = ("nature", "rp", "both", "om", "nature_om")
+_HYBRID_DIMENSION_LABELS = {
+    "nature": "Shop Nature",
+    "rp": "RP Type",
+    "both": "Shop Nature＋RP Type",
+    "om": "OM",
+    "nature_om": "Shop Nature＋OM",
+}
+# 存貨偏重提示門檻（庫存佔比下限，庫存佔比 − 銷量佔比差距下限）：
+# nature／rp／both 沿用現行契約；om（約 7 組）與 nature_om（3×N 組）因組數多、
+# 平均佔比低，沿用原門檻幾乎不會觸發，故分別下調。
+_HYBRID_SKEW_THRESHOLDS = {
+    "nature": (0.40, 0.20),
+    "rp": (0.40, 0.20),
+    "both": (0.40, 0.20),
+    "om": (0.25, 0.12),
+    "nature_om": (0.12, 0.08),
+}
 _HYBRID_RP_GROUPS = ("RF", "ND")
 _HYBRID_COMBINED_GROUPS = tuple(
     f"{n}-{r}" for n in ("Tourist", "Mix", "Non Tourist") for r in _HYBRID_RP_GROUPS
@@ -5845,14 +5863,67 @@ def _hybrid_dimension(dimension) -> str:
     return d if d in _HYBRID_DIMENSIONS else "nature"
 
 
-def _hybrid_dimension_groups(dimension) -> tuple[str, ...]:
-    """分類維度對應的彙總分組名稱（Summary／交叉表欄位按此切換）。"""
+def _hybrid_dimension_groups(dimension, om_groups=None) -> tuple[str, ...]:
+    """分類維度對應的彙總分組名稱（Summary／交叉表欄位按此切換）。
+
+    om 維度回傳動態 OM 名單（排序後不重複值）；nature_om 回傳完整笛卡兒積
+    （Nature 外層固定順序、OM 內層排序）。om_groups 缺省時退回單一
+    「空白」群組，呼叫端應傳入實際名單（transform 內由 OM 欄推導，
+    Excel 回退路徑由 stats 或 raw 重建）。
+    """
     d = _hybrid_dimension(dimension)
     if d == "rp":
         return _HYBRID_RP_GROUPS
     if d == "both":
         return _HYBRID_COMBINED_GROUPS
+    if d == "om":
+        return tuple(sorted(om_groups)) if om_groups else (_HYBRID_OM_BLANK_LABEL,)
+    if d == "nature_om":
+        oms = tuple(sorted(om_groups)) if om_groups else (_HYBRID_OM_BLANK_LABEL,)
+        return tuple(f"{n}-{o}" for n in _HYBRID_DIAG_NATURES for o in oms)
     return tuple(_HYBRID_DIAG_NATURES)
+
+
+# OM 空白群組顯示名（空白 OM 自成一組，令使用者察覺未安排 OM 的店舖）
+_HYBRID_OM_BLANK_LABEL = "空白"
+
+
+def _normalize_hybrid_om(series: pd.Series) -> tuple[pd.Series, tuple[str, ...]]:
+    """OM 正規化（混合模式固定規則）：去除前後空格；空白歸入「空白」群組；
+    大小寫不敏感（Ivy＝ivy），顯示沿用首見原值。
+    回傳 (顯示值序列, 排序後不重複名單)。"""
+    raw = series.fillna("").astype(str).str.strip()
+    disp = raw.mask(raw == "", _HYBRID_OM_BLANK_LABEL)
+    key = disp.str.lower()
+    first: dict[str, str] = {}
+    for k, d in zip(key.tolist(), disp.tolist()):
+        if k not in first:
+            first[k] = d
+    canon = pd.Series([first[k] for k in key.tolist()], index=series.index)
+    return canon, tuple(sorted(set(first.values())))
+
+
+def _hybrid_om_groups_from_values(values) -> tuple[str, ...]:
+    """由 OM 欄值推導排序後不重複的 OM 名單（去除前後空格，空白歸入「空白」）。
+    輸入應為已正規化值（transform_hybrid 輸出）；直接傳入大小寫變體時不合併。
+    """
+    cleaned: list[str] = []
+    for v in values:
+        text = "" if pd.isna(v) else str(v).strip()
+        cleaned.append(text if text else _HYBRID_OM_BLANK_LABEL)
+    uniq = sorted(set(cleaned))
+    return tuple(uniq) if uniq else (_HYBRID_OM_BLANK_LABEL,)
+
+
+def _hybrid_skew_thresholds(dimension) -> tuple[float, float]:
+    """存貨偏重提示門檻（庫存佔比下限，差距下限），按分類維度切換。"""
+    return _HYBRID_SKEW_THRESHOLDS.get(_hybrid_dimension(dimension), (0.40, 0.20))
+
+
+def _hybrid_skew_hint_text(dimension) -> str:
+    """存貨偏重提示門檻的文字描述（供 UI 與文件使用）。"""
+    share, gap = _hybrid_skew_thresholds(dimension)
+    return f"某分組庫存佔比 ≥ {share:.0%} 且較銷量佔比高 ≥ {gap * 100:.0f} 個百分點"
 
 # ── Safety 基準周轉天數（Review 線；與調貨段的 14 日線分開，Safety 不跟隨存貨周轉）──
 _HYBRID_SAFETY_DAYS_DEFAULT = {"Tourist": 7, "Mix": 9, "Non Tourist": 10}
@@ -6270,21 +6341,34 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
     return out
 
 
-def _hybrid_diag_summary_columns(dimension: str = "nature") -> list[str]:
+def _hybrid_diag_summary_columns(dimension: str = "nature", om_groups=None) -> list[str]:
     cols = ["Safety Review"]
-    for g in _hybrid_dimension_groups(dimension):
+    for g in _hybrid_dimension_groups(dimension, om_groups=om_groups):
         cols += [f"{g} 列數", f"{g} SKU 數", f"{g} 建議調整量合計"]
     cols += ["合計 列數", "合計 SKU 數", "合計 建議調整量"]
     return cols
 
 
-def _hybrid_group_key_series(df: pd.DataFrame, dimension: str) -> pd.Series:
-    """依分類維度產生每列的分組鍵（nature→Shop Nature；rp→RP Type；both→Nature-RP）。
-    RP Type 為正規化後值；缺欄時一律按 RF（可補貨）處理，與 transform_hybrid 同口徑。"""
+def _hybrid_group_key_series(df: pd.DataFrame, dimension: str, om_groups=None) -> pd.Series:
+    """依分類維度產生每列的分組鍵（nature→Shop Nature；rp→RP Type；both→Nature-RP；
+    om→OM；nature_om→Nature-OM）。
+    RP Type 為正規化後值；缺欄時一律按 RF（可補貨）處理，與 transform_hybrid 同口徑。
+    OM 空白歸入「空白」，與 transform_hybrid 同口徑（om_groups 僅決定欄位集合，
+    不影響逐列鍵值）。"""
     d = _hybrid_dimension(dimension)
     nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     if d == "nature":
         return nature
+    if d in ("om", "nature_om"):
+        om = (
+            df["OM"].fillna("").astype(str).str.strip()
+            if "OM" in df.columns
+            else _safe_default_series("", df.index)
+        )
+        om = pd.Series(np.where(om == "", _HYBRID_OM_BLANK_LABEL, om), index=df.index)
+        if d == "om":
+            return om
+        return nature + "-" + om
     rp = (
         df["RP Type"].fillna("").astype(str).str.strip().str.upper()
         if "RP Type" in df.columns
@@ -6296,10 +6380,16 @@ def _hybrid_group_key_series(df: pd.DataFrame, dimension: str) -> pd.Series:
     return nature + "-" + rp
 
 
-def _build_hybrid_diag_summary(raw: pd.DataFrame, dimension: str = "nature") -> pd.DataFrame:
-    """Safety Review × 分類維度（預設 Shop Nature）交叉表（列數 / SKU 數 / 建議調整量合計），含總計列。"""
-    cols = _hybrid_diag_summary_columns(dimension)
-    groups = _hybrid_dimension_groups(dimension)
+def _build_hybrid_diag_summary(raw: pd.DataFrame, dimension: str = "nature", om_groups=None) -> pd.DataFrame:
+    """Safety Review × 分類維度（預設 Shop Nature）交叉表（列數 / SKU 數 / 建議調整量合計），含總計列。
+    om／nature_om 維度由 OM 欄推導動態分組（om_groups 缺省時由 raw 即時推導）。"""
+    dim = _hybrid_dimension(dimension)
+    if dim in ("om", "nature_om") and om_groups is None and raw is not None and not raw.empty:
+        om_groups = _hybrid_om_groups_from_values(
+            raw["OM"] if "OM" in raw.columns else _safe_default_series("", raw.index)
+        )
+    cols = _hybrid_diag_summary_columns(dim, om_groups=om_groups)
+    groups = _hybrid_dimension_groups(dim, om_groups=om_groups)
     if raw is None or raw.empty or "事件類型" not in raw.columns:
         return pd.DataFrame(columns=cols)
     df = raw[raw["事件類型"].fillna("").astype(str) != ""].copy()
@@ -6308,7 +6398,7 @@ def _build_hybrid_diag_summary(raw: pd.DataFrame, dimension: str = "nature") -> 
     df["_chg"] = pd.to_numeric(
         df.get("Safety 建議調整量", _safe_default_series(np.nan, df.index)), errors="coerce"
     ).fillna(0)
-    grp = _hybrid_group_key_series(df, dimension)
+    grp = _hybrid_group_key_series(df, dim, om_groups=om_groups)
     diag = df["Safety Review"].fillna("").astype(str)
 
     def _agg(sub: pd.DataFrame) -> dict:
@@ -6660,6 +6750,9 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
     return {
         "safety_days": _hybrid_safety_days_from_raw(raw, nature),
         "dimension": "nature",
+        "om_groups": list(_hybrid_om_groups_from_values(
+            raw["OM"] if raw is not None and not raw.empty and "OM" in raw.columns
+            else _safe_default_series("", raw.index if raw is not None else []))),
         "need_rows": int(need.sum()),
         "need_skus": int(raw.loc[need, "SKU"].nunique()) if need.any() else 0,
         "total_demand": int(_safe_numeric(raw.get("調入需求量 (補到14日)", _safe_default_series(0, raw.index))).sum()),
@@ -6851,15 +6944,20 @@ def transform_hybrid(
     """Safety Stock x NetStock Review 核心轉換（調貨事件 Review Safety 設定）。
 
     - 分類維度（dimension，預設 "nature" 維持現行契約）：
-      "nature"＝以 Shop Nature 分類；"rp"＝以 RP Type 分類；"both"＝Shop Nature＋RP Type（6 組）。
+      "nature"＝以 Shop Nature 分類；"rp"＝以 RP Type 分類；"both"＝Shop Nature＋RP Type（6 組）；
+      "om"＝以 OM 分類（動態 OM 名單）；"nature_om"＝Shop Nature＋OM（3×N 組）。
       維度決定需求方過濾與 Summary／交叉表分組，**不改變 TurnDay 池與 Safety 基準天數
       （兩者恆按 Shop Nature）**。RP Type 正規化：RF＝可補貨、ND＝不可補貨；
       其他／空白歸 ND 並列 warning。來源缺「RP Type」欄時全部列按 RF 處理
-      （ND 排除規則無法套用）、維度退回 nature 並列 warning。
-      需求方一律排除 ND 列（ND 不作調入方，仍可作供應方）——三種維度皆適用：
-      nature／both 需求方為 Tourist-RF；rp 需求方為任何 Nature 的 RF 列，
+      （ND 排除規則無法套用）；rp／both 維度退回 nature 並列 warning，
+      om／nature_om 維度不退回（OM 分組不依賴 RP Type）。
+      需求方一律排除 ND 列（ND 不作調入方，仍可作供應方）——五種維度皆適用：
+      nature／both／om／nature_om 需求方為 Tourist-RF（後兩者計算與 nature 完全相同，
+      僅 Summary／交叉表分組不同）；rp 需求方為任何 Nature 的 RF 列，
       且取消「需求 Nature 自身除外」守衛與池級歸零（允許同 Nature 店間再平衡）。
-      供應方三種維度皆維持 Mix／Non Tourist（勾選雙向時另加 Tourist）。
+      供應方五種維度皆維持 Mix／Non Tourist（勾選雙向時另加 Tourist）。
+      OM 分組：OM 欄去除前後空格、空白歸入「空白」群組、大小寫不敏感（Ivy＝ivy，顯示沿用首見原值）、按字串排序；
+      來源缺「OM」欄或全欄空白時 om／nature_om 退回 nature 並列 warning。
       非法維度值退回 nature，不拋錯。
     - 調貨段：與 Stock Checking 同規則（SKU 級加總 TurnDay、Nature 供應門檻、
       14 日需求/可轉出、NT 優先→Mix 補足、需求量大→小），另疊加本模式特有的
@@ -6902,7 +7000,8 @@ def transform_hybrid(
     - OM 變體：分配跑兩遍——不限OM（契約欄位）與同OM（來源店須與需求店同 OM，
       欄位加「(同OM)」後綴）；Safety Review 與建議調整量兩變體相同，不受調貨限制影響。
     - Summary：附 Stock Checking 的 SKU 級彙總（按分類維度分組：nature 三組／rp 兩組／
-      both 六組；庫存/月銷加總、TurnDay、佔比、強制調貨提示、存貨偏重提示），
+      both 六組／om 動態 OM 名單／nature_om 三 Nature × OM；庫存/月銷加總、TurnDay、佔比、
+      強制調貨提示、存貨偏重提示（門檻按維度切換）），
       供查閱哪些 SKU 存貨偏重哪個分組。
     - Buyer 統計：沿用 Stock Checking 的 Buyer 需調貨 SKU 統計（同 SKU 首個非空 Buyer，
       已刪除重複），另加 Buyer 需調整 Safety SKU 統計（Safety 設定不足＋過高母體，
@@ -6912,7 +7011,8 @@ def transform_hybrid(
       ref_date 預設為今天，建議傳入 MTD 截止日期（與報表數據口徑一致）。
     回傳 (raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warnings)；
     stats["safety_days"] 為實際採用的各 Nature 基準天數；
-    stats["dimension"] 為實際採用的分類維度（rp 欄缺失退回 nature 時亦為 nature）；
+    stats["dimension"] 為實際採用的分類維度（rp／both 缺 RP 欄、om／nature_om 缺 OM 分組時退回 nature）；
+    stats["om_groups"] 為排序後不重複的 OM 名單（供 Excel 重建動態欄位用）；
     stats["nd_priority"] 為 ND 優先轉出的請求狀態（缺 RP Type 欄時不生效，nd_transfer 恆為 0）；
     stats["nd_transfer"]／["nd_transfer_om"] 為 RP Type＝ND 來源列的轉出量合計（不限OM／同OM）；
     stats["buyer_need_skus"] 為 [(Buyer, 需調貨 SKU 數)]；
@@ -6943,14 +7043,18 @@ def transform_hybrid(
     warnings.extend(_transfer_input_consistency_warnings(df))
 
     # ── 分類維度與 RP Type 正規化（RF＝可補貨、ND＝不可補貨；ND 列不作調貨需求方）──
+    # om／nature_om 維度按 OM 分組，不依賴 RP Type，故缺 RP 欄時不退回（仍按 RF 處理）；
+    # 僅 rp／both 維度缺 RP 欄時退回 nature。
     dim = _hybrid_dimension(dimension)
     df, mapped_rp, rp_present = _normalize_hybrid_rp_type(df)
     if not rp_present:
+        _rp_fallback = dim in ("rp", "both")
         warnings.append(
             "來源檔案缺少「RP Type」欄位，ND 列排除規則無法套用（全部列按可補貨 RF 處理）"
-            + ("，分類維度已退回 Shop Nature。" if dim != "nature" else "。")
+            + ("，分類維度已退回 Shop Nature。" if _rp_fallback else "。")
         )
-        dim = "nature"
+        if _rp_fallback:
+            dim = "nature"
     elif mapped_rp:
         warnings.append(
             f"有 {mapped_rp} 列 RP Type 無法辨識（非 RF／ND 或空白），已正規化為 ND"
@@ -7135,19 +7239,32 @@ def transform_hybrid(
     sku_arr = df["SKU"].to_numpy(dtype=object)
     n_rows = len(df)
 
-    # ── OM 群組（同OM調貨變體用）：欄缺失→全部同群組並 warning；空白→(未填OM) ──
+    # ── OM 群組（同OM調貨變體與 om／nature_om 分類維度用）：
+    # 去除前後空格；空白自成「空白」群組；大小寫不敏感（顯示沿用首見原值）──
     om_col = _resolve_column_name("OM", set(df.columns))
     if om_col is None:
         warnings.append("來源檔案缺少「OM」欄位，「同OM調貨」無法區分店群，全部店舖視為同一組（結果與不限OM相同）。")
-        df["OM"] = "(未填OM)"
-        om_arr = np.full(n_rows, "(未填OM)", dtype=object)
+        om_src = _safe_default_series("", idx)
+        n_om_blank = n_rows
     else:
-        om_raw = df[om_col].fillna("").astype(str).str.strip()
-        n_om_blank = int((om_raw == "").sum())
-        if n_om_blank:
-            warnings.append(f"有 {n_om_blank} 列「OM」空白，同OM調貨時歸入「(未填OM)」群組。")
-        om_arr = om_raw.replace("", "(未填OM)").to_numpy(dtype=object)
-        df["OM"] = om_arr
+        om_src = df[om_col]
+        n_om_blank = int((om_src.fillna("").astype(str).str.strip() == "").sum())
+        if 0 < n_om_blank < n_rows:
+            warnings.append(
+                f"有 {n_om_blank} 列「OM」空白，已歸入「空白」群組"
+                "（同OM調貨與 OM 分類均視為同一 OM，請檢查該等店舖是否已安排 OM）。"
+            )
+    om_disp, om_groups = _normalize_hybrid_om(om_src)
+    df["OM"] = om_disp
+    # 同OM調貨比對鍵（大小寫不敏感；顯示值另存 df["OM"] 供 RAW／主表稽核）
+    om_arr = om_disp.str.lower().to_numpy(dtype=object)
+    # 退回條件按來源是否全空判斷（不以顯示名比對，避免真實 OM 名與「空白」碰撞）
+    if dim in ("om", "nature_om") and (om_col is None or n_om_blank == n_rows):
+        if om_col is None:
+            warnings.append("來源檔案缺少「OM」欄位，無法按 OM 分組，分類維度已退回 Shop Nature。")
+        else:
+            warnings.append("「OM」欄全欄空白，無法按 OM 分組，分類維度已退回 Shop Nature。")
+        dim = "nature"
 
     # ── 調貨分配：不限OM（現行契約欄位）＋ 同OM（來源店與需求店同 OM 才可轉出）──
     # rp 維度取消「需求 Nature 自身除外」守衛（允許同 Nature 店間再平衡）；
@@ -7280,12 +7397,13 @@ def transform_hybrid(
         )
     diagnosis = _build_hybrid_diagnosis(raw)
     diagnosis_om = _build_hybrid_diagnosis(raw, variant="om")
-    diag_summary = _build_hybrid_diag_summary(raw, dimension=dim)
-    sc_summary = _build_stock_checking_summary(raw, bidirectional=bidirectional, dimension=dim)
+    diag_summary = _build_hybrid_diag_summary(raw, dimension=dim, om_groups=om_groups)
+    sc_summary = _build_stock_checking_summary(raw, bidirectional=bidirectional, dimension=dim, om_groups=om_groups)
 
     stats = {
         "safety_days": dict(_safety_days),
         "dimension": dim,
+        "om_groups": list(om_groups),
         "ref_date": _ref_date.isoformat(),
         "turnday_threshold": int(turnday_threshold),
         "d001_threshold": int(d001_threshold),
@@ -7694,9 +7812,11 @@ def generate_excel_hybrid(
     """Safety Stock x NetStock Review 輸出（8 工作表，順序固定）：
     RAW（重新排列欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄；含不限OM與同OM兩套調貨結果；
     雙向時另含「可轉出貨量 (Tourist)」）/
-    Summary（SKU 級彙總，按 stats["dimension"] 分類維度分組：nature 三組／rp 兩組／both 六組；
-    各組加總/TurnDay/涉及店舖數/佔比、強制調貨提示、存貨偏重提示；nature 雙向時另加 AD 欄
-    「由Tourist 店舖預計調出數量」）/
+    Summary（SKU 級彙總，按 stats["dimension"] 分類維度分組：nature 三組／rp 兩組／both 六組／
+    om 動態 OM 名單／nature_om 三 Nature × OM（動態 OM 名單由 stats["om_groups"] 還原，
+    缺失時由 raw 即時推導）；
+    各組加總/TurnDay/涉及店舖數/佔比、強制調貨提示、存貨偏重提示（門檻按維度切換）；
+    nature 雙向時另加 AD 欄「由Tourist 店舖預計調出數量」）/
     調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM)（店舖×SKU 主表含 RP Type 欄）/
     店舖問題 SKU（每間店舖需行動列：問題＋建議方法）/
   Review 摘要（指標卡 4 排（雙向或 ND 店舖有實際轉出時 5 排）+ Safety Review × 分類維度交叉表
@@ -7711,6 +7831,12 @@ def generate_excel_hybrid(
     if diagnosis_om is None:
         diagnosis_om = _build_hybrid_diagnosis(raw, variant="om")
     _dim = _hybrid_dimension((stats or {}).get("dimension"))
+    _om_groups = (stats or {}).get("om_groups")
+    if _om_groups is None and raw is not None and not raw.empty:
+        _om_groups = _hybrid_om_groups_from_values(
+            raw["OM"] if "OM" in raw.columns else _safe_default_series("", raw.index)
+        )
+    _om_groups = tuple(_om_groups) if _om_groups else None
     _ref_date = None
     try:
         if stats and stats.get("ref_date"):
@@ -7718,10 +7844,10 @@ def generate_excel_hybrid(
     except ValueError:
         _ref_date = None
     if diag_summary is None:
-        diag_summary = _build_hybrid_diag_summary(raw, dimension=_dim)
+        diag_summary = _build_hybrid_diag_summary(raw, dimension=_dim, om_groups=_om_groups)
     _bidirectional = raw is not None and "可轉出貨量 (Tourist)" in raw.columns
     if sc_summary is None:
-        sc_summary = _build_stock_checking_summary(raw, bidirectional=_bidirectional, dimension=_dim)
+        sc_summary = _build_stock_checking_summary(raw, bidirectional=_bidirectional, dimension=_dim, om_groups=_om_groups)
     wb = Workbook()
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
@@ -7742,7 +7868,7 @@ def generate_excel_hybrid(
 
     # ── Sheet 2: Summary（SKU 級彙總，按分類維度分組；雙向時另加 AD 欄；偏重提示以醒目橘底加強顯示）──
     ws_sc = wb.create_sheet(title="Summary")
-    _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38, bidirectional=_bidirectional, highlight_skew=True, dimension=_dim)
+    _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38, bidirectional=_bidirectional, highlight_skew=True, dimension=_dim, om_groups=_om_groups)
 
     if progress_callback:
         progress_callback(0.40, "建立調貨 Review 主表 (不限OM)...")
@@ -8666,14 +8792,15 @@ _STOCK_CHECKING_SUMMARY_COLUMNS = [
 ]
 
 
-def _stock_checking_summary_columns(dimension: str = "nature", bidirectional: bool = False) -> list[str]:
+def _stock_checking_summary_columns(dimension: str = "nature", bidirectional: bool = False, om_groups=None) -> list[str]:
     """Summary 欄序（按分類維度切換分組欄位）：
     nature＝三 Nature（現行契約，含雙向時末尾「由Tourist 店舖預計調出數量」）；
-    rp＝RF／ND 兩組；both＝六組（Tourist-RF … Non Tourist-ND）。
+    rp＝RF／ND 兩組；both＝六組（Tourist-RF … Non Tourist-ND）；
+    om＝動態 OM 名單；nature_om＝三 Nature × OM 笛卡兒積。
     每組加總區為加總庫存／加總月銷／TurnDay／涉及店舖數四欄（店舖數＝同 SKU 同組
     Site Code 不重複計數，空白 Site Code 不計）。"""
     dim = _hybrid_dimension(dimension)
-    groups = _hybrid_dimension_groups(dim)
+    groups = _hybrid_dimension_groups(dim, om_groups=om_groups)
     cols = ["Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Supply Source", "D001 Net Stock Qty (CM)"]
     for gname in groups:
         cols += [
@@ -8699,13 +8826,14 @@ def _stock_checking_summary_columns(dimension: str = "nature", bidirectional: bo
 
 
 def _build_stock_checking_summary(
-    raw: pd.DataFrame, bidirectional: bool = False, dimension: str = "nature"
+    raw: pd.DataFrame, bidirectional: bool = False, dimension: str = "nature", om_groups=None
 ) -> pd.DataFrame:
     """SKU 級 Summary（參考 By SKUxShop_Stock Checking_Output 格式）：
 
     - 每個 SKU 一列：Brand / SKU / SKU Desc / Buyer / Adj. SST / Supply Source / D001 Net Stock Qty (CM)
       （Buyer、Adj. SST 取同 SKU 首個非空值作代表）
-    - 按分類維度分組（dimension：nature 三組／rp 兩組 RF／ND／both 六組）加總
+    - 按分類維度分組（dimension：nature 三組／rp 兩組 RF／ND／both 六組／
+      om 動態 OM 名單／nature_om 三 Nature × OM 笛卡兒積；om_groups 缺省時由 raw 即時推導）加總
       Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)，
       TurnDay = 加總庫存 ÷ 加總月銷 × 30.5（月銷為 0 時留空）；除佔比外一律取整顯示
     - 各組涉及店舖數：同 SKU 同組的 Site Code 不重複計數（空白 Site Code 不計），
@@ -8713,16 +8841,22 @@ def _build_stock_checking_summary(
     - 各組佔比 (%)：該組加總 ÷ 全部分組加總合計（0-1 小數，Excel 以 0.00% 顯示；
       合計為 0 時留空；nature 維度僅計 Tourist / Mix / Non Tourist 精確比對）
     - 強制調貨提示：該 SKU 有任何店舖列被標示「需要調貨」時顯示「需要調貨」
-    - 存貨偏重提示：某分組庫存佔比 ≥ 40% 且庫存佔比 − 銷量佔比 ≥ 20 個百分點 →
+    - 存貨偏重提示：按維度門檻（nature／rp／both：庫存佔比 ≥ 40% 且差距 ≥ 20 個百分點；
+      om：≥ 25% 且差距 ≥ 12 個百分點；nature_om：≥ 12% 且差距 ≥ 8 個百分點）→
       「存貨偏重 {分組}（庫存 x% / 銷量 y%）」，多組以；分隔（差距大者在前）
     - 由 X 店舖預計調出數量 = 該 SKU 對應分組來源店的「轉出量」加總；
       nature 維度：Non Tourist / Mix 固定、bidirectional=True 時另加「由Tourist 店舖預計調出數量」
-      （置於欄序最後，A–AC 契約欄位不動）；rp／both 維度：每個分組各一欄
+      （置於欄序最後，A–AC 契約欄位不動）；rp／both／om／nature_om 維度：每個分組各一欄
     """
     if raw is None or raw.empty:
         return pd.DataFrame()
     dim = _hybrid_dimension(dimension)
-    groups = _hybrid_dimension_groups(dim)
+    if dim in ("om", "nature_om") and om_groups is None:
+        om_groups = _hybrid_om_groups_from_values(
+            raw["OM"] if "OM" in raw.columns else _safe_default_series("", raw.index)
+        )
+    groups = _hybrid_dimension_groups(dim, om_groups=om_groups)
+    skew_share, skew_gap = _hybrid_skew_thresholds(dim)
     df = raw.copy()
     df["_sku"] = df["SKU"]
     df = df[df["_sku"].notna()]
@@ -8731,6 +8865,14 @@ def _build_stock_checking_summary(
     df["_nature"] = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     if dim == "nature":
         df["_grp"] = df["_nature"]
+    elif dim in ("om", "nature_om"):
+        _om = (
+            df["OM"].fillna("").astype(str).str.strip()
+            if "OM" in df.columns
+            else _safe_default_series("", df.index)
+        )
+        _om = pd.Series(np.where(_om == "", _HYBRID_OM_BLANK_LABEL, _om), index=df.index)
+        df["_grp"] = _om if dim == "om" else df["_nature"] + "-" + _om
     else:
         rp = (
             df["RP Type"].fillna("").astype(str).str.strip().str.upper()
@@ -8801,14 +8943,14 @@ def _build_stock_checking_summary(
                 round(msold_sum / _total_msold, 4) if _total_msold > 0 else None
             )
         row["強制調貨提示"] = "需要調貨" if bool(g["_need"].any()) else ""
-        # 存貨偏重提示：某分組庫存佔比 ≥ 40% 且（庫存佔比 − 銷量佔比）≥ 20 個百分點
+        # 存貨偏重提示：按維度門檻（見 _HYBRID_SKEW_THRESHOLDS）
         _hints: list[tuple[float, str]] = []
         if _total_stock > 0:
             for grp_name in groups:
                 stock_sum, msold_sum = _sums[grp_name]
                 s_share = stock_sum / _total_stock
                 v_share = (msold_sum / _total_msold) if _total_msold > 0 else 0.0
-                if s_share >= 0.40 and (s_share - v_share) >= 0.20:
+                if s_share >= skew_share and (s_share - v_share) >= skew_gap:
                     _hints.append((s_share - v_share,
                                    f"存貨偏重 {grp_name}（庫存 {s_share:.1%} / 銷量 {v_share:.1%}）"))
         row["存貨偏重提示"] = "；".join(h for _, h in sorted(_hints, key=lambda t: -t[0]))
@@ -8816,7 +8958,7 @@ def _build_stock_checking_summary(
 
     summary = pd.DataFrame(rows)
     summary = summary.sort_values(["Brand", "SKU"], kind="stable").reset_index(drop=True)
-    ordered = _stock_checking_summary_columns(dim, bidirectional=bidirectional)
+    ordered = _stock_checking_summary_columns(dim, bidirectional=bidirectional, om_groups=om_groups)
     ordered = [c for c in ordered if c in summary.columns]
     trailing = [c for c in summary.columns if c not in ordered]
     return summary[ordered + trailing]
@@ -9023,24 +9165,54 @@ def transform_stock_checking(
     return df, summary, stats, warnings
 
 
-def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30, bidirectional: bool = False, highlight_skew: bool = False, dimension: str = "nature"):
+def _hybrid_om_groups_from_summary_columns(summary: pd.DataFrame, dimension: str) -> tuple[str, ...] | None:
+    """由已產生的 Summary 欄位反推 OM 名單（Excel 寫入回退路徑用）。
+
+    om 維度欄形如「{OM} 加總 - Shop Stock Qty (CM)」；nature_om 維度欄形如
+    「{Nature}-{OM} 加總 - Shop Stock Qty (CM)」。無法反推時回傳 None。
+    """
+    if summary is None or summary.empty:
+        return None
+    dim = _hybrid_dimension(dimension)
+    if dim not in ("om", "nature_om"):
+        return None
+    suffix = " 加總 - Shop Stock Qty (CM)"
+    prefixes = [str(c)[:-len(suffix)] for c in summary.columns
+                if isinstance(c, str) and c.endswith(suffix)]
+    if not prefixes:
+        return None
+    if dim == "om":
+        return tuple(sorted(set(prefixes)))
+    oms: set[str] = set()
+    for p in prefixes:
+        for n in _HYBRID_DIAG_NATURES:
+            if p.startswith(n + "-"):
+                oms.add(p[len(n) + 1:])
+                break
+    return tuple(sorted(oms)) if oms else None
+
+
+def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30, bidirectional: bool = False, highlight_skew: bool = False, dimension: str = "nature", om_groups=None):
     """Summary 工作表：SKU 級彙總（雙列表頭模仿 By SKUxShop_Stock Checking_Output 樞紐佈局）。
 
-    欄位配置按分類維度分組數 G（nature 3／rp 2／both 6）動態排列：
+    欄位配置按分類維度分組數 G（nature 3／rp 2／both 6／om N／nature_om 3×N）動態排列：
     - A-G：Brand / SKU / SKU Desc / Buyer / Adj. SST / Supply Source / D001
     - H 起：各分組加總庫存 / 加總月銷 / TurnDay / 涉及店舖數 ×G（整數顯示，TurnDay 活公式四捨五入到整數日）
     - 其後：各分組佔比 (%) ×G（活公式，0.00% 顯示；合計 0 留空）
     - 其後：強制調貨提示 / 各分組預計調出數量（nature 維度＝NT、Mix 兩欄固定順序，
-      雙向時「由Tourist」欄附於存貨偏重提示之後，A–AC 契約欄序不動；rp／both 維度＝每組各一欄）
+      雙向時「由Tourist」欄附於存貨偏重提示之後，A–AC 契約欄序不動；rp／both／om／nature_om 維度＝每組各一欄）
     - 最後：存貨偏重提示
 
     nature 維度（預設）之欄位號與 v1.22 版一致再各組加一欄涉及店舖數
     （加總區每組 4 欄；佔比 T–Y、提示 Z、調出 AA–AB、偏重 AC、雙向 AD）。
     highlight_skew=True 時，存貨偏重提示非空的列以醒目橘底（FFC000）加強顯示
     提示欄與偏重分組的庫存佔比欄。
+    om_groups 缺省時由 summary 欄位反推（om／nature_om 維度）；無法反推時退回單一群組。
     """
     dim = _hybrid_dimension(dimension)
-    groups = _hybrid_dimension_groups(dim)
+    if dim in ("om", "nature_om") and not om_groups and summary is not None and not summary.empty:
+        om_groups = _hybrid_om_groups_from_summary_columns(summary, dim)
+    groups = _hybrid_dimension_groups(dim, om_groups=om_groups)
     G = len(groups)
     base_col = 8
     pct_start = base_col + 4 * G
