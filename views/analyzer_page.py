@@ -724,7 +724,9 @@ if uploaded_file is not None:
                 "🥇 ND 優先轉出已開啟：來源取用順序為 **Non Tourist-ND → Non Tourist-RF → Mix-ND → Mix-RF**"
                 + ("** → Tourist-ND → Tourist-RF**（雙向已開啟，故含 Tourist 池）" if bidirectional else "（未開雙向時不取 Tourist 貨）")
                 + "；池間順序與轉出資格（池級加總 TurnDay 門檻、逐列 14 日超額、自我調貨／同 Nature／同OM 守衛）完全不變，"
-                "ND 列仍不作調貨需求方。因此各 Nature 轉出合計與調入總量不變，"
+                "ND 列仍不作調貨需求方。正常一店×一SKU 一列的資料下，各 Nature 轉出合計與調入總量不變"
+                "（若同一 Site Code 同時出現在需求與來源端——「Site Code × SKU」重複列異常，系統會列 warning——"
+                "自我調貨守衛會令池內取用順序影響合計與缺口），"
                 "**變動的是逐列轉出量、調貨來源、事件類型與調貨後庫存／TurnDay**；"
                 "Safety Review、建議 Safety 設定值與調整量不受影響。"
             )
