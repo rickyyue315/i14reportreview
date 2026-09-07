@@ -6158,12 +6158,12 @@ def _build_hybrid_diagnosis(raw: pd.DataFrame, variant: str = "free") -> pd.Data
 
 
 # 簡易調貨明細欄序（一列一筆「來源店舖 → 接收店舖」調貨；RP Type 緊接對應 Shop Name，
-# 調貨數量置於 Supply Site Code 前作 Target／Supply 分隔；v1.22.0 起 12 欄）
+# 調貨數量置於 Target Site Code 前作 Supply／Target 分隔，先轉出後接收；v1.22.0 起 12 欄）
 _HYBRID_TRANSFER_DETAIL_COLUMNS = [
     "Brand", "SKU", "SKU Desc",
-    "Target Site Code(接收店舖)", "Target Shop Name", "Target RP Type", "Target OM",
-    "調貨數量",
     "Supply Site Code(調貨來源)", "Supply Shop Name", "Supply RP Type", "Supply OM",
+    "調貨數量",
+    "Target Site Code(接收店舖)", "Target Shop Name", "Target RP Type", "Target OM",
 ]
 
 
@@ -6264,7 +6264,7 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
         return pd.DataFrame(columns=cols)
     out = pd.DataFrame(rows, columns=cols)
     out = out.sort_values(
-        ["Brand", "SKU", "Target Site Code(接收店舖)", "Supply Site Code(調貨來源)"],
+        ["Brand", "SKU", "Supply Site Code(調貨來源)", "Target Site Code(接收店舖)"],
         kind="stable",
     ).reset_index(drop=True)
     return out

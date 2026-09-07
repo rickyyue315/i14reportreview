@@ -1028,7 +1028,7 @@ def test_detail_columns_and_row_splitting():
     assert _get(raw, "T21", "調貨來源 (Site Code)") == "N21:6; M21:11"
     det = _build_hybrid_transfer_detail(raw)
     assert list(det.columns) == _HYBRID_TRANSFER_DETAIL_COLUMNS
-    assert _HYBRID_TRANSFER_DETAIL_COLUMNS.index("調貨數量") == _HYBRID_TRANSFER_DETAIL_COLUMNS.index("Supply Site Code(調貨來源)") - 1
+    assert _HYBRID_TRANSFER_DETAIL_COLUMNS.index("調貨數量") == _HYBRID_TRANSFER_DETAIL_COLUMNS.index("Target Site Code(接收店舖)") - 1
     assert _HYBRID_TRANSFER_DETAIL_COLUMNS.index("Target RP Type") == _HYBRID_TRANSFER_DETAIL_COLUMNS.index("Target Shop Name") + 1
     assert _HYBRID_TRANSFER_DETAIL_COLUMNS.index("Supply RP Type") == _HYBRID_TRANSFER_DETAIL_COLUMNS.index("Supply Shop Name") + 1
     assert len(det) == 2
@@ -1109,8 +1109,8 @@ def test_detail_excel_sheets():
     assert ws.auto_filter.ref == "A1:L3"
     assert ws.cell(row=2, column=8).number_format == "#,##0"
     assert int(ws.cell(row=2, column=8).value) == 11  # M21:11（排序後首行）
-    assert ws.cell(row=2, column=6).value == "RF"  # Target RP Type
-    assert ws.cell(row=2, column=11).value == "RF"  # Supply RP Type（M21）
+    assert ws.cell(row=2, column=6).value == "RF"  # Supply RP Type（M21）
+    assert ws.cell(row=2, column=11).value == "RF"  # Target RP Type
     ws_om = wb["簡易調貨明細 (同OM)"]
     assert ws_om.auto_filter.ref == "A1:L2"
     assert int(ws_om.cell(row=2, column=8).value) == 11
