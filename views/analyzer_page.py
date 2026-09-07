@@ -612,7 +612,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）或 Shop Nature＋RP Type 分類，影響需求方過濾與 Summary／交叉表分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
+        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）或 Shop Nature＋RP Type 分類，影響需求方過濾與 Summary／交叉表分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -682,6 +682,21 @@ if uploaded_file is not None:
                  "新增「可轉出貨量 (Tourist)」與 Summary「由Tourist 店舖預計調出數量」欄位，"
                  "來源優先序固定 Non Tourist → Mix → Tourist。"
         )
+        nd_priority = st.checkbox(
+            "🥇 ND 優先轉出（同一 Shop Nature 池內，RP Type＝ND 的店舖先於 RF 轉出）",
+            value=False, key="hy_nd_priority",
+            help="預設關閉：池內按來源檔列序取用（現行規則）。"
+                 "開啟後「同一 Shop Nature 池內」RP Type＝ND 的來源列先於 RF 列被取用，"
+                 "池間順序仍為 Non Tourist → Mix → Tourist（雙向時才含 Tourist），"
+                 "展開為 Non Tourist-ND → Non Tourist-RF → Mix-ND → Mix-RF → Tourist-ND → Tourist-RF；"
+                 "ND／RF 兩段各自維持來源檔列序（不按可轉出貨量重排）。\n"
+                 "轉出資格一律不放寬：仍須該池加總 TurnDay ≥ 門檻、該列有 14 日超額（零銷售有貨列為全數庫存）、"
+                 "非自我調貨、非同 Nature（「以 RP Type 分類」維度允許同 Nature 互調）、同OM 變體另須同 OM；"
+                 "ND 列仍不作調貨需求方。\n"
+                 "本開關只改變調貨分配結果（轉出量／調貨來源／事件類型／調貨後庫存與 TurnDay），"
+                 "不影響 Safety Review、建議 Safety 設定值與調整量。"
+                 "「ND」口徑為正規化後非 RF（含無法辨識而歸入 ND 的列）；來源檔缺「RP Type」欄時自動失效並列 warning。"
+        )
         hy_ref_date = st.date_input(
             "📅 參考日期（New SKU 判定基準；Launch Date 起 90 天內視為新品）",
             value=datetime.now().date() - timedelta(days=1),
@@ -690,7 +705,7 @@ if uploaded_file is not None:
         )
         _current_hybrid_params = build_hybrid_params(
             turnday_threshold, d001_threshold, _safety_days, bidirectional, _dimension,
-            hy_ref_date,
+            hy_ref_date, nd_priority,
         )
         if bidirectional:
             st.caption(
@@ -703,6 +718,15 @@ if uploaded_file is not None:
             st.caption(
                 f"🔁 調貨觸發（同 Stock Checking）：該 SKU 的 **Tourist 加總 TurnDay < {int(turnday_threshold)} 日** 且 **D001 < {int(d001_threshold)} 件**，"
                 "且 Mix / Non Tourist 至少一個 Nature 加總 TurnDay ≥ 門檻（有貨可調）。調入補到 14 日周轉，NT 優先再由 Mix 補足。"
+            )
+        if nd_priority:
+            st.caption(
+                "🥇 ND 優先轉出已開啟：來源取用順序為 **Non Tourist-ND → Non Tourist-RF → Mix-ND → Mix-RF**"
+                + ("** → Tourist-ND → Tourist-RF**（雙向已開啟，故含 Tourist 池）" if bidirectional else "（未開雙向時不取 Tourist 貨）")
+                + "；池間順序與轉出資格（池級加總 TurnDay 門檻、逐列 14 日超額、自我調貨／同 Nature／同OM 守衛）完全不變，"
+                "ND 列仍不作調貨需求方。因此各 Nature 轉出合計與調入總量不變，"
+                "**變動的是逐列轉出量、調貨來源、事件類型與調貨後庫存／TurnDay**；"
+                "Safety Review、建議 Safety 設定值與調整量不受影響。"
             )
         if _dimension == "rp":
             st.caption(
@@ -754,6 +778,7 @@ if uploaded_file is not None:
                     bidirectional=bool(bidirectional),
                     safety_days=_safety_days,
                     dimension=_dimension,
+                    nd_priority=bool(nd_priority),
                     progress_callback=_cb_transform,
                     ref_date=hy_ref_date,
                 )
@@ -805,6 +830,7 @@ if uploaded_file is not None:
                 (stats or {}).get("bidirectional", bidirectional),
                 applied_hybrid_dimension,
                 applied_hybrid_ref,
+                (stats or {}).get("nd_priority", nd_priority),
             )
             hybrid_is_stale = hybrid_params_changed(applied_hybrid_params, _current_hybrid_params)
             if hybrid_is_stale:

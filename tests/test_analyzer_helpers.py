@@ -50,6 +50,20 @@ def test_hybrid_params_ref_date_stale_detection():
     assert not hybrid_params_changed(legacy, dict(legacy))
 
 
+def test_nd_priority_stale_detection_and_legacy_snapshot():
+    base = build_hybrid_params(14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False)
+    assert base["nd_priority"] is False  # 舊呼叫未傳開關仍相容
+    assert not hybrid_params_changed(base, build_hybrid_params(
+        14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False, "nature", None, False))
+    assert hybrid_params_changed(base, build_hybrid_params(
+        14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10}, False, "nature", None, True))
+    # 舊快照缺 nd_priority 鍵時不誤報（向後相容）
+    legacy = {k: v for k, v in base.items() if k != "nd_priority"}
+    assert not hybrid_params_changed(legacy, dict(legacy))
+    legacy_no_ref = {k: v for k, v in base.items() if k not in {"nd_priority", "ref_date"}}
+    assert not hybrid_params_changed(legacy_no_ref, dict(legacy_no_ref))
+
+
 def test_site_code_options_are_canonical_strings():
     assert canonical_site_codes([1002, "1001", " 1002 ", None, "", " B01 "]) == ["1001", "1002", "B01"]
 

@@ -12,8 +12,8 @@
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
 | Stock Checking 分析 | D001 倉庫少貨且 Tourist 店舖 Turnday < 門檻 → 標示調貨需求，從 Mix / Non Tourist 店舖分配可轉出貨量（Non Tourist 優先）；Summary 另以佔比差額標示「存貨偏重」的 Nature（存貨集中但銷量不高，偏重數值以醒目橘底加強顯示）；RAW 按可讀性重排欄序，不顯示 Item_Shop 與 Value 金額欄；另附「店舖問題 SKU」（每間店舖需行動列：需要調入／可轉出供應，問題＋建議方法；建議方法只計涉及來源店舖數量，不重複列出店號） |
-| Safety Stock x NetStock | 沿用 Stock Checking 調貨引擎，以 **Safety 基準周轉天數（按 Nature，預設 Tourist 7 / Mix 9 / Non Tourist 10，可調 7–10）** Review 調貨事件是否因 Safety Stock 設定不足／過高，輸出店舖×SKU Review 主表與建議調整量（下調建議補底 3 件——SAP MOQ 下 Safety 1–2 件難補貨；現有 1–2 件不強制上調、零銷售歸零不受保底）；Safety 基準與調貨的 14 日線互相獨立；調貨分不限OM與同OM兩套對照（OM 限制不影響 Safety 建議）；可選擇**分類維度**（預設 Shop Nature，可改 RP Type 或 Shop Nature＋RP Type；ND 列一律不作調貨需求方、仍可作供應）；可勾選「允許雙向調貨」讓任何 Nature 缺貨皆可調入、遊客區店舖亦可轉出；「Review 摘要」另提供 **Safety 調整方向分類**（增加／減少／不變）與 **SKU 級 Safety 調整明細** |
-| 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式、調貨門檻、Safety 基準周轉天數（按 Nature）、分類維度（Shop Nature／RP Type／Shop Nature＋RP Type） |
+| Safety Stock x NetStock | 沿用 Stock Checking 調貨引擎，以 **Safety 基準周轉天數（按 Nature，預設 Tourist 7 / Mix 9 / Non Tourist 10，可調 7–10）** Review 調貨事件是否因 Safety Stock 設定不足／過高，輸出店舖×SKU Review 主表與建議調整量（下調建議補底 3 件——SAP MOQ 下 Safety 1–2 件難補貨；現有 1–2 件不強制上調、零銷售歸零不受保底）；Safety 基準與調貨的 14 日線互相獨立；調貨分不限OM與同OM兩套對照（OM 限制不影響 Safety 建議）；可選擇**分類維度**（預設 Shop Nature，可改 RP Type 或 Shop Nature＋RP Type；ND 列一律不作調貨需求方、仍可作供應）；可勾選「允許雙向調貨」讓任何 Nature 缺貨皆可調入、遊客區店舖亦可轉出；可勾選「ND 優先轉出」（同一 Shop Nature 池內 ND 店先於 RF 店轉出，池間順序與轉出資格不變，不影響 Safety Review 與建議調整量）；「Review 摘要」另提供 **Safety 調整方向分類**（增加／減少／不變）與 **SKU 級 Safety 調整明細** |
+| 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式、調貨門檻、Safety 基準周轉天數（按 Nature）、分類維度（Shop Nature／RP Type／Shop Nature＋RP Type）、允許雙向調貨、ND 優先轉出 |
 | 視覺化看板 | 即時顯示統計指標與交叉分析表 |
 | Excel 導出 | 一鍵下載含 RAW、Shop Stock Status、By Shop、分析摘要之美化報表 |
 
@@ -87,7 +87,7 @@ OOS Review 建議額外包含：
 | Adj. Safety Stock | 現有安全庫存量（報表內顯示為 Safety Stock (現時)，並非系統建議值；輸入欄名兩名皆接受，語意相同） |
 | Shop Nature | 店舖性質（Tourist / Mix / Non Tourist） |
 
-Safety Stock x NetStock Review 另建議包含 `RP Type`（RF＝可補貨／ND＝不可補貨）——ND 列不作調貨需求方、RP Type／混合分類維度均依賴此欄；缺失時全部列按 RF 處理並退回 Shop Nature 維度（列 warning，不停止）。
+Safety Stock x NetStock Review 另建議包含 `RP Type`（RF＝可補貨／ND＝不可補貨）——ND 列不作調貨需求方、RP Type／混合分類維度與「ND 優先轉出」均依賴此欄；缺失時全部列按 RF 處理並退回 Shop Nature 維度（列 warning，不停止），「ND 優先轉出」同時自動失效。
 
 ## 分析模式
 
@@ -163,7 +163,8 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
    - **以 Shop Nature＋RP Type 分類**：調貨計算與預設完全相同（需求方 Tourist-RF），僅 Summary 與交叉表改按 6 組（Tourist-RF／Tourist-ND／Mix-RF／Mix-ND／Non Tourist-RF／Non Tourist-ND）分欄呈現
    - 來源缺「RP Type」欄時全部列按 RF 處理（ND 排除規則無法套用）、維度退回 nature 並列 warning；非法維度值退回 nature 不拋錯
 1. **調貨段** — 與 Stock Checking 同規則，並疊加本模式特有的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但 P90D 有銷售時逐列回補、D001 逐列 Net→Stock 回補；同檔與 Stock Checking 的結果可能有細微差異）：SKU 級 Tourist 加總 TurnDay < 門檻（預設 14）且 D001 < 門檻（預設 100）且有貨可調 → 標示需要調貨（需求列另須 RP Type＝RF）；補到 14 日周轉，Non Tourist 優先再由 Mix 補足（目標日數固定 14）。分配跑兩遍：**不限OM**（現行契約欄位）與**同OM**（來源店須與需求店同 OM 才可轉出，欄位加「(同OM)」後綴；公司規定某些情況只允許同 OM 店舖調貨，例 Ivy HBA6 → Ivy HB94）；來源店與需求店同為一店（Site Code 相同）時一律排除，防止自我調貨
-   - **允許雙向調貨（UI 勾選，預設關閉）** — 針對「存貨偏重遊客區而其他區域缺貨」場景：任何 Nature 缺貨（該 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且個別店補到 14 日需求 > 0 且該列 RP Type＝RF）且其他任一 Nature 有貨（加總 TurnDay ≥ 門檻）即標示需要調貨；RAW 另加「可轉出貨量 (Tourist)」，遊客區店舖亦可轉出，來源優先序固定 **Non Tourist → Mix → Tourist**，需求 Nature 自身一律排除（分配層顯式守衛＋池級歸零雙重保證；「以 RP Type 分類」維度例外——允許同 Nature 互調）；缺貨 Nature 的超額列一律不可轉出（池級歸零）；未勾選時輸出欄位與數值與單向完全一致。雙向只適用於本模式，Stock Checking 仍為單向（只向遊客區調入）
+    - **允許雙向調貨（UI 勾選，預設關閉）** — 針對「存貨偏重遊客區而其他區域缺貨」場景：任何 Nature 缺貨（該 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且個別店補到 14 日需求 > 0 且該列 RP Type＝RF）且其他任一 Nature 有貨（加總 TurnDay ≥ 門檻）即標示需要調貨；RAW 另加「可轉出貨量 (Tourist)」，遊客區店舖亦可轉出，來源優先序固定 **Non Tourist → Mix → Tourist**，需求 Nature 自身一律排除（分配層顯式守衛＋池級歸零雙重保證；「以 RP Type 分類」維度例外——允許同 Nature 互調）；缺貨 Nature 的超額列一律不可轉出（池級歸零）；未勾選時輸出欄位與數值與單向完全一致。雙向只適用於本模式，Stock Checking 仍為單向（只向遊客區調入）
+    - **ND 優先轉出（UI 勾選，預設關閉）** — 針對「不可補貨（ND）店舖的滯留貨先清走」場景：**同一 Shop Nature 池內**，RP Type＝ND 的來源列先於 RF 列取用，池間順序仍為 Non Tourist → Mix → Tourist（雙向時才含 Tourist），展開為 **Non Tourist-ND → Non Tourist-RF → Mix-ND → Mix-RF → Tourist-ND → Tourist-RF** 六段；ND 段與 RF 段各自維持來源檔列序（不按可轉出貨量重排）。**轉出資格一律不放寬**（仍須該池加總 TurnDay ≥ 門檻、該列有 14 日超額（零銷售有貨列為全數庫存）、非自我調貨、非同 Nature（「以 RP Type 分類」維度允許同 Nature 互調）、同OM變體另須同 OM），ND 列仍不作調貨需求方；「ND」口徑為正規化後非 RF（含無法辨識而歸入 ND 的列）。因轉出列母體與分配順序無關，本開關**只改變調貨分配結果**（`轉出量` / `調貨來源` / `事件類型` / `調貨後庫存` / `調貨後 TurnDay`），**不影響 Safety Review、建議 Safety 設定值與調整量，各 Nature 轉出合計與調入總量亦不變**；來源檔缺「RP Type」欄時自動失效並列 warning；未勾選時輸出與現行完全一致。Review 摘要第 5 排另加「ND 來源轉出量」／「ND 來源轉出量 (同OM)」兩卡（開啟且有實際 ND 轉出時顯示），店號見「簡易調貨明細」的 `Supply RP Type` 欄。只適用於本模式，Stock Checking 無此開關
  2. **Review 基準** — `Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 的基準天數)`（無銷售列為 0）；基準天數按 Nature 於 UI 分別設定（預設 Tourist 7 / Mix 9 / Non Tourist 10，可調 7–10），與調貨觸發門檻及 14 日調貨線**完全無關** — 改變基準天數不會影響任何調貨欄位（`調入需求量 (補到14日)` / `實際調入量` / `調入缺口` / `轉出量` / `可轉出貨量` / `調貨後庫存` / `調貨後 TurnDay` 及其同OM變體）；RAW 與主表另逐列回顯 `Safety 基準天數` 供稽核
 3. **事件列與 Review**：
    - `需要調入`（需要調貨=是 的列；單向只出現在 Tourist-RF，雙向任何 Nature 的 RF，rp 維度任何 Nature 的 RF）：現有 Safety Stock (現時) < 所需量 → `Safety 設定不足`；否則 `設定正常—缺貨非設定因素`
@@ -191,7 +192,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 | Summary | SKU 級調貨彙總 — 庫存/月銷加總、TurnDay、涉及店舖數、佔比、調貨提示、存貨偏重提示（分組庫存佔比 ≥40% 且較銷量佔比高 ≥20 個百分點的分組；店舖數為同 SKU 同組 Site Code 不重複計數，空白不計；混合模式按所選分類維度分組——nature 三組／rp 兩組 RF／ND／both 六組；Stock Checking 與混合模式的 Summary 均以醒目橘底加強顯示偏重提示與偏重分組的庫存佔比欄）（Stock Checking 及混合模式） |
 | 調貨分析摘要 | 調貨 Dashboard — 需求/調入/轉出/缺口（Stock Checking） |
 | 調貨 Review Safety Stock (不限OM)／(同OM) | 店舖×SKU Review 主表兩版（僅混合模式）— 需要調入／實際轉出／可轉出未使用事件列，按 Nature 的 Safety 基準天數（預設 7 / 9 / 10）Review 與建議調整量，逐列含「Safety 基準天數」與「Safety 周轉所需量」及 RP Type；同OM版來源店須與需求店同 OM |
-| Review 摘要 | 混合模式 — 指標卡（第 4 排為同OM調貨對照；雙向調貨時另加第 5 排 Tourist 轉出量）+ Safety Review × 分類維度交叉表（欄位按維度切換：nature 三組／rp 兩組／both 六組；列數 / SKU 數 / 建議調整量合計，含總計列）+ Safety 調整方向分類（增加 / 減少 / 不變 × 列數 / SKU 數 / Safety 建議調整量合計，含總計列）+ Safety 調整明細（SKU 級彙總：Review 列數 / 需增加店舖數 / 需減少店舖數 / 設定正常店舖數 / 現有與建議 Safety 設定合計（調整列）/ 淨調整量）；三個區塊同母體（事件類型非空的列），不受 OM 限制影響 |
+| Review 摘要 | 混合模式 — 指標卡（第 4 排為同OM調貨對照；第 5 排為轉出來源對照——雙向調貨時含 Tourist 轉出量兩卡，「ND 優先轉出」開啟且 ND 店舖有實際轉出時另加「ND 來源轉出量」／「ND 來源轉出量 (同OM)」兩卡，該排 2–4 卡）+ Safety Review × 分類維度交叉表（欄位按維度切換：nature 三組／rp 兩組／both 六組；列數 / SKU 數 / 建議調整量合計，含總計列）+ Safety 調整方向分類（增加 / 減少 / 不變 × 列數 / SKU 數 / Safety 建議調整量合計，含總計列）+ Safety 調整明細（SKU 級彙總：Review 列數 / 需增加店舖數 / 需減少店舖數 / 設定正常店舖數 / 現有與建議 Safety 設定合計（調整列）/ 淨調整量）；三個區塊同母體（事件類型非空的列），不受 OM 限制影響 |
 | 簡易調貨明細 (不限OM)／(同OM) | 混合模式 — 一列一筆「來源店舖 → 接收店舖」調貨（Brand / SKU / SKU Desc / Target Site Code(接收店舖) / Target Shop Name / Target RP Type / Target OM / 調貨數量 / Supply Site Code(調貨來源) / Supply Shop Name / Supply RP Type / Supply OM）；來源如「HB30:2; HB49:3」拆成兩行；只收錄實際有調入的列；Streamlit 結果頁另有同名 tab（可切換兩版） |
 
 ## 版本

@@ -10,6 +10,7 @@ def build_hybrid_params(
     bidirectional: bool,
     dimension: str = "nature",
     ref_date=None,
+    nd_priority: bool = False,
 ) -> dict:
     if ref_date is None:
         ref_text = ""
@@ -25,6 +26,7 @@ def build_hybrid_params(
         "bidirectional": bool(bidirectional),
         "dimension": str(dimension),
         "ref_date": ref_text,
+        "nd_priority": bool(nd_priority),
     }
 
 
@@ -32,9 +34,10 @@ def hybrid_params_changed(applied: dict | None, current: dict) -> bool:
     if applied is None:
         return False
     if set(applied) != set(current):
-        # 舊快照缺 ref_date 鍵時以空值補齊再比對（向後相容）
-        applied = {**applied, "ref_date": applied.get("ref_date", "")}
-        current = {**current, "ref_date": current.get("ref_date", "")}
+        # 舊快照缺新增鍵時以預設值補齊再比對（向後相容）
+        defaults = {"ref_date": "", "nd_priority": False}
+        applied = {**{k: applied.get(k, d) for k, d in defaults.items()}, **applied}
+        current = {**{k: current.get(k, d) for k, d in defaults.items()}, **current}
     return applied != current
 
 

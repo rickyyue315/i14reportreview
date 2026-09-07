@@ -6649,6 +6649,11 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
     chg = pd.to_numeric(raw.get("Safety 建議調整量", _safe_default_series(np.nan, raw.index)), errors="coerce")
     nature = raw.get("Shop Nature", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
     bidirectional = "可轉出貨量 (Tourist)" in raw.columns
+    rp_in_raw = "RP Type" in raw.columns
+    raw_rp = (
+        raw["RP Type"].fillna("").astype(str).str.strip()
+        if rp_in_raw else _safe_default_series("", raw.index)
+    )
     under = diag == _HYBRID_DIAG_UNDER
     over = diag == _HYBRID_DIAG_OVER
     donor = evt.isin([_HYBRID_EVENT_DONATED, _HYBRID_EVENT_DONOR])
@@ -6669,6 +6674,9 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
         "mix_transfer_om": int(_safe_numeric(raw.loc[nature == "Mix", "轉出量 (同OM)"]).sum()) if "轉出量 (同OM)" in raw.columns else 0,
         "tourist_transfer_om": int(_safe_numeric(raw.loc[nature == "Tourist", "轉出量 (同OM)"]).sum()) if bidirectional and "轉出量 (同OM)" in raw.columns else 0,
         "bidirectional": bool(bidirectional),
+        # ND 來源轉出量（與 transform_hybrid 同口徑；nd_priority 無法由 raw 反推，故不列）
+        "nd_transfer": int(_safe_numeric(raw.loc[raw_rp == "ND", "轉出量"]).sum()) if rp_in_raw and "轉出量" in raw.columns else 0,
+        "nd_transfer_om": int(_safe_numeric(raw.loc[raw_rp == "ND", "轉出量 (同OM)"]).sum()) if rp_in_raw and "轉出量 (同OM)" in raw.columns else 0,
         "donor_rows": int(donor.sum()),
         "under_rows": int(under.sum()),
         "under_skus": int(raw.loc[under, "SKU"].nunique()) if under.any() else 0,
@@ -6686,7 +6694,8 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
 def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
     """調貨 Review 指標卡（每排 4 卡，與 Streamlit Hybrid Dashboard 同口徑；
     第 4 排為同OM調貨對照，Safety Review 建議不受 OM 限制影響；
-    雙向調貨時另加第 5 排 Tourist 轉出量兩卡）。
+    第 5 排為轉出來源對照——雙向調貨時含 Tourist 轉出量兩卡，「ND 優先轉出」開啟且 ND 店舖
+    有實際轉出時另加 ND 來源轉出量兩卡（該排 2–4 卡）。
     回傳各排指標 list（4 或 5 排）供 _write_metric_cards 使用；stats 缺失時由 raw 自動匯總。"""
     if stats is None:
         stats = _hybrid_stats_from_raw(raw)
@@ -6695,6 +6704,7 @@ def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
         return int(stats.get(key, 0) or 0)
 
     bidir = bool(stats.get("bidirectional"))
+    nd_prio = bool(stats.get("nd_priority"))
     row1 = [
         ("需調貨 SKU 數", g("need_skus"), "符合調貨條件的 SKU 總數（已刪除重複）", "f97316"),
         ("需要調入列數", g("need_rows"),
@@ -6723,11 +6733,23 @@ def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
         ("Mix 轉出量 (同OM)", g("mix_transfer_om"), "限同 OM：Mix 店舖轉出（件）", "06b6d4"),
     ]
     rows = [row1, row2, row3, row4]
+    # 第 5 排：轉出來源對照——雙向調貨含 Tourist 轉出量兩卡；「ND 優先轉出」開啟且 ND 店舖
+    # 確實轉出時另加 ND 來源轉出量兩卡（該排 2–4 卡）。ND 卡以開關狀態為前提（開關關閉時
+    # 即使有 ND 列因列序恰好轉出，也不改動現行版面），stats 缺失的回退路徑無法反推開關狀態，
+    # 故該路徑不顯示 ND 卡。
+    row5: list = []
     if bidir:
-        rows.append([
+        row5 += [
             ("Tourist 轉出量", g("tourist_transfer"), "不限OM：由 Tourist 店舖轉出（件）", "f43f5e"),
             ("Tourist 轉出量 (同OM)", g("tourist_transfer_om"), "限同 OM：Tourist 店舖轉出（件）", "ec4899"),
-        ])
+        ]
+    if nd_prio and (g("nd_transfer") > 0 or g("nd_transfer_om") > 0):
+        row5 += [
+            ("ND 來源轉出量", g("nd_transfer"), "不限OM：由 RP Type＝ND 店舖轉出（件），店號見「簡易調貨明細」Supply RP Type 欄", "a855f8"),
+            ("ND 來源轉出量 (同OM)", g("nd_transfer_om"), "限同 OM：RP Type＝ND 店舖轉出（件）", "7c3aed"),
+        ]
+    if row5:
+        rows.append(row5)
     return rows
 
 
@@ -6742,6 +6764,7 @@ def _hybrid_allocate_transfers(
     om_arr: np.ndarray | None = None,
     tourist_avail0: np.ndarray | None = None,
     nature_arr: np.ndarray | None = None,
+    nd_priority: np.ndarray | None = None,
 ):
     """調貨分配：按 SKU 彙總需求，來源池固定 Non Tourist → Mix → Tourist（tourist_avail0
     為 None 時不設 Tourist 池，即現行單向規則），需求列按需求量大→小依序分配。
@@ -6749,6 +6772,8 @@ def _hybrid_allocate_transfers(
     nature_arr 非 None 時來源列與需求列同 Shop Nature 一律排除（「需求 Nature 自身除外」
     契約守衛；現行池級歸零已令同 Nature 來源恆為 0，此守衛為顯式防呆）。
     來源店與需求列同為一店（Site Code 相同）時一律排除，防止重複列資料異常造成自我調貨。
+    nd_priority 非 None（bool 陣列，True＝該列 RP Type 為 ND）時，**池內**改依 ND 列先於
+    RF 列取用（池間順序與全部轉出資格條件不變）。
     回傳 (actual_np, gap_np, donate_np, desc_np)。"""
     actual_np = np.zeros(n_rows, dtype=int)
     donate_np = np.zeros(n_rows, dtype=int)
@@ -6761,18 +6786,26 @@ def _hybrid_allocate_transfers(
     tourist_avail = (
         np.asarray(tourist_avail0, dtype=float).copy() if tourist_avail0 is not None else None
     )
+    nd_flag = np.asarray(nd_priority, dtype=bool) if nd_priority is not None else None
+
+    def _nd_first(keys: list[int]) -> list[int]:
+        """池內 ND 列前置（ND 群組與 RF 群組各自維持來源檔列序）；池間順序不變。"""
+        if nd_flag is None:
+            return keys
+        return [p for p in keys if nd_flag[p]] + [p for p in keys if not nd_flag[p]]
+
     for sku in set(sku_arr[need_mask]):
         sku_mask = sku_arr == sku
         need_rows = np.nonzero(sku_mask & need_mask)[0]
         nt_src = [int(p) for p in np.nonzero(sku_mask & (nt_avail > 0))[0]]
         mix_src = [int(p) for p in np.nonzero(sku_mask & (mix_avail > 0))[0]]
         order = np.argsort(-demand[need_rows], kind="stable")
-        remain_nt = {p: float(nt_avail[p]) for p in nt_src}
-        remain_mix = {p: float(mix_avail[p]) for p in mix_src}
+        remain_nt = {p: float(nt_avail[p]) for p in _nd_first(nt_src)}
+        remain_mix = {p: float(mix_avail[p]) for p in _nd_first(mix_src)}
         pools = [remain_nt, remain_mix]
         if tourist_avail is not None:
             tourist_src = [int(p) for p in np.nonzero(sku_mask & (tourist_avail > 0))[0]]
-            pools.append({p: float(tourist_avail[p]) for p in tourist_src})
+            pools.append({p: float(tourist_avail[p]) for p in _nd_first(tourist_src)})
         for n in order:
             row_pos = int(need_rows[n])
             rem = float(demand[row_pos])
@@ -6811,6 +6844,7 @@ def transform_hybrid(
     bidirectional: bool = False,
     safety_days: dict | None = None,
     dimension: str = "nature",
+    nd_priority: bool = False,
     progress_callback=None,
     ref_date=None,
 ):
@@ -6853,6 +6887,15 @@ def transform_hybrid(
       且「需求 Nature 自身除外」為分配層的顯式守衛（池級歸零另保證缺貨 Nature 不進入來源池）。
       Review 段對稱擴展：需要調入可出現在任何 Nature 列、實際轉出／可轉出未使用
       可出現在 Tourist 列（事件與診斷文字不變）。
+    - nd_priority=True（ND 優先轉出，預設 False 維持現行契約）：**同一 Shop Nature 池內**
+      RP Type 為 ND 的來源列先於 RF 列取用，池間順序仍為 Non Tourist → Mix → Tourist
+      （雙向時才含 Tourist），展開為 NT-ND → NT-RF → Mix-ND → Mix-RF → Tourist-ND →
+      Tourist-RF 六段；ND／RF 兩段各自維持來源檔列序（不按可轉出量重排）。
+      轉出資格（池級歸零、逐列 14 日超額、自我調貨／同 Nature／同OM 守衛）一律不放寬，
+      ND 列仍不作調貨需求方；「ND」口徑＝正規化後 RP Type 非 RF（含無法辨識而歸入 ND 的列）。
+      因 donor_mask 與分配順序無關，本開關**只改調貨分配結果**（轉出量／調貨來源／
+      事件類型／調貨後庫存與 TurnDay），不影響 Safety Review、建議調整值與調整量。
+      來源檔缺 RP Type 欄時自動失效（全部列按 RF）並列 warning。
     - 上下文欄位：調貨後庫存 = 原始 + 實際調入 − 轉出；
       調貨後 TurnDay = 調貨後庫存 ÷ 月銷 × 30.5（月銷 0 留空；月銷為回補後值，
       另存「Effective Shop Monthly Sold Qty (P90D)」稽核欄，原值保留於原欄）。
@@ -6870,6 +6913,8 @@ def transform_hybrid(
     回傳 (raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warnings)；
     stats["safety_days"] 為實際採用的各 Nature 基準天數；
     stats["dimension"] 為實際採用的分類維度（rp 欄缺失退回 nature 時亦為 nature）；
+    stats["nd_priority"] 為 ND 優先轉出的請求狀態（缺 RP Type 欄時不生效，nd_transfer 恆為 0）；
+    stats["nd_transfer"]／["nd_transfer_om"] 為 RP Type＝ND 來源列的轉出量合計（不限OM／同OM）；
     stats["buyer_need_skus"] 為 [(Buyer, 需調貨 SKU 數)]；
     stats["buyer_safety_fix"] 為 [(Buyer, 需調整 Safety SKU 數, Safety 建議調整量合計)]。
     """
@@ -7107,17 +7152,25 @@ def transform_hybrid(
     # ── 調貨分配：不限OM（現行契約欄位）＋ 同OM（來源店與需求店同 OM 才可轉出）──
     # rp 維度取消「需求 Nature 自身除外」守衛（允許同 Nature 店間再平衡）；
     # nature／both 維度維持守衛（池級歸零＋分配層守衛雙重保證）
+    # ND 優先轉出：池內 ND 列前置（ND 口徑＝正規化後非 RF，含無法辨識列）；
+    # 缺 RP Type 欄時全部列按 RF，開關自動失效
+    _src_nd = (~is_rf) if (nd_priority and rp_present) else None
+    _is_nd_src = (df["RP Type"] == "ND") if rp_present else pd.Series(False, index=idx)
+    if nd_priority and not rp_present:
+        warnings.append(
+            "來源檔案缺少「RP Type」欄位（全部列按可補貨 RF 處理），「ND 優先轉出」無法套用，已按現行列序分配。"
+        )
     nt_avail0 = df["可轉出貨量 (Non Tourist)"].to_numpy(dtype=float)
     mix_avail0 = df["可轉出貨量 (Mix)"].to_numpy(dtype=float)
     tourist_avail0 = df["可轉出貨量 (Tourist)"].to_numpy(dtype=float) if bidirectional else None
     _guard_nature = None if dim == "rp" else nature.to_numpy()
     actual_np, gap_np, donate_np, desc_np = _hybrid_allocate_transfers(
         n_rows, sku_arr, site_arr, need_mask, demand, nt_avail0, mix_avail0,
-        tourist_avail0=tourist_avail0, nature_arr=_guard_nature,
+        tourist_avail0=tourist_avail0, nature_arr=_guard_nature, nd_priority=_src_nd,
     )
     actual_om, gap_om, donate_om, desc_om = _hybrid_allocate_transfers(
         n_rows, sku_arr, site_arr, need_mask, demand, nt_avail0, mix_avail0, om_arr=om_arr,
-        tourist_avail0=tourist_avail0, nature_arr=_guard_nature,
+        tourist_avail0=tourist_avail0, nature_arr=_guard_nature, nd_priority=_src_nd,
     )
     df["實際調入量"] = actual_np
     df["調入缺口"] = gap_np
@@ -7250,6 +7303,11 @@ def transform_hybrid(
         "mix_transfer_om": int(raw.loc[raw["Shop Nature"] == "Mix", "轉出量 (同OM)"].sum()),
         "tourist_transfer_om": int(raw.loc[raw["Shop Nature"] == "Tourist", "轉出量 (同OM)"].sum()) if bidirectional else 0,
         "bidirectional": bool(bidirectional),
+        # 記錄 UI 請求狀態（缺 RP Type 欄時 nd_transfer 恆為 0，指標卡自然不顯示，
+        # 不因正規化而與參數快照比對產生不一致的過期警告）
+        "nd_priority": bool(nd_priority),
+        "nd_transfer": int(raw.loc[_is_nd_src, "轉出量"].sum()) if rp_present else 0,
+        "nd_transfer_om": int(raw.loc[_is_nd_src, "轉出量 (同OM)"].sum()) if rp_present else 0,
         "donated_rows_om": int((donor_mask & (donate_om > 0)).sum()),
         "mapped_other_rows": int(mapped_other),
         "mapped_rp_rows": int(mapped_rp),
@@ -7641,7 +7699,7 @@ def generate_excel_hybrid(
     「由Tourist 店舖預計調出數量」）/
     調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM)（店舖×SKU 主表含 RP Type 欄）/
     店舖問題 SKU（每間店舖需行動列：問題＋建議方法）/
-  Review 摘要（指標卡 4 排（雙向時 5 排）+ Safety Review × 分類維度交叉表
+  Review 摘要（指標卡 4 排（雙向或 ND 店舖有實際轉出時 5 排）+ Safety Review × 分類維度交叉表
  + Safety 調整方向分類 + Safety 調整明細（SKU 級彙總）
  + Buyer 統計（需調貨＋需調整 Safety 合併表））/
     簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)（一列一筆來源店→接收店調貨，來源字串已拆行）。

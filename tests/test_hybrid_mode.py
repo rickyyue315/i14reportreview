@@ -1848,3 +1848,227 @@ def test_min3_stats_and_safety_tables_consistent():
     assert int(r["建議 Safety 設定合計（調整列）"]) == 6
     assert int(r["淨調整量"]) == -6
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 20. ND 優先轉出（nd_priority=True，v1.30.0）
+# 規則：**同一 Shop Nature 池內** RP Type＝ND 的來源列先於 RF 列取用；池間順序仍為
+#       Non Tourist → Mix → Tourist（雙向時才含 Tourist），展開為
+#       NT-ND → NT-RF → Mix-ND → Mix-RF → Tourist-ND → Tourist-RF；ND／RF 兩段各自維持
+#       來源檔列序。轉出資格（池級歸零、逐列 14 日超額、自我調貨／同 Nature／同OM 守衛）
+#       一律不放寬；ND 列仍不作需求方；「ND」口徑＝正規化後非 RF（含無法辨識列）。
+#       因 donor_mask 與分配順序無關，Safety Review 與建議調整量逐列不變。預設關閉＝零變動。
+# ──────────────────────────────────────────────────────────────────────────────
+# T21 需調入 14 件；NT 池列序 N22(RF, 超額 16) → N21(ND, 超額 6)；M21(Mix-ND, 超額 11)
+_NDPRIO_ROWS = [
+    {"SKU": 700, "Site Code": "T21", "Shop Nature": "Tourist", "RP Type": "RF",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 0.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 20},
+    {"SKU": 700, "Site Code": "N22", "Shop Nature": "Non Tourist", "RP Type": "RF",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 10},
+    {"SKU": 700, "Site Code": "N21", "Shop Nature": "Non Tourist", "RP Type": "ND",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 20.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 10},
+    {"SKU": 700, "Site Code": "M21", "Shop Nature": "Mix", "RP Type": "ND",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 25.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 10},
+]
+
+# 決策 1 反例：ND 只在 Mix、RF 在 Non Tourist → 仍先取 Non Tourist-RF（不跨池搶 ND）
+_NDPRIO_POOL_ROWS = [
+    {"SKU": 710, "Site Code": "T31", "Shop Nature": "Tourist", "RP Type": "RF",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 0.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 20,
+     "D001 Net Stock Qty (CM)": 10.0},
+    {"SKU": 710, "Site Code": "N31", "Shop Nature": "Non Tourist", "RP Type": "RF",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 10},
+    {"SKU": 710, "Site Code": "M31", "Shop Nature": "Mix", "RP Type": "ND",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 25.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 10},
+]
+
+# 「以 RP Type 分類」維度：需求 Tourist-RF，來源 Mix-RF 先列、Mix-ND 後列
+_NDPRIO_RP_ROWS = [
+    {"SKU": 720, "Site Code": "T51", "Shop Nature": "Tourist", "RP Type": "RF",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 0.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 20,
+     "D001 Net Stock Qty (CM)": 10.0},
+    {"SKU": 720, "Site Code": "M52", "Shop Nature": "Mix", "RP Type": "RF",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 10},
+    {"SKU": 720, "Site Code": "M51", "Shop Nature": "Mix", "RP Type": "ND",
+     "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 18.0,
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 10},
+]
+
+# T21 的 D001 Net 需 < 門檻 100（BASE 99 已符合）
+_SAFETY_COLS = ["需要調貨", "調入需求量 (補到14日)", "可轉出貨量 (Non Tourist)",
+                "可轉出貨量 (Mix)", "Safety 周轉所需量", "Safety Review",
+                "建議 Safety 設定值", "Safety 建議調整量"]
+
+
+def _ndprio(nd_priority=False, **kw):
+    return transform_hybrid(_df(_NDPRIO_ROWS), nd_priority=nd_priority, **kw)
+
+
+def test_nd_priority_off_equals_current_contract():
+    # 預設關閉時，不傳參數與顯式傳 False 結果相同，且按來源檔列序取用（RF 列 N22 先）
+    raw_default, _, _, _, _, stats_default, _ = transform_hybrid(_df(_NDPRIO_ROWS))
+    raw_off, _, _, _, _, stats_off, _ = _ndprio()
+    for col in ["轉出量", "調貨來源 (Site Code)", "實際調入量", "調入缺口", "轉出量 (同OM)", "調貨來源 (同OM)"]:
+        assert raw_default[col].tolist() == raw_off[col].tolist()
+    assert _get(raw_off, "T21", "調貨來源 (Site Code)") == "N22:14"
+    assert int(_get(raw_off, "N22", "轉出量")) == 14 and int(_get(raw_off, "N21", "轉出量")) == 0
+    assert stats_off["nd_priority"] is False and stats_off["nd_transfer"] == 0
+    assert stats_default["nd_priority"] is False
+
+
+def test_nd_priority_prefers_nd_within_same_pool():
+    raw, _, _, _, _, stats, _ = _ndprio(nd_priority=True)
+    assert _get(raw, "T21", "調貨來源 (Site Code)") == "N21:6; N22:8"
+    assert int(_get(raw, "N21", "轉出量")) == 6 and int(_get(raw, "N22", "轉出量")) == 8
+    assert _get(raw, "T21", "調貨來源 (同OM)") == "N21:6; N22:8"  # 兩變體同規則（本場景全同 OM）
+    assert stats["nd_priority"] is True and stats["nd_transfer"] == 6 and stats["nd_transfer_om"] == 6
+    # Mix-ND 仍排在 Non Tourist-RF 之後 → 未被取用
+    assert int(_get(raw, "M21", "轉出量")) == 0
+
+
+def test_nd_priority_does_not_cross_pool_order():
+    _, _, _, _, _, stats_off, _ = transform_hybrid(_df(_NDPRIO_POOL_ROWS))
+    raw, _, _, _, _, stats_on, _ = transform_hybrid(_df(_NDPRIO_POOL_ROWS), nd_priority=True)
+    # Non Tourist 只有 RF、Mix 才有 ND → 仍由 Non Tourist-RF 轉出，ND 不跨池前置
+    assert _get(raw, "T31", "調貨來源 (Site Code)") == "N31:14"
+    assert int(_get(raw, "M31", "轉出量")) == 0
+    assert stats_on["nd_transfer"] == stats_off["nd_transfer"] == 0
+
+
+def test_nd_priority_keeps_safety_review_unchanged():
+    raw_off, _, _, _, _, stats_off, _ = _ndprio()
+    raw_on, _, _, _, _, stats_on, _ = _ndprio(nd_priority=True)
+    for col in _SAFETY_COLS:
+        # equals 將 NaN 視為相等（建議值／調整量對非事件列留空）
+        assert raw_off[col].reset_index(drop=True).equals(raw_on[col].reset_index(drop=True)), col
+    # 池級合計與調入／缺口不變（池間順序未改）
+    for key in ("nt_transfer", "mix_transfer", "total_actual", "total_gap",
+                "nt_transfer_om", "mix_transfer_om", "need_rows", "donor_rows"):
+        assert stats_off[key] == stats_on[key], key
+    assert stats_off["nt_transfer"] == stats_on["nt_transfer"] == 14
+    for key in ("under_rows", "over_rows", "normal_rows", "under_inc_total", "over_dec_total"):
+        assert stats_off[key] == stats_on[key], key
+
+
+def test_nd_priority_changes_event_label_and_stock_after():
+    raw_off, _, _, _, _, _, _ = _ndprio()
+    raw_on, _, _, _, _, _, _ = _ndprio(nd_priority=True)
+    assert _get(raw_off, "N21", "事件類型") == "可轉出未使用"
+    assert _get(raw_on, "N21", "事件類型") == "實際轉出"
+    assert int(_get(raw_off, "N21", "調貨後庫存")) == 20
+    assert int(_get(raw_on, "N21", "調貨後庫存")) == 14
+    assert _get(raw_on, "M21", "事件類型") == _get(raw_off, "M21", "事件類型") == "可轉出未使用"
+    assert _get(raw_on, "T21", "事件類型") == "需要調入"
+
+
+def test_nd_priority_missing_rp_type_column_is_noop_with_warning():
+    df = _df(_NDPRIO_ROWS).drop(columns=["RP Type"])
+    raw_off, _, _, _, _, stats_off, _ = transform_hybrid(df)
+    raw_on, _, _, _, _, stats_on, warns = transform_hybrid(df, nd_priority=True)
+    assert any("ND 優先轉出" in w and "RP Type" in w for w in warns), warns
+    assert raw_on["調貨來源 (Site Code)"].tolist() == raw_off["調貨來源 (Site Code)"].tolist()
+    assert stats_on["nd_transfer"] == 0 and stats_off["nd_transfer"] == 0
+
+
+def test_nd_priority_includes_unrecognized_rp_type_as_nd():
+    rows = [dict(r) for r in _NDPRIO_ROWS]
+    rows[2] = {**rows[2], "RP Type": ""}  # N21 空白 → 正規化為 ND，仍列入優先轉出
+    raw, _, _, _, _, stats, warns = transform_hybrid(_df(rows), nd_priority=True)
+    assert stats["mapped_rp_rows"] == 1
+    assert _get(raw, "T21", "調貨來源 (Site Code)") == "N21:6; N22:8"
+    assert any("RP Type" in w and "ND" in w for w in warns)
+
+
+def test_nd_priority_applies_in_rp_dimension():
+    _, _, _, _, _, stats_off, _ = transform_hybrid(_df(_NDPRIO_RP_ROWS), dimension="rp")
+    raw_on, _, _, _, _, stats_on, _ = transform_hybrid(
+        _df(_NDPRIO_RP_ROWS), dimension="rp", nd_priority=True)
+    assert stats_off["dimension"] == stats_on["dimension"] == "rp"
+    assert stats_off["nd_transfer"] == 0
+    assert stats_on["nd_transfer"] == 4
+    # ND 列仍不作需求方（M51 為 Mix-ND，缺貨也不會標示需要調貨）
+    assert _get(raw_on, "M51", "需要調貨") != "是"
+
+
+def test_nd_priority_dashboard_card_row():
+    raw_off, _, _, _, _, stats_off, _ = _ndprio()
+    raw_on, _, _, _, _, stats_on, _ = _ndprio(nd_priority=True)
+    assert len(_hybrid_dashboard_metrics(raw_off, stats_off)) == 4
+    rows = _hybrid_dashboard_metrics(raw_on, stats_on)
+    assert len(rows) == 5
+    assert [c[0] for c in rows[4]] == ["ND 來源轉出量", "ND 來源轉出量 (同OM)"]
+    assert rows[4][0][1] == 6 and rows[4][1][1] == 6
+    # stats 缺失時無法由 raw 反推開關狀態 → 不顯示 ND 卡，off 路徑兩口徑一致
+    assert len(_hybrid_dashboard_metrics(raw_on, None)) == 4
+    assert _hybrid_dashboard_metrics(raw_off, stats_off) == _hybrid_dashboard_metrics(raw_off, None)
+    # 回退口徑仍算出 ND 轉出量（供其他彙總使用）
+    assert _hybrid_stats_from_raw(raw_on)["nd_transfer"] == 6
+    assert _hybrid_stats_from_raw(raw_off)["nd_transfer"] == 0
+
+
+def test_nd_priority_bidir_and_nd_share_fifth_row():
+    raw, _, _, _, _, stats, _ = transform_hybrid(
+        _df(_BIDIR_B1), bidirectional=True, nd_priority=True)
+    rows = _hybrid_dashboard_metrics(raw, stats)
+    assert len(rows) == 5
+    assert [c[0] for c in rows[4]][:2] == ["Tourist 轉出量", "Tourist 轉出量 (同OM)"]
+
+
+def test_nd_priority_excel_metric_layout():
+    raw_off, sc, dg, dg_om, cs, st_off, _ = _ndprio()
+    ws_off = load_workbook(generate_excel_hybrid(raw_off, sc, dg, dg_om, cs, st_off))["Review 摘要"]
+    assert ws_off.cell(row=19, column=1).value == "Safety Review × Shop Nature 交叉表"
+    raw_on, sc2, dg2, dg2o, cs2, st_on, _ = _ndprio(nd_priority=True)
+    ws_on = load_workbook(generate_excel_hybrid(raw_on, sc2, dg2, dg2o, cs2, st_on))["Review 摘要"]
+    assert ws_on.cell(row=19, column=1).value == "ND 來源轉出量"
+    assert ws_on.cell(row=19, column=2).value == "ND 來源轉出量 (同OM)"
+    assert int(ws_on.cell(row=20, column=1).value) == 6
+    assert ws_on.cell(row=23, column=1).value == "Safety Review × Shop Nature 交叉表"
+
+
+def test_allocate_nd_priority_within_pool_only():
+    sku = np.array(["900"] * 7, dtype=object)
+    site = np.array(["T01", "N01", "N02", "M01", "M02", "T02", "T03"], dtype=object)
+    nature = np.array(
+        ["Tourist", "Non Tourist", "Non Tourist", "Mix", "Mix", "Tourist", "Tourist"], dtype=object)
+    need = np.array([True] + [False] * 6)
+    demand = np.array([20, 0, 0, 0, 0, 0, 0], dtype=float)
+    nt = np.array([0, 10, 5, 0, 0, 0, 0], dtype=float)
+    mix = np.array([0, 0, 0, 8, 3, 0, 0], dtype=float)
+    tou = np.array([0, 0, 0, 0, 0, 2, 4], dtype=float)
+    nd = np.array([False, False, True, False, True, True, False])
+    _, gap_off, _, desc_off = _hybrid_allocate_transfers(
+        7, sku, site, need, demand, nt, mix, tourist_avail0=tou, nature_arr=nature)
+    assert desc_off[0] == "N01:10; N02:5; M01:5" and gap_off[0] == 0
+    _, gap_on, donate_on, desc_on = _hybrid_allocate_transfers(
+        7, sku, site, need, demand, nt, mix, tourist_avail0=tou, nature_arr=nature, nd_priority=nd)
+    assert desc_on[0] == "N02:5; N01:10; M02:3; M01:2" and gap_on[0] == 0
+    assert donate_on.tolist() == [0, 10, 5, 2, 3, 0, 0]
+    # Tourist 來源列與需求列同 Nature → 兩口徑皆一律排除
+    assert donate_on[5] == donate_on[6] == 0
+
+
+def test_allocate_nd_priority_applies_to_tourist_pool():
+    sku = np.array(["910"] * 3, dtype=object)
+    site = np.array(["M01", "T02", "T01"], dtype=object)
+    nature = np.array(["Mix", "Tourist", "Tourist"], dtype=object)
+    need = np.array([True, False, False])
+    demand = np.array([10, 0, 0], dtype=float)
+    zero = np.zeros(3, dtype=float)
+    tou = np.array([0, 7, 3], dtype=float)
+    nd = np.array([False, False, True])
+    _, _, _, desc_off = _hybrid_allocate_transfers(
+        3, sku, site, need, demand, zero, zero, tourist_avail0=tou, nature_arr=nature)
+    assert desc_off[0] == "T02:7; T01:3"
+    _, _, _, desc_on = _hybrid_allocate_transfers(
+        3, sku, site, need, demand, zero, zero, tourist_avail0=tou, nature_arr=nature, nd_priority=nd)
+    assert desc_on[0] == "T01:3; T02:7"
+
