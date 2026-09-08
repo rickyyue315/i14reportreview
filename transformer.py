@@ -5883,7 +5883,7 @@ _HYBRID_SALES_OOS_DAYS_MAX = 14
 _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT = 30
 _HYBRID_SALES_OVERSTOCK_DAYS_MIN = 15
 _HYBRID_SALES_OVERSTOCK_DAYS_MAX = 90
-_HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT = 5
+_HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT = 2
 _HYBRID_SALES_OVERSTOCK_MIN_UNITS_MIN = 1
 _HYBRID_SALES_OVERSTOCK_MIN_UNITS_MAX = 100
 
@@ -7213,7 +7213,7 @@ def transform_hybrid(
       （高銷／中銷／低銷／零銷，同 SKU 內按 Sold Qty (P90D) 平均排名分帶，
       見 _hybrid_sales_bands）與「銷量存貨分類」（高銷缺貨／低銷積壓／零銷積壓／正常，
       店舖 TurnDay = Shop Stock Qty (CM) ÷ 生效月銷 × 30.5，門檻見
-      _hybrid_sales_params：缺貨線預設 7 日、積壓線預設 30 日、積壓保底預設 5 件）。
+      _hybrid_sales_params：缺貨線預設 7 日、積壓線預設 30 日、積壓保底預設 2 件）。
     - sales_rebalance=True（銷量再平衡，預設 False 維持現行契約）：需求方在原判定之外
       **增列**「高銷缺貨」列——豁免所屬 Nature 池加總 TurnDay 門檻（本通道存在目的），
       但仍須 RF、補到 14 日需求 > 0、D001 < 門檻、同 SKU 有可轉出量；單向模式需求方
@@ -8190,7 +8190,7 @@ def _write_hybrid_guide_sheet(ws, stats):
         else "關閉（池內按來源檔列序取用）")
     _kv("銷量分類門檻",
         f'缺貨線 {st_.get("sales_oos_days", 7)} 日／積壓線 {st_.get("sales_overstock_days", 30)} 日／'
-        f'保底 {st_.get("sales_overstock_min_units", 5)} 件（銷量存貨分類恆按此計算）')
+        f'保底 {st_.get("sales_overstock_min_units", 2)} 件（銷量存貨分類恆按此計算）')
     _kv("銷量再平衡", "開啟（高銷缺貨列豁免池門檻加入調貨需求方）" if st_.get("sales_rebalance")
         else "關閉（調貨需求判定按現行規則）")
     _kv("參考日期", f'{st_.get("ref_date", "—")}（Past 90 Days 0 Sales 轉 ND 提示的新品判定基準，預設昨日）')

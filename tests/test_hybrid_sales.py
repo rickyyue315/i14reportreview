@@ -524,13 +524,13 @@ def test_params_snapshot_backward_compatible():
                               False, "nature", None, False)
     new_default = build_hybrid_params(14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10},
                                       False, "nature", None, False,
-                                      False, 7, 30, 5)
+                                      False, 7, 30, 2)
     assert not hybrid_params_changed(old, new_default)
     new_on = build_hybrid_params(14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10},
                                  False, "nature", None, False,
-                                 True, 7, 30, 5)
+                                 True, 7, 30, 2)
     assert hybrid_params_changed(old, new_on)
     new_dim = build_hybrid_params(14, 100, {"Tourist": 7, "Mix": 9, "Non Tourist": 10},
                                   False, "sales", None, False,
-                                  False, 7, 30, 5)
+                                  False, 7, 30, 2)
     assert hybrid_params_changed(old, new_dim)

@@ -14,7 +14,7 @@ def build_hybrid_params(
     sales_rebalance: bool = False,
     sales_oos_days: int = 7,
     sales_overstock_days: int = 30,
-    sales_overstock_min_units: int = 5,
+    sales_overstock_min_units: int = 2,
 ) -> dict:
     if ref_date is None:
         ref_text = ""
@@ -49,7 +49,7 @@ def hybrid_params_changed(applied: dict | None, current: dict) -> bool:
             "sales_rebalance": False,
             "sales_oos_days": 7,
             "sales_overstock_days": 30,
-            "sales_overstock_min_units": 5,
+            "sales_overstock_min_units": 2,
         }
         applied = {**{k: applied.get(k, d) for k, d in defaults.items()}, **applied}
         current = {**{k: current.get(k, d) for k, d in defaults.items()}, **current}
