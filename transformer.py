@@ -291,7 +291,7 @@ def _compute_raw_extra_columns_impl(df: pd.DataFrame) -> pd.DataFrame:
 try:
     import streamlit as st
     # 必須限制緩存大小與壽命 — 無 TTL/無 max_entries 時每次轉換都累積一份 DataFrame 拷貝，
-    # 長時間運行的容器記憶體會持續增長且「釋放記憶體」按鈕前的運行間隔內無法自動回收
+    # 長時間運作的容器記憶體會持續增長且「釋放記憶體」按鈕前的執行間隔內無法自動回收
     _compute_raw_extra_columns_impl = st.cache_data(_compute_raw_extra_columns_impl, max_entries=4, ttl=3600)
 except ImportError:
     pass
@@ -628,7 +628,7 @@ def _add_combined_recommendation_columns(
     # 新品保護：Launch Date 距參考日期 90 天內（≈3 個月）視為 New SKU。新品未出單是上架
     # 時間問題而非滯銷證據，排除「P90D 0 Sales → Safety=0/ND」override，改走正常
     # X/Y 計算；Launch Date 缺欄位、缺值或無法解析時一律視為非新品（維持原行為）。
-    # 參考日期預設為今天，建議傳入 MTD 截止日期（與報表數據口徑一致）。
+    # 參考日期預設為今天，建議傳入 MTD 截止日期（與報表資料基準一致）。
     _ref = _normalize_ref_date(ref_date)
     if "Launch Date" in df.columns:
         _launch_raw = df["Launch Date"].fillna("").astype(str).str.strip()
@@ -660,7 +660,7 @@ def _add_combined_recommendation_columns(
     # Safety Qty Change 分類（增加 / 減少 / 不變）—「只可增加」模式下不會出現「減少」
     df["Safety Qty Change 分類"] = np.where(delta > 0, "增加", np.where(delta < 0, "減少", "不變"))
 
-    # 建議 Safety Stock 的周轉日數，與來源「Turnday (P90D Qty)」同口徑（P90D 日均）：
+    # 建議 Safety Stock 的周轉日數，與來源「Turnday (P90D Qty)」同一準則（P90D 日均）：
     # = Recommend Safety Stock ÷ (Shop Monthly Sold Qty (P90D) ÷ 30)。
     # P90D 月均 = 0 時無周轉意義（來源為 inf），此處留空；Recommend = 0 顯示 0（零覆蓋）。
     rec_turnday = np.full(len(df), np.nan)
@@ -6281,12 +6281,12 @@ _HYBRID_P90D_ZERO_SALES_ANNOTATION = "另符合 Past 90 Days 0 Sales，建議檢
 def _hybrid_p90d_zero_sales_mask(raw: pd.DataFrame, ref_date=None) -> tuple[pd.Series, list[str]]:
     """混合模式零銷售轉 ND 候選遮罩（僅店舖問題表提示用，不改主表）。
 
-    口徑與獨立 Past 90 Days 0 Sales 模式一致：四期銷售皆 ≤ 0 且店舖有庫存
+    準則與獨立 Past 90 Days 0 Sales 模式一致：四期銷售皆 ≤ 0 且店舖有庫存
     （NaN 視為 0；負數視為 ≤ 0；`Shop Stock Qty (LM)` 欄存在時須 LM／CM 皆 > 0，
     缺欄時僅以 CM > 0 判定）。另作新品保護（`Launch Date` 距參考日期 90 天內排除，
     重用 `_parse_launch_dates`；缺欄／缺值／無法解析視為非新品；參考日期預設為今天，
     建議傳入 MTD 截止日期）與防呆排除
-    （`需要調貨=是` 列、非 RF 列不納入；`RP Type` 缺欄時沿用全 RF 口徑）。
+    （`需要調貨=是` 列、非 RF 列不納入；`RP Type` 缺欄時沿用全 RF 處理）。
     四個銷售欄任一缺失時回傳全 False＋一條 warning（不停止、不拋錯）。
     """
     idx = raw.index
@@ -6485,8 +6485,8 @@ def _hybrid_diag_summary_columns(dimension: str = "nature", om_groups=None) -> l
 def _hybrid_group_key_series(df: pd.DataFrame, dimension: str, om_groups=None) -> pd.Series:
     """依分類維度產生每列的分組鍵（nature→Shop Nature；rp→RP Type；both→Nature-RP；
     om→OM；nature_om→Nature-OM；sales→銷量帶；sales_nature→Nature-銷量帶）。
-    RP Type 為正規化後值；缺欄時一律按 RF（可補貨）處理，與 transform_hybrid 同口徑。
-    OM 空白歸入「空白」，與 transform_hybrid 同口徑（om_groups 僅決定欄位集合，
+    RP Type 為正規化後值；缺欄時一律按 RF（可補貨）處理，與 transform_hybrid 同一準則。
+    OM 空白歸入「空白」，與 transform_hybrid 同一準則（om_groups 僅決定欄位集合，
     不影響逐列鍵值）。銷量帶為 transform_hybrid 常開產出欄；缺欄時退回
     Shop Nature 鍵（顯式守衛，正常輸入不會觸發，sales 與 sales_nature 同規則）。"""
     d = _hybrid_dimension(dimension)
@@ -6545,7 +6545,7 @@ def _build_hybrid_diag_summary(raw: pd.DataFrame, dimension: str = "nature", om_
         return {
             "列數": int(len(sub)),
             "SKU 數": int(sub["SKU"].nunique()) if "SKU" in sub.columns else 0,
-            # 先四捨五入再取整，與「Safety 調整方向分類」／stats 合計口徑一致
+            # 先四捨五入再取整，與「Safety 調整方向分類」／stats 合計準則一致
             "建議調整量合計": int(round(float(sub["_chg"].sum()))),
         }
 
@@ -6727,7 +6727,7 @@ _HYBRID_BUYER_COMBINED_TITLE = "Buyer 統計（需調貨＋需調整 Safety）"
 def _hybrid_buyer_need_stats(raw: pd.DataFrame, need_series: pd.Series | None = None) -> list[tuple[str, int]]:
     """Buyer 級統計：各 Buyer 涉及多少個「需要調貨」SKU（已刪除重複）。
 
-    與 Stock Checking 的 `_stock_checking_buyer_stats` 同口徑（Buyer 取同 SKU 首個非空值；
+    與 Stock Checking 的 `_stock_checking_buyer_stats` 同一準則（Buyer 取同 SKU 首個非空值；
     全空歸入「(未填 Buyer)」），供 Safety Stock x NetStock Review 沿用。
     回傳 [(Buyer, 需調貨 SKU 數)]，按數量降序、同數按 Buyer 名排序。
     """
@@ -6760,9 +6760,9 @@ def _hybrid_buyer_safety_stats(raw: pd.DataFrame) -> list[tuple[str, int, int]]:
 
     母體為 Safety Review 屬「Safety 設定不足」或「Safety 設定過高」的列（即有
     「建議 Safety 設定值」的列，與 Safety 調整方向分類的增加＋減少同母體）。
-    Buyer 取同 SKU 首個非空值（與需調貨統計同口徑）；全空歸入「(未填 Buyer)」。
+    Buyer 取同 SKU 首個非空值（與需調貨統計同一準則）；全空歸入「(未填 Buyer)」。
     調整量合計為該 Buyer 名下各需調整 SKU 的「Safety 建議調整量」列合計（四捨五入取整，
-    與交叉表／分類表同口徑；正=增加、負=減少）。
+    與交叉表／分類表同一準則；正=增加、負=減少）。
     回傳 [(Buyer, 需調整 Safety SKU 數, Safety 建議調整量合計)]，
     按 SKU 數降序、同數按 Buyer 名排序。
     """
@@ -6840,7 +6840,7 @@ def _hybrid_buyer_combined_detail(raw: pd.DataFrame) -> list[tuple[str, int, int
     Buyer 取同 SKU 全表首個非空值（需調貨與需調整共用同一歸屬，避免同一 SKU
     在兩母體歸入不同 Buyer）；全空歸入「(未填 Buyer)」。
     需調貨貨量為該 Buyer 名下各需調貨 SKU 的「調入需求量 (補到14日)」列合計
-    （取整，與指標卡總需求同口徑）；Safety 調整量為「Safety 建議調整量」列合計
+    （取整，與指標卡總需求同一準則）；Safety 調整量為「Safety 建議調整量」列合計
     （取整，正=增加、負=減少）。
     回傳 [(Buyer, 需調貨 SKU 數, 調入需求量合計, 需調整 Safety SKU 數,
     Safety 建議調整量合計)]，按需調貨數降序、再按需調整數降序、同數按 Buyer 名排序。
@@ -6911,7 +6911,7 @@ def _hybrid_safety_days_from_raw(raw: pd.DataFrame, nature=None) -> dict[str, in
 
 
 def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
-    """由 raw 匯總 Review stats（stats 缺失時的回退，與 transform_hybrid 同口徑）。"""
+    """由 raw 匯總 Review stats（stats 缺失時的回退，與 transform_hybrid 同一準則）。"""
     if raw is None or raw.empty:
         return {}
     need = raw.get("需要調貨", _safe_default_series("", raw.index)).astype(str) == "是"
@@ -6949,7 +6949,7 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
         "mix_transfer_om": int(_safe_numeric(raw.loc[nature == "Mix", "轉出量 (同OM)"]).sum()) if "轉出量 (同OM)" in raw.columns else 0,
         "tourist_transfer_om": int(_safe_numeric(raw.loc[nature == "Tourist", "轉出量 (同OM)"]).sum()) if bidirectional and "轉出量 (同OM)" in raw.columns else 0,
         "bidirectional": bool(bidirectional),
-        # ND 來源轉出量（與 transform_hybrid 同口徑；nd_priority 無法由 raw 反推，故不列）
+        # ND 來源轉出量（與 transform_hybrid 同一準則；nd_priority 無法由 raw 反推，故不列）
         "nd_transfer": int(_safe_numeric(raw.loc[raw_rp == "ND", "轉出量"]).sum()) if rp_in_raw and "轉出量" in raw.columns else 0,
         "nd_transfer_om": int(_safe_numeric(raw.loc[raw_rp == "ND", "轉出量 (同OM)"]).sum()) if rp_in_raw and "轉出量 (同OM)" in raw.columns else 0,
         "donor_rows": int(donor.sum()),
@@ -6963,7 +6963,7 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
         "total_raw_rows": int(len(raw)),
         # 銷量分類列可由 RAW 反推；開關狀態與門檻為參數、無法由 RAW 反推，
         # 故回退路徑不列 sales_rebalance／sales_need_rows（銷量分類概況排自然不顯示，
-        # 與 ND 優先轉出的回退口徑一致）
+        # 與 ND 優先轉出的回退準則一致）
         "sales_oos_rows": int(cls_col.eq(_HYBRID_SALES_CLASS_ORDER[0]).sum()),
         "sales_oos_skus": int(
             raw.loc[cls_col.eq(_HYBRID_SALES_CLASS_ORDER[0]), "SKU"].nunique()
@@ -6980,7 +6980,7 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
 
 
 def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
-    """調貨 Review 指標卡（每排 4 卡，與 Streamlit Hybrid Dashboard 同口徑；
+    """調貨 Review 指標卡（每排 4 卡，與 Streamlit Hybrid Dashboard 同一準則；
     第 4 排為同OM調貨對照，Safety Review 建議不受 OM 限制影響；
     第 5 排為轉出來源對照——雙向調貨時含 Tourist 轉出量兩卡，「ND 優先轉出」開啟且 ND 店舖
     有實際轉出時另加 ND 來源轉出量兩卡（該排 2–4 卡）；
@@ -7177,7 +7177,7 @@ def transform_hybrid(
     - 調貨段：與 Stock Checking 同規則（SKU 級加總 TurnDay、Nature 供應門檻、
       14 日需求/可轉出、NT 優先→Mix 補足、需求量大→小），另疊加本模式特有的
       **資料品質補正**（Shop Nature 正規化、月銷逐列回補、D001 逐列 Net→Stock
-      fallback；回補口徑見各段 warning），故同一份輸入在兩個模式可能出現細微差異。
+      fallback；回補準則見各段 warning），故同一份輸入在兩個模式可能出現細微差異。
       **調貨段恆以 14 日為基準，不受 safety_days 影響。**
     - Review 段（Safety 基準周轉天數，按 Shop Nature 分別設定）：
       Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 的基準天數)；
@@ -7192,7 +7192,7 @@ def transform_hybrid(
       維持原所需量，不強制上調到 3。
       建議 Safety 設定值 = 不足列取所需量、過高列取生效基準（僅不足/過高列），
       Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）；
-      「Safety 周轉所需量」欄維持原所需量作稽核口徑，保底只體現在建議值與調整量。
+      「Safety 周轉所需量」欄維持原所需量供稽核，保底只體現在建議值與調整量。
     - bidirectional=True（允許雙向調貨，預設 False 維持單向契約）：任何 Nature 缺貨
       （該 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且列需求 > 0）且其他任一 Nature
       有貨（加總 TurnDay ≥ 門檻）即標示需要調貨；新增 RAW 欄「可轉出貨量 (Tourist)」，
@@ -7205,7 +7205,7 @@ def transform_hybrid(
       （雙向時才含 Tourist），展開為 NT-ND → NT-RF → Mix-ND → Mix-RF → Tourist-ND →
       Tourist-RF 六段；ND／RF 兩段各自維持來源檔列序（不按可轉出量重排）。
       轉出資格（池級歸零、逐列 14 日超額、自我調貨／同 Nature／同OM 守衛）一律不放寬，
-      ND 列仍不作調貨需求方；「ND」口徑＝正規化後 RP Type 非 RF（含無法辨識而歸入 ND 的列）。
+      ND 列仍不作調貨需求方；「ND」的定義＝正規化後 RP Type 非 RF（含無法辨識而歸入 ND 的列）。
       因 donor_mask 與分配順序無關，本開關**只改調貨分配結果**（轉出量／調貨來源／
       事件類型／調貨後庫存與 TurnDay），不影響 Safety Review、建議調整值與調整量。
       來源檔缺 RP Type 欄時自動失效（全部列按 RF）並列 warning。
@@ -7237,7 +7237,7 @@ def transform_hybrid(
       含各 Buyer 的調整量合計）。
     - 零銷售轉 ND 提示：Past 90 Days 0 Sales 候選（四期銷售皆 ≤ 0 且有庫存）於
       「店舖問題 SKU」以 ND 退場提示（距參考日期 90 天內新品除外）；參考日期
-      ref_date 預設為今天，建議傳入 MTD 截止日期（與報表數據口徑一致）。
+      ref_date 預設為今天，建議傳入 MTD 截止日期（與報表資料基準一致）。
     回傳 (raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, warnings)；
     stats["safety_days"] 為實際採用的各 Nature 基準天數；
     stats["dimension"] 為實際採用的分類維度（rp／both 缺 RP 欄、om／nature_om 缺 OM 分組時退回 nature）；
@@ -7335,7 +7335,7 @@ def transform_hybrid(
             "已逐列以 Sold Qty (P90D) ÷ 90 × 30.5 換算月銷。"
         )
     msold_eff = msold_raw.where(~(msold_blank | msold_zero_conflict), sold_p90d / 90.0 * 30.5)
-    # 實際採用月銷另存 Effective 欄（與 D001 Effective 欄同口徑）；覆寫前保留原始輸入供稽核比對
+    # 實際採用月銷另存 Effective 欄（與 D001 Effective 欄同一準則）；覆寫前保留原始輸入供稽核比對
     df["Effective Shop Monthly Sold Qty (P90D)"] = msold_eff
     df["Shop Monthly Sold Qty (P90D)"] = msold_eff
 
@@ -7430,7 +7430,7 @@ def transform_hybrid(
     ttd_np = pd.Series(sku_tourist_turnday, index=idx).to_numpy(dtype=float)
     mtd_np = pd.Series(sku_mix_turnday, index=idx).to_numpy(dtype=float)
     ntd_np = pd.Series(sku_nt_turnday, index=idx).to_numpy(dtype=float)
-    # 每列所屬 Nature 的 SKU 級加總 TurnDay（rp 模式需求判定用；仍按 Shop Nature 口徑）
+    # 每列所屬 Nature 的 SKU 級加總 TurnDay（rp 模式需求判定用；仍按 Shop Nature 準則）
     nature_td_np = np.select([is_tourist, is_mix], [ttd_np, mtd_np], default=ntd_np)
     tourist_pool_ok = sku_tourist_turnday >= turnday_threshold
     if dim == "rp":
@@ -7551,7 +7551,7 @@ def transform_hybrid(
     # ── 調貨分配：不限OM（現行契約欄位）＋ 同OM（來源店與需求店同 OM 才可轉出）──
     # rp 維度取消「需求 Nature 自身除外」守衛（允許同 Nature 店間再平衡）；
     # nature／both 維度維持守衛（池級歸零＋分配層守衛雙重保證）
-    # ND 優先轉出：池內 ND 列前置（ND 口徑＝正規化後非 RF，含無法辨識列）；
+    # ND 優先轉出：池內 ND 列前置（ND 的定義＝正規化後非 RF，含無法辨識列）；
     # 缺 RP Type 欄時全部列按 RF，開關自動失效
     _src_nd = (~is_rf) if (nd_priority and rp_present) else None
     _is_nd_src = (df["RP Type"] == "ND") if rp_present else pd.Series(False, index=idx)
@@ -7992,7 +7992,7 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
     ＋ ③ Safety 調整明細（SKU 級彙總）＋ ④ Buyer 統計（需調貨＋需調整 Safety 合併表）
     ＋ ⑤ 銷量 × 存貨分類交叉表（母體為全部店舖×SKU 列，不受調貨事件影響）。
     ②③ 由 raw 即時彙算（Safety 建議不受 OM 限制影響，兩變體共用同一份統計）；
-    ④ 與 Stock Checking 的 Buyer 統計同口徑（同 SKU 首個非空 Buyer，已刪除重複）。"""
+    ④ 與 Stock Checking 的 Buyer 統計同一準則（同 SKU 首個非空 Buyer，已刪除重複）。"""
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     bold_font = Font(bold=True, size=11)
@@ -8112,8 +8112,8 @@ def _hybrid_raw_display_columns(raw: pd.DataFrame) -> list[str]:
 
 
 def _write_hybrid_guide_sheet(ws, stats):
-    """「說明」工作表（工作簿首位）：回顯本次執行參數、講解模式核心邏輯，
-    並逐頁導讀各工作表應關注的部分。內容為靜態說明＋stats 參數回顯，不含計算欄位。"""
+    """「說明」工作表（工作簿首位）：列出本次執行參數、講解模式核心邏輯，
+    並逐頁導讀各工作表應留意的部分。內容為靜態說明＋stats 參數照錄，不含計算欄位。"""
     st_ = stats or {}
     dim = _hybrid_dimension(st_.get("dimension"))
     sd = {**_HYBRID_SAFETY_DAYS_DEFAULT, **(st_.get("safety_days") or {})}
@@ -8175,7 +8175,7 @@ def _write_hybrid_guide_sheet(ws, stats):
         r += 1
 
     _merged("Safety Stock x NetStock Review 說明與導讀", title_font, height=26)
-    _merged("本頁講解此報告的 Review 邏輯與本次執行參數，並逐頁說明應關注的部分；各項判定以 RAW 逐列欄位為準。",
+    _merged("本頁講解此報告的 Review 邏輯與本次執行參數，並逐頁說明應留意的部分；各項判定以 RAW 逐列欄位為準。",
             sub_font, height=16)
 
     # ── ① 本次執行參數 ──
@@ -8213,8 +8213,8 @@ def _write_hybrid_guide_sheet(ws, stats):
             "標示 ND 退場建議（距參考日期 90 天內新品除外）。")
 
     # ── ③ 工作表導讀 ──
-    _sec("③ 工作表導讀（先看哪頁、關注什麼）")
-    for col, val in ((1, "工作表"), (2, "內容"), (3, "建議關注")):
+    _sec("③ 工作表導讀（先看哪一頁、應留意什麼）")
+    for col, val in ((1, "工作表"), (2, "內容"), (3, "建議留意")):
         c = ws.cell(row=r, column=col, value=val)
         c.font = label_font
         c.fill = head_fill
@@ -8223,22 +8223,22 @@ def _write_hybrid_guide_sheet(ws, stats):
     r += 1
     _row3("說明（本頁）", "Review 邏輯、本次參數與導讀", "執行任何行動前，先核對上方 ① 的參數是否符合預期")
     _row3("RAW", "全部店舖×SKU 逐列明細與判定欄",
-          "關注「需要調貨」「事件類型」「Safety Review」「建議 Safety 設定值」「Safety 建議調整量」「銷量帶」「銷量存貨分類」；非事件列 Review 欄留空屬正常")
+          "留意「需要調貨」「事件類型」「Safety Review」「建議 Safety 設定值」「Safety 建議調整量」「銷量帶」「銷量存貨分類」；非事件列 Review 欄留空屬正常")
     _row3("Summary", "SKU 級庫存／銷量分佈（按分類維度分組）",
-          "關注「存貨偏重提示」（橘底）——哪些分組存貨偏重而銷量不高")
+          "留意「存貨偏重提示」（橘底）——哪些分組存貨偏重而銷量不高")
     _row3("調貨 Review Safety Stock (不限OM)", "逐列 Safety Review 主表（調貨來源不限 OM）",
           "按「Safety Review」篩選設定不足／過高；行動看「建議 Safety 設定值」與「Safety 建議調整量」")
     _row3("調貨 Review Safety Stock (同OM)", "同上，惟調貨來源須與需求店同一 OM",
           "兩套數值可能不同；(同OM) 限制較嚴，按公司規定選用")
     _row3("店舖問題 SKU", "每間店舖需行動事項（問題＋建議方法）",
-          "店務同事由此頁入手；含調入缺口跟進與 0 Sales 轉 ND 建議")
+          "店務同事可先從這一頁著手；含調入缺口跟進與 0 Sales 轉 ND 建議")
     _row3("Review 摘要", "指標卡＋Safety Review×分類維度交叉表＋Safety 調整方向分類／明細＋銷量×存貨分類交叉表",
           "管理層概覽；「Safety 調整方向分類」看建議增加／減少的總量")
     _row3("簡易調貨明細 (不限OM)／(同OM)", "一列一筆「來源店舖 → 接收店舖」調貨",
-          "實際執行調貨時照此表：來源店、接收店、調貨數量")
+          "實際執行調貨時按此表進行：來源店、接收店、調貨數量")
 
-    # ── ④ 速查提示 ──
-    _sec("④ 速查提示")
+    # ── ④ 實用提示 ──
+    _sec("④ 實用提示")
     _bullet("「Safety 建議調整量」正數＝建議上調設定；負數＝建議下調設定（僅不足／過高列有值）。")
     _bullet("Summary 橘底＝觸發「存貨偏重提示」的分組（庫存佔比高而銷量佔比低）。")
     _bullet("分類維度只改變 Summary／交叉表的分組顯示，不影響調貨與 Safety 計算。")
@@ -8255,7 +8255,7 @@ def generate_excel_hybrid(
     progress_callback=None,
 ) -> BytesIO:
     """Safety Stock x NetStock Review 輸出（9 工作表，順序固定）：
-    說明（首頁導讀：本次執行參數回顯＋模式核心邏輯＋各工作表應關注的部分）/
+    說明（首頁導讀：本次執行參數列出＋模式核心邏輯＋各工作表應留意的部分）/
     RAW（重新排列欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄；含不限OM與同OM兩套調貨結果；
     雙向時另含「可轉出貨量 (Tourist)」）/
     Summary（SKU 級彙總，按 stats["dimension"] 分類維度分組：nature 三組／rp 兩組／both 六組／
@@ -9201,7 +9201,7 @@ def _stock_checking_stats_empty() -> dict:
 def _stock_checking_buyer_stats(raw: pd.DataFrame, need_series: pd.Series | None = None) -> list[tuple[str, int]]:
     """Buyer 級統計：各 Buyer 涉及多少個「需要調貨」SKU（已刪除重複）。
 
-    - Buyer 取同 SKU 首個非空值（與 Summary 同口徑）；全空歸入「(未填 Buyer)」
+    - Buyer 取同 SKU 首個非空值（與 Summary 同一準則）；全空歸入「(未填 Buyer)」
     - 回傳 [(Buyer, 需調貨 SKU 數)]，按數量降序、同數按 Buyer 名排序
     """
     if raw is None or raw.empty or "SKU" not in raw.columns:
@@ -9439,7 +9439,7 @@ def transform_stock_checking(
     D001 倉庫少貨（低於門檻）且遊客區（Tourist）店舖缺貨時的檢查（SKU 級判定）：
 
     - 觸發條件（同時符合才標示）：該 SKU 的「Tourist 加總 TurnDay」
-      （= 各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5，與 Summary 同口徑）
+      （= 各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5，與 Summary 同一準則）
       < Turnday 門檻，且 D001 < 門檻，且 Mix / Non Tourist 至少一個 Nature 的加總 TurnDay ≥ 門檻（有貨可調）。
       加總 TurnDay ≥ 門檻的 SKU 一律無須調貨；Mix 與 Non Tourist 加總 TurnDay 皆低於門檻時視為無貨可調，不標示。
     - 需求端：已標示 SKU 的 Tourist 店列，補到 14 日周轉的需求 > 0
@@ -9498,7 +9498,7 @@ def transform_stock_checking(
     no_sale_has_stock = (sold_val <= 0) & (cm_stock_val > 0)
     ideal_14d = sold_val / 90.0 * 14
 
-    # ── SKU 級各 Nature 加總 TurnDay（與 Summary 同口徑：加總庫存 ÷ 加總月銷 × 30.5）──
+    # ── SKU 級各 Nature 加總 TurnDay（與 Summary 同一準則：加總庫存 ÷ 加總月銷 × 30.5）──
     if _resolve_column_name("Shop Monthly Sold Qty (P90D)", avail) is not None:
         msold_monthly = _safe_numeric(df["Shop Monthly Sold Qty (P90D)"])
     else:
@@ -9876,7 +9876,7 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
 
 
 def _stock_checking_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
-    """Stock Checking Dashboard 指標（與 Streamlit Transfer Analysis Dashboard 同口徑）。
+    """Stock Checking Dashboard 指標（與 Streamlit Transfer Analysis Dashboard 同一準則）。
 
     回傳 (row1_metrics, row2_metrics)，供 _write_metric_cards 使用。
     stats 缺失時（舊呼叫相容）直接由 raw 匯總。

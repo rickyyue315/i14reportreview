@@ -593,7 +593,7 @@ def test_sku_soh_tier_summary_marker():
     assert str(s4[marker_col]) == "", f"S4 (售罄率100%) should be '', got '{s4[marker_col]}'"
     print(f"OK S4: 有貨 2 間、有賣 2 間 → 比率=100% → marker=''")
 
-    print("OK _build_sku_soh_tier_summary marker（新口徑，有貨>0 & <50% → Y）")
+    print("OK _build_sku_soh_tier_summary marker（新準則，有貨>0 & <50% → Y）")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

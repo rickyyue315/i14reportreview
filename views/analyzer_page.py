@@ -659,7 +659,7 @@ if uploaded_file is not None:
                  "以銷量分類：計算與預設相同，Summary／交叉表按銷量帶分組——同 SKU 內按 Sold Qty (P90D) 排名，"
                  "排名超過 75%＝高銷、排名在最低 25% 內＝低銷、其餘＝中銷、P90D≤0＝零銷（有銷店舖少於 4 間時不區分高低，全歸中銷）。\n"
                  "以銷量＋Shop Nature分類：計算與預設相同，Summary／交叉表按 Nature×銷量帶 12 組（如 Tourist-高銷、Mix-低銷）呈現；"
-                 "銷量帶口徑與「以銷量分類」相同，分帶結果隨本次上傳資料的篩選範圍而變。\n"
+                 "銷量帶準則與「以銷量分類」相同，分帶結果隨本次上傳資料的篩選範圍而變。\n"
                  "RP Type 為 ND（不可補貨）的店舖列一律不作需求方（仍可作供應方）；其他／空白值歸入 ND 並列 warning；"
                  "來源缺「RP Type」欄時全部列按 RF 處理並退回 Shop Nature 維度（OM／銷量維度不退回）。"
                  "來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature 維度。"
@@ -711,7 +711,7 @@ if uploaded_file is not None:
                  "ND 列仍不作調貨需求方。\n"
                  "本開關只改變調貨分配結果（轉出量／調貨來源／事件類型／調貨後庫存與 TurnDay），"
                  "不影響 Safety Review、建議 Safety 設定值與調整量。"
-                  "「ND」口徑為正規化後非 RF（含無法辨識而歸入 ND 的列）；來源檔缺「RP Type」欄時自動失效並列 warning。"
+                  "「ND」的定義為正規化後非 RF（含無法辨識而歸入 ND 的列）；來源檔缺「RP Type」欄時自動失效並列 warning。"
          )
         st.markdown("**📈 銷量分類與銷量再平衡**")
         _sales_hint = (
@@ -759,7 +759,7 @@ if uploaded_file is not None:
             "📅 參考日期（New SKU 判定基準；Launch Date 起 90 天內視為新品）",
             value=datetime.now().date() - timedelta(days=1),
             key="hy_ref_date",
-            help="Past 90 Days 0 Sales 轉 ND 候選的新品保護以此日期起計 90 天（Launch Date 在此日期前 90 天內視為新品，不作 ND 提示）。預設為昨日，與報表數據口徑一致。",
+            help="Past 90 Days 0 Sales 轉 ND 候選的新品保護以此日期起計 90 天（Launch Date 在此日期前 90 天內視為新品，不作 ND 提示）。預設為昨日，與報表資料基準一致。",
         )
         _current_hybrid_params = build_hybrid_params(
             turnday_threshold, d001_threshold, _safety_days, bidirectional, _dimension,
@@ -831,7 +831,7 @@ if uploaded_file is not None:
             st.caption(
                 "🧮 目前維度＝以銷量＋Shop Nature分類：調貨計算與預設相同（需求 Tourist-RF、供應 Mix／Non Tourist），"
                 "Summary 與交叉表按 Nature×銷量帶 12 組（Tourist-高銷／中銷／低銷／零銷、Mix-…、Non Tourist-…）呈現；"
-                "銷量帶口徑與「以銷量分類」相同——按本次上傳資料內同 SKU 各店舖 Sold Qty (P90D) 排名計算，"
+                "銷量帶準則與「以銷量分類」相同——按本次上傳資料內同 SKU 各店舖 Sold Qty (P90D) 排名計算，"
                 "篩選範圍不同時分帶結果會不同。"
             )
         else:
@@ -1096,7 +1096,7 @@ if uploaded_file is not None:
                             "需調整 Safety SKU 佔比": st.column_config.NumberColumn("需調整 Safety SKU 佔比", format="%.1f%%"),
                         },
                     )
-                    st.caption("同一 Buyer 的需調貨與需調整 Safety 並列顯示（已刪除重複；需調貨同 Stock Checking 口徑；需調整母體為 Safety 設定不足＋過高，貨量與調整量為淨額）。")
+                    st.caption("同一 Buyer 的需調貨與需調整 Safety 並列顯示（已刪除重複；需調貨按 Stock Checking 同一準則；需調整母體為 Safety 設定不足＋過高，貨量與調整量為淨額）。")
                 else:
                     st.info("無符合條件的 Buyer 統計")
 
@@ -1108,7 +1108,7 @@ if uploaded_file is not None:
                 _sales_block = _build_hybrid_sales_summary(raw_df)
                 if not _sales_block.empty:
                     st.dataframe(_sales_block, width='stretch', hide_index=True)
-                    st.caption(f"分類口徑：高銷缺貨＝同 SKU 內屬高銷帶且店舖周轉日數 < {_soos} 日；"
+                    st.caption(f"分類準則：高銷缺貨＝同 SKU 內屬高銷帶且店舖周轉日數 < {_soos} 日；"
                                f"低銷積壓＝低銷帶且周轉日數 ≥ {_sover} 日且庫存 ≥ {_sminu} 件；"
                                f"零銷積壓＝P90D 零銷售且庫存 ≥ {_sminu} 件；其餘為正常。"
                                "母體為全部店舖×SKU 列（有別於 ①–④ 的調貨事件列母體），無調貨事件時仍可查閱；"
@@ -1151,7 +1151,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Stock Impact Analysis":
-        st.caption("📦 以 **Shop Stock Qty = 0（缺貨）** 為核心，分析存貨對 Sold Qty 的因果影響（無貨就無銷售）。重點關注 Tourist 店舖。")
+        st.caption("📦 以 **Shop Stock Qty = 0（缺貨）** 為核心，分析存貨對 Sold Qty 的因果影響（無貨就無銷售）。重點留意 Tourist 店舖。")
 
         warehouse_only = st.checkbox(
             "🏗️ 只分析 Warehouse SKU（建議）",
@@ -1881,7 +1881,7 @@ if uploaded_file is not None:
                     "🔁 Tourist 加總 TurnDay 門檻 (日)",
                     min_value=1, max_value=365, value=14, step=1,
                     key="sc_ttd",
-                    help="該 SKU 所有 Tourist 店的庫存加總 ÷ 月銷加總 × 30.5（與 Summary 同口徑）低於此值時，才列入調貨候選。"
+                    help="該 SKU 所有 Tourist 店的庫存加總 ÷ 月銷加總 × 30.5（與 Summary 同一準則）低於此值時，才列入調貨候選。"
                 )
             with sc_top[1]:
                 d001_threshold = st.number_input(

@@ -1,6 +1,6 @@
 """Safety Stock x NetStock Review Buyer 統計（需調貨＋需調整 Safety 合併表）。
 
-- Buyer 需調貨 SKU 統計與 Stock Checking 同口徑（同 SKU 首個非空 Buyer，已刪除重複）
+- Buyer 需調貨 SKU 統計與 Stock Checking 同一準則（同 SKU 首個非空 Buyer，已刪除重複）
 - Buyer 需調整 Safety SKU 統計母體為 Safety 設定不足＋過高（有建議 Safety 設定值的列）
 - 兩者按 Buyer 外連接合併為單一表：Buyer／需調貨 SKU 數／需調貨 SKU 佔比／調入需求量合計／
   需調整 Safety SKU 數／需調整 Safety SKU 佔比／Safety 建議調整量合計
@@ -90,7 +90,7 @@ def test_buyer_need_empty_buyer_grouped():
 
 
 def test_buyer_safety_counts_and_amounts():
-    # 10 日口徑：SKU 300（T01 +10、N01 −20 → 淨 −10）；SKU 301（T02 +35、N02 −20 → 淨 +15）
+    # 10 日基準：SKU 300（T01 +10、N01 −20 → 淨 −10）；SKU 301（T02 +35、N02 −20 → 淨 +15）
     raw, _, _, _, _, stats, _ = transform_hybrid(_df(_TWO_BUYER), safety_days=_SD10)
     assert stats["buyer_safety_fix"] == [("Alice", 1, -10), ("Bob", 1, 15)]
     assert _hybrid_buyer_safety_stats(raw) == stats["buyer_safety_fix"]

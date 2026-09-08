@@ -1,6 +1,6 @@
 """Validation tests for Hybrid Past 90 Days 0 Sales ND hint (v1.26.0, ref_date v1.27.0).
 
-口徑：M-2／M-1／CM-MTD／P90D 皆 ≤ 0 且有庫存（LM 欄存在時須雙 >0），
+準則：M-2／M-1／CM-MTD／P90D 皆 ≤ 0 且有庫存（LM 欄存在時須雙 >0），
 距參考日期 90 天內新品、需要調貨列、ND 列除外；僅店舖問題表提示，不改主表。
 參考日期預設為今天，建議傳入 MTD 截止日期。
 """

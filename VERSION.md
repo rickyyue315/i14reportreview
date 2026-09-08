@@ -1,13 +1,23 @@
 # 版本記錄
 
+## v1.35.1 (2026-09-08)
+
+說明字眼優化為香港繁體書面語，避免大陸用語：Safety Stock x NetStock Review「說明」工作表全文、使用說明頁與 README 的相關描述、銷量帶分類說明圖——「回顯」→「列出／照錄」、「關注」→「留意」、「打開 Excel 預設停在此頁」→「開啟 Excel 時預設顯示本頁」、「速查提示」→「實用提示」、「邊界口徑」→「邊界準則」、「尾列／前列店舖」→「銷量最少／最高的店舖」、「由此頁入手」→「從這一頁著手」、「照此表」→「按此表進行」、「口徑」→「準則／定義」、「數據口徑」→「資料基準」、「運行」→「運作／執行」；另修正兩處既有文字（「逐列回顯 Safety 基準天數」→「逐列顯示」、「重點關注 Tourist 店舖」→「重點留意」）。僅文字變更，計算、欄位與版面零變動。
+
+- Change: `_write_hybrid_guide_sheet()` 各區塊標題與導讀文字（③ 導讀標題改「先看哪一頁、應留意什麼」、欄首「建議留意」、④ 改「實用提示」）；`generate_excel_hybrid()` 與 `_write_hybrid_guide_sheet()` docstring 同步
+- Change: `scripts/make_sales_band_chart.py` 判定條件表「說明」欄與備註用語，重新生成 `assets/sales_band_guide.png`
+- Change: transformer.py／測試檔／圖表腳本的代碼註釋與 docstring 同步掃描（約 50 處「口徑／回顯／運行」等）——僅註釋文字，所有欄名、工作表名、警告訊息、UI 字串與計算邏輯零變動，323 項測試與煙霧測試全數通過驗證
+- Change: README（9 工作表段落、「說明」列、Review 基準段）、使用說明頁（輸出 9 工作表描述、Review 基準、圖片 caption）與結果頁 Overstock 模式 caption（「重點留意」）
+- Update: `tests/test_hybrid_mode.py` 說明表測試斷言同步新標題；共 323 項測試通過
+
 ## v1.35.0 (2026-09-08)
 
-Safety Stock x NetStock Review 輸出 Excel 由 8 個工作表擴為 **9 個工作表**，新增首頁「說明」導讀表——回顯本次執行參數（分類維度／調貨門檻／D001 門檻／Safety 基準周轉天數／雙向調貨／ND 優先轉出／銷量分類門檻／銷量再平衡／參考日期）、講解核心邏輯（調貨段 14 日線、Review 段 Safety 基準、銷量帶與銷量存貨分類、Past 90 Days 0 Sales 轉 ND），並逐頁說明各工作表的內容與用家應關注的部分（含速查提示）。打開 Excel 預設停在「說明」頁。**非破壞性**——原 8 個工作表的欄位、數值與排序零變動，僅新增說明頁；使用說明頁另於本模式收合區塊加入「銷量帶分類說明圖」（高銷／中銷／低銷／零銷判定與例子，口徑與說明表一致）。
+Safety Stock x NetStock Review 輸出 Excel 由 8 個工作表擴為 **9 個工作表**，新增首頁「說明」導讀表——列出本次執行參數（分類維度／調貨門檻／D001 門檻／Safety 基準周轉天數／雙向調貨／ND 優先轉出／銷量分類門檻／銷量再平衡／參考日期）、講解核心邏輯（調貨段 14 日線、Review 段 Safety 基準、銷量帶與銷量存貨分類、Past 90 Days 0 Sales 轉 ND），並逐頁說明各工作表的內容與用家應留意的部分（含實用提示）。開啟 Excel 時預設顯示「說明」頁。**非破壞性**——原 8 個工作表的欄位、數值與排序零變動，僅新增說明頁；使用說明頁另於本模式收合區塊加入「銷量帶分類說明圖」（高銷／中銷／低銷／零銷判定與例子，口徑與說明表一致）。
 
-- New: `_write_hybrid_guide_sheet()`——「說明」工作表撰寫（① 本次執行參數回顯：由 `stats` 還原分類維度／門檻／基準天數／開關狀態；② 核心邏輯五點；③ 工作表導讀八列（工作表／內容／建議關注）；④ 速查提示四點；含換行高度估算，全文字面語繁體中文）；`generate_excel_hybrid()` 接入（`wb.active = 0` 預設停於說明頁）
+- New: `_write_hybrid_guide_sheet()`——「說明」工作表撰寫（① 本次執行參數列出：由 `stats` 還原分類維度／門檻／基準天數／開關狀態；② 核心邏輯五點；③ 工作表導讀八列（工作表／內容／建議留意）；④ 實用提示四點；含換行高度估算，全文字面語繁體中文）；`generate_excel_hybrid()` 接入（`wb.active = 0` 預設停於說明頁）
 - New: 使用說明頁「🔀 Safety Stock x NetStock Review」收合區塊新增「🖼️ 銷量帶分類說明圖」子區塊（`assets/sales_band_guide.png`，由 `scripts/make_sales_band_chart.py` 生成，規則口徑與 `_hybrid_sales_bands()` 一致）；`MODES` 元組支援第 4 位可選圖片路徑
 - Change: 全站說明同步——README／使用說明頁輸出工作表描述 8→9（含首頁「說明」）、Excel 輸出結構表加「說明」列
-- Update: `tests/test_hybrid_mode.py` 三處 `sheetnames` 斷言前置「說明」，新增 `test_guide_sheet_first_with_params_echo`（說明表為首位且為開啟預設頁、參數回顯按 stats 還原、導讀與速查區塊齊備）；共 323 項測試通過
+- Update: `tests/test_hybrid_mode.py` 三處 `sheetnames` 斷言前置「說明」，新增 `test_guide_sheet_first_with_params_echo`（說明表為首位且為開啟預設頁、參數按 stats 還原列出、導讀與實用提示區塊齊備）；共 323 項測試通過
 
 ## v1.34.0 (2026-09-08)
 

@@ -191,7 +191,7 @@ def test_transfer_columns_equivalent_to_stock_checking():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 3. Review 規則（Safety 基準天數；_SD10 為合法上限 10 日口徑）
+# 3. Review 規則（Safety 基準天數；_SD10 為合法上限 10 日基準）
 # ──────────────────────────────────────────────────────────────────────────────
 def test_tourist_under_setting_diagnosis():
     raw, sc_summary, diagnosis, _, _, stats, _ = transform_hybrid(_df(_SCENARIO_A10), safety_days=_SD10)
@@ -212,7 +212,7 @@ def test_donor_over_setting_diagnosis():
     assert stats["over_rows"] == 1 and stats["over_dec_total"] == -2
 
 
-# 10 日口徑專用場景：Tourist 需調入判不足；N01 判過高；M01 以 Adj 10 對齊 Mix 所需量作邊界正常列
+# 10 日基準專用場景：Tourist 需調入判不足；N01 判過高；M01 以 Adj 10 對齊 Mix 所需量作邊界正常列
 _SCENARIO_A10 = [
     {"SKU": 300, "Site Code": "T01", "Shop Nature": "Tourist",
      "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
@@ -533,7 +533,7 @@ def test_no_candidates_warns_but_completes():
 # 9. Excel 契約（9 工作表）
 # ──────────────────────────────────────────────────────────────────────────────
 def test_guide_sheet_first_with_params_echo():
-    """「說明」導讀表：首位且為開啟預設頁；參數回顯按 stats 還原；導讀與速查區塊齊備。"""
+    """「說明」導讀表：首位且為開啟預設頁；參數按 stats 還原列出；導讀與實用提示區塊齊備。"""
     raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, _ = transform_hybrid(
         _df(_SCENARIO_A),
         bidirectional=True, nd_priority=True, sales_rebalance=True,
@@ -547,7 +547,7 @@ def test_guide_sheet_first_with_params_echo():
     ws = wb["說明"]
     col_a = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
     col_b = [ws.cell(row=r, column=2).value for r in range(1, ws.max_row + 1)]
-    # ① 參數回顯（按本次 stats 還原）
+    # ① 參數列出（按本次 stats 還原）
     pairs = dict(zip(col_a, col_b))
     assert "① 本次執行參數（供核對）" in col_a
     assert pairs["分類維度"].startswith("Shop Nature")
@@ -559,7 +559,7 @@ def test_guide_sheet_first_with_params_echo():
     assert pairs["銷量再平衡"].startswith("開啟")
     assert "缺貨線 7 日" in pairs["銷量分類門檻"]
     # ②③④ 區塊與導讀列齊備
-    for block in ("② 核心邏輯（這份報告怎樣算出來）", "③ 工作表導讀（先看哪頁、關注什麼）", "④ 速查提示"):
+    for block in ("② 核心邏輯（這份報告怎樣算出來）", "③ 工作表導讀（先看哪一頁、應留意什麼）", "④ 實用提示"):
         assert block in col_a
     assert "說明（本頁）" in col_a and "店舖問題 SKU" in col_a and "簡易調貨明細 (不限OM)／(同OM)" in col_a
 
@@ -852,7 +852,7 @@ def test_bidir_mix_short_tourist_donates():
     assert _get(raw, "M01", "Safety Review") == "Safety 設定不足"
     assert _get(raw, "T01", "事件類型") == "實際轉出"
     assert _get(raw, "T01", "Safety Review") == "Safety 設定過高"
-    assert float(_get(raw, "T01", "Safety 建議調整量")) == -20  # 10 日口徑：建議 10 − 現有 30
+    assert float(_get(raw, "T01", "Safety 建議調整量")) == -20  # 10 日基準：建議 10 − 現有 30
     # 主表「可轉出貨量」含 Tourist 欄
     assert int(_get(diagnosis, "T01", "可轉出貨量")) == 16
     # 存貨偏重提示指向 Tourist（使用者場景）
@@ -1162,7 +1162,7 @@ def test_detail_excel_sheets():
 # ──────────────────────────────────────────────────────────────────────────────
 # 14. Safety 調整統計（② 調整方向分類 ＋ ③ SKU 級調整明細；v1.16.0）
 # ──────────────────────────────────────────────────────────────────────────────
-# 兩個 SKU 的對照場景：SKU 301 為 SKU 300 的等價複製（10 日口徑：各 1 列不足 +10、1 列過高 −2、1 列正常）
+# 兩個 SKU 的對照場景：SKU 301 為 SKU 300 的等價複製（10 日基準：各 1 列不足 +10、1 列過高 −2、1 列正常）
 _SAFETY_TWO_SKU = _SCENARIO_A10 + [
     {"SKU": 301, "Site Code": "T12", "Shop Nature": "Tourist",
      "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
@@ -1403,7 +1403,7 @@ def test_safety_days_non_integer_rejected():
 def test_safety_line_follows_nature_days():
     raw, _, _, _, _, stats, _ = transform_hybrid(_df(_SCENARIO_A))  # 預設 7 / 9 / 10
     assert stats["safety_days"] == {"Tourist": 7, "Mix": 9, "Non Tourist": 10}
-    # T01 Tourist：ceil(360/90 × 7) = 28，現有 30 → 不再判不足（14 日口徑下會判不足）
+    # T01 Tourist：ceil(360/90 × 7) = 28，現有 30 → 不再判不足（14 日基準下會判不足）
     assert int(_get(raw, "T01", _HYBRID_SAFETY_DAYS_COLUMN)) == 7
     assert int(_get(raw, "T01", _HYBRID_SAFETY_LINE_COLUMN)) == 28
     assert _get(raw, "T01", "Safety Review") == "設定正常—缺貨非設定因素"
@@ -1559,7 +1559,7 @@ def test_effective_monthly_sold_column_added_and_original_kept():
 
 
 def test_cross_table_sums_round_not_truncate():
-    # 小數調整量：cross 表合計須四捨五入（-0.5→-1、+0.5→0），與分類表／stats 同口徑
+    # 小數調整量：cross 表合計須四捨五入（-0.5→-1、+0.5→0），與分類表／stats 同一準則
     rows = [
         {"SKU": 300, "Site Code": "T01", "Shop Nature": "Tourist", "OM": "OM1",
          "Sold Qty (P90D)": 270.0, "Shop Stock Qty (CM)": 20.0,
@@ -1576,7 +1576,7 @@ def test_cross_table_sums_round_not_truncate():
     assert float(_get(raw, "M01", "Safety 建議調整量")) == -1.5
     row_under = cross[cross["Safety Review"] == "Safety 設定不足"].iloc[0]
     row_over = cross[cross["Safety Review"] == "Safety 設定過高"].iloc[0]
-    # 舊 int() 截斷會得 +1／−1；四捨五入（round-half-even）應得 +2／−2，與分類表／stats 同口徑
+    # 舊 int() 截斷會得 +1／−1；四捨五入（round-half-even）應得 +2／−2，與分類表／stats 同一準則
     assert int(row_under["Tourist 建議調整量合計"]) == 2 and int(row_under["合計 建議調整量"]) == 2
     assert int(row_over["Mix 建議調整量合計"]) == -2 and int(row_over["合計 建議調整量"]) == -2
     total = cross[cross["Safety Review"] == "總計"].iloc[0]
@@ -1898,7 +1898,7 @@ def test_min3_stats_and_safety_tables_consistent():
 #       Non Tourist → Mix → Tourist（雙向時才含 Tourist），展開為
 #       NT-ND → NT-RF → Mix-ND → Mix-RF → Tourist-ND → Tourist-RF；ND／RF 兩段各自維持
 #       來源檔列序。轉出資格（池級歸零、逐列 14 日超額、自我調貨／同 Nature／同OM 守衛）
-#       一律不放寬；ND 列仍不作需求方；「ND」口徑＝正規化後非 RF（含無法辨識列）。
+#       一律不放寬；ND 列仍不作需求方；「ND」的定義＝正規化後非 RF（含無法辨識列）。
 #       因 donor_mask 與分配順序無關，Safety Review 與建議調整量逐列不變。預設關閉＝零變動。
 # ──────────────────────────────────────────────────────────────────────────────
 # T21 需調入 14 件；NT 池列序 N22(RF, 超額 16) → N21(ND, 超額 6)；M21(Mix-ND, 超額 11)
@@ -2049,10 +2049,10 @@ def test_nd_priority_dashboard_card_row():
     assert len(rows) == 5
     assert [c[0] for c in rows[4]] == ["ND 來源轉出量", "ND 來源轉出量 (同OM)"]
     assert rows[4][0][1] == 6 and rows[4][1][1] == 6
-    # stats 缺失時無法由 raw 反推開關狀態 → 不顯示 ND 卡，off 路徑兩口徑一致
+    # stats 缺失時無法由 raw 反推開關狀態 → 不顯示 ND 卡，off 路徑兩準則一致
     assert len(_hybrid_dashboard_metrics(raw_on, None)) == 4
     assert _hybrid_dashboard_metrics(raw_off, stats_off) == _hybrid_dashboard_metrics(raw_off, None)
-    # 回退口徑仍算出 ND 轉出量（供其他彙總使用）
+    # 回退準則仍算出 ND 轉出量（供其他彙總使用）
     assert _hybrid_stats_from_raw(raw_on)["nd_transfer"] == 6
     assert _hybrid_stats_from_raw(raw_off)["nd_transfer"] == 0
 
@@ -2095,7 +2095,7 @@ def test_allocate_nd_priority_within_pool_only():
         7, sku, site, need, demand, nt, mix, tourist_avail0=tou, nature_arr=nature, nd_priority=nd)
     assert desc_on[0] == "N02:5; N01:10; M02:3; M01:2" and gap_on[0] == 0
     assert donate_on.tolist() == [0, 10, 5, 2, 3, 0, 0]
-    # Tourist 來源列與需求列同 Nature → 兩口徑皆一律排除
+    # Tourist 來源列與需求列同 Nature → 兩個模式皆一律排除
     assert donate_on[5] == donate_on[6] == 0
 
 

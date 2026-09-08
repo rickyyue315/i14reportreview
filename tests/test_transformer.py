@@ -576,7 +576,7 @@ def test_fix10_ref_date_invalid_raises():
 
 
 # ── Fix #11: Recommend Safety Stock Turnday 欄位 ────────────────────────────
-# 與來源「Turnday (P90D Qty)」同口徑（P90D 日均）：
+# 與來源「Turnday (P90D Qty)」同一準則（P90D 日均）：
 # = Recommend Safety Stock ÷ (Shop Monthly Sold Qty (P90D) ÷ 30)；
 # P90D 月均 = 0 留空（無周轉意義），Recommend = 0 顯示 0。
 
