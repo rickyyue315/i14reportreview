@@ -1,5 +1,17 @@
 # 版本記錄
 
+## v1.33.0 (2026-09-08)
+
+Safety Stock x NetStock Review 新增「以銷量分類」：RAW／主表恆附**銷量帶**與**銷量存貨分類**兩個顯示欄（同 SKU 內按 Sold Qty (P90D) 平均排名分高銷／中銷／低銷／零銷四帶；以店舖周轉日數與缺貨線／積壓線／保底件數三條可調門檻分類高銷缺貨／低銷積壓／零銷積壓／正常），分類維度由五選一擴為**六選一**（新增「以銷量分類」），並新增預設關閉的「⚖️ 啟用銷量再平衡」開關——高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方、積壓列經既有轉出判定提供來源。**非破壞性**——再平衡開關未勾選時調貨欄位與數值與 v1.32.0 完全一致（僅新增兩個恆輸出的銷量顯示欄，主表 26→28 欄）；分類維度舊五選項計算零變動；銷量分類與調貨 14 日線及 Safety 基準天數互相獨立。
+
+- New: 銷量分類常數與計算函數——`_HYBRID_SALES_BANDS`／`_HYBRID_SALES_CLASS_ORDER`、`_hybrid_sales_bands()`（同 SKU 有銷列平均排名分帶，有銷列 < 4 不產生高銷／低銷避免小樣本假區分，並列同值同帶）、`_hybrid_sales_classification()`（店舖 TurnDay = 庫存 ÷ 生效月銷 × 30.5；缺貨用「低於」、積壓用「不少於」；零銷有存未達保底歸正常，仍由 Past 90 Days 0 Sales 轉 ND 提示涵蓋）、`_hybrid_sales_params()`（缺貨線預設 7 日可調 1–14、積壓線預設 30 日可調 15–90、保底預設 5 件可調 1–100；非整數拒絕、範圍外箝制列 warning，風格同 `_hybrid_safety_days`）
+- New: `transform_hybrid()` 新增 `sales_rebalance`／`sales_oos_days`／`sales_overstock_days`／`sales_overstock_min_units` 關鍵字參數（全部帶預設值，舊呼叫零影響）；銷量帶／銷量存貨分類兩欄恆寫入 RAW 並加入「調貨 Review Safety Stock」主表（`_HYBRID_DIAG_COLUMNS` 26→28 欄，置於 `Shop Monthly Sold Qty (P90D)` 之後）與 RAW 顯示欄序
+- New: **銷量再平衡通道**（`sales_rebalance=True`）——需求方在原判定外**增列**高銷缺貨 RF 列：豁免所屬 Nature 池加總 TurnDay 門檻，仍須補到 14 日需求 > 0、D001 < 門檻、同 SKU 有可轉出量；跟隨單向／雙向框架（單向需求仍限 Tourist、轉出池仍限 Mix／Non Tourist）；供應方轉出量公式與池級歸零不變，需求擴大後健康池內積壓列經既有 donor 判定自動入事件表；自我調貨／同 Nature／同OM 守衛與 ND 不作需求方全部保留；stats 新增 `sales_rebalance`／三個門檻／`sales_oos_rows`／`sales_oos_skus`／`sales_overstock_rows`／`sales_overstock_units`／`sales_need_rows`（僅本通道新增需求列數），`_hybrid_stats_from_raw()` 以同口徑補算四個分類統計（開關狀態無法由 RAW 反推，回退路徑不列）
+- New: 分類維度第六選項 `sales`（以銷量分類）——`_HYBRID_DIMENSIONS`／`_HYBRID_DIMENSION_LABELS`／`_hybrid_dimension_groups()`／`_hybrid_group_key_series()`／`_build_stock_checking_summary()` 支持銷量帶分組；存貨偏重門檻 sales 為 ≥30% 且差距 ≥15 個百分點；計算與預設完全相同（僅分組顯示不同）；新區塊 `_build_hybrid_sales_summary()`——「銷量 × 存貨分類交叉表」（母體為**全部店舖×SKU 列**，有別於 ①–④ 的事件列母體；各分類 × Shop Nature 列數、總計列數／SKU 數／店舖數、庫存與 P90D 銷量合計，含總計列）掛入「Review 摘要」工作表（⑤，恆寫入——無調貨事件時 ①–④ 顯示「無符合資料（①–④ 統計區塊以調貨事件列為母體）」而 ⑤ 照常輸出）與 Streamlit「Review 摘要」tab
+- New: 指標卡末尾另加「銷量分類概況」一排（高銷缺貨列數／高銷缺貨 SKU 數／積壓列數／積壓庫存件數，僅 `sales_rebalance=True` 時，無第 5 排時該排為第 5 排；`_write_metric_cards()` 新增 `row6_metrics`，Review 摘要 table_start 改按排數動態計算 4×排數＋4，舊排版面零變動）；結果頁參數區新增「⚖️ 啟用銷量再平衡」核選（key `hy_sales_reb`）＋缺貨線／積壓線／保底件數三個數值輸入＋開啟時 caption 說明；分類維度 radio 加「📈 以銷量分類」；`build_hybrid_params()` 納入新開關與三參數，`hybrid_params_changed()` 舊快照補齊預設值（向後相容）
+- Change: 全站說明同步——README（分類維度六選一、銷量分類與再平衡規則、輸出欄位描述）、使用說明頁（模式說明與核心計算規則）、結果頁模式說明 caption、存貨偏重門檻完整對照 caption 加 sales 門檻
+- Update: 新增 `tests/test_hybrid_sales.py` ×25（銷量帶分帶規則與小樣本守衛、分類邊界與保底件數、參數正規化、再平衡通道單向／雙向／ND／池級歸零守衛、sales 維度 Summary／交叉表／門檻、區塊⑤版面與無事件時輸出、銷量分類概況指標卡排、params 向後相容）；`tests/test_hybrid_mode.py` 主表欄數斷言 25→27／26→28 更新、①–④ 空母體提示與區塊⑤恆輸出斷言更新；`tests/_smoke_pipeline.py` 加銷量再平衡＋sales 維度案例；共 317 項測試通過
+
 ## v1.32.0 (2026-09-07)
 
 Safety Stock x NetStock Review OM 正規化：空白 OM 自成「空白」群組，OM 大小寫不敏感。RAW「OM」欄空白值改顯示「空白」（舊版顯示「(未填OM)」），大小寫變體合併為一組（顯示沿用首見原值）；舊維度計算零變動。

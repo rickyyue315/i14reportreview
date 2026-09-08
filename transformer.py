@@ -1000,7 +1000,7 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
     _auto_width(ws)
 
 
-def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None, progress_pct=0.95, row3_metrics=None, row4_metrics=None, row5_metrics=None):
+def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None, progress_pct=0.95, row3_metrics=None, row4_metrics=None, row5_metrics=None, row6_metrics=None):
     ws.merge_cells("A1:D1")
     title_cell = ws.cell(row=1, column=1, value=title)
     title_cell.font = Font(bold=True, size=14, color="1E40AF")
@@ -1013,6 +1013,8 @@ def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc
         row_offsets.append((15, row4_metrics))
     if row5_metrics:
         row_offsets.append((19, row5_metrics))
+    if row6_metrics:
+        row_offsets.append((23, row6_metrics))
 
     for row_offset, metrics in row_offsets:
         for i, (name, value, desc, color) in enumerate(metrics):
@@ -5833,28 +5835,142 @@ _HYBRID_DIAG_NATURES = ["Tourist", "Mix", "Non Tourist"]
 # both：以 Shop Nature＋RP Type 分類（6 組；計算同 nature 模式，僅分組顯示不同）
 # om：以 OM 分類（動態 OM 名單；計算同 nature 模式，僅分組顯示不同）
 # nature_om：以 Shop Nature＋OM 分類（3×N 組；計算同 nature 模式，僅分組顯示不同）
-_HYBRID_DIMENSIONS = ("nature", "rp", "both", "om", "nature_om")
+# sales：以銷量分類（高銷／中銷／低銷／零銷 四帶；計算同 nature 模式，僅分組顯示不同）
+_HYBRID_DIMENSIONS = ("nature", "rp", "both", "om", "nature_om", "sales")
 _HYBRID_DIMENSION_LABELS = {
     "nature": "Shop Nature",
     "rp": "RP Type",
     "both": "Shop Nature＋RP Type",
     "om": "OM",
     "nature_om": "Shop Nature＋OM",
+    "sales": "銷量",
 }
 # 存貨偏重提示門檻（庫存佔比下限，庫存佔比 − 銷量佔比差距下限）：
 # nature／rp／both 沿用現行契約；om（約 7 組）與 nature_om（3×N 組）因組數多、
-# 平均佔比低，沿用原門檻幾乎不會觸發，故分別下調。
+# 平均佔比低，沿用原門檻幾乎不會觸發，故分別下調；sales（4 帶）介於兩者之間。
 _HYBRID_SKEW_THRESHOLDS = {
     "nature": (0.40, 0.20),
     "rp": (0.40, 0.20),
     "both": (0.40, 0.20),
     "om": (0.25, 0.12),
     "nature_om": (0.12, 0.08),
+    "sales": (0.30, 0.15),
 }
 _HYBRID_RP_GROUPS = ("RF", "ND")
 _HYBRID_COMBINED_GROUPS = tuple(
     f"{n}-{r}" for n in ("Tourist", "Mix", "Non Tourist") for r in _HYBRID_RP_GROUPS
 )
+
+# ── 銷量帶／銷量存貨分類（常開顯示欄；「銷量再平衡」調貨通道另受開關控制）──
+# 銷量帶：同 SKU 內按 Sold Qty (P90D) 排名分帶——P90D≤0＝零銷；
+# 有銷列中排名超過 75%＝高銷、排名在最低 25% 內＝低銷、其餘＝中銷；
+# 同 SKU 有銷列數 < _HYBRID_SALES_MIN_SOLD_ROWS 時不產生高銷／低銷（全歸中銷，
+# 避免小樣本假區分）。並列以平均排名處理（同值同帶）。
+_HYBRID_SALES_BANDS = ("高銷", "中銷", "低銷", "零銷")
+_HYBRID_SALES_BAND_COLUMN = "銷量帶"
+_HYBRID_SALES_CLASS_COLUMN = "銷量存貨分類"
+_HYBRID_SALES_CLASS_ORDER = ("高銷缺貨", "低銷積壓", "零銷積壓", "正常")
+_HYBRID_SALES_P_HIGH = 0.75
+_HYBRID_SALES_P_LOW = 0.25
+_HYBRID_SALES_MIN_SOLD_ROWS = 4
+_HYBRID_SALES_OOS_DAYS_DEFAULT = 7
+_HYBRID_SALES_OOS_DAYS_MIN = 1
+_HYBRID_SALES_OOS_DAYS_MAX = 14
+_HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT = 30
+_HYBRID_SALES_OVERSTOCK_DAYS_MIN = 15
+_HYBRID_SALES_OVERSTOCK_DAYS_MAX = 90
+_HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT = 5
+_HYBRID_SALES_OVERSTOCK_MIN_UNITS_MIN = 1
+_HYBRID_SALES_OVERSTOCK_MIN_UNITS_MAX = 100
+
+
+def _hybrid_sales_params(
+    sales_rebalance,
+    sales_oos_days=None,
+    sales_overstock_days=None,
+    sales_overstock_min_units=None,
+) -> tuple[bool, dict, list[str]]:
+    """銷量分類參數正規化：開關轉 bool；三個門檻以預設為底，
+    非整數拒絕、範圍外箝制並列 warning（風格同 _hybrid_safety_days）。
+    回傳 (sales_rebalance, {"oos_days", "overstock_days", "overstock_min_units"}, warnings)。"""
+    warnings: list[str] = []
+    params = {
+        "oos_days": _HYBRID_SALES_OOS_DAYS_DEFAULT,
+        "overstock_days": _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT,
+        "overstock_min_units": _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT,
+    }
+    spec = {
+        "oos_days": (sales_oos_days, _HYBRID_SALES_OOS_DAYS_MIN, _HYBRID_SALES_OOS_DAYS_MAX, "缺貨線（日）"),
+        "overstock_days": (sales_overstock_days, _HYBRID_SALES_OVERSTOCK_DAYS_MIN, _HYBRID_SALES_OVERSTOCK_DAYS_MAX, "積壓線（日）"),
+        "overstock_min_units": (sales_overstock_min_units, _HYBRID_SALES_OVERSTOCK_MIN_UNITS_MIN, _HYBRID_SALES_OVERSTOCK_MIN_UNITS_MAX, "積壓保底件數（件）"),
+    }
+    for key, (val, lo, hi, label) in spec.items():
+        if val is None:
+            continue
+        if isinstance(val, bool):
+            raise ValueError(f"銷量門檻「{label}」必須為整數，不得為布林值。")
+        try:
+            numeric = float(val)
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(numeric) or not numeric.is_integer():
+            raise ValueError(f"銷量門檻「{label}」必須為整數。")
+        n = int(numeric)
+        if n < lo or n > hi:
+            clamped = min(max(n, lo), hi)
+            warnings.append(f"銷量門檻「{label}」輸入 {n} 超出建議範圍，已箝制為 {clamped}。")
+            n = clamped
+        params[key] = n
+    return bool(sales_rebalance), params, warnings
+
+
+def _hybrid_sales_bands(sold_p90d: pd.Series, sku_key: pd.Series) -> pd.Series:
+    """同 SKU 內銷量帶（見 _HYBRID_SALES_BANDS 註解）：Sold Qty (P90D)≤0＝零銷；
+    有銷列按同 SKU 平均排名分帶（>75%＝高銷、≤25%＝低銷、其餘＝中銷）；
+    有銷列數 < _HYBRID_SALES_MIN_SOLD_ROWS 的 SKU 不產生高銷／低銷。"""
+    result = pd.Series(_HYBRID_SALES_BANDS[3], index=sold_p90d.index, dtype=object)
+    pos_mask = sold_p90d > 0
+    if not bool(pos_mask.any()):
+        return result
+    sub_sold = sold_p90d[pos_mask]
+    sub_sku = sku_key[pos_mask]
+    ranks = sub_sold.groupby(sub_sku, sort=False).rank(method="average")
+    counts = sub_sold.groupby(sub_sku, sort=False).transform("size")
+    frac = ranks / counts
+    band = pd.Series(_HYBRID_SALES_BANDS[1], index=sub_sold.index, dtype=object)
+    band[frac > _HYBRID_SALES_P_HIGH] = _HYBRID_SALES_BANDS[0]
+    band[frac <= _HYBRID_SALES_P_LOW] = _HYBRID_SALES_BANDS[2]
+    band[counts < _HYBRID_SALES_MIN_SOLD_ROWS] = _HYBRID_SALES_BANDS[1]
+    result[sub_sold.index] = band
+    return result
+
+
+def _hybrid_sales_classification(
+    band: pd.Series,
+    shop_turn_day: np.ndarray,
+    cm_stock: np.ndarray,
+    params: dict,
+) -> pd.Series:
+    """銷量存貨分類（逐列，全列覆蓋）：
+    高銷 且 店舖 TurnDay < 缺貨線 → 高銷缺貨；
+    低銷 且 店舖 TurnDay ≥ 積壓線 且 庫存 ≥ 保底件數 → 低銷積壓；
+    零銷 且 庫存 ≥ 保底件數 → 零銷積壓（庫存不足保底的零銷有存列歸正常，
+    仍由既有「Past 90 Days 0 Sales 轉 ND」提示涵蓋）；其餘 → 正常。
+    邊界：缺貨用「低於」（等於缺貨線為正常），積壓用「不少於」。"""
+    band_txt = band.fillna("").astype(str)
+    td = np.asarray(shop_turn_day, dtype=float)
+    stock = np.asarray(cm_stock, dtype=float)
+    cls = pd.Series(_HYBRID_SALES_CLASS_ORDER[3], index=band.index, dtype=object)
+    is_high = (band_txt == _HYBRID_SALES_BANDS[0]).to_numpy()
+    is_low = (band_txt == _HYBRID_SALES_BANDS[2]).to_numpy()
+    is_zero = (band_txt == _HYBRID_SALES_BANDS[3]).to_numpy()
+    oos = is_high & (td < float(params["oos_days"]))
+    over = is_low & (td >= float(params["overstock_days"])) & (stock >= float(params["overstock_min_units"]))
+    zero_over = is_zero & (stock >= float(params["overstock_min_units"]))
+    cls[over] = _HYBRID_SALES_CLASS_ORDER[1]
+    cls[zero_over] = _HYBRID_SALES_CLASS_ORDER[2]
+    cls[oos] = _HYBRID_SALES_CLASS_ORDER[0]
+    return cls
 
 
 def _hybrid_dimension(dimension) -> str:
@@ -5866,6 +5982,7 @@ def _hybrid_dimension(dimension) -> str:
 def _hybrid_dimension_groups(dimension, om_groups=None) -> tuple[str, ...]:
     """分類維度對應的彙總分組名稱（Summary／交叉表欄位按此切換）。
 
+    sales 維度回傳固定四帶（高銷／中銷／低銷／零銷）；
     om 維度回傳動態 OM 名單（排序後不重複值）；nature_om 回傳完整笛卡兒積
     （Nature 外層固定順序、OM 內層排序）。om_groups 缺省時退回單一
     「空白」群組，呼叫端應傳入實際名單（transform 內由 OM 欄推導，
@@ -5874,6 +5991,8 @@ def _hybrid_dimension_groups(dimension, om_groups=None) -> tuple[str, ...]:
     d = _hybrid_dimension(dimension)
     if d == "rp":
         return _HYBRID_RP_GROUPS
+    if d == "sales":
+        return _HYBRID_SALES_BANDS
     if d == "both":
         return _HYBRID_COMBINED_GROUPS
     if d == "om":
@@ -6025,6 +6144,7 @@ _HYBRID_SAFETY_SKU_COLUMNS = [
 _HYBRID_DIAG_COLUMNS = [
     "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Site Code", "OM", "Shop Nature", "RP Type",
     "事件類型", "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)",
+    _HYBRID_SALES_BAND_COLUMN, _HYBRID_SALES_CLASS_COLUMN,
     _HYBRID_SAFETY_DAYS_COLUMN, _HYBRID_SAFETY_LINE_COLUMN, "Adj. Safety Stock", "Safety Review",
     "建議 Safety 設定值", "Safety 建議調整量",
     "調入需求量 (補到14日)", "實際調入量", "調入缺口",
@@ -6351,13 +6471,19 @@ def _hybrid_diag_summary_columns(dimension: str = "nature", om_groups=None) -> l
 
 def _hybrid_group_key_series(df: pd.DataFrame, dimension: str, om_groups=None) -> pd.Series:
     """依分類維度產生每列的分組鍵（nature→Shop Nature；rp→RP Type；both→Nature-RP；
-    om→OM；nature_om→Nature-OM）。
+    om→OM；nature_om→Nature-OM；sales→銷量帶）。
     RP Type 為正規化後值；缺欄時一律按 RF（可補貨）處理，與 transform_hybrid 同口徑。
     OM 空白歸入「空白」，與 transform_hybrid 同口徑（om_groups 僅決定欄位集合，
-    不影響逐列鍵值）。"""
+    不影響逐列鍵值）。銷量帶為 transform_hybrid 常開產出欄；缺欄時退回
+    Shop Nature 鍵（顯式守衛，正常輸入不會觸發）。"""
     d = _hybrid_dimension(dimension)
     nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     if d == "nature":
+        return nature
+    if d == "sales":
+        if _HYBRID_SALES_BAND_COLUMN in df.columns:
+            band = df[_HYBRID_SALES_BAND_COLUMN].fillna("").astype(str).str.strip()
+            return band.where(band.isin(_HYBRID_SALES_BANDS), _HYBRID_SALES_BANDS[1])
         return nature
     if d in ("om", "nature_om"):
         om = (
@@ -6428,6 +6554,47 @@ def _build_hybrid_diag_summary(raw: pd.DataFrame, dimension: str = "nature", om_
     for k, v in _agg(df).items():
         total_row[_total_key[k]] = v
     rows.append(total_row)
+    return pd.DataFrame(rows, columns=cols)
+
+
+# 「銷量 × 存貨分類」交叉表欄序（Review 摘要區塊⑤；欄名屬新契約，未經要求不得改動）
+_HYBRID_SALES_SUMMARY_COLUMNS = [
+    "銷量存貨分類", "Tourist 列數", "Mix 列數", "Non Tourist 列數",
+    "總計 列數", "總計 SKU 數", "總計 店舖數",
+    "庫存合計（件）", "Sold Qty (P90D) 合計（件）",
+]
+
+
+def _build_hybrid_sales_summary(raw: pd.DataFrame) -> pd.DataFrame:
+    """銷量 × 存貨分類交叉表（Review 摘要區塊⑤）——母體為**全部店舖×SKU 列**
+    （有別於 ①–④ 的調貨事件列母體），無調貨事件時仍可查閱高銷缺貨與積壓分布。
+    列：高銷缺貨／低銷積壓／零銷積壓／正常／總計；各 Nature 列數按 Shop Nature 拆分，
+    SKU 數與店舖數為不重複計數（店舖數＝Site Code 不重複，空白不計），
+    庫存與 P90D 銷量為件數合計。分類欄為 transform_hybrid 常開產出；缺欄時回傳空表。"""
+    cols = _HYBRID_SALES_SUMMARY_COLUMNS
+    if raw is None or raw.empty or _HYBRID_SALES_CLASS_COLUMN not in raw.columns:
+        return pd.DataFrame(columns=cols)
+    cls = raw[_HYBRID_SALES_CLASS_COLUMN].fillna("").astype(str)
+    nature = raw.get("Shop Nature", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
+    stock = _safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, raw.index)))
+    sold = _safe_numeric(raw.get("Sold Qty (P90D)", _safe_default_series(0, raw.index)))
+    site = raw.get("Site Code", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
+    rows = []
+    for label in (*_HYBRID_SALES_CLASS_ORDER, "總計"):
+        m = pd.Series(True, index=raw.index) if label == "總計" else cls.eq(label)
+        sub = raw[m]
+        site_sub = site[m]
+        rows.append({
+            "銷量存貨分類": label,
+            "Tourist 列數": int((m & (nature == "Tourist")).sum()),
+            "Mix 列數": int((m & (nature == "Mix")).sum()),
+            "Non Tourist 列數": int((m & (nature == "Non Tourist")).sum()),
+            "總計 列數": int(m.sum()),
+            "總計 SKU 數": int(sub["SKU"].nunique()) if "SKU" in sub.columns else 0,
+            "總計 店舖數": int(site_sub[site_sub != ""].nunique()),
+            "庫存合計（件）": int(stock[m].sum()),
+            "Sold Qty (P90D) 合計（件）": int(sold[m].sum()),
+        })
     return pd.DataFrame(rows, columns=cols)
 
 
@@ -6747,6 +6914,7 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
     under = diag == _HYBRID_DIAG_UNDER
     over = diag == _HYBRID_DIAG_OVER
     donor = evt.isin([_HYBRID_EVENT_DONATED, _HYBRID_EVENT_DONOR])
+    cls_col = raw.get(_HYBRID_SALES_CLASS_COLUMN, _safe_default_series("", raw.index)).fillna("").astype(str)
     return {
         "safety_days": _hybrid_safety_days_from_raw(raw, nature),
         "dimension": "nature",
@@ -6779,6 +6947,19 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
         "over_dec_total": int(round(float(chg[over].fillna(0).sum()))),
         "normal_rows": int((evt != "").sum()) - int(under.sum()) - int(over.sum()),
         "total_raw_rows": int(len(raw)),
+        # 銷量分類列可由 RAW 反推；開關狀態與門檻為參數、無法由 RAW 反推，
+        # 故回退路徑不列 sales_rebalance／sales_need_rows（銷量分類概況排自然不顯示，
+        # 與 ND 優先轉出的回退口徑一致）
+        "sales_oos_rows": int(cls_col.eq(_HYBRID_SALES_CLASS_ORDER[0]).sum()),
+        "sales_oos_skus": int(
+            raw.loc[cls_col.eq(_HYBRID_SALES_CLASS_ORDER[0]), "SKU"].nunique()
+        ) if "SKU" in raw.columns else 0,
+        "sales_overstock_rows": int(cls_col.isin(_HYBRID_SALES_CLASS_ORDER[1:3]).sum()),
+        "sales_overstock_units": int(
+            _safe_numeric(raw.get("Shop Stock Qty (CM)", _safe_default_series(0, raw.index)))[
+                cls_col.isin(_HYBRID_SALES_CLASS_ORDER[1:3]).to_numpy()
+            ].sum()
+        ),
         "buyer_need_skus": _hybrid_buyer_need_stats(raw, need),
         "buyer_safety_fix": _hybrid_buyer_safety_stats(raw),
     }
@@ -6788,8 +6969,10 @@ def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
     """調貨 Review 指標卡（每排 4 卡，與 Streamlit Hybrid Dashboard 同口徑；
     第 4 排為同OM調貨對照，Safety Review 建議不受 OM 限制影響；
     第 5 排為轉出來源對照——雙向調貨時含 Tourist 轉出量兩卡，「ND 優先轉出」開啟且 ND 店舖
-    有實際轉出時另加 ND 來源轉出量兩卡（該排 2–4 卡）。
-    回傳各排指標 list（4 或 5 排）供 _write_metric_cards 使用；stats 缺失時由 raw 自動匯總。"""
+    有實際轉出時另加 ND 來源轉出量兩卡（該排 2–4 卡）；
+    「銷量再平衡」開啟時（stats["sales_rebalance"] 為 True）末尾另加一排銷量分類概況（4 卡；
+    無第 5 排時該排為第 5 排，否則為第 6 排）。
+    回傳各排指標 list（4–6 排）供 _write_metric_cards 使用；stats 缺失時由 raw 自動匯總。"""
     if stats is None:
         stats = _hybrid_stats_from_raw(raw)
 
@@ -6843,6 +7026,15 @@ def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
         ]
     if row5:
         rows.append(row5)
+    # 末尾另加銷量分類概況排（僅開關狀態為 True 時）——母體為全部店舖×SKU 列；
+    # 開關狀態無法由 RAW 反推，故回退路徑（stats 缺 sales_rebalance）不顯示本排
+    if bool(stats.get("sales_rebalance")):
+        rows.append([
+            ("高銷缺貨列數", g("sales_oos_rows"), "同 SKU 內銷量屬高銷帶且店舖周轉日數低於缺貨線的店舖×SKU 列數", "ef4444"),
+            ("高銷缺貨 SKU 數", g("sales_oos_skus"), "高銷缺貨列涉及的 SKU 數（已刪除重複）", "f97316"),
+            ("積壓列數", g("sales_overstock_rows"), "低銷／零銷積壓列數（周轉日數達積壓線且庫存達保底件數）", "f59e0b"),
+            ("積壓庫存件數", g("sales_overstock_units"), "積壓列的 Shop Stock Qty (CM) 合計（件）", "8b5cf6"),
+        ])
     return rows
 
 
@@ -6940,22 +7132,27 @@ def transform_hybrid(
     nd_priority: bool = False,
     progress_callback=None,
     ref_date=None,
+    sales_rebalance: bool = False,
+    sales_oos_days: int | None = None,
+    sales_overstock_days: int | None = None,
+    sales_overstock_min_units: int | None = None,
 ):
     """Safety Stock x NetStock Review 核心轉換（調貨事件 Review Safety 設定）。
 
     - 分類維度（dimension，預設 "nature" 維持現行契約）：
       "nature"＝以 Shop Nature 分類；"rp"＝以 RP Type 分類；"both"＝Shop Nature＋RP Type（6 組）；
-      "om"＝以 OM 分類（動態 OM 名單）；"nature_om"＝Shop Nature＋OM（3×N 組）。
+      "om"＝以 OM 分類（動態 OM 名單）；"nature_om"＝Shop Nature＋OM（3×N 組）；
+      "sales"＝以銷量分類（高銷／中銷／低銷／零銷 四帶；計算同 nature 模式，僅分組顯示不同）。
       維度決定需求方過濾與 Summary／交叉表分組，**不改變 TurnDay 池與 Safety 基準天數
       （兩者恆按 Shop Nature）**。RP Type 正規化：RF＝可補貨、ND＝不可補貨；
       其他／空白歸 ND 並列 warning。來源缺「RP Type」欄時全部列按 RF 處理
       （ND 排除規則無法套用）；rp／both 維度退回 nature 並列 warning，
       om／nature_om 維度不退回（OM 分組不依賴 RP Type）。
-      需求方一律排除 ND 列（ND 不作調入方，仍可作供應方）——五種維度皆適用：
-      nature／both／om／nature_om 需求方為 Tourist-RF（後兩者計算與 nature 完全相同，
+      需求方一律排除 ND 列（ND 不作調入方，仍可作供應方）——六種維度皆適用：
+      nature／both／om／nature_om／sales 需求方為 Tourist-RF（後三者計算與 nature 完全相同，
       僅 Summary／交叉表分組不同）；rp 需求方為任何 Nature 的 RF 列，
       且取消「需求 Nature 自身除外」守衛與池級歸零（允許同 Nature 店間再平衡）。
-      供應方五種維度皆維持 Mix／Non Tourist（勾選雙向時另加 Tourist）。
+      供應方六種維度皆維持 Mix／Non Tourist（勾選雙向時另加 Tourist）。
       OM 分組：OM 欄去除前後空格、空白歸入「空白」群組、大小寫不敏感（Ivy＝ivy，顯示沿用首見原值）、按字串排序；
       來源缺「OM」欄或全欄空白時 om／nature_om 退回 nature 並列 warning。
       非法維度值退回 nature，不拋錯。
@@ -6994,13 +7191,26 @@ def transform_hybrid(
       因 donor_mask 與分配順序無關，本開關**只改調貨分配結果**（轉出量／調貨來源／
       事件類型／調貨後庫存與 TurnDay），不影響 Safety Review、建議調整值與調整量。
       來源檔缺 RP Type 欄時自動失效（全部列按 RF）並列 warning。
+    - 銷量分類（常開，與 sales_rebalance 開關無關）：RAW／主表新增「銷量帶」
+      （高銷／中銷／低銷／零銷，同 SKU 內按 Sold Qty (P90D) 平均排名分帶，
+      見 _hybrid_sales_bands）與「銷量存貨分類」（高銷缺貨／低銷積壓／零銷積壓／正常，
+      店舖 TurnDay = Shop Stock Qty (CM) ÷ 生效月銷 × 30.5，門檻見
+      _hybrid_sales_params：缺貨線預設 7 日、積壓線預設 30 日、積壓保底預設 5 件）。
+    - sales_rebalance=True（銷量再平衡，預設 False 維持現行契約）：需求方在原判定之外
+      **增列**「高銷缺貨」列——豁免所屬 Nature 池加總 TurnDay 門檻（本通道存在目的），
+      但仍須 RF、補到 14 日需求 > 0、D001 < 門檻、同 SKU 有可轉出量；單向模式需求方
+      仍限 Tourist 列、轉出池仍限 Mix／Non Tourist（跟隨方向框架，雙向時兩端放寬至
+      任何 Nature）。供應方轉出量公式不變（逐列 14 日超額＋池級歸零），需求方擴大後
+      更多 SKU 有需求列，健康池內積壓列經既有 donor 判定自動入事件表；
+      自我調貨／同 Nature／同OM 守衛與 ND 不作需求方全部保留。
+      新事件列自動流入 Safety Review、店舖問題 SKU、Buyer 統計與簡易調貨明細。
     - 上下文欄位：調貨後庫存 = 原始 + 實際調入 − 轉出；
       調貨後 TurnDay = 調貨後庫存 ÷ 月銷 × 30.5（月銷 0 留空；月銷為回補後值，
       另存「Effective Shop Monthly Sold Qty (P90D)」稽核欄，原值保留於原欄）。
     - OM 變體：分配跑兩遍——不限OM（契約欄位）與同OM（來源店須與需求店同 OM，
       欄位加「(同OM)」後綴）；Safety Review 與建議調整量兩變體相同，不受調貨限制影響。
     - Summary：附 Stock Checking 的 SKU 級彙總（按分類維度分組：nature 三組／rp 兩組／
-      both 六組／om 動態 OM 名單／nature_om 三 Nature × OM；庫存/月銷加總、TurnDay、佔比、
+      both 六組／om 動態 OM 名單／nature_om 三 Nature × OM／sales 四銷量帶；庫存/月銷加總、TurnDay、佔比、
       強制調貨提示、存貨偏重提示（門檻按維度切換）），
       供查閱哪些 SKU 存貨偏重哪個分組。
     - Buyer 統計：沿用 Stock Checking 的 Buyer 需調貨 SKU 統計（同 SKU 首個非空 Buyer，
@@ -7016,7 +7226,12 @@ def transform_hybrid(
     stats["nd_priority"] 為 ND 優先轉出的請求狀態（缺 RP Type 欄時不生效，nd_transfer 恆為 0）；
     stats["nd_transfer"]／["nd_transfer_om"] 為 RP Type＝ND 來源列的轉出量合計（不限OM／同OM）；
     stats["buyer_need_skus"] 為 [(Buyer, 需調貨 SKU 數)]；
-    stats["buyer_safety_fix"] 為 [(Buyer, 需調整 Safety SKU 數, Safety 建議調整量合計)]。
+    stats["buyer_safety_fix"] 為 [(Buyer, 需調整 Safety SKU 數, Safety 建議調整量合計)]；
+    stats["sales_rebalance"] 為銷量再平衡開關狀態；stats["sales_oos_days"]／
+    ["sales_overstock_days"]／["sales_overstock_min_units"] 為實際採用的銷量門檻；
+    stats["sales_oos_rows"]／["sales_oos_skus"] 為高銷缺貨列數／SKU 數（全列母體）；
+    stats["sales_overstock_rows"]／["sales_overstock_units"] 為積壓列數（低銷＋零銷）／
+    積壓列庫存合計；stats["sales_need_rows"] 為僅由銷量再平衡通道新增的需求列數。
     """
     missing = validate_hybrid_input(df_input)
     if missing:
@@ -7105,6 +7320,15 @@ def transform_hybrid(
     df["Effective Shop Monthly Sold Qty (P90D)"] = msold_eff
     df["Shop Monthly Sold Qty (P90D)"] = msold_eff
 
+    # ── 銷量分類參數（門檻恆計算並寫入分類欄；sales_rebalance 開關只控制調貨通道）──
+    _sales_rebalance, _sales_params, _sales_param_warnings = _hybrid_sales_params(
+        sales_rebalance,
+        sales_oos_days=sales_oos_days,
+        sales_overstock_days=sales_overstock_days,
+        sales_overstock_min_units=sales_overstock_min_units,
+    )
+    warnings.extend(_sales_param_warnings)
+
     # D001：逐列 Net 優先、Stock 回補（兩者皆空白或非有限值視為空白），並保留 Effective 欄位供 RAW 稽核
     avail_now = set(df.columns)
     net_d001_col = _resolve_column_name("D001 Net Stock Qty (CM)", avail_now)
@@ -7146,6 +7370,14 @@ def transform_hybrid(
     )
 
     sku_key = df["SKU"]
+
+    # ── 銷量帶／銷量存貨分類（常開顯示欄；店舖 TurnDay 與調貨 14 日線、Safety 基準天數互相獨立）──
+    with np.errstate(divide="ignore", invalid="ignore"):
+        _shop_turn_day = np.where(msold_val > 0, cm_stock_val / np.where(msold_val > 0, msold_val, 1.0) * 30.5, np.inf)
+    df[_HYBRID_SALES_BAND_COLUMN] = _hybrid_sales_bands(sold_p90d, sku_key)
+    df[_HYBRID_SALES_CLASS_COLUMN] = _hybrid_sales_classification(
+        df[_HYBRID_SALES_BAND_COLUMN], _shop_turn_day, cm_stock_val, _sales_params,
+    )
 
     def _sku_nature_turnday(nature_mask):
         s_stock = pd.Series(np.where(nature_mask, cm_stock_val, 0.0), index=idx)
@@ -7230,7 +7462,38 @@ def transform_hybrid(
             & (demand > 0)
             & (mix_pool_ok | nt_pool_ok)
         )
+    # ── 銷量再平衡通道（僅 sales_rebalance=True）：高銷缺貨列增列為需求方 ──
+    # 豁免所屬 Nature 池加總 TurnDay 門檻（本通道存在目的），但仍須 RF、
+    # 補到 14 日需求 > 0、D001 < 門檻、同 SKU 有可轉出量（供應欄公式與池級歸零不變）；
+    # 單向模式需求方仍限 Tourist 列（跟隨方向框架；雙向／rp 維度任何 Nature）。
+    # 需求方擴大後更多 SKU 進入 flagged_skus，健康池內積壓列經既有 donor 判定
+    # 自動入事件表；自我調貨／同 Nature／同OM 守衛與 ND 不作需求方全部保留。
+    need_mask_base = need_mask
+    if _sales_rebalance:
+        _sales_sku_supply = pd.Series(
+            mix_excess + nt_excess + tourist_excess, index=idx
+        ).groupby(sku_key).transform("sum").to_numpy(dtype=float)
+        _high_short = (df[_HYBRID_SALES_CLASS_COLUMN] == _HYBRID_SALES_CLASS_ORDER[0]).to_numpy()
+        _sales_dir_allow = (
+            np.ones(len(df), dtype=bool) if (bidirectional or dim == "rp") else is_tourist
+        )
+        _sales_need = (
+            _sales_dir_allow
+            & is_rf
+            & _high_short
+            & (demand > 0)
+            & (d001_np < d001_threshold)
+            & (_sales_sku_supply > 0)
+        )
+        need_mask = need_mask | _sales_need
+
     need_series = pd.Series(need_mask, index=idx)
+    _sales_added_rows = int((need_mask & ~need_mask_base).sum()) if _sales_rebalance else 0
+    if _sales_added_rows:
+        warnings.append(
+            f"⚖️ 銷量再平衡：{int(_sales_added_rows)} 列高銷缺貨店舖列新增為調貨需求方"
+            "（豁免 Nature 池加總 TurnDay 門檻；D001 門檻、有貨可調與 RF 資格要求不變）。"
+        )
 
     df["需要調貨"] = np.where(need_mask, "是", "")
     df["調入需求量 (補到14日)"] = np.where(need_mask, demand, 0).astype(int)
@@ -7440,6 +7703,21 @@ def transform_hybrid(
         "over_dec_total": int(round(float(np.nansum(chg[over_mask])))) if over_mask.any() else 0,
         "normal_rows": int(in_table.sum()) - int(under_mask.sum()) - int(over_mask.sum()),
         "total_raw_rows": int(n_rows),
+        "sales_rebalance": bool(_sales_rebalance),
+        "sales_oos_days": int(_sales_params["oos_days"]),
+        "sales_overstock_days": int(_sales_params["overstock_days"]),
+        "sales_overstock_min_units": int(_sales_params["overstock_min_units"]),
+        "sales_oos_rows": int((raw[_HYBRID_SALES_CLASS_COLUMN] == _HYBRID_SALES_CLASS_ORDER[0]).sum()),
+        "sales_oos_skus": int(
+            raw.loc[raw[_HYBRID_SALES_CLASS_COLUMN] == _HYBRID_SALES_CLASS_ORDER[0], "SKU"].nunique()
+        ),
+        "sales_overstock_rows": int(
+            raw[_HYBRID_SALES_CLASS_COLUMN].isin(_HYBRID_SALES_CLASS_ORDER[1:3]).sum()
+        ),
+        "sales_overstock_units": int(
+            raw.loc[raw[_HYBRID_SALES_CLASS_COLUMN].isin(_HYBRID_SALES_CLASS_ORDER[1:3]), "Shop Stock Qty (CM)"].sum()
+        ),
+        "sales_need_rows": int(_sales_added_rows),
         "buyer_need_skus": _hybrid_buyer_need_stats(raw, need_series),
         "buyer_safety_fix": _hybrid_buyer_safety_stats(raw),
     }
@@ -7688,10 +7966,12 @@ def _write_hybrid_buyer_combined_table(ws, combined, thin_border, header_fill,
 def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None,
                                      raw: pd.DataFrame, thin_border, desc_font,
                                      progress_callback=None):
-    """Review 摘要工作表：指標卡 4 排（第 4 排為同OM調貨對照；雙向調貨時另加第 5 排
-    Tourist 轉出量）＋ ① Safety Review × 分類維度交叉表（維度由 stats["dimension"] 推定，
+    """Review 摘要工作表：指標卡 4–6 排（第 4 排為同OM調貨對照；雙向調貨時另加第 5 排
+    Tourist 轉出量；銷量再平衡開啟時末尾另加銷量分類概況一排）
+    ＋ ① Safety Review × 分類維度交叉表（維度由 stats["dimension"] 推定，
     預設 Shop Nature）＋ ② Safety 調整方向分類
-    ＋ ③ Safety 調整明細（SKU 級彙總）＋ ④ Buyer 統計（需調貨＋需調整 Safety 合併表）。
+    ＋ ③ Safety 調整明細（SKU 級彙總）＋ ④ Buyer 統計（需調貨＋需調整 Safety 合併表）
+    ＋ ⑤ 銷量 × 存貨分類交叉表（母體為全部店舖×SKU 列，不受調貨事件影響）。
     ②③ 由 raw 即時彙算（Safety 建議不受 OM 限制影響，兩變體共用同一份統計）；
     ④ 與 Stock Checking 的 Buyer 統計同口徑（同 SKU 首個非空 Buyer，已刪除重複）。"""
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
@@ -7704,51 +7984,62 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
 
     _rows = _hybrid_dashboard_metrics(raw, stats)
     row5_metrics = _rows[4] if len(_rows) > 4 else None
+    row6_metrics = _rows[5] if len(_rows) > 5 else None
     _days = (stats or {}).get("safety_days") or _hybrid_safety_days_from_raw(raw)
     _write_metric_cards(
         ws, f"Safety Stock 設定 Review 摘要 (Transfer Diagnosis Dashboard｜"
             f"Safety 基準 {_hybrid_safety_days_label(_days)})",
         _rows[0], _rows[1], thin_border, desc_font, progress_callback,
         progress_pct=0.80, row3_metrics=_rows[2], row4_metrics=_rows[3],
-        row5_metrics=row5_metrics,
+        row5_metrics=row5_metrics, row6_metrics=row6_metrics,
     )
 
-    table_start = 24 if row5_metrics else 20
-    # 三個區塊共用同一母體（事件類型非空），故 ① 為空即代表全無資料
-    if cross is None or cross.empty:
-        ws.cell(row=table_start, column=1, value="無符合資料").font = Font(size=12)
-        _auto_width(ws)
-        return
-
+    table_start = 4 * len(_rows) + 4
     _block_kw = dict(header_fill=header_fill, header_font=header_font, bold_font=bold_font,
                      section_fill=section_fill, total_fill=total_fill, thin_border=thin_border,
                      center=center, left_wrap=left_wrap)
     _dim = _hybrid_dimension((stats or {}).get("dimension"))
-    next_row = _write_hybrid_summary_block(
-        ws, table_start - 1, f"Safety Review × {_HYBRID_DIMENSION_LABELS[_dim]} 交叉表", cross, **_block_kw)
-    next_row = _write_hybrid_summary_block(
-        ws, next_row, "Safety 調整方向分類（增加 / 減少 / 不變）",
-        _build_hybrid_safety_change_summary(raw), **_block_kw)
-    next_row = _write_hybrid_summary_block(
-        ws, next_row, "Safety 調整明細（SKU 級彙總）",
-        _build_hybrid_safety_sku_detail(raw), **_block_kw)
+    # ①–④ 共用同一母體（事件類型非空），① 為空即代表四區塊全無資料；
+    # ⑤ 母體為全部列，不受影響，恆在四區塊之後寫入
+    if cross is None or cross.empty:
+        ws.cell(row=table_start, column=1,
+                value="無符合資料（①–④ 統計區塊以調貨事件列為母體）").font = Font(size=12)
+        next_row = table_start + 2
+    else:
+        next_row = _write_hybrid_summary_block(
+            ws, table_start - 1, f"Safety Review × {_HYBRID_DIMENSION_LABELS[_dim]} 交叉表", cross, **_block_kw)
+        next_row = _write_hybrid_summary_block(
+            ws, next_row, "Safety 調整方向分類（增加 / 減少 / 不變）",
+            _build_hybrid_safety_change_summary(raw), **_block_kw)
+        next_row = _write_hybrid_summary_block(
+            ws, next_row, "Safety 調整明細（SKU 級彙總）",
+            _build_hybrid_safety_sku_detail(raw), **_block_kw)
 
-    try:
-        combined = _hybrid_buyer_combined_detail(raw)
-    except Exception:
-        buyer_need = (stats or {}).get("buyer_need_skus")
-        if buyer_need is None:
-            buyer_need = _hybrid_buyer_need_stats(raw)
-        buyer_safety = (stats or {}).get("buyer_safety_fix")
-        if buyer_safety is None:
-            buyer_safety = _hybrid_buyer_safety_stats(raw)
-        combined = _hybrid_buyer_combined_stats(buyer_need, buyer_safety)
-    _table_kw = dict(thin_border=thin_border, header_fill=header_fill,
-                     header_font=header_font, bold_font=bold_font,
-                     section_fill=section_fill, total_fill=total_fill,
-                     center=center)
-    if combined:
-        next_row = _write_hybrid_buyer_combined_table(ws, combined, start_row=next_row, **_table_kw)
+        try:
+            combined = _hybrid_buyer_combined_detail(raw)
+        except Exception:
+            buyer_need = (stats or {}).get("buyer_need_skus")
+            if buyer_need is None:
+                buyer_need = _hybrid_buyer_need_stats(raw)
+            buyer_safety = (stats or {}).get("buyer_safety_fix")
+            if buyer_safety is None:
+                buyer_safety = _hybrid_buyer_safety_stats(raw)
+            combined = _hybrid_buyer_combined_stats(buyer_need, buyer_safety)
+        _table_kw = dict(thin_border=thin_border, header_fill=header_fill,
+                         header_font=header_font, bold_font=bold_font,
+                         section_fill=section_fill, total_fill=total_fill,
+                         center=center)
+        if combined:
+            next_row = _write_hybrid_buyer_combined_table(ws, combined, start_row=next_row, **_table_kw)
+
+    _oos_days = int((stats or {}).get("sales_oos_days") or _HYBRID_SALES_OOS_DAYS_DEFAULT)
+    _over_days = int((stats or {}).get("sales_overstock_days") or _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT)
+    _min_units = int((stats or {}).get("sales_overstock_min_units") or _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT)
+    _write_hybrid_summary_block(
+        ws, next_row,
+        f"銷量 × 存貨分類交叉表（母體為全部店舖×SKU 列；缺貨線 {_oos_days} 日、"
+        f"積壓線 {_over_days} 日、積壓保底 {_min_units} 件）",
+        _build_hybrid_sales_summary(raw), **_block_kw)
 
     if progress_callback:
         progress_callback(0.90, "Review 摘要完成...")
@@ -7761,6 +8052,7 @@ _HYBRID_RAW_DISPLAY_GROUPS = [
     ["Adj. SST", "Adj. MCH1", "Vendor MC", "MCH2", "Item Status", "Item Class", "RP Type",
      "Shop Stock Status", "Supply Source", "Launch Date"],
     ["Shop Stock Qty (CM)", "Adj. Safety Stock", "Sold Qty (P90D)", "Shop Monthly Sold Qty (P90D)",
+     _HYBRID_SALES_BAND_COLUMN, _HYBRID_SALES_CLASS_COLUMN,
      "Turnday (P90D Qty)", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
      "Net Sales (M-2)", "Net Sales (M-1)", "Net Sales (CM - MTD)", "Excess Stock Qty",
      "Shop On Order PO Qty (CM)", "Shop Pending Receive",
@@ -7813,15 +8105,17 @@ def generate_excel_hybrid(
     RAW（重新排列欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄；含不限OM與同OM兩套調貨結果；
     雙向時另含「可轉出貨量 (Tourist)」）/
     Summary（SKU 級彙總，按 stats["dimension"] 分類維度分組：nature 三組／rp 兩組／both 六組／
-    om 動態 OM 名單／nature_om 三 Nature × OM（動態 OM 名單由 stats["om_groups"] 還原，
+    om 動態 OM 名單／nature_om 三 Nature × OM／sales 四銷量帶（動態 OM 名單由 stats["om_groups"] 還原，
     缺失時由 raw 即時推導）；
     各組加總/TurnDay/涉及店舖數/佔比、強制調貨提示、存貨偏重提示（門檻按維度切換）；
     nature 雙向時另加 AD 欄「由Tourist 店舖預計調出數量」）/
     調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM)（店舖×SKU 主表含 RP Type 欄）/
     店舖問題 SKU（每間店舖需行動列：問題＋建議方法）/
-  Review 摘要（指標卡 4 排（雙向或 ND 店舖有實際轉出時 5 排）+ Safety Review × 分類維度交叉表
+  Review 摘要（指標卡 4–6 排（雙向或 ND 店舖有實際轉出時 5 排；銷量再平衡開啟時末尾另加銷量分類概況一排）
+  + Safety Review × 分類維度交叉表
  + Safety 調整方向分類 + Safety 調整明細（SKU 級彙總）
- + Buyer 統計（需調貨＋需調整 Safety 合併表））/
+ + Buyer 統計（需調貨＋需調整 Safety 合併表）
+ + 銷量 × 存貨分類交叉表（母體為全部店舖×SKU 列））/
     簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)（一列一筆來源店→接收店調貨，來源字串已拆行）。
     雙向與否由 RAW 是否含「可轉出貨量 (Tourist)」欄推定；分類維度由 stats["dimension"] 推定
     （缺失時退回 nature）。
@@ -8865,6 +9159,12 @@ def _build_stock_checking_summary(
     df["_nature"] = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     if dim == "nature":
         df["_grp"] = df["_nature"]
+    elif dim == "sales":
+        if _HYBRID_SALES_BAND_COLUMN in df.columns:
+            _band = df[_HYBRID_SALES_BAND_COLUMN].fillna("").astype(str).str.strip()
+            df["_grp"] = _band.where(_band.isin(_HYBRID_SALES_BANDS), _HYBRID_SALES_BANDS[1])
+        else:
+            df["_grp"] = df["_nature"]
     elif dim in ("om", "nature_om"):
         _om = (
             df["OM"].fillna("").astype(str).str.strip()

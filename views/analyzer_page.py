@@ -22,6 +22,7 @@ from transformer import (
     transform_hybrid, generate_excel_hybrid, _hybrid_dashboard_metrics,
     _hybrid_raw_display_columns, _build_hybrid_transfer_detail,
     _build_hybrid_safety_change_summary, _build_hybrid_safety_sku_detail,
+    _build_hybrid_sales_summary,
     _hybrid_buyer_need_stats, _hybrid_buyer_safety_stats,
     _hybrid_buyer_combined_stats, _hybrid_buyer_combined_detail,
     _build_stock_checking_shop_issues, _build_combined_shop_issues,
@@ -32,6 +33,9 @@ from transformer import (
     _hybrid_safety_days_label,
     _HYBRID_DIMENSION_LABELS,
     _hybrid_skew_hint_text,
+    _HYBRID_SALES_OOS_DAYS_DEFAULT, _HYBRID_SALES_OOS_DAYS_MIN, _HYBRID_SALES_OOS_DAYS_MAX,
+    _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT, _HYBRID_SALES_OVERSTOCK_DAYS_MIN, _HYBRID_SALES_OVERSTOCK_DAYS_MAX,
+    _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT, _HYBRID_SALES_OVERSTOCK_MIN_UNITS_MIN, _HYBRID_SALES_OVERSTOCK_MIN_UNITS_MAX,
 )
 import time
 import traceback
@@ -613,7 +617,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM 或 Shop Nature＋OM 分類；其中 OM 兩個維度計算與預設相同，僅 Summary／交叉表改按 OM 或 Nature×OM 分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
+        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM、Shop Nature＋OM 或 銷量（高銷／中銷／低銷／零銷 四帶）分類；其中 OM 兩個維度與銷量維度計算與預設相同，僅 Summary／交叉表改按 OM、Nature×OM 或銷量帶分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。RAW／主表恆附 **銷量帶**（同 SKU 內按 Sold Qty (P90D) 排名分帶）與 **銷量存貨分類**（高銷缺貨／低銷積壓／零銷積壓／正常；店舖周轉日數門檻預設缺貨 7 日、積壓 30 日、保底 5 件，與調貨 14 日線及 Safety 基準天數互相獨立）；「Review 摘要」另附 **⑤ 銷量 × 存貨分類交叉表**（母體為全部店舖×SKU 列）。可勾選 **啟用銷量再平衡**（預設關閉）：高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方（仍須 D001 低於門檻、補到 14 日需求 > 0 且同 SKU 有貨可調），積壓列經既有轉出判定提供來源；跟隨單向／雙向框架，自我調貨／同 Nature／同OM 守衛與池級歸零不放寬。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -635,6 +639,7 @@ if uploaded_file is not None:
             "🔀 以 Shop Nature＋RP Type 分類": "both",
             "🗺️ 以 OM 分類": "om",
             "🧩 以 Shop Nature＋OM 分類": "nature_om",
+            "📈 以銷量分類": "sales",
         }
         _hybrid_dim_label = st.radio(
             "🗂️ 分類維度",
@@ -650,6 +655,8 @@ if uploaded_file is not None:
                  "以 Shop Nature＋RP Type 分類：計算與預設相同，Summary／交叉表按 6 組（如 Tourist-RF、Mix-ND）呈現。\n"
                  "以 OM 分類：計算與預設相同，Summary／交叉表按來源 OM 欄的不重複值分組呈現。\n"
                  "以 Shop Nature＋OM 分類：計算與預設相同，Summary／交叉表按 Nature×OM 組合（如 Tourist-XXX）呈現。\n"
+                 "以銷量分類：計算與預設相同，Summary／交叉表按銷量帶分組——同 SKU 內按 Sold Qty (P90D) 排名，"
+                 "排名超過 75%＝高銷、排名在最低 25% 內＝低銷、其餘＝中銷、P90D≤0＝零銷（有銷店舖少於 4 間時不區分高低，全歸中銷）。\n"
                  "RP Type 為 ND（不可補貨）的店舖列一律不作需求方（仍可作供應方）；其他／空白值歸入 ND 並列 warning；"
                  "來源缺「RP Type」欄時全部列按 RF 處理並退回 Shop Nature 維度（OM 維度不退回）。"
                  "來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature 維度。"
@@ -701,8 +708,50 @@ if uploaded_file is not None:
                  "ND 列仍不作調貨需求方。\n"
                  "本開關只改變調貨分配結果（轉出量／調貨來源／事件類型／調貨後庫存與 TurnDay），"
                  "不影響 Safety Review、建議 Safety 設定值與調整量。"
-                 "「ND」口徑為正規化後非 RF（含無法辨識而歸入 ND 的列）；來源檔缺「RP Type」欄時自動失效並列 warning。"
+                  "「ND」口徑為正規化後非 RF（含無法辨識而歸入 ND 的列）；來源檔缺「RP Type」欄時自動失效並列 warning。"
+         )
+        st.markdown("**📈 銷量分類與銷量再平衡**")
+        _sales_hint = (
+            "「銷量帶」與「銷量存貨分類」兩個顯示欄位恆輸出（RAW／主表，全列覆蓋），不受本開關影響；"
+            "開關只控制是否讓「高銷缺貨」店舖列加入調貨需求方與積壓列經既有來源判定轉出。"
         )
+        sales_rebalance = st.checkbox(
+            "⚖️ 啟用銷量再平衡（高銷缺貨店舖可調入＋低銷／零銷積壓列可轉出）",
+            value=False, key="hy_sales_reb",
+            help="預設關閉：調貨需求判定維持現行規則（按 Nature 池加總 TurnDay）。"
+                 "開啟後，同 SKU 內銷量屬高銷帶且店舖周轉日數低於缺貨線的店舖×SKU 列，"
+                 "即使所屬 Nature 池整體不缺货，也可加入調貨需求方（仍須 RP Type＝RF、"
+                 "補到 14 日需求 > 0、D001 < 門檻且同 SKU 有貨可調）；"
+                 "積壓列（低銷／零銷且達積壓線與保底件數）經既有轉出判定提供來源。"
+                 "單向模式需求方仍限 Tourist 列、轉出池仍限 Mix／Non Tourist（跟隨「允許雙向調貨」框架）；"
+                 "自我調貨／同 Nature／同OM 守衛與池級歸零全部保留；"
+                 "Safety 分類欄位屬觀察層，與調貨的 14 日線及 Safety 基準天數互相獨立。"
+        )
+        _sales_cols = st.columns(3)
+        with _sales_cols[0]:
+            sales_oos_days = st.number_input(
+                "📉 高銷缺貨線 (日)",
+                min_value=_HYBRID_SALES_OOS_DAYS_MIN, max_value=_HYBRID_SALES_OOS_DAYS_MAX,
+                value=_HYBRID_SALES_OOS_DAYS_DEFAULT, step=1, key="hy_sales_oos",
+                help="店舖周轉日數（Shop Stock Qty (CM) ÷ 生效月銷 × 30.5）低於此值且銷量帶＝高銷 → 「高銷缺貨」。"
+                     + _sales_hint
+            )
+        with _sales_cols[1]:
+            sales_overstock_days = st.number_input(
+                "📦 低銷積壓線 (日)",
+                min_value=_HYBRID_SALES_OVERSTOCK_DAYS_MIN, max_value=_HYBRID_SALES_OVERSTOCK_DAYS_MAX,
+                value=_HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT, step=1, key="hy_sales_over",
+                help="銷量帶＝低銷且店舖周轉日數不少於此值且庫存達保底件數 → 「低銷積壓」（零銷不計周轉，只看保底件數）。"
+                     + _sales_hint
+            )
+        with _sales_cols[2]:
+            sales_overstock_min_units = st.number_input(
+                "🧱 積壓保底件數 (件)",
+                min_value=_HYBRID_SALES_OVERSTOCK_MIN_UNITS_MIN, max_value=_HYBRID_SALES_OVERSTOCK_MIN_UNITS_MAX,
+                value=_HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT, step=1, key="hy_sales_minu",
+                help="低銷／零銷積壓分類要求庫存不少於此件數，避免尾數庫存誤報積壓。"
+                     + _sales_hint
+            )
         hy_ref_date = st.date_input(
             "📅 參考日期（New SKU 判定基準；Launch Date 起 90 天內視為新品）",
             value=datetime.now().date() - timedelta(days=1),
@@ -712,6 +761,7 @@ if uploaded_file is not None:
         _current_hybrid_params = build_hybrid_params(
             turnday_threshold, d001_threshold, _safety_days, bidirectional, _dimension,
             hy_ref_date, nd_priority,
+            sales_rebalance, sales_oos_days, sales_overstock_days, sales_overstock_min_units,
         )
         if bidirectional:
             st.caption(
@@ -736,6 +786,16 @@ if uploaded_file is not None:
                 "**變動的是逐列轉出量、調貨來源、事件類型與調貨後庫存／TurnDay**；"
                 "Safety Review、建議 Safety 設定值與調整量不受影響。"
             )
+        if sales_rebalance:
+            st.caption(
+                f"⚖️ 銷量再平衡已開啟：同 SKU 內屬**高銷帶**且店舖周轉日數 < 缺貨線 {int(sales_oos_days)} 日 的 RF 列"
+                f"（補到 14 日需求 > 0、D001 < {int(d001_threshold)} 件且同 SKU 有貨可調）即使所屬 Nature 池不缺貨也可調入；"
+                f"積壓列（低銷且周轉 ≥ {int(sales_overstock_days)} 日，或零銷，且庫存 ≥ {int(sales_overstock_min_units)} 件）"
+                "經既有轉出判定提供來源。"
+                + ("目前已勾選雙向：兩端放寬至任何 Nature。" if bidirectional
+                   else "未勾選雙向：需求方仍限 Tourist 列、轉出池仍限 Mix／Non Tourist。")
+                + "自我調貨／同 Nature／同OM 守衛與池級歸零全部保留；ND 列仍不作需求方。"
+            )
         if _dimension == "rp":
             st.caption(
                 f"🏷️ 目前維度＝以 RP Type 分類：需求方＝**任何 Nature 且 RP Type＝RF** 的缺貨店舖"
@@ -758,6 +818,12 @@ if uploaded_file is not None:
                 "🧩 目前維度＝Shop Nature＋OM：調貨計算與預設相同（需求 Tourist-RF、供應 Mix／Non Tourist），"
                 "Summary 與交叉表按 Nature×OM 組合（如 Tourist-XXX）呈現；來源缺「OM」欄或全欄空白時退回 Shop Nature 維度。"
             )
+        elif _dimension == "sales":
+            st.caption(
+                "📈 目前維度＝以銷量分類：調貨計算與預設相同（需求 Tourist-RF、供應 Mix／Non Tourist），"
+                "Summary 與交叉表按銷量帶（高銷／中銷／低銷／零銷）分組呈現；"
+                "銷量帶按本次上傳資料內同 SKU 各店舖 Sold Qty (P90D) 排名計算，篩選範圍不同時分帶結果會不同。"
+            )
         else:
             st.caption(
                 "🏬 目前維度＝以 Shop Nature 分類（預設）：需求方僅 Tourist 且 RP Type＝RF 的店舖"
@@ -766,7 +832,7 @@ if uploaded_file is not None:
         st.caption(
             f"📦 存貨偏重提示門檻（隨分類維度切換，目前維度：{_hybrid_skew_hint_text(_dimension)}；"
             "觸發的分組以醒目橘底加強顯示）——完整對照：Shop Nature／RP Type／Nature＋RP Type 為庫存佔比 ≥ 40% 且差距 ≥ 20 個百分點；"
-            "OM 為 ≥ 25% 且差距 ≥ 12 個百分點；Nature＋OM 為 ≥ 12% 且差距 ≥ 8 個百分點。"
+            "OM 為 ≥ 25% 且差距 ≥ 12 個百分點；Nature＋OM 為 ≥ 12% 且差距 ≥ 8 個百分點；銷量 為 ≥ 30% 且差距 ≥ 15 個百分點。"
         )
         st.caption(
             f"🧭 Review 基準：Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 基準天數)，"
@@ -804,6 +870,10 @@ if uploaded_file is not None:
                     nd_priority=bool(nd_priority),
                     progress_callback=_cb_transform,
                     ref_date=hy_ref_date,
+                    sales_rebalance=bool(sales_rebalance),
+                    sales_oos_days=int(sales_oos_days),
+                    sales_overstock_days=int(sales_overstock_days),
+                    sales_overstock_min_units=int(sales_overstock_min_units),
                 )
                 buf = generate_excel_hybrid(
                     raw_df, sc_summary, diagnosis, diagnosis_om, diag_summary, _stats,
@@ -854,6 +924,10 @@ if uploaded_file is not None:
                 applied_hybrid_dimension,
                 applied_hybrid_ref,
                 (stats or {}).get("nd_priority", nd_priority),
+                (stats or {}).get("sales_rebalance", sales_rebalance),
+                (stats or {}).get("sales_oos_days", sales_oos_days),
+                (stats or {}).get("sales_overstock_days", sales_overstock_days),
+                (stats or {}).get("sales_overstock_min_units", sales_overstock_min_units),
             )
             hybrid_is_stale = hybrid_params_changed(applied_hybrid_params, _current_hybrid_params)
             if hybrid_is_stale:
@@ -1015,6 +1089,22 @@ if uploaded_file is not None:
                     st.caption("同一 Buyer 的需調貨與需調整 Safety 並列顯示（已刪除重複；需調貨同 Stock Checking 口徑；需調整母體為 Safety 設定不足＋過高，貨量與調整量為淨額）。")
                 else:
                     st.info("無符合條件的 Buyer 統計")
+
+                st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+                _soos = int((stats or {}).get("sales_oos_days") or _HYBRID_SALES_OOS_DAYS_DEFAULT)
+                _sover = int((stats or {}).get("sales_overstock_days") or _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT)
+                _sminu = int((stats or {}).get("sales_overstock_min_units") or _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT)
+                st.markdown("#### ⑤ 銷量 × 存貨分類交叉表（母體為全部店舖×SKU 列）")
+                _sales_block = _build_hybrid_sales_summary(raw_df)
+                if not _sales_block.empty:
+                    st.dataframe(_sales_block, width='stretch', hide_index=True)
+                    st.caption(f"分類口徑：高銷缺貨＝同 SKU 內屬高銷帶且店舖周轉日數 < {_soos} 日；"
+                               f"低銷積壓＝低銷帶且周轉日數 ≥ {_sover} 日且庫存 ≥ {_sminu} 件；"
+                               f"零銷積壓＝P90D 零銷售且庫存 ≥ {_sminu} 件；其餘為正常。"
+                               "母體為全部店舖×SKU 列（有別於 ①–④ 的調貨事件列母體），無調貨事件時仍可查閱；"
+                               "銷量帶按本次上傳資料內同 SKU 排名計算，篩選範圍不同時結果會不同。")
+                else:
+                    st.info("無符合資料")
             with tab_detail:
                 st.markdown("#### 簡易調貨明細（一列一筆來源店→接收店調貨；來源如 HB30:2; HB49:3 會拆成兩行）")
                 _dv = st.radio(

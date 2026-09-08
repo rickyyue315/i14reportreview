@@ -1313,7 +1313,14 @@ def test_excel_safety_blocks_empty_population():
     assert diag_summary.empty
     ws = load_workbook(generate_excel_hybrid(
         raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats))["Review 摘要"]
-    assert ws.cell(row=20, column=1).value == "無符合資料"
+    assert ws.cell(row=20, column=1).value == "無符合資料（①–④ 統計區塊以調貨事件列為母體）"
+    # ⑤ 銷量 × 存貨分類母體為全部列，無調貨事件時仍恆寫入
+    assert str(ws.cell(row=22, column=1).value).startswith("銷量 × 存貨分類交叉表")
+    assert ws.cell(row=23, column=1).value == "銷量存貨分類"
+    assert [ws.cell(row=r, column=1).value for r in range(24, 29)] == \
+        ["高銷缺貨", "低銷積壓", "零銷積壓", "正常", "總計"]
+    assert int(ws.cell(row=27, column=5).value) == 1  # 正常列數
+    assert int(ws.cell(row=28, column=5).value) == 1  # 總計列數
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1415,7 +1422,7 @@ def test_main_table_contract_names_safety_columns():
     assert _HYBRID_SAFETY_DAYS_COLUMN in _HYBRID_DIAG_COLUMNS
     assert "14日周轉所需量" not in _HYBRID_DIAG_COLUMNS
     raw, _, diagnosis, _, _, _, _ = transform_hybrid(_df(_SCENARIO_A))
-    assert list(diagnosis.columns) == _HYBRID_DIAG_COLUMNS  # 主表 26 欄契約完整（含 RP Type）
+    assert list(diagnosis.columns) == _HYBRID_DIAG_COLUMNS  # 主表 28 欄契約完整（含 RP Type 與銷量帶／銷量存貨分類）
     display = _hybrid_raw_display_columns(raw)
     assert _HYBRID_SAFETY_LINE_COLUMN in display and _HYBRID_SAFETY_DAYS_COLUMN in display
     assert display.index(_HYBRID_SAFETY_DAYS_COLUMN) < display.index(_HYBRID_SAFETY_LINE_COLUMN)
@@ -1645,7 +1652,7 @@ def test_missing_rp_type_column_falls_back_to_nature():
     assert stats["dimension"] == "nature"
     assert stats["need_rows"] == 1  # 全部列按 RF 處理，維持舊行為
     assert "RP Type" not in raw.columns  # RAW 不虛構欄位
-    assert "RP Type" not in diagnosis.columns and len(diagnosis.columns) == 25
+    assert "RP Type" not in diagnosis.columns and len(diagnosis.columns) == 27  # 25＋銷量帶／銷量存貨分類（v1.33.0）
 
 
 # Mix 池整體缺貨（加總 TurnDay < 14）但 M02 有超額——rp 維度允許同 Nature 店間再平衡

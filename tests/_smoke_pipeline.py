@@ -95,6 +95,14 @@ def main():
     generate_excel_hybrid(r2, h_sc2, h_diag2, h_diag2_om, h_cross2, h_stats2)
     print("OK Hybrid Bidirectional | rows=%d need=%d diag=%d tourist_out=%d warnings=%d" % (len(r2), h_stats2["need_rows"], len(h_diag2), h_stats2["tourist_transfer"], len(h_w2)))
 
+    # ── Safety Stock x NetStock Review（銷量再平衡＋以銷量分類維度）──
+    r3, h_sc3, h_diag3, h_diag3_om, h_cross3, h_stats3, h_w3 = transform_hybrid(
+        df, sales_rebalance=True, dimension="sales")
+    generate_excel_hybrid(r3, h_sc3, h_diag3, h_diag3_om, h_cross3, h_stats3)
+    print("OK Hybrid Sales Rebalance | rows=%d need=%d sales_need=%d oos=%d overstock=%d warnings=%d" % (
+        len(r3), h_stats3["need_rows"], h_stats3["sales_need_rows"],
+        h_stats3["sales_oos_rows"], h_stats3["sales_overstock_rows"], len(h_w3)))
+
     # ── Stock Impact Analysis ──
     _, si_brand, si_buyer, si_cat, _, si_alloc, si_diag, si_inv, si_mly, si_raw, si_warns = transform_stock_impact(
         df, warehouse_only=False, stock_threshold=300

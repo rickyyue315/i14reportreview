@@ -11,6 +11,10 @@ def build_hybrid_params(
     dimension: str = "nature",
     ref_date=None,
     nd_priority: bool = False,
+    sales_rebalance: bool = False,
+    sales_oos_days: int = 7,
+    sales_overstock_days: int = 30,
+    sales_overstock_min_units: int = 5,
 ) -> dict:
     if ref_date is None:
         ref_text = ""
@@ -27,6 +31,10 @@ def build_hybrid_params(
         "dimension": str(dimension),
         "ref_date": ref_text,
         "nd_priority": bool(nd_priority),
+        "sales_rebalance": bool(sales_rebalance),
+        "sales_oos_days": int(sales_oos_days),
+        "sales_overstock_days": int(sales_overstock_days),
+        "sales_overstock_min_units": int(sales_overstock_min_units),
     }
 
 
@@ -35,7 +43,14 @@ def hybrid_params_changed(applied: dict | None, current: dict) -> bool:
         return False
     if set(applied) != set(current):
         # 舊快照缺新增鍵時以預設值補齊再比對（向後相容）
-        defaults = {"ref_date": "", "nd_priority": False}
+        defaults = {
+            "ref_date": "",
+            "nd_priority": False,
+            "sales_rebalance": False,
+            "sales_oos_days": 7,
+            "sales_overstock_days": 30,
+            "sales_overstock_min_units": 5,
+        }
         applied = {**{k: applied.get(k, d) for k, d in defaults.items()}, **applied}
         current = {**{k: current.get(k, d) for k, d in defaults.items()}, **current}
     return applied != current
