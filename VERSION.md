@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.37.0 (2026-09-08)
+
+Safety Stock x NetStock Review 的分類引入 **Stock Checking** 與 **Safety Stock Review** 兩個模式（調貨與 Safety 建議計算一律不變，只加分類顯示）：
+
+- **Stock Checking** — 參數區新增「🗂️ 分類維度」七選一（Shop Nature／RP Type／Shop Nature＋RP Type／OM／Shop Nature＋OM／銷量／銷量＋Shop Nature）與「📈 銷量存貨分類門檻」三項（缺貨線 7 日／積壓線 30 日／保底 2 件，與 hybrid 同一準則可調）。Summary 按所選維度分組（與 hybrid 同一 builder，nature 預設的 A–AC 契約欄序不變）；RAW 恆附「銷量帶」與「銷量存貨分類」顯示欄；「店舖問題 SKU」表末尾新增兩欄。調貨觸發、分配與數量**完全不隨維度改變**；存貨偏重提示門檻按維度切換（與 hybrid 同表）
+- **Safety Stock Review** — 參數區新增同一組「🗂️ 分類維度」與門檻輸入。SUMMARY 工作表原 ①② 區塊下方新增 **③ Safety Qty Change 分類 × 分類維度交叉表**（列數／SKU 數／Safety Qty Change 合計，含總計列；總計列 SKU 數為全表不重複 SKU，與 ① 同一準則；非標準 Shop Nature 值如 Other 不佔分組欄、只計入合計）；RAW 恆附「銷量帶」與「銷量存貨分類」；「店舖問題 SKU」表末尾新增兩欄；結果頁新增「🧮 分類交叉表」tab（區塊 ③ 即時數據＋銷量 × 存貨分類分佈，後者母體為全部店舖×SKU 列）。Safety 建議值、倍率、MTD 月銷預估與退場建議**完全不變**；①② 表頭與 RAW 原有欄序不動
+- **資料守衛** — 兩模式來源缺「Sold Qty (P90D)」時不輸出銷量兩欄並列 warning；缺「Shop Stock Qty (CM)」時只輸出銷量帶並列 warning；Safety Stock Review 缺「Shop Monthly Sold Qty (P90D)」時店舖周轉日數以 Sold Qty (P90D) ÷ 90 × 30.5 換算（與 Stock Checking 同一準則）並列 warning；OM 兩個維度缺「OM」欄或全欄空白時退回 Shop Nature（與 hybrid 同）
+- New: `_attach_sales_classification_columns()`（兩模式共用的銷量帶／銷量存貨分類附加函數，hybrid 不經此函數）；`_build_combined_dimension_cross_tab()`（SUMMARY 區塊 ③，分組鍵與 hybrid 同一 `_hybrid_group_key_series`）；`_sales_threshold_inputs()`／`_DIMENSION_OPTIONS`（UI 共用）
+- Change: `transform_stock_checking()` 新增 `dimension`／`sales_*` 參數，stats 記錄 `dimension`／`om_groups`／三項銷量門檻；`generate_excel_stock_checking()` 按 stats 維度寫 Summary；`transform_combined()` 新增 `sales_*` 參數；`generate_excel_combined()` 新增 `dimension`／`om_groups` 參數並寫區塊 ③；`_COMBINED_RAW_COLS` 於 Sold Qty (P90D) 後插入銷量兩欄
+- Update: `tests/test_dimension_other_modes.py` 新增 14 項測試（預設契約不變、sales／om 維度分組、調貨計算零變動對照、店舖問題 SKU 兩欄、缺欄守衛、交叉表分組與總計、Excel 區塊 ③）；共 337 項測試通過
+
 ## v1.36.0 (2026-09-08)
 
 Safety Stock x NetStock Review「積壓保底件數」預設值由 5 件下調為 **2 件**——低銷／零銷且庫存 2–4 件的店舖×SKU 列，預設門檻下即判為低銷積壓／零銷積壓（此前須達 5 件；庫存 0–1 件仍歸正常）。UI「🧱 積壓保底件數 (件)」預設顯示 2，仍可調 1–100；已明確輸入過參數的執行不受影響（僅無輸入時落到新預設）。**行為變更限銷量存貨分類及其統計**（分類欄、區塊⑤、銷量分類概況指標卡）——調貨 14 日線、Safety 基準天數及再平衡通道的守衛邏輯不變。

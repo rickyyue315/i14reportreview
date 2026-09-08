@@ -117,6 +117,8 @@ COMBINED_RAW_COLS = [
     "D001 Net Stock Qty (CM)",
     "Shop Stock Qty (CM)",
     "Sold Qty (P90D)",
+    "銷量帶",
+    "銷量存貨分類",
     "Turnday (P90D Qty)",
     "Sold Qty (M-2)",
     "Sold Qty (M-1)",
@@ -837,6 +839,72 @@ def _build_combined_classification_summary(raw):
     return change_summary, nd_summary
 
 
+def _build_combined_dimension_cross_tab(raw, dimension="nature", om_groups=None):
+    """Safety Qty Change 分類 × 分類維度交叉表（SUMMARY 區塊 ③）。
+
+    Safety Stock Review 引入分類維度用：只改分組顯示，不影響任何 Safety 建議計算。
+    分組鍵與混合模式同一準則（_hybrid_group_key_series）；om_groups 缺省時由 raw 即時推導；
+    RAW 缺「銷量帶」欄時銷量兩個維度退回 Shop Nature 鍵（與 hybrid 同一守衛）。
+    每格統計 列數 / SKU 數 / Safety Qty Change 合計；總計列的 SKU 數為全表不重複 SKU
+    （同一 SKU 可跨分類，與區塊 ① 同一準則）；非標準 Shop Nature 值不佔分組欄、只計入合計。
+    """
+    dim = _hybrid_dimension(dimension)
+    first_col = "Safety Qty Change 分類"
+    if raw is None or raw.empty or "Safety Qty Change" not in raw.columns:
+        groups = _hybrid_dimension_groups(dim, om_groups=om_groups)
+        cols = [first_col]
+        for g in groups:
+            cols += [f"{g} 列數", f"{g} SKU 數", f"{g} Safety Qty Change 合計"]
+        cols += ["合計 列數", "合計 SKU 數", "合計 Safety Qty Change"]
+        return pd.DataFrame(columns=cols)
+    if dim in ("om", "nature_om") and om_groups is None:
+        om_groups = _hybrid_om_groups_from_values(
+            raw["OM"] if "OM" in raw.columns else _safe_default_series("", raw.index)
+        )
+    groups = _hybrid_dimension_groups(dim, om_groups=om_groups)
+    cols = [first_col]
+    for g in groups:
+        cols += [f"{g} 列數", f"{g} SKU 數", f"{g} Safety Qty Change 合計"]
+    cols += ["合計 列數", "合計 SKU 數", "合計 Safety Qty Change"]
+    chg = pd.to_numeric(raw["Safety Qty Change"], errors="coerce").fillna(0)
+    grp = _hybrid_group_key_series(raw, dim, om_groups=om_groups)
+    sku = raw["SKU"] if "SKU" in raw.columns else _safe_default_series("", raw.index)
+    total_sku = int(sku.dropna().nunique())
+    _total_keys = {
+        "列數": "合計 列數",
+        "SKU 數": "合計 SKU 數",
+        "Safety Qty Change 合計": "合計 Safety Qty Change",
+    }
+
+    def _agg(sub_chg: pd.Series, sub_sku: pd.Series) -> dict:
+        return {
+            "列數": int(len(sub_chg)),
+            "SKU 數": int(sub_sku.dropna().nunique()),
+            "Safety Qty Change 合計": int(round(float(sub_chg.sum()))),
+        }
+
+    def _fill(row: dict, mask: pd.Series, total_row: bool = False) -> dict:
+        for g in groups:
+            gm = mask & (grp == g).to_numpy()
+            for k, v in _agg(chg[gm], sku[gm]).items():
+                row[f"{g} {k}"] = v
+        agg = _agg(chg[mask], sku[mask])
+        if total_row:
+            agg["SKU 數"] = total_sku
+        for k, v in agg.items():
+            row[_total_keys[k]] = v
+        return row
+
+    cat_masks = [
+        ("增加", chg > 0),
+        ("減少", chg < 0),
+        ("不變", chg == 0),
+    ]
+    rows = [_fill({first_col: label}, mask.to_numpy()) for label, mask in cat_masks]
+    rows.append(_fill({first_col: "總計"}, np.ones(len(raw), dtype=bool), total_row=True))
+    return pd.DataFrame(rows, columns=cols)
+
+
 def transform_combined(
     df_input: pd.DataFrame,
     progress_callback=None,
@@ -847,6 +915,9 @@ def transform_combined(
     month_total_days: int | None = None,
     safety_mode: str = "increase_only",
     ref_date=None,
+    sales_oos_days=None,
+    sales_overstock_days=None,
+    sales_overstock_min_units=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str], list[str]]:
     missing = validate_input(df_input)
     if missing:
@@ -879,6 +950,14 @@ def transform_combined(
         df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode=safety_mode,
         ref_date=ref_date,
     )
+
+    # 銷量帶／銷量存貨分類（常開顯示欄；只作分類顯示，不影響 Safety 建議計算）
+    _sales_params, _sales_param_warnings = _hybrid_sales_params(
+        False, sales_oos_days, sales_overstock_days, sales_overstock_min_units
+    )[1:]
+    warnings.extend(_sales_param_warnings)
+    raw, _sales_col_warnings = _attach_sales_classification_columns(raw, _sales_params)
+    warnings.extend(_sales_col_warnings)
 
     status_col = raw["Shop Stock Status"].fillna("")
     safety_change = pd.to_numeric(raw.get("Safety Qty Change", _safe_default_series(0, raw.index)), errors="coerce").fillna(0)
@@ -1039,8 +1118,9 @@ def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc
     _auto_width(ws)
 
 
-def _write_summary_sheet(ws, change_summary, nd_summary, thin_border):
-    """SUMMARY sheet — 兩個區塊：Safety Qty Change 分類 與 ND 建議分類 統計表."""
+def _write_summary_sheet(ws, change_summary, nd_summary, thin_border, cross_tab=None):
+    """SUMMARY sheet — 區塊：Safety Qty Change 分類、ND 建議分類 統計表，
+    另附 Safety Qty Change 分類 × 分類維度交叉表（cross_tab，Safety Stock Review 引入分類維度用）."""
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     bold_font = Font(bold=True, size=11)
@@ -1086,7 +1166,9 @@ def _write_summary_sheet(ws, change_summary, nd_summary, thin_border):
         return header_row + len(block) + 1
 
     next_row = _write_block(3, "① Safety Qty Change 分類（增加 / 減少 / 不變）", change_summary)
-    _write_block(next_row + 1, "② Recommendation of new Safety Qty / ND 分類", nd_summary)
+    next_row = _write_block(next_row + 1, "② Recommendation of new Safety Qty / ND 分類", nd_summary)
+    if cross_tab is not None and not cross_tab.empty:
+        _write_block(next_row + 1, "③ Safety Qty Change 分類 × 分類維度交叉表", cross_tab)
     _auto_width(ws)
 
 
@@ -1104,12 +1186,14 @@ _STOCK_CHECKING_SHOP_ISSUE_NUM_COLUMNS = [
     "調入需求量 (補到14日)", "實際調入量", "調入缺口",
     "可轉出貨量 (Mix)", "可轉出貨量 (Non Tourist)", "轉出量",
     "調貨來源 (Site Code)",
+    "銷量帶", "銷量存貨分類",
 ]
 _COMBINED_SHOP_ISSUE_NUM_COLUMNS = [
     "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)", "Turnday (P90D Qty)",
     "Adj. Safety Stock", "Recommend Safety Stock", "Safety Qty Change",
     "Overstock Cap (X)", "OOS Floor (Y)",
     "Recommendation of new Safety Qty / ND",
+    "銷量帶", "銷量存貨分類",
 ]
 _HYBRID_SHOP_ISSUE_NUM_COLUMNS = [
     "Supply Source", "D001 Net Stock Qty (CM)",
@@ -1555,11 +1639,23 @@ def generate_excel_combined(
     raw_df: pd.DataFrame,
     categories: list[str],
     progress_callback=None,
+    dimension: str = "nature",
+    om_groups=None,
 ) -> BytesIO:
+    """Safety Stock Review 輸出。dimension／om_groups 決定 SUMMARY 區塊 ③
+    「Safety Qty Change 分類 × 分類維度交叉表」的分組（只影響顯示，不影響任何建議計算）；
+    om_groups 缺省時由 raw 即時推導。"""
     wb = Workbook()
 
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
+
+    _dim = _hybrid_dimension(dimension)
+    if _dim in ("om", "nature_om") and not om_groups and raw_df is not None and not raw_df.empty:
+        om_groups = _hybrid_om_groups_from_values(
+            raw_df["OM"] if "OM" in raw_df.columns else _safe_default_series("", raw_df.index)
+        )
+    cross_tab = _build_combined_dimension_cross_tab(raw_df, dimension=_dim, om_groups=om_groups)
 
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
@@ -1672,7 +1768,7 @@ def generate_excel_combined(
     # ── Sheet 5: SUMMARY（Safety Qty Change 分類 / ND 建議分類 統計）──
     change_summary, nd_summary = _build_combined_classification_summary(raw_df)
     ws_class_summary = wb.create_sheet(title="SUMMARY")
-    _write_summary_sheet(ws_class_summary, change_summary, nd_summary, thin_border)
+    _write_summary_sheet(ws_class_summary, change_summary, nd_summary, thin_border, cross_tab=cross_tab)
 
     if progress_callback:
         progress_callback(0.88, "建立分析摘要工作表...")
@@ -5983,6 +6079,53 @@ def _hybrid_sales_classification(
     return cls
 
 
+def _attach_sales_classification_columns(
+    df: pd.DataFrame,
+    sales_params: dict,
+    *,
+    monthly_sold: pd.Series | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
+    """為模式 RAW 附加「銷量帶」與「銷量存貨分類」兩欄（Stock Checking／Safety Stock
+    Review 引入用；hybrid 在 transform_hybrid 內自行計算，不經此函數）。
+
+    - 銷量帶需「Sold Qty (P90D)」與「SKU」；缺任一欄時兩欄皆不輸出並列 warning。
+    - 銷量存貨分類另需「Shop Stock Qty (CM)」與店舖周轉日數（庫存 ÷ 月銷 × 30.5）；
+      月銷優先「Shop Monthly Sold Qty (P90D)」，缺欄時以 Sold Qty (P90D) ÷ 90 × 30.5
+      換算（與 Stock Checking 同一準則）並列 warning；缺庫存欄時只輸出銷量帶並列 warning。
+    monthly_sold 已由呼叫方解像時傳入，避免重複 warning。回傳 (附加後 df, warnings)。
+    """
+    warnings: list[str] = []
+    df = df.copy()
+    if "Sold Qty (P90D)" not in df.columns or "SKU" not in df.columns:
+        warnings.append("來源檔案缺少「Sold Qty (P90D)」，無法計算銷量帶與銷量存貨分類。")
+        return df, warnings
+    sold_p90d = _safe_numeric(df["Sold Qty (P90D)"])
+    df[_HYBRID_SALES_BAND_COLUMN] = _hybrid_sales_bands(sold_p90d, df["SKU"])
+    if "Shop Stock Qty (CM)" not in df.columns:
+        warnings.append("來源檔案缺少「Shop Stock Qty (CM)」，無法計算銷量存貨分類（銷量帶已輸出）。")
+        return df, warnings
+    if monthly_sold is None:
+        if "Shop Monthly Sold Qty (P90D)" in df.columns:
+            monthly_sold = _safe_numeric(df["Shop Monthly Sold Qty (P90D)"])
+        else:
+            monthly_sold = sold_p90d / 90.0 * 30.5
+            warnings.append(
+                "來源檔案缺少「Shop Monthly Sold Qty (P90D)」，銷量存貨分類的店舖周轉日數改以 Sold Qty (P90D) 換算。"
+            )
+    msold_val = np.asarray(monthly_sold, dtype=float)
+    cm_stock_val = _safe_numeric(df["Shop Stock Qty (CM)"]).to_numpy(dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        shop_turn_day = np.where(
+            msold_val > 0,
+            cm_stock_val / np.where(msold_val > 0, msold_val, 1.0) * 30.5,
+            np.inf,
+        )
+    df[_HYBRID_SALES_CLASS_COLUMN] = _hybrid_sales_classification(
+        df[_HYBRID_SALES_BAND_COLUMN], shop_turn_day, cm_stock_val, sales_params,
+    )
+    return df, warnings
+
+
 def _hybrid_dimension(dimension) -> str:
     """分類維度正規化：非法值退回預設 nature，不拋錯（沿用 _hybrid_safety_days 風格）。"""
     d = str(dimension or "nature").strip().lower()
@@ -9195,6 +9338,8 @@ def _stock_checking_stats_empty() -> dict:
         "nt_transfer": 0,
         "mix_transfer": 0,
         "buyer_need_skus": [],
+        "dimension": "nature",
+        "om_groups": None,
     }
 
 
@@ -9433,6 +9578,10 @@ def transform_stock_checking(
     turnday_threshold: int = 14,
     d001_threshold: int = 100,
     progress_callback=None,
+    dimension: str = "nature",
+    sales_oos_days=None,
+    sales_overstock_days=None,
+    sales_overstock_min_units=None,
 ):
     """Stock Checking（調貨檢查）核心轉換。
 
@@ -9449,6 +9598,8 @@ def transform_stock_checking(
       該 Nature 的 SKU 級加總 TurnDay < 門檻時，該 Nature 視為無貨可調（可轉出量歸零）。RP Type 為 RF 與 ND 皆可作為來源。
     - 分配：按 SKU 彙總需求，Non Tourist 店優先，不足再由 Mix 店補足；需求列按需求量大→小依序分配；
       來源店與需求店同為一店（Site Code 相同）時一律排除，防止重複列資料異常造成自我調貨。
+    - 分類維度（dimension）與銷量帶／銷量存貨分類（常開顯示欄，門檻見 sales_* 參數）只改
+      Summary 分組與顯示欄，調貨計算一律按 Shop Nature 準則，不隨維度改變。
     """
     if progress_callback:
         progress_callback(0.0, "驗證輸入資料...")
@@ -9507,6 +9658,22 @@ def transform_stock_checking(
         warnings.append("來源檔案缺少「Shop Monthly Sold Qty (P90D)」，加總 TurnDay 改以 Sold Qty (P90D) 換算。")
     msold_val = msold_monthly.to_numpy(dtype=float)
     sku_key = df["SKU"] if "SKU" in df.columns else _safe_default_series(None, idx)
+
+    # ── 分類維度與銷量帶／銷量存貨分類（常開顯示欄；只改 Summary 分組，不影響調貨計算）──
+    dim = _hybrid_dimension(dimension)
+    _sales_params, _sales_param_warnings = _hybrid_sales_params(
+        False, sales_oos_days, sales_overstock_days, sales_overstock_min_units
+    )[1:]
+    warnings.extend(_sales_param_warnings)
+    df, _sales_col_warnings = _attach_sales_classification_columns(
+        df, _sales_params, monthly_sold=msold_monthly,
+    )
+    warnings.extend(_sales_col_warnings)
+    om_groups = None
+    if dim in ("om", "nature_om"):
+        om_groups = _hybrid_om_groups_from_values(
+            df["OM"] if "OM" in df.columns else _safe_default_series("", idx)
+        )
 
     def _sku_nature_turnday(nature_mask: np.ndarray) -> np.ndarray:
         s_stock = pd.Series(np.where(nature_mask, cm_stock_val, 0.0), index=df.index)
@@ -9614,6 +9781,11 @@ def transform_stock_checking(
         "nt_transfer": int(df.loc[df["Shop Nature"] == "Non Tourist", "轉出量"].sum()),
         "mix_transfer": int(df.loc[df["Shop Nature"] == "Mix", "轉出量"].sum()),
         "buyer_need_skus": _stock_checking_buyer_stats(df, need_series),
+        "dimension": dim,
+        "om_groups": om_groups,
+        "sales_oos_days": int(_sales_params["oos_days"]),
+        "sales_overstock_days": int(_sales_params["overstock_days"]),
+        "sales_overstock_min_units": int(_sales_params["overstock_min_units"]),
     }
 
     if not need_mask.any():
@@ -9622,7 +9794,7 @@ def transform_stock_checking(
     # ── SKU 級 Summary ──────────────────────────────────────────────────────
     if progress_callback:
         progress_callback(0.35, "建立 SKU Summary...")
-    summary = _build_stock_checking_summary(df)
+    summary = _build_stock_checking_summary(df, dimension=dim, om_groups=om_groups)
 
     if progress_callback:
         progress_callback(0.4, "完成資料轉換...")
@@ -9980,6 +10152,7 @@ _STOCK_CHECKING_RAW_DISPLAY_GROUPS = [
     ["Adj. SST", "Adj. MCH1", "Vendor MC", "MCH2", "Item Status", "Item Class", "RP Type",
      "Shop Stock Status", "Supply Source", "Launch Date"],
     ["Shop Stock Qty (CM)", "Adj. Safety Stock", "Sold Qty (P90D)", "Shop Monthly Sold Qty (P90D)",
+     "銷量帶", "銷量存貨分類",
      "Turnday (P90D Qty)", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
      "Net Sales (M-2)", "Net Sales (M-1)", "Net Sales (CM - MTD)", "Excess Stock Qty",
      "Shop On Order PO Qty (CM)", "Shop Pending Receive",
@@ -10020,17 +10193,22 @@ def generate_excel_stock_checking(
     stats: dict | None = None,
     progress_callback=None,
 ) -> BytesIO:
-    """Stock Checking 輸出：Summary（SKU 級彙總，偏重提示以醒目橘底加強顯示）
-    + RAW（重排欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄）
-    + 店舖問題 SKU（每間店舖需行動列；空表寫「無符合資料」）
-    + 調貨分析摘要（Dashboard）。"""
+    """Stock Checking 輸出：Summary（SKU 級彙總，按 stats["dimension"] 分類維度分組，
+    偏重提示以醒目橘底加強顯示）+ RAW（重排欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄）
+    + 店舖問題 SKU（每間店舖需行動列；空表寫「無符合資料」）+ 調貨分析摘要（Dashboard）。"""
     wb = Workbook()
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
 
+    _dim = _hybrid_dimension((stats or {}).get("dimension"))
+    _om_groups = (stats or {}).get("om_groups")
+    if summary is None:
+        summary = _build_stock_checking_summary(raw, dimension=_dim, om_groups=_om_groups)
+
     ws_summary = wb.active
     ws_summary.title = "Summary"
-    _write_stock_checking_summary_sheet(ws_summary, summary, progress_callback, highlight_skew=True)
+    _write_stock_checking_summary_sheet(ws_summary, summary, progress_callback, highlight_skew=True,
+                                        dimension=_dim, om_groups=_om_groups)
 
     if progress_callback:
         progress_callback(0.35, "建立 RAW...")

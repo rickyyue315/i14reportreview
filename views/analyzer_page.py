@@ -27,6 +27,7 @@ from transformer import (
     _hybrid_buyer_combined_stats, _hybrid_buyer_combined_detail,
     _build_stock_checking_shop_issues, _build_combined_shop_issues,
     _build_hybrid_shop_issues,
+    _build_combined_dimension_cross_tab,
     _STOCK_CHECKING_SHOP_ISSUE_COLUMNS, _COMBINED_SHOP_ISSUE_COLUMNS,
     _HYBRID_SHOP_ISSUE_COLUMNS,
     _HYBRID_SAFETY_DAYS_DEFAULT, _HYBRID_SAFETY_DAYS_MIN, _HYBRID_SAFETY_DAYS_MAX,
@@ -168,6 +169,58 @@ st.markdown("""
 mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review"]
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0, key="mode_selector")
 
+# 3a. 分類維度選項（Safety Stock x NetStock Review／Stock Checking／Safety Stock Review 共用）
+_DIMENSION_OPTIONS = {
+    "🏬 以 Shop Nature 分類（預設）": "nature",
+    "🏷️ 以 RP Type 分類": "rp",
+    "🔀 以 Shop Nature＋RP Type 分類": "both",
+    "🗺️ 以 OM 分類": "om",
+    "🧩 以 Shop Nature＋OM 分類": "nature_om",
+    "📈 以銷量分類": "sales",
+    "🧮 以銷量＋Shop Nature分類": "sales_nature",
+}
+_DIMENSION_HELP_COMMON = (
+    "決定 Summary／交叉表的分組欄位；非法值自動退回 Shop Nature，不影響任何建議與調貨計算。\n"
+    "以 Shop Nature 分類：按 Tourist／Mix／Non Tourist 三組呈現。\n"
+    "以 RP Type 分類：按 RF（可補貨）／ND（不可補貨）兩組呈現。\n"
+    "以 Shop Nature＋RP Type 分類：按 6 組（如 Tourist-RF、Mix-ND）呈現。\n"
+    "以 OM 分類：按來源 OM 欄的不重複值分組呈現（空白自成「空白」組）。\n"
+    "以 Shop Nature＋OM 分類：按 Nature×OM 組合（如 Tourist-XXX）呈現。\n"
+    "以銷量分類：按銷量帶分組——同 SKU 內按 Sold Qty (P90D) 排名，排名超過 75%＝高銷、"
+    "排名在最低 25% 內＝低銷、其餘＝中銷、P90D≤0＝零銷（有銷店舖少於 4 間時不區分高低，全歸中銷）。\n"
+    "以銷量＋Shop Nature分類：按 Nature×銷量帶 12 組（如 Tourist-高銷、Mix-低銷）呈現；"
+    "銷量帶準則與「以銷量分類」相同，分帶結果隨本次上傳資料的篩選範圍而變。\n"
+    "來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature 維度。"
+)
+
+
+def _sales_threshold_inputs(prefix: str):
+    """銷量存貨分類三條門檻輸入（多模式共用；回傳 缺貨線／積壓線／保底件數）。"""
+    st.markdown("**📈 銷量存貨分類門檻**（店舖周轉日數 = Shop Stock Qty (CM) ÷ 月銷 × 30.5）")
+    _cols = st.columns(3)
+    with _cols[0]:
+        _oos = st.number_input(
+            "📉 高銷缺貨線 (日)",
+            min_value=_HYBRID_SALES_OOS_DAYS_MIN, max_value=_HYBRID_SALES_OOS_DAYS_MAX,
+            value=_HYBRID_SALES_OOS_DAYS_DEFAULT, step=1, key=f"{prefix}_sales_oos",
+            help="店舖周轉日數低於此值且銷量帶＝高銷 → 「高銷缺貨」。預設 7 日。",
+        )
+    with _cols[1]:
+        _over = st.number_input(
+            "📦 低銷積壓線 (日)",
+            min_value=_HYBRID_SALES_OVERSTOCK_DAYS_MIN, max_value=_HYBRID_SALES_OVERSTOCK_DAYS_MAX,
+            value=_HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT, step=1, key=f"{prefix}_sales_over",
+            help="銷量帶＝低銷且店舖周轉日數不少於此值且庫存達保底件數 → 「低銷積壓」（零銷不計周轉，只看保底件數）。預設 30 日。",
+        )
+    with _cols[2]:
+        _minu = st.number_input(
+            "🧱 積壓保底件數 (件)",
+            min_value=_HYBRID_SALES_OVERSTOCK_MIN_UNITS_MIN, max_value=_HYBRID_SALES_OVERSTOCK_MIN_UNITS_MAX,
+            value=_HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT, step=1, key=f"{prefix}_sales_minu",
+            help="低銷／零銷積壓分類要求庫存不少於此件數，避免尾數庫存誤報積壓。預設 2 件。",
+        )
+    return int(_oos), int(_over), int(_minu)
+
 # 4. 初始化 Session State (確保下載與重整時狀態持久化)
 MODE_KEYS = {
     "Overstock Review": {"prefix": "", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
@@ -175,7 +228,7 @@ MODE_KEYS = {
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "NDRF 月份對比": {"prefix": "ndrf_comp_", "processed": False, "comparison_by_shop": None, "adj_sst_pivot": None, "mch2_pivot": None, "raw_df": None, "excel_data": None, "warnings": []},
-    "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
+    "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": [], "dimension": "nature", "sales_oos_days": _HYBRID_SALES_OOS_DAYS_DEFAULT, "sales_overstock_days": _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT, "sales_overstock_min_units": _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT},
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "sku_soh_summary": None, "excel_data": None, "warnings": []},
     "Past 90 Days 0 Sales": {"prefix": "p90ds_", "processed": False, "summary_df": None, "raw_df": None, "excel_data": None, "warnings": []},
@@ -404,6 +457,19 @@ if uploaded_file is not None:
         )
         safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
 
+        _ss_dim_label = st.radio(
+            "🗂️ 分類維度",
+            options=list(_DIMENSION_OPTIONS),
+            index=0,
+            horizontal=True,
+            key="ss_dim",
+            help="決定 SUMMARY「③ Safety Qty Change 分類 × 分類維度交叉表」的分組欄位。" + _DIMENSION_HELP_COMMON +
+                 "\n本模式所有維度均只改分組顯示，Safety 建議計算（倍率、MTD 月銷預估、退場建議）不隨維度改變。"
+                 "RAW／店舖問題 SKU 另恆附「銷量帶」與「銷量存貨分類」顯示欄（見下方門檻）。"
+        )
+        _ss_dimension = _DIMENSION_OPTIONS[_ss_dim_label]
+        _ss_sales_oos, _ss_sales_over, _ss_sales_minu = _sales_threshold_inputs("ss")
+
         _all_site_codes = canonical_site_codes(df_input["Site Code"]) if "Site Code" in df_input.columns else []
 
         if st.button("⚙️ 執行報表轉換與分析", type="primary", width='stretch'):
@@ -432,14 +498,24 @@ if uploaded_file is not None:
                     month_total_days=month_total_days,
                     safety_mode=safety_mode_value,
                     ref_date=mtd_date,
+                    sales_oos_days=_ss_sales_oos,
+                    sales_overstock_days=_ss_sales_over,
+                    sales_overstock_min_units=_ss_sales_minu,
                 )
-                buf = generate_excel_combined(summary_df, raw_df, categories, progress_callback=_cb_excel)
+                buf = generate_excel_combined(
+                    summary_df, raw_df, categories, progress_callback=_cb_excel,
+                    dimension=_ss_dimension,
+                )
                 st.session_state.combined_processed = True
                 st.session_state.combined_summary_df = summary_df
                 st.session_state.combined_raw_df = raw_df
                 st.session_state.combined_categories = categories
                 st.session_state.combined_excel_data = buf
                 st.session_state.combined_warnings = _warnings
+                st.session_state.combined_dimension = _ss_dimension
+                st.session_state.combined_sales_oos_days = _ss_sales_oos
+                st.session_state.combined_sales_overstock_days = _ss_sales_over
+                st.session_state.combined_sales_overstock_min_units = _ss_sales_minu
             except Exception as e:
                 _prog2.empty()
                 _tb = traceback.format_exc()
@@ -559,12 +635,46 @@ if uploaded_file is not None:
                 help="選擇特定 Site Code 過濾下方表格。僅影響 RAW 明細預覽。"
             )
 
-            tab1, tab2, tab3, tab4 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "🏪 By Shop 明細", "🏪 店舖問題 SKU", "📄 RAW 原始明細"])
+            tab1, tab_cross, tab2, tab3, tab4 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "🧮 分類交叉表", "🏪 By Shop 明細", "🏪 店舖問題 SKU", "📄 RAW 原始明細"])
 
             with tab1:
                 st.markdown("#### 採購人員與品牌之 Safety Stock 交叉統計表")
                 st.markdown("本表即為 Excel 導出檔中「Shop Stock Status」工作表之即時數據：")
                 st.dataframe(summary_df, width='stretch', hide_index=True)
+
+            with tab_cross:
+                _ss_applied_dim = st.session_state.get("combined_dimension") or "nature"
+                _ss_dim_txt = _HYBRID_DIMENSION_LABELS.get(_ss_applied_dim, "Shop Nature")
+                _ss_oos_txt = int(st.session_state.get("combined_sales_oos_days") or _HYBRID_SALES_OOS_DAYS_DEFAULT)
+                _ss_over_txt = int(st.session_state.get("combined_sales_overstock_days") or _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT)
+                _ss_minu_txt = int(st.session_state.get("combined_sales_overstock_min_units") or _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT)
+                st.markdown(f"#### ① Safety Qty Change 分類 × {_ss_dim_txt} 交叉表（列數 / SKU 數 / Safety Qty Change 合計）")
+                st.markdown("即為 Excel 導出檔 SUMMARY 工作表區塊 ③ 之即時數據（只改分組顯示，Safety 建議計算不變）：")
+                try:
+                    _ss_cross = _build_combined_dimension_cross_tab(raw_df, dimension=_ss_applied_dim)
+                except Exception:
+                    _ss_cross = None
+                if _ss_cross is not None and not _ss_cross.empty:
+                    st.dataframe(_ss_cross, width='stretch', hide_index=True)
+                    st.caption("增加／減少／不變按「Safety Qty Change」正負分行；非標準 Shop Nature 值（如 Other／空白）不佔分組欄、只計入合計；"
+                               "總計列 SKU 數為全表不重複 SKU（同一 SKU 可跨分類）。")
+                else:
+                    st.info("無符合資料")
+
+                st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+                st.markdown("#### ② 銷量 × 存貨分類分佈（母體為全部店舖×SKU 列）")
+                try:
+                    _ss_sales_block = _build_hybrid_sales_summary(raw_df)
+                except Exception:
+                    _ss_sales_block = None
+                if _ss_sales_block is not None and not _ss_sales_block.empty:
+                    st.dataframe(_ss_sales_block, width='stretch', hide_index=True)
+                    st.caption(f"分類準則：高銷缺貨＝同 SKU 內屬高銷帶且店舖周轉日數 < {_ss_oos_txt} 日；"
+                               f"低銷積壓＝低銷帶且周轉日數 ≥ {_ss_over_txt} 日且庫存 ≥ {_ss_minu_txt} 件；"
+                               f"零銷積壓＝P90D 零銷售且庫存 ≥ {_ss_minu_txt} 件；其餘為正常。"
+                               "銷量帶按本次上傳資料內同 SKU 排名計算，篩選範圍不同時結果會不同。")
+                else:
+                    st.info("無符合資料（來源檔缺少「Sold Qty (P90D)」或「Shop Stock Qty (CM)」時不產生銷量存貨分類）")
 
             with tab2:
                 by_shop_df = summary_df  # placeholder, real by_shop is built in excel gen
@@ -633,15 +743,7 @@ if uploaded_file is not None:
                 min_value=0, max_value=1000000, value=100, step=10, key="hy_d001",
                 help="當 D001 Net Stock Qty (CM) 低於此值且需求 Nature 加總 TurnDay 低於門檻時，才標示需要調貨。"
             )
-        _hybrid_dim_options = {
-            "🏬 以 Shop Nature 分類（預設）": "nature",
-            "🏷️ 以 RP Type 分類": "rp",
-            "🔀 以 Shop Nature＋RP Type 分類": "both",
-            "🗺️ 以 OM 分類": "om",
-            "🧩 以 Shop Nature＋OM 分類": "nature_om",
-            "📈 以銷量分類": "sales",
-            "🧮 以銷量＋Shop Nature分類": "sales_nature",
-        }
+        _hybrid_dim_options = _DIMENSION_OPTIONS
         _hybrid_dim_label = st.radio(
             "🗂️ 分類維度",
             options=list(_hybrid_dim_options),
@@ -1896,6 +1998,18 @@ if uploaded_file is not None:
                 "加總 TurnDay ≥ 門檻的 SKU 一律無須調貨；Mix 與 Non Tourist 加總 TurnDay 皆低於門檻時視為無貨可調，不標示。"
                 "只有已標示 SKU 的 RAW 才計算調貨數量；調入需求補到 14 日周轉，來源優先 Non Tourist 店舖，再由 Mix 店舖補足（RF 與 ND 店皆可轉出）。"
             )
+            _sc_dim_label = st.radio(
+                "🗂️ 分類維度",
+                options=list(_DIMENSION_OPTIONS),
+                index=0,
+                horizontal=True,
+                key="sc_dim",
+                help="決定 Summary 的分組欄位。" + _DIMENSION_HELP_COMMON +
+                     "\n本模式的調貨計算一律按 Shop Nature 準則（上述觸發條件），不隨維度改變。"
+                     "RAW／店舖問題 SKU 另恆附「銷量帶」與「銷量存貨分類」顯示欄（見下方門檻）。"
+            )
+            _sc_dimension = _DIMENSION_OPTIONS[_sc_dim_label]
+            _sc_sales_oos, _sc_sales_over, _sc_sales_minu = _sales_threshold_inputs("sc")
 
         st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
@@ -2073,6 +2187,10 @@ if uploaded_file is not None:
                         turnday_threshold=int(turnday_threshold),
                         d001_threshold=int(d001_threshold),
                         progress_callback=_cb_transform,
+                        dimension=_sc_dimension,
+                        sales_oos_days=_sc_sales_oos,
+                        sales_overstock_days=_sc_sales_over,
+                        sales_overstock_min_units=_sc_sales_minu,
                     )
                     buf = generate_excel_stock_checking(raw_df, summary_df, _stats, progress_callback=_cb_excel)
                     st.session_state.stock_chk_processed = True
@@ -2945,11 +3063,13 @@ if uploaded_file is not None:
 
             tab_sum, tab_issue, tab_raw = st.tabs(["📊 Summary (SKU 彙總)", "🏪 店舖問題 SKU", "RAW 完整明細"])
             with tab_sum:
-                st.markdown("#### SKU 級 Summary：各 Shop Nature 庫存/月銷加總與 TurnDay、涉及店舖數、佔比 (%)、調貨提示與調出量")
-                st.markdown("即為 Excel 導出檔中「Summary」工作表之即時數據（加總/TurnDay 取整，TurnDay = 四捨五入到整數日；佔比 (%) = 該 Nature 加總 ÷ Tourist+Mix+Non Tourist 合計，頁面顯示小數、Excel 顯示為 %）：")
+                _sc_applied_dim = (stats or {}).get("dimension") or "nature"
+                _sc_dim_txt = _HYBRID_DIMENSION_LABELS.get(_sc_applied_dim, "Shop Nature")
+                st.markdown(f"#### SKU 級 Summary（按 {_sc_dim_txt} 分組）：各組庫存/月銷加總與 TurnDay、涉及店舖數、佔比 (%)、調貨提示與調出量")
+                st.markdown("即為 Excel 導出檔中「Summary」工作表之即時數據（加總/TurnDay 取整，TurnDay = 四捨五入到整數日；佔比 (%) = 該分組加總 ÷ 全部分組合計，頁面顯示小數、Excel 顯示為 %；調貨計算不隨維度改變）：")
                 if summary_df is not None and not summary_df.empty:
                     st.dataframe(_style_inventory_skew(summary_df), width='stretch', hide_index=True)
-                    st.caption(f"共 {len(summary_df):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = 某 Nature 庫存佔比 ≥ 40% 且較銷量佔比高 ≥ 20 個百分點；偏重數值以橘色底色加強顯示（Excel 同步）。")
+                    st.caption(f"共 {len(summary_df):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = {_hybrid_skew_hint_text(_sc_applied_dim)}；偏重數值以橘色底色加強顯示（Excel 同步）。")
                 else:
                     st.info("無符合資料")
             with tab_issue:
