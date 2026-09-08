@@ -1,5 +1,14 @@
 # 版本記錄
 
+## v1.34.0 (2026-09-08)
+
+Safety Stock x NetStock Review 分類維度由六選一擴為**七選一**，新增「以銷量＋Shop Nature分類」（`sales_nature`）——Summary 與 Review 摘要交叉表改按 Nature×銷量帶 12 組（Tourist-高銷／Tourist-中銷／…／Non Tourist-零銷，Nature 外層固定順序、帶內層固定順序）分欄呈現。**非破壞性**——計算與預設完全相同（需求方 Tourist-RF，池級歸零與同 Nature 守衛照舊；TurnDay 池與 Safety 基準天數恆按 Shop Nature），銷量帶口徑與「以銷量分類」相同（常開產出欄，分帶結果隨本次上傳資料的篩選範圍而變）；舊六維度輸出欄位與數值零變動；缺 RP Type／OM 欄時不退回（銷量帶分組不依賴兩者）。
+
+- New: 分類維度第七選項 `sales_nature`（以銷量＋Shop Nature分類）——`_HYBRID_DIMENSIONS`／`_HYBRID_DIMENSION_LABELS`（「銷量＋Shop Nature」）／新常數 `_HYBRID_SALES_NATURE_GROUPS`（3 Nature×4 帶＝12 組）；`_hybrid_dimension_groups()`／`_hybrid_group_key_series()`／`_build_stock_checking_summary()` 支持合併分組（每列鍵值＝Shop Nature-銷量帶；銷量帶欄缺失時顯式退回 Shop Nature 鍵，正常輸入不會觸發）；Summary 每組各一欄「由{Nature-帶} 店舖預計調出數量」；存貨偏重門檻 sales_nature 為 ≥12% 且差距 ≥8 個百分點（12 組，與 nature_om 同門檻）
+- New: 結果頁參數區「🗂️ 分類維度」radio 加「🧮 以銷量＋Shop Nature分類」＋help 文字與維度 caption 說明；存貨偏重門檻完整對照 caption 加 sales_nature 門檻
+- Change: 全站說明同步——README（分類維度七選一、銷量＋Shop Nature 維度規則、輸出工作表描述與門檻對照）、使用說明頁（分類維度 ①–⑦ 與輸出 8 工作表描述）
+- Update: `tests/test_hybrid_sales.py` 新增 sales_nature 維度測試區（註冊與門檻、Summary／交叉表分組欄位與分組加總對帳、逐列分組鍵值、缺銷量帶欄退回 Shop Nature 鍵、計算與預設零變動、Excel Summary 群組標籤與 Review 摘要交叉表標題）；共 324 項測試通過
+
 ## v1.33.0 (2026-09-08)
 
 Safety Stock x NetStock Review 新增「以銷量分類」：RAW／主表恆附**銷量帶**與**銷量存貨分類**兩個顯示欄（同 SKU 內按 Sold Qty (P90D) 平均排名分高銷／中銷／低銷／零銷四帶；以店舖周轉日數與缺貨線／積壓線／保底件數三條可調門檻分類高銷缺貨／低銷積壓／零銷積壓／正常），分類維度由五選一擴為**六選一**（新增「以銷量分類」），並新增預設關閉的「⚖️ 啟用銷量再平衡」開關——高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方、積壓列經既有轉出判定提供來源。**非破壞性**——再平衡開關未勾選時調貨欄位與數值與 v1.32.0 完全一致（僅新增兩個恆輸出的銷量顯示欄，主表 26→28 欄）；分類維度舊五選項計算零變動；銷量分類與調貨 14 日線及 Safety 基準天數互相獨立。

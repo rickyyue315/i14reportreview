@@ -6,6 +6,7 @@
 - 銷量再平衡（預設關閉）：高銷缺貨 RF 列豁免 Nature 池門檻入需求方；積壓列經既有轉出判定提供來源；
   跟隨單向／雙向框架；ND 不作需求、池級歸零與同 Nature／同OM／自我調貨守衛保留
 - 分類維度第六選項 sales：計算同 nature，僅 Summary／交叉表按銷量帶分組
+- 分類維度第七選項 sales_nature（v1.34.0）：計算同 nature，Summary／交叉表按 Nature×銷量帶 12 組分組
 - Review 摘要區塊⑤：銷量 × 存貨分類交叉表（母體為全部列，無調貨事件時仍輸出）
 """
 import warnings
@@ -18,10 +19,12 @@ from transformer import (
     generate_excel_hybrid,
     _hybrid_dashboard_metrics,
     _HYBRID_DIAG_COLUMNS,
+    _HYBRID_DIMENSION_LABELS,
     _HYBRID_SALES_BANDS,
     _HYBRID_SALES_BAND_COLUMN,
     _HYBRID_SALES_CLASS_COLUMN,
     _HYBRID_SALES_CLASS_ORDER,
+    _HYBRID_SALES_NATURE_GROUPS,
     _HYBRID_SALES_OOS_DAYS_DEFAULT,
     _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT,
     _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT,
@@ -362,6 +365,73 @@ def test_group_key_sales_fallback_without_band_column():
     df = pd.DataFrame({"Shop Nature": ["Tourist", "Mix"], "RP Type": ["RF", "RF"]})
     key = _hybrid_group_key_series(df, "sales")
     assert key.tolist() == ["Tourist", "Mix"]   # 缺銷量帶欄 → 顯式退回 Shop Nature 鍵
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 6b. 分類維度 sales_nature（銷量＋Shop Nature 合併分組，v1.34.0）
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_sales_nature_dimension_registry():
+    assert _hybrid_dimension("sales_nature") == "sales_nature"
+    groups = _hybrid_dimension_groups("sales_nature")
+    assert groups == _HYBRID_SALES_NATURE_GROUPS
+    assert groups == tuple(
+        f"{n}-{b}" for n in ("Tourist", "Mix", "Non Tourist") for b in _HYBRID_SALES_BANDS
+    )
+    assert len(groups) == 12
+    assert _hybrid_skew_thresholds("sales_nature") == (0.12, 0.08)
+    assert _HYBRID_SKEW_THRESHOLDS["sales_nature"] == (0.12, 0.08)
+    assert "≥ 12%" in _hybrid_skew_hint_text("sales_nature")
+    assert _HYBRID_DIMENSION_LABELS["sales_nature"] == "銷量＋Shop Nature"
+
+
+def test_sales_nature_dimension_groups_summary_and_cross():
+    df = _df(_SCENARIO_SALES)
+    base, *_, _ = transform_hybrid(df)
+    raw, sc_summary, _, _, diag_summary, stats, _ = transform_hybrid(df, dimension="sales_nature")
+    assert stats["dimension"] == "sales_nature"
+    # Summary／交叉表按 Nature-銷量帶 12 組分欄
+    for g in _HYBRID_SALES_NATURE_GROUPS:
+        assert f"{g} 列數" in diag_summary.columns
+    for g in ("Tourist-高銷", "Mix-低銷", "Non Tourist-零銷"):
+        assert f"{g} 加總 - Shop Stock Qty (CM)" in sc_summary.columns
+        assert f"由{g} 店舖預計調出數量" in sc_summary.columns
+    # 分組加總對帳：TH＝Tourist-高銷（庫存 20）、M502＝Mix-低銷（庫存 40）
+    assert int(sc_summary["Tourist-高銷 加總 - Shop Stock Qty (CM)"].iloc[0]) == 20
+    assert int(sc_summary["Mix-低銷 加總 - Shop Stock Qty (CM)"].iloc[0]) == 40
+    assert int(sc_summary["Tourist-中銷 加總 - Shop Stock Qty (CM)"].iloc[0]) == 60
+    # 計算與預設相同（調貨數值零變動）
+    pd.testing.assert_frame_equal(base[_TRANSFER_NUMERIC_COLS], raw[_TRANSFER_NUMERIC_COLS])
+
+
+def test_group_key_sales_nature():
+    raw, *_ = transform_hybrid(_df(_SCENARIO_SALES))
+    key = _hybrid_group_key_series(raw, "sales_nature")
+    by_site = dict(zip(raw["Site Code"], key))
+    assert by_site["TH"] == "Tourist-高銷"
+    assert by_site["TO"] == "Tourist-中銷"
+    assert by_site["N501"] == "Non Tourist-中銷"
+    assert by_site["M502"] == "Mix-低銷"
+
+
+def test_group_key_sales_nature_fallback_without_band_column():
+    df = pd.DataFrame({"Shop Nature": ["Tourist", "Mix"], "RP Type": ["RF", "RF"]})
+    key = _hybrid_group_key_series(df, "sales_nature")
+    assert key.tolist() == ["Tourist", "Mix"]   # 缺銷量帶欄 → 顯式退回 Shop Nature 鍵
+
+
+def test_sales_nature_excel_outputs():
+    raw, sc, dg, dg_om, ds, stats, _ = transform_hybrid(
+        _df(_SCENARIO_SALES), dimension="sales_nature", sales_rebalance=True)
+    assert not ds.empty  # 銷量再平衡開啟 → TH 高銷缺貨入事件，交叉表有內容
+    wb = load_workbook(generate_excel_hybrid(raw, sc, dg, dg_om, ds, stats))
+    ws_sum = wb["Summary"]
+    row4 = [ws_sum.cell(row=4, column=c).value for c in range(1, ws_sum.max_column + 1)]
+    assert "Tourist-高銷" in row4 and "Non Tourist-零銷" in row4
+    ws_rev = wb["Review 摘要"]
+    col_a = [ws_rev.cell(row=r, column=1).value for r in range(1, 80)]
+    assert any(isinstance(v, str) and v.startswith("Safety Review × 銷量＋Shop Nature 交叉表")
+               for v in col_a)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

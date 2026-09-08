@@ -617,7 +617,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM、Shop Nature＋OM 或 銷量（高銷／中銷／低銷／零銷 四帶）分類；其中 OM 兩個維度與銷量維度計算與預設相同，僅 Summary／交叉表改按 OM、Nature×OM 或銷量帶分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。RAW／主表恆附 **銷量帶**（同 SKU 內按 Sold Qty (P90D) 排名分帶）與 **銷量存貨分類**（高銷缺貨／低銷積壓／零銷積壓／正常；店舖周轉日數門檻預設缺貨 7 日、積壓 30 日、保底 5 件，與調貨 14 日線及 Safety 基準天數互相獨立）；「Review 摘要」另附 **⑤ 銷量 × 存貨分類交叉表**（母體為全部店舖×SKU 列）。可勾選 **啟用銷量再平衡**（預設關閉）：高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方（仍須 D001 低於門檻、補到 14 日需求 > 0 且同 SKU 有貨可調），積壓列經既有轉出判定提供來源；跟隨單向／雙向框架，自我調貨／同 Nature／同OM 守衛與池級歸零不放寬。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
+        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM、Shop Nature＋OM、銷量（高銷／中銷／低銷／零銷 四帶）或 銷量＋Shop Nature（Nature×銷量帶 12 組）分類；其中 OM／銷量／銷量＋Shop Nature 維度計算與預設相同，僅 Summary／交叉表改按 OM、Nature×OM、銷量帶或 Nature×銷量帶分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。RAW／主表恆附 **銷量帶**（同 SKU 內按 Sold Qty (P90D) 排名分帶）與 **銷量存貨分類**（高銷缺貨／低銷積壓／零銷積壓／正常；店舖周轉日數門檻預設缺貨 7 日、積壓 30 日、保底 5 件，與調貨 14 日線及 Safety 基準天數互相獨立）；「Review 摘要」另附 **⑤ 銷量 × 存貨分類交叉表**（母體為全部店舖×SKU 列）。可勾選 **啟用銷量再平衡**（預設關閉）：高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方（仍須 D001 低於門檻、補到 14 日需求 > 0 且同 SKU 有貨可調），積壓列經既有轉出判定提供來源；跟隨單向／雙向框架，自我調貨／同 Nature／同OM 守衛與池級歸零不放寬。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -640,6 +640,7 @@ if uploaded_file is not None:
             "🗺️ 以 OM 分類": "om",
             "🧩 以 Shop Nature＋OM 分類": "nature_om",
             "📈 以銷量分類": "sales",
+            "🧮 以銷量＋Shop Nature分類": "sales_nature",
         }
         _hybrid_dim_label = st.radio(
             "🗂️ 分類維度",
@@ -657,8 +658,10 @@ if uploaded_file is not None:
                  "以 Shop Nature＋OM 分類：計算與預設相同，Summary／交叉表按 Nature×OM 組合（如 Tourist-XXX）呈現。\n"
                  "以銷量分類：計算與預設相同，Summary／交叉表按銷量帶分組——同 SKU 內按 Sold Qty (P90D) 排名，"
                  "排名超過 75%＝高銷、排名在最低 25% 內＝低銷、其餘＝中銷、P90D≤0＝零銷（有銷店舖少於 4 間時不區分高低，全歸中銷）。\n"
+                 "以銷量＋Shop Nature分類：計算與預設相同，Summary／交叉表按 Nature×銷量帶 12 組（如 Tourist-高銷、Mix-低銷）呈現；"
+                 "銷量帶口徑與「以銷量分類」相同，分帶結果隨本次上傳資料的篩選範圍而變。\n"
                  "RP Type 為 ND（不可補貨）的店舖列一律不作需求方（仍可作供應方）；其他／空白值歸入 ND 並列 warning；"
-                 "來源缺「RP Type」欄時全部列按 RF 處理並退回 Shop Nature 維度（OM 維度不退回）。"
+                 "來源缺「RP Type」欄時全部列按 RF 處理並退回 Shop Nature 維度（OM／銷量維度不退回）。"
                  "來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature 維度。"
         )
         _dimension = _hybrid_dim_options[_hybrid_dim_label]
@@ -824,6 +827,13 @@ if uploaded_file is not None:
                 "Summary 與交叉表按銷量帶（高銷／中銷／低銷／零銷）分組呈現；"
                 "銷量帶按本次上傳資料內同 SKU 各店舖 Sold Qty (P90D) 排名計算，篩選範圍不同時分帶結果會不同。"
             )
+        elif _dimension == "sales_nature":
+            st.caption(
+                "🧮 目前維度＝以銷量＋Shop Nature分類：調貨計算與預設相同（需求 Tourist-RF、供應 Mix／Non Tourist），"
+                "Summary 與交叉表按 Nature×銷量帶 12 組（Tourist-高銷／中銷／低銷／零銷、Mix-…、Non Tourist-…）呈現；"
+                "銷量帶口徑與「以銷量分類」相同——按本次上傳資料內同 SKU 各店舖 Sold Qty (P90D) 排名計算，"
+                "篩選範圍不同時分帶結果會不同。"
+            )
         else:
             st.caption(
                 "🏬 目前維度＝以 Shop Nature 分類（預設）：需求方僅 Tourist 且 RP Type＝RF 的店舖"
@@ -832,7 +842,7 @@ if uploaded_file is not None:
         st.caption(
             f"📦 存貨偏重提示門檻（隨分類維度切換，目前維度：{_hybrid_skew_hint_text(_dimension)}；"
             "觸發的分組以醒目橘底加強顯示）——完整對照：Shop Nature／RP Type／Nature＋RP Type 為庫存佔比 ≥ 40% 且差距 ≥ 20 個百分點；"
-            "OM 為 ≥ 25% 且差距 ≥ 12 個百分點；Nature＋OM 為 ≥ 12% 且差距 ≥ 8 個百分點；銷量 為 ≥ 30% 且差距 ≥ 15 個百分點。"
+            "OM 為 ≥ 25% 且差距 ≥ 12 個百分點；Nature＋OM／銷量＋Shop Nature 為 ≥ 12% 且差距 ≥ 8 個百分點；銷量 為 ≥ 30% 且差距 ≥ 15 個百分點。"
         )
         st.caption(
             f"🧭 Review 基準：Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 基準天數)，"

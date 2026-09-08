@@ -14,6 +14,7 @@ from transformer import (
     transform_combined, generate_excel_combined,
     transform_stock_impact, generate_excel_stock_impact,
     transform_hybrid, generate_excel_hybrid,
+    _hybrid_dimension_groups,
 )
 
 BASE = {
@@ -102,6 +103,14 @@ def main():
     print("OK Hybrid Sales Rebalance | rows=%d need=%d sales_need=%d oos=%d overstock=%d warnings=%d" % (
         len(r3), h_stats3["need_rows"], h_stats3["sales_need_rows"],
         h_stats3["sales_oos_rows"], h_stats3["sales_overstock_rows"], len(h_w3)))
+
+    # ── Safety Stock x NetStock Review（以銷量＋Shop Nature 分類維度）──
+    r3b, h_sc3b, h_diag3b, h_diag3b_om, h_cross3b, h_stats3b, h_w3b = transform_hybrid(
+        df, sales_rebalance=True, dimension="sales_nature")
+    assert h_stats3b["dimension"] == "sales_nature"
+    generate_excel_hybrid(r3b, h_sc3b, h_diag3b, h_diag3b_om, h_cross3b, h_stats3b)
+    print("OK Hybrid Sales x Nature  | rows=%d need=%d groups=%d warnings=%d" % (
+        len(r3b), h_stats3b["need_rows"], len(_hybrid_dimension_groups("sales_nature")), len(h_w3b)))
 
     # ── Stock Impact Analysis ──
     _, si_brand, si_buyer, si_cat, _, si_alloc, si_diag, si_inv, si_mly, si_raw, si_warns = transform_stock_impact(
