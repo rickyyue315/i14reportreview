@@ -338,7 +338,7 @@ def test_hybrid_excel_contains_shop_issue_sheet():
     buf = generate_excel_hybrid(raw, sc, d, do, cs, stats)
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
-        "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)",
+        "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)",
         "店舖問題 SKU", "Review 摘要",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]

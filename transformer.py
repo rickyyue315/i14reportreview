@@ -8111,6 +8111,140 @@ def _hybrid_raw_display_columns(raw: pd.DataFrame) -> list[str]:
     return ordered
 
 
+def _write_hybrid_guide_sheet(ws, stats):
+    """「說明」工作表（工作簿首位）：回顯本次執行參數、講解模式核心邏輯，
+    並逐頁導讀各工作表應關注的部分。內容為靜態說明＋stats 參數回顯，不含計算欄位。"""
+    st_ = stats or {}
+    dim = _hybrid_dimension(st_.get("dimension"))
+    sd = {**_HYBRID_SAFETY_DAYS_DEFAULT, **(st_.get("safety_days") or {})}
+
+    def _dw(text):
+        # 顯示寬度估算（全形字元約 2、半形約 1），供換行高度估算
+        return sum(2 if ord(ch) > 0x2E7F else 1 for ch in str(text))
+
+    ws.column_dimensions["A"].width = 26
+    ws.column_dimensions["B"].width = 56
+    ws.column_dimensions["C"].width = 66
+    title_font = Font(size=15, bold=True, color="1A1A2E")
+    sub_font = Font(size=9, color="6B7280", italic=True)
+    section_fill = PatternFill("solid", start_color="0077A3")
+    section_font = Font(size=11, bold=True, color="FFFFFF")
+    head_fill = PatternFill("solid", start_color="E4EEF5")
+    label_font = Font(size=10, bold=True)
+    body_font = Font(size=10)
+    wrap = Alignment(vertical="top", wrap_text=True)
+    r = 1
+
+    def _merged(text, font, height=None, fill=None):
+        nonlocal r
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=3)
+        c = ws.cell(row=r, column=1, value=text)
+        c.font = font
+        c.alignment = Alignment(vertical="center", wrap_text=True)
+        if fill:
+            c.fill = fill
+        ws.row_dimensions[r].height = height or 18
+        r += 1
+
+    def _sec(text):
+        _merged(text, section_font, height=20, fill=section_fill)
+
+    def _kv(label, value):
+        nonlocal r
+        ws.cell(row=r, column=1, value=label).font = label_font
+        ws.cell(row=r, column=1).alignment = wrap
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
+        c = ws.cell(row=r, column=2, value=value)
+        c.font = body_font
+        c.alignment = wrap
+        lines = max(1, -(-_dw(value) // 110))
+        ws.row_dimensions[r].height = 14 * lines + 6
+        r += 1
+
+    def _bullet(text):
+        _kv("•", text)
+
+    def _row3(a, b, c):
+        nonlocal r
+        for col, val, f in ((1, a, label_font), (2, b, body_font), (3, c, body_font)):
+            cell = ws.cell(row=r, column=col, value=val)
+            cell.font = f
+            cell.alignment = wrap
+        lines = max(1, -(-_dw(a) // 25), -(-_dw(b) // 54), -(-_dw(c) // 64))
+        ws.row_dimensions[r].height = 14 * lines + 6
+        r += 1
+
+    _merged("Safety Stock x NetStock Review 說明與導讀", title_font, height=26)
+    _merged("本頁講解此報告的 Review 邏輯與本次執行參數，並逐頁說明應關注的部分；各項判定以 RAW 逐列欄位為準。",
+            sub_font, height=16)
+
+    # ── ① 本次執行參數 ──
+    _sec("① 本次執行參數（供核對）")
+    _kv("分類維度", f"{_HYBRID_DIMENSION_LABELS[dim]}（只影響 Summary／交叉表分組，不影響調貨與 Safety 計算）")
+    _kv("調貨門檻", f'{st_.get("turnday_threshold", 14)} 日（SKU 級 Nature 池加總 TurnDay）')
+    _kv("D001 庫存門檻", f'{st_.get("d001_threshold", 100)} 件（D001 Net Stock Qty (CM) 低於此值才標示需要調貨）')
+    _kv("Safety 基準周轉天數", f'Tourist {sd["Tourist"]} 日／Mix {sd["Mix"]} 日／Non Tourist {sd["Non Tourist"]} 日')
+    _kv("允許雙向調貨", "開啟（任何 Nature 缺貨皆可調入，Tourist 店舖亦可轉出）" if st_.get("bidirectional")
+        else "關閉（需求限 Tourist，供應限 Mix／Non Tourist）")
+    _kv("ND 優先轉出", "開啟（同一 Nature 池內 ND 來源列先於 RF 列取用）" if st_.get("nd_priority")
+        else "關閉（池內按來源檔列序取用）")
+    _kv("銷量分類門檻",
+        f'缺貨線 {st_.get("sales_oos_days", 7)} 日／積壓線 {st_.get("sales_overstock_days", 30)} 日／'
+        f'保底 {st_.get("sales_overstock_min_units", 5)} 件（銷量存貨分類恆按此計算）')
+    _kv("銷量再平衡", "開啟（高銷缺貨列豁免池門檻加入調貨需求方）" if st_.get("sales_rebalance")
+        else "關閉（調貨需求判定按現行規則）")
+    _kv("參考日期", f'{st_.get("ref_date", "—")}（Past 90 Days 0 Sales 轉 ND 提示的新品判定基準，預設昨日）')
+
+    # ── ② 核心邏輯 ──
+    _sec("② 核心邏輯（這份報告怎樣算出來）")
+    _bullet("調貨段（固定 14 日，與 Safety 無關）：同 SKU 中某 Nature 池的加總 TurnDay（加總庫存 ÷ 加總月銷 × 30.5）"
+            "低於調貨門檻，且 D001 低於門檻，該 Nature 內 RP Type＝RF 的缺貨店舖列標示「需要調貨」，"
+            "需求量＝補到 14 日周轉；供應來源為 Mix／Non Tourist 池的 14 日超額（雙向時另加 Tourist）；"
+            "池級歸零——缺貨池的列一律不可轉出。分配跑兩遍：「不限OM」與「同OM」（來源店須與需求店同 OM）。")
+    _bullet("Review 段（Safety 基準天數，按 Shop Nature）：Safety 周轉所需量＝ceil(Sold Qty (P90D) ÷ 90 × 該 Nature 基準天數)。"
+            "需要調入列：現有 Safety 設定 < 所需量 → 「Safety 設定不足」；有貨轉出列（實際轉出／可轉出未使用）："
+            "現有設定 > 生效基準 → 「Safety 設定過高」；等於邊界屬設定正常。建議值＝不足列取所需量、"
+            "過高列取生效基準（下調補底 3 件——SAP MOQ 使 1–2 件難以補貨）。Safety 設定與調貨 14 日線互相獨立。")
+    _bullet("銷量帶（常開顯示欄）：同 SKU 內按 Sold Qty (P90D) 的店舖平均排名分帶——排名百分比 > 75%＝高銷、"
+            "≤ 25%＝低銷、其餘＝中銷、P90D ≤ 0＝零銷；並列同值同帶；有銷售店舖少於 4 間時不設高銷／低銷（全歸中銷）。")
+    _bullet("銷量存貨分類（常開顯示欄）：高銷且店舖周轉日數低於缺貨線 → 高銷缺貨；低銷且周轉不少於積壓線且庫存不少於保底件數 → "
+            "低銷積壓；零銷且庫存不少於保底件數 → 零銷積壓；其餘 → 正常（門檻見上方 ①）。")
+    _bullet("Past 90 Days 0 Sales 轉 ND：M-2／M-1／CM-MTD／P90D 皆零銷售且有庫存的列，於「店舖問題 SKU」"
+            "標示 ND 退場建議（距參考日期 90 天內新品除外）。")
+
+    # ── ③ 工作表導讀 ──
+    _sec("③ 工作表導讀（先看哪頁、關注什麼）")
+    for col, val in ((1, "工作表"), (2, "內容"), (3, "建議關注")):
+        c = ws.cell(row=r, column=col, value=val)
+        c.font = label_font
+        c.fill = head_fill
+        c.alignment = Alignment(vertical="center")
+    ws.row_dimensions[r].height = 16
+    r += 1
+    _row3("說明（本頁）", "Review 邏輯、本次參數與導讀", "執行任何行動前，先核對上方 ① 的參數是否符合預期")
+    _row3("RAW", "全部店舖×SKU 逐列明細與判定欄",
+          "關注「需要調貨」「事件類型」「Safety Review」「建議 Safety 設定值」「Safety 建議調整量」「銷量帶」「銷量存貨分類」；非事件列 Review 欄留空屬正常")
+    _row3("Summary", "SKU 級庫存／銷量分佈（按分類維度分組）",
+          "關注「存貨偏重提示」（橘底）——哪些分組存貨偏重而銷量不高")
+    _row3("調貨 Review Safety Stock (不限OM)", "逐列 Safety Review 主表（調貨來源不限 OM）",
+          "按「Safety Review」篩選設定不足／過高；行動看「建議 Safety 設定值」與「Safety 建議調整量」")
+    _row3("調貨 Review Safety Stock (同OM)", "同上，惟調貨來源須與需求店同一 OM",
+          "兩套數值可能不同；(同OM) 限制較嚴，按公司規定選用")
+    _row3("店舖問題 SKU", "每間店舖需行動事項（問題＋建議方法）",
+          "店務同事由此頁入手；含調入缺口跟進與 0 Sales 轉 ND 建議")
+    _row3("Review 摘要", "指標卡＋Safety Review×分類維度交叉表＋Safety 調整方向分類／明細＋銷量×存貨分類交叉表",
+          "管理層概覽；「Safety 調整方向分類」看建議增加／減少的總量")
+    _row3("簡易調貨明細 (不限OM)／(同OM)", "一列一筆「來源店舖 → 接收店舖」調貨",
+          "實際執行調貨時照此表：來源店、接收店、調貨數量")
+
+    # ── ④ 速查提示 ──
+    _sec("④ 速查提示")
+    _bullet("「Safety 建議調整量」正數＝建議上調設定；負數＝建議下調設定（僅不足／過高列有值）。")
+    _bullet("Summary 橘底＝觸發「存貨偏重提示」的分組（庫存佔比高而銷量佔比低）。")
+    _bullet("分類維度只改變 Summary／交叉表的分組顯示，不影響調貨與 Safety 計算。")
+    _bullet("「可轉出未使用」＝該列有 14 日超額庫存但本次未被取用，可留作後備來源。")
+
+
 def generate_excel_hybrid(
     raw: pd.DataFrame,
     sc_summary: pd.DataFrame | None = None,
@@ -8120,7 +8254,8 @@ def generate_excel_hybrid(
     stats: dict | None = None,
     progress_callback=None,
 ) -> BytesIO:
-    """Safety Stock x NetStock Review 輸出（8 工作表，順序固定）：
+    """Safety Stock x NetStock Review 輸出（9 工作表，順序固定）：
+    說明（首頁導讀：本次執行參數回顯＋模式核心邏輯＋各工作表應關注的部分）/
     RAW（重新排列欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄；含不限OM與同OM兩套調貨結果；
     雙向時另含「可轉出貨量 (Tourist)」）/
     Summary（SKU 級彙總，按 stats["dimension"] 分類維度分組：nature 三組／rp 兩組／both 六組／
@@ -8171,9 +8306,13 @@ def generate_excel_hybrid(
     )
     desc_font = Font(size=9, color="6B7280", italic=True)
 
+    # ── Sheet 0: 說明（邏輯、本次執行參數與導讀；置於工作簿首位）──
+    ws_guide = wb.active
+    ws_guide.title = "說明"
+    _write_hybrid_guide_sheet(ws_guide, stats)
+
     # ── Sheet 1: RAW（重排欄序；不顯示 Item_Shop 與 Value 金額欄）──
-    ws_raw = wb.active
-    ws_raw.title = "RAW"
+    ws_raw = wb.create_sheet(title="RAW")
     _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.0, progress_end=0.24,
                      columns=_hybrid_raw_display_columns(raw))
 
@@ -8241,6 +8380,7 @@ def generate_excel_hybrid(
 
     gc.collect()
     buf = BytesIO()
+    wb.active = 0
     wb.save(buf)
     buf.seek(0)
 

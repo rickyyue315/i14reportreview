@@ -530,14 +530,46 @@ def test_no_candidates_warns_but_completes():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 9. Excel 契約（7 工作表）
+# 9. Excel 契約（9 工作表）
 # ──────────────────────────────────────────────────────────────────────────────
+def test_guide_sheet_first_with_params_echo():
+    """「說明」導讀表：首位且為開啟預設頁；參數回顯按 stats 還原；導讀與速查區塊齊備。"""
+    raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, _ = transform_hybrid(
+        _df(_SCENARIO_A),
+        bidirectional=True, nd_priority=True, sales_rebalance=True,
+        safety_days={"Tourist": 8, "Mix": 9, "Non Tourist": 10},
+        d001_threshold=120, turnday_threshold=13,
+    )
+    buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
+    wb = load_workbook(buf)
+    assert wb.sheetnames[0] == "說明"
+    assert wb.active.title == "說明"
+    ws = wb["說明"]
+    col_a = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
+    col_b = [ws.cell(row=r, column=2).value for r in range(1, ws.max_row + 1)]
+    # ① 參數回顯（按本次 stats 還原）
+    pairs = dict(zip(col_a, col_b))
+    assert "① 本次執行參數（供核對）" in col_a
+    assert pairs["分類維度"].startswith("Shop Nature")
+    assert pairs["調貨門檻"].startswith("13 日")
+    assert pairs["D001 庫存門檻"].startswith("120 件")
+    assert pairs["Safety 基準周轉天數"] == "Tourist 8 日／Mix 9 日／Non Tourist 10 日"
+    assert pairs["允許雙向調貨"].startswith("開啟")
+    assert pairs["ND 優先轉出"].startswith("開啟")
+    assert pairs["銷量再平衡"].startswith("開啟")
+    assert "缺貨線 7 日" in pairs["銷量分類門檻"]
+    # ②③④ 區塊與導讀列齊備
+    for block in ("② 核心邏輯（這份報告怎樣算出來）", "③ 工作表導讀（先看哪頁、關注什麼）", "④ 速查提示"):
+        assert block in col_a
+    assert "說明（本頁）" in col_a and "店舖問題 SKU" in col_a and "簡易調貨明細 (不限OM)／(同OM)" in col_a
+
+
 def test_generate_excel_sheets_and_headers():
     raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats, _ = transform_hybrid(_df(_SCENARIO_A))
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
-        "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
+        "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]
     raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
@@ -966,7 +998,7 @@ def test_bidir_excel_headers_and_dashboard_rows():
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
-        "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
+        "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]
     raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
@@ -1269,9 +1301,9 @@ def test_excel_safety_blocks_appended_after_cross():
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     wb = load_workbook(buf)
     assert wb.sheetnames == [
-        "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
+        "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
-    ]  # 8 表契約（新增店舖問題 SKU），新統計只在「Review 摘要」內延伸
+    ]  # 9 表契約（v1.35.0 起首位為「說明」導讀表），新統計只在「Review 摘要」內延伸
     ws = wb["Review 摘要"]
     # ① 交叉表位置完全未變（單向：標題 19 / 表頭 20 / 資料 21–25）
     assert ws.cell(row=19, column=1).value == "Safety Review × Shop Nature 交叉表"
