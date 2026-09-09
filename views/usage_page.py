@@ -223,8 +223,29 @@ Tourist 缺貨、Mix/NT 調撥計算：
 11. **簡易調貨明細（tab 與 Excel）** = 一列一筆「來源店舖 → 接收店舖」調貨，欄位固定 Brand / SKU / SKU Desc / Supply Site Code(調貨來源) / Supply Shop Name / Supply RP Type / Supply OM / 調貨數量 / Target Site Code(接收店舖) / Target Shop Name / Target RP Type / Target OM（RP Type 緊接對應 Shop Name 之後，調貨數量放在接收 Site Code 前作 Supply／Target 分隔）；調貨來源字串（如「HB30:2; HB49:3」）按分號逐段拆行，同一接收列同一來源店重複出現時合併加總；只收錄「需要調貨=是」且實際有調入（實際調入量 > 0）的列，無貨可調的缺口列不進簡易版；來源店的 Shop Name／OM／RP Type 以 RAW 全量 Site Code 查找表補回（查不到留空）；按 Brand / SKU / 來源店 / 接收店排序；結果頁 tab 可切換不限OM／同OM，Excel 則固定輸出兩個工作表各一套
 12. **輸出 9 工作表** = 說明（首頁導讀：列出本次執行參數（分類維度／調貨門檻／D001 門檻／Safety 基準天數／各開關／銷量分類門檻／參考日期）＋核心邏輯（調貨段 14 日線、Review 段 Safety 基準、銷量帶與銷量存貨分類、0 Sales 轉 ND）＋工作表導讀（每頁內容與建議留意的部分）＋實用提示；開啟 Excel 時預設顯示本頁）/ RAW（欄序按可讀性重排：識別（Buyer/Brand/SKU/SKU Desc/Site Code/Shop Name/OM/Shop Nature）→品項屬性（含 RP Type）→庫存與銷售（含銷量帶／銷量存貨分類與 D001 三欄）→SKU 級判定（各 Nature 加總 TurnDay／需要調貨／調入需求量）→Review 結果（事件類型 / Safety 基準天數 / Safety 周轉所需量 / Safety Review / 建議 Safety 設定值 / Safety 建議調整量）→調貨 (不限OM)→調貨 (同OM)→其他原始欄，非事件列 Review 欄留空；不顯示「Item_Shop」與所有含「Value」的金額欄；雙向時另含「可轉出貨量 (Tourist)」）/ Summary（SKU 級彙總，按所選分類維度分組：nature 三組＝與 Stock Checking 同格式同值（A–AC 契約欄序：各組加總庫存／加總月銷／TurnDay／涉及店舖數，店舖數為同 SKU 同組 Site Code 不重複計數，空白不計）、rp 兩組（RF／ND）、both 六組、om（動態 OM 名單）、nature_om（三 Nature × OM）、sales（高銷／中銷／低銷／零銷 四帶）、sales_nature（三 Nature × 四帶 12 組）；各組庫存/月銷加總、TurnDay、涉及店舖數、佔比、強制調貨提示、存貨偏重提示（門檻按維度切換：nature／rp／both 為庫存佔比 ≥40% 且差距 ≥20 個百分點，om 為 ≥25% 且差距 ≥12 個百分點，nature_om／sales_nature 為 ≥12% 且差距 ≥8 個百分點，sales 為 ≥30% 且差距 ≥15 個百分點）——偏重提示欄與偏重分組的庫存佔比欄以醒目橘底（Streamlit 與 Excel 同步）加強顯示；nature 雙向時末尾另加「由Tourist 店舖預計調出數量」欄）/ 調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM)（店舖×SKU 主表，含 Site Code／OM／Shop Nature／RP Type 與銷量帶／銷量存貨分類，按 Brand / SKU / 事件類型 / Site Code 排序）/ 店舖問題 SKU（每間店舖需行動列：Safety 設定不足／過高＋Past 90 Days 0 Sales 轉 ND 候選（四期皆零銷售且有庫存，新品除外；重疊列保留原問題類型並加註）；按店舖分組、店內按嚴重度排序；主表以不限OM為準，另附三個同OM對照欄；調入缺口在建議方法加註）/ Review 摘要（指標卡——第 4 排為同OM調貨對照、第 5 排為轉出來源對照（雙向時含 Tourist 轉出量兩卡，「ND 優先轉出」開啟且 ND 店舖有實際轉出時另加「ND 來源轉出量」兩卡，該排 2–4 卡）、末尾為銷量分類概況一排（「銷量再平衡」開啟時：高銷缺貨列數／高銷缺貨 SKU 數／積壓列數／積壓庫存件數；無第 5 排時該排為第 5 排） + Safety Review × 分類維度交叉表（欄位按維度切換）：列數 / SKU 數 / 建議調整量合計，含總計列；其下另加「Safety 調整方向分類」（增加 / 減少 / 不變 × 列數 / SKU 數 / Safety 建議調整量合計，含總計列）與「Safety 調整明細（SKU 級彙總）」，最後為「銷量 × 存貨分類交叉表」（母體為全部店舖×SKU 列：各分類 × Shop Nature 列數、總計列數／SKU 數／店舖數、庫存與 P90D 銷量合計，含總計列；無調貨事件時仍輸出））/ 簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)（見第 11 點；凍結表頭 + 自動篩選；無實際調貨時顯示「無符合資料」）
 13. **Safety 調整統計（「Review 摘要」與同名 tab）** = 以有調貨事件的店舖×SKU 列為母體（與 Safety Review × 分類維度交叉表相同），統計「調整 Safety」的影響：① **Safety 調整方向分類** — 按「Safety 建議調整量」的正負分為 增加／減少／不變，各列 列數、SKU 數、Safety 建議調整量合計，末列「總計」（SKU 數為不重複計算，同一 SKU 可跨分類；合計為淨調整量）；四捨五入後調整量為 0 的列歸「不變」。② **Safety 調整明細（SKU 級彙總）** — 每個有事件的 SKU 一列：Review 列數、需增加店舖數、需減少店舖數、設定正常店舖數（三者的店舖數按 Site Code 不重複計算）、現有 Safety 設定合計（調整列）、建議 Safety 設定合計（調整列）（兩個合計只累加「Safety 設定不足＋過高」的列）與 淨調整量（= 該 SKU 各列「Safety 建議調整量」加總），按 Brand / SKU 排序。兩個統計不受 OM 限制、「允許雙向調貨」、「ND 優先轉出」與分類維度影響（Safety 建議與調貨分配順序無關）
-14. **Buyer 統計（需調貨＋需調整 Safety 合併表）** = 與 Stock Checking 採用同一準則：同 SKU 取全表首個非空 Buyer（空白歸入「(未填 Buyer)」），已刪除重複；需調貨與需調整 Safety 按 Buyer 外連接合併為同一列（缺席以 0 補齊），按需調貨數降序、再按需調整數降序。欄位為 Buyer／需調貨 SKU 數／需調貨 SKU 佔比／調入需求量合計／需調整 Safety SKU 數／需調整 Safety SKU 佔比／Safety 建議調整量合計（需調整母體為 Safety 設定不足＋過高；調入需求量與調整量為淨額，分別與指標卡總需求及調整合計對帳）。合併表跟隨現行分類維度與調貨結果，不受 OM 限制影響，空集合時不輸出
+ 14. **Buyer 統計（需調貨＋需調整 Safety 合併表）** = 與 Stock Checking 採用同一準則：同 SKU 取全表首個非空 Buyer（空白歸入「(未填 Buyer)」），已刪除重複；需調貨與需調整 Safety 按 Buyer 外連接合併為同一列（缺席以 0 補齊），按需調貨數降序、再按需調整數降序。欄位為 Buyer／需調貨 SKU 數／需調貨 SKU 佔比／調入需求量合計／需調整 Safety SKU 數／需調整 Safety SKU 佔比／Safety 建議調整量合計（需調整母體為 Safety 設定不足＋過高；調入需求量與調整量為淨額，分別與指標卡總需求及調整合計對帳）。合併表跟隨現行分類維度與調貨結果，不受 OM 限制影響，空集合時不輸出
       """, ("assets/sales_band_guide.png",)),
+
+    ("🔮 Forecast Review",
+     """
+- 以 **SKU 級**計算建議訂貨量（第二維度防缺貨）：爆升 SKU 用樂觀情境、其餘用標準情境估月需求
+- 缺貨還原：缺貨店（CM 期庫存 0 且 RF）取情境訊號與 MTD 實績孰高，避免低估被壓抑的需求
+- 位置分流：Warehouse 貨＝店存＋D001 Net＋D001 PO＋在途（對象 D001 PO）；Vendor 貨＝店存＋Shop PO＋在途（對象 Shop PO）
+- 上限封頂：建議訂量＝min(缺口, 上限空間)，防止嚴重 Overstock；全 ND 的 SKU 不建議訂貨
+- 另附 **店舖覆蓋檢視**：有訂量 SKU 的每店可用日數與風險旗，確保店舖不斷貨
+- 輸出：說明、Forecast 主表、店舖覆蓋、按 Buyer 彙總、RAW、Forecast 摘要共 6 個工作表
+     """,
+     """
+SKU 級 Forecast 計算：
+1. **逐列訊號（月規模）** = MTD 月化＝Sold Qty (CM - MTD) ÷ MTD 日數 × 當月日數（MTD 日期無效時退回 max(M-1, 月均基準)）；保守＝月均基準（Shop Monthly Sold Qty (P90D)，缺欄時以 Sold Qty (P90D) ÷ 90 × 30.5 換算）；標準＝max(月均基準, M-1)；樂觀＝max(MTD 月化 × 衰減係數, 月均基準, M-1)。保守情境只作參考欄
+2. **爆升分類（SKU 級）** = 新起量（M-2＋M-1 在基數內且近期有量，預設基數 10 件）／加速中（M-1 ≥ 加速倍數 × M-2 且 MTD 月化 ≥ 加速倍數 × M-1，預設 1.15 倍）／爆升（max(M-1, MTD 月化) ÷ max(M-2, 基數) ≥ 爆升倍數，預設 1.5 倍）用樂觀情境；其餘平穩用標準情境
+3. **缺貨還原（取代式）** = 缺貨列（CM 期庫存 0 且 RP Type＝RF，重用 Stock Impact 引擎的 Is OOS 欄；公式準則與該引擎一致）取情境訊號與 MTD 實績孰高，非缺貨列取情境訊號；月預估為各列貢獻值合計後無條件捨去取整
+4. **位置** = Warehouse 貨：店舖庫存合計＋D001 庫存 (Net)＋D001 PO＋在途（Shop Pending Receive (±7 days)，實檔別名相容）；Vendor 貨：店舖庫存合計＋Shop PO 合計＋在途。Supply Source 缺欄全視 Warehouse，RP Type 缺欄全視 RF；同 SKU 多個 Supply Source 以眾數為準並列 warning
+5. **建議訂量** = 目標覆蓋量＝ceil(月預估 ÷ 30.5 × 目標天數，預設 30 日）；缺口＝max(0, 目標覆蓋量 − 位置）；上限空間＝max(0, ceil(月預估 × 上限月數，預設 2.0 個月） − 位置）；建議訂量＝min(缺口, 上限空間）；缺口大於上限空間時狀態標「建議訂貨（已封頂）」；全 ND 的 SKU 建議訂量為 0（狀態「ND 不建議訂貨」）
+6. **店舖覆蓋（母體：建議訂量＞0 的 SKU）** = 店舖日銷＝MTD ÷ MTD 日數（無 MTD 銷售時退回 P90D ÷ 30.5）；可用日數＝(店舖庫存＋該店在途) ÷ 店舖日銷；風險旗：已缺貨（庫存 0）／≤7日／≤目標天數／足夠；按 SKU＋風險＋日數排序；主表另計缺貨風險店數（可用日數 ≤7 日，RF／ND 皆計）／現已缺貨店數／鋪貨店數
+7. **輸入檢核** = `Buyer / Brand / SKU / Shop Stock Status`（共用）＋ `Site Code / Sold Qty (M-2) / Sold Qty (M-1) / Sold Qty (CM - MTD) / Sold Qty (P90D) / Shop Stock Qty (CM)`（本模式嚴格欄，缺任一即停止）；D001 PO／Shop PO／在途欄缺欄時計 0 並列 warning；負銷售按 0、負庫存或非數值庫存按 0（列 warning，不拒絕）
+8. **輸出 6 工作表** = 說明（首頁導讀：本次參數＋核心邏輯＋工作表導讀＋實用提示；開啟 Excel 時預設顯示本頁）/ Forecast 主表（SKU 級：識別／三期銷售＋月化／爆升分類／三情境＋採用月預估／位置分項與合計／目標覆蓋量／缺口／上限空間／建議訂量（醒目底色）／建議訂貨對象（D001 PO／Shop PO）／SKU 狀態／風險店數；按 Buyer／Brand／SKU 排序）/ 店舖覆蓋 / 按 Buyer 彙總（建議訂量合計分 D001 PO／Shop PO 兩欄）/ RAW（重排欄序，不顯示 Item_Shop 與 Value 金額欄；含逐列訊號欄與 FC 缺貨還原列旗）/ Forecast 摘要（指標卡 8 項＋按 Buyer 表）
+     """),
 ]
 
 for _label, _desc, _rules, *_extra in MODES:
@@ -256,6 +277,7 @@ st.markdown("""
         <li>✅ <b>Safety Stock x NetStock Review</b> <span style="color:#0077a3;font-size:0.8em">(Shop Nature／Site Code／Shop Stock Qty (CM)／Sold Qty (P90D)／Safety Stock (現時) 或 Adj. Safety Stock／Shop Monthly Sold Qty (P90D))</span></li>
         <li>✅ <b>NDRF 月份對比</b> <span style="color:#0077a3;font-size:0.8em">(Month／RP Type／Shop Stock Qty (CM)／Adj. SST／Site Code)</span></li>
         <li>✅ <b>Past 90 Days 0 Sales</b> <span style="color:#0077a3;font-size:0.8em">(Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Shop Stock Qty (LM)／Shop Stock Qty (CM)／Site Code)</span></li>
+        <li>✅ <b>Forecast Review</b> <span style="color:#0077a3;font-size:0.8em">(Site Code／Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Sold Qty (P90D)／Shop Stock Qty (CM))</span></li>
     </ul>
     <p>OOS Review 額外建議欄位（非必要，缺少時將顯示提示）：</p>
     <ul>

@@ -19,6 +19,15 @@ from transformer import (
     transform_p90d_zero_sales, generate_excel_p90d_zero_sales,
     transform_stock_checking, generate_excel_stock_checking,
     _stock_checking_raw_display_columns,
+    transform_forecast, generate_excel_forecast,
+    _forecast_raw_display_columns,
+    _FC_TARGET_DAYS_DEFAULT, _FC_TARGET_DAYS_MIN, _FC_TARGET_DAYS_MAX,
+    _FC_CAP_MONTHS_DEFAULT, _FC_CAP_MONTHS_MIN, _FC_CAP_MONTHS_MAX,
+    _FC_SURGE_MULT_DEFAULT, _FC_SURGE_MULT_MIN, _FC_SURGE_MULT_MAX,
+    _FC_SURGE_MIN_BASE_DEFAULT, _FC_SURGE_MIN_BASE_MIN, _FC_SURGE_MIN_BASE_MAX,
+    _FC_ACCEL_MULT_DEFAULT, _FC_ACCEL_MULT_MIN, _FC_ACCEL_MULT_MAX,
+    _FC_DAMP_DEFAULT, _FC_DAMP_MIN, _FC_DAMP_MAX,
+    _FC_CLASS_NEW, _FC_CLASS_ACCEL, _FC_CLASS_SURGE,
     transform_hybrid, generate_excel_hybrid, _hybrid_dashboard_metrics,
     _hybrid_raw_display_columns, _build_hybrid_transfer_detail,
     _build_hybrid_safety_change_summary, _build_hybrid_safety_sku_detail,
@@ -166,7 +175,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 3. 模式選擇器
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review"]
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0, key="mode_selector")
 
 # 3a. 分類維度選項（Safety Stock x NetStock Review／Stock Checking／Safety Stock Review 共用）
@@ -234,6 +243,7 @@ MODE_KEYS = {
     "Past 90 Days 0 Sales": {"prefix": "p90ds_", "processed": False, "summary_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "Stock Checking": {"prefix": "stock_chk_", "processed": False, "summary_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
     "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "sc_summary": None, "diagnosis": None, "diagnosis_om": None, "diag_summary": None, "stats": None, "excel_data": None, "params": None, "warnings": []},
+    "Forecast Review": {"prefix": "fc_", "processed": False, "main_df": None, "coverage_df": None, "buyer_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -2011,11 +2021,86 @@ if uploaded_file is not None:
             _sc_dimension = _DIMENSION_OPTIONS[_sc_dim_label]
             _sc_sales_oos, _sc_sales_over, _sc_sales_minu = _sales_threshold_inputs("sc")
 
+        if mode == "Forecast Review":
+            fc_mtd_date = st.date_input(
+                "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
+                value=datetime.now().date() - timedelta(days=1),
+                key="fc_mtd_date",
+                help="MTD 月化＝Sold Qty (CM - MTD) ÷ 經過日數 × 當月日數。預設為昨日，與報表資料基準一致。"
+            )
+            _fc_mtd_days = fc_mtd_date.day
+            _fc_month_total_days = calendar.monthrange(fc_mtd_date.year, fc_mtd_date.month)[1]
+            st.caption(f"MTD: {_fc_mtd_days}日，當月共 {_fc_month_total_days} 日。月初 MTD 日數少時 MTD 月化波動較大，樂觀情境已乘衰減係數緩衝。")
+            fc_top = st.columns(2)
+            with fc_top[0]:
+                fc_target_days = st.number_input(
+                    "🎯 目標覆蓋天數 (日)",
+                    min_value=_FC_TARGET_DAYS_MIN, max_value=_FC_TARGET_DAYS_MAX,
+                    value=_FC_TARGET_DAYS_DEFAULT, step=1,
+                    key="fc_target_days",
+                    help="目標覆蓋量＝ceil(月預估 ÷ 30.5 × 天數)。預設 30 日。"
+                )
+            with fc_top[1]:
+                fc_cap_months = st.number_input(
+                    "🧱 上限月數 (個月)",
+                    min_value=_FC_CAP_MONTHS_MIN, max_value=_FC_CAP_MONTHS_MAX,
+                    value=_FC_CAP_MONTHS_DEFAULT, step=0.5,
+                    key="fc_cap_months",
+                    help="上限空間＝ceil(月預估 × 月數) − 位置；建議訂量＝min(缺口, 上限空間)。防止嚴重 Overstock 的封頂。預設 2.0 個月。"
+                )
+            fc_mid = st.columns(3)
+            with fc_mid[0]:
+                fc_surge_mult = st.number_input(
+                    "🚀 爆升倍數 (倍)",
+                    min_value=_FC_SURGE_MULT_MIN, max_value=_FC_SURGE_MULT_MAX,
+                    value=_FC_SURGE_MULT_DEFAULT, step=0.1,
+                    key="fc_surge_mult",
+                    help="max(M-1, MTD 月化) ÷ max(M-2, 新起量基數) 達此倍數判爆升，用樂觀情境。預設 1.5 倍。"
+                )
+            with fc_mid[1]:
+                fc_surge_min_base = st.number_input(
+                    "🌱 新起量基數 (件)",
+                    min_value=_FC_SURGE_MIN_BASE_MIN, max_value=_FC_SURGE_MIN_BASE_MAX,
+                    value=_FC_SURGE_MIN_BASE_DEFAULT, step=1,
+                    key="fc_surge_min_base",
+                    help="M-2＋M-1 合計不超過此數且近期有量 → 新起量（用樂觀情境）。預設 10 件。"
+                )
+            with fc_mid[2]:
+                fc_accel_mult = st.number_input(
+                    "📈 加速倍數 (倍)",
+                    min_value=_FC_ACCEL_MULT_MIN, max_value=_FC_ACCEL_MULT_MAX,
+                    value=_FC_ACCEL_MULT_DEFAULT, step=0.05,
+                    key="fc_accel_mult",
+                    help="M-1 ≥ 此倍數 × M-2 且 MTD 月化 ≥ 此倍數 × M-1 → 加速中（用樂觀情境）。預設 1.15 倍。"
+                )
+            fc_bot = st.columns(2)
+            with fc_bot[0]:
+                fc_damp = st.number_input(
+                    "🎚️ 衰減係數",
+                    min_value=_FC_DAMP_MIN, max_value=_FC_DAMP_MAX,
+                    value=_FC_DAMP_DEFAULT, step=0.05,
+                    key="fc_damp",
+                    help="樂觀情境＝max(MTD 月化 × 係數, 月均基準, M-1)，避免直接追逐尖峰。預設 0.8。"
+                )
+            with fc_bot[1]:
+                fc_show_surge_only = st.checkbox(
+                    "🔥 只顯示爆升 SKU（新起量／加速中／爆升）",
+                    value=True,
+                    key="fc_surge_only",
+                    help="只影響主表與店舖覆蓋表的顯示；摘要與按 Buyer 彙總一律按全母體計算。"
+                )
+            st.caption(
+                f"📐 本次參數：目標覆蓋 **{int(fc_target_days)} 日**｜上限 **{float(fc_cap_months):g} 個月**｜"
+                f"爆升 **{float(fc_surge_mult):g} 倍**（基數 {int(fc_surge_min_base)} 件）｜加速 **{float(fc_accel_mult):g} 倍**｜"
+                f"衰減 **{float(fc_damp):g}**。Warehouse 貨位置＝店存＋D001 Net＋D001 PO＋在途，對象 D001 PO；"
+                "Vendor 貨位置＝店存＋Shop PO＋在途，對象 Shop PO。"
+            )
+
         st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
         SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
-        if mode == "Stock Checking":
-            # 調貨分配需要完整涵蓋所有 Shop Nature 來源店，此模式不做 Nature 篩選
+        if mode in ("Stock Checking", "Forecast Review"):
+            # 調貨分配／Forecast SKU 彙總需要完整涵蓋所有 Shop Nature，此兩個模式不做 Nature 篩選
             selected_shop_natures = SHOP_NATURE_OPTIONS
         else:
             selected_shop_natures = st.multiselect(
@@ -2030,7 +2115,7 @@ if uploaded_file is not None:
         _is_carry_mode = (mode == "Carry SKU Review")
         # Modes that don't use the Shop Nature Rate sliders (no Safety Qty calculation):
         # Carry SKU Review, SKU 精簡 Review, NDRF 月份對比 (pivot/comparison only).
-        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking")
+        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review")
 
         if not _skip_rates_mode:
             _tourist_default = 30 if _is_overstock_mode else 50
@@ -2199,6 +2284,31 @@ if uploaded_file is not None:
                     st.session_state.stock_chk_stats = _stats
                     st.session_state.stock_chk_excel_data = buf
                     st.session_state.stock_chk_warnings = _warnings
+                elif mode == "Forecast Review":
+                    _main_df, _cov_df, _buyer_df, _raw_df, _fc_stats, _warnings = transform_forecast(
+                        df_input,
+                        mtd_days=int(_fc_mtd_days),
+                        month_total_days=int(_fc_month_total_days),
+                        target_days=float(fc_target_days),
+                        cap_months=float(fc_cap_months),
+                        surge_mult=float(fc_surge_mult),
+                        surge_min_base=float(fc_surge_min_base),
+                        accel_mult=float(fc_accel_mult),
+                        damp=float(fc_damp),
+                        progress_callback=_cb_transform,
+                    )
+                    _fc_stats = dict(_fc_stats or {})
+                    _fc_stats["mtd_date"] = fc_mtd_date.isoformat()
+                    _fc_stats["surge_only"] = bool(fc_show_surge_only)
+                    buf = generate_excel_forecast(_main_df, _cov_df, _buyer_df, _raw_df, _fc_stats, progress_callback=_cb_excel)
+                    st.session_state.fc_processed = True
+                    st.session_state.fc_main_df = _main_df
+                    st.session_state.fc_coverage_df = _cov_df
+                    st.session_state.fc_buyer_df = _buyer_df
+                    st.session_state.fc_raw_df = _raw_df
+                    st.session_state.fc_stats = _fc_stats
+                    st.session_state.fc_excel_data = buf
+                    st.session_state.fc_warnings = _warnings
             except Exception as e:
                 _prog2.empty()
                 _tb = traceback.format_exc()
@@ -3103,6 +3213,148 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載 Stock Checking 分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+            )
+
+        if mode == "Forecast Review" and st.session_state.fc_processed:
+            main_df = st.session_state.fc_main_df
+            coverage_df = st.session_state.fc_coverage_df
+            buyer_df = st.session_state.fc_buyer_df
+            raw_df = st.session_state.fc_raw_df
+            stats = st.session_state.fc_stats or {}
+            excel_data = st.session_state.fc_excel_data
+            total_rows = int(stats.get("raw_rows", len(raw_df) if raw_df is not None else 0))
+
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+            st.markdown("### 📈 Forecast 數據分析摘要 (Forecast Dashboard)")
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #3b82f6;">
+                    <div class="metric-title">SKU 數</div>
+                    <div class="metric-value" style="color: #3b82f6;">{int(stats.get("total_skus", 0)):,}</div>
+                    <div class="metric-desc">本次計算的 SKU 總數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #f59e0b;">
+                    <div class="metric-title">爆升 SKU 數</div>
+                    <div class="metric-value" style="color: #f59e0b;">{int(stats.get("surge_skus", 0)):,}</div>
+                    <div class="metric-desc">新起量／加速中／爆升合計</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ef4444;">
+                    <div class="metric-title">建議總訂量</div>
+                    <div class="metric-value" style="color: #ef4444;">{int(stats.get("total_order", 0)):,}</div>
+                    <div class="metric-desc">全部 SKU 建議訂量合計（件）</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #8b5cf6;">
+                    <div class="metric-title">其中 D001 PO</div>
+                    <div class="metric-value" style="color: #8b5cf6;">{int(stats.get("total_order_d001", 0)):,}</div>
+                    <div class="metric-desc">Warehouse 貨向 D001 下單（件）</div>
+                </div>
+                """, unsafe_allow_html=True)
+            r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
+            with r2_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #06b6d4;">
+                    <div class="metric-title">其中 Shop PO</div>
+                    <div class="metric-value" style="color: #06b6d4;">{int(stats.get("total_order_shop", 0)):,}</div>
+                    <div class="metric-desc">Vendor 貨向供應商下單（件）</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #f97316;">
+                    <div class="metric-title">已封頂 SKU 數</div>
+                    <div class="metric-value" style="color: #f97316;">{int(stats.get("capped_skus", 0)):,}</div>
+                    <div class="metric-desc">缺口超過上限空間的 SKU</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #64748b;">
+                    <div class="metric-title">ND 不訂 SKU 數</div>
+                    <div class="metric-value" style="color: #64748b;">{int(stats.get("nd_skus", 0)):,}</div>
+                    <div class="metric-desc">全 ND 列的 SKU（建議訂量 0）</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r2_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #10b981;">
+                    <div class="metric-title">店舖覆蓋列數</div>
+                    <div class="metric-value" style="color: #10b981;">{int(stats.get("coverage_rows", 0)):,}</div>
+                    <div class="metric-desc">有訂量 SKU 的店舖列數</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+            st.markdown("#### 👤 按 Buyer 建議訂量統計")
+            if buyer_df is not None and not buyer_df.empty:
+                _b_total_d001 = int(buyer_df["FC 建議訂量合計 (D001 PO)"].sum())
+                _b_total_shop = int(buyer_df["FC 建議訂量合計 (Shop PO)"].sum())
+                st.dataframe(buyer_df, width='stretch', hide_index=True)
+                st.caption(f"共 {len(buyer_df)} 個 Buyer；D001 PO 合計 {_b_total_d001:,} 件，Shop PO 合計 {_b_total_shop:,} 件（全母體計算，不受「只顯示爆升」影響）。")
+            else:
+                st.info("無符合資料")
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            _surge_classes = {_FC_CLASS_NEW, _FC_CLASS_ACCEL, _FC_CLASS_SURGE}
+            _surge_only = bool(stats.get("surge_only", True))
+            _main_disp = main_df
+            _cov_disp = coverage_df
+            if _surge_only and main_df is not None and not main_df.empty:
+                _main_disp = main_df[main_df["FC 爆升分類"].isin(_surge_classes)]
+                if _cov_disp is not None and not _cov_disp.empty and not _main_disp.empty:
+                    _cov_disp = _cov_disp[_cov_disp["SKU"].isin(set(_main_disp["SKU"]))]
+                elif _main_disp.empty:
+                    _cov_disp = _cov_disp.iloc[0:0] if _cov_disp is not None else _cov_disp
+            tab_main, tab_cov, tab_raw = st.tabs(["📊 Forecast 主表 (SKU 建議訂貨)", "🏪 店舖覆蓋", "RAW 完整明細"])
+            with tab_main:
+                st.markdown("#### SKU 級 Forecast 主表（一 SKU 一列）")
+                st.markdown("即為 Excel 導出檔中「Forecast 主表」工作表之即時數據（建議訂量＝min(缺口, 上限空間)；Warehouse 貨對象 D001 PO，Vendor 貨對象 Shop PO）：")
+                if _main_disp is not None and not _main_disp.empty:
+                    st.dataframe(_main_disp, width='stretch', hide_index=True)
+                    _scope = "爆升 SKU（新起量／加速中／爆升）" if _surge_only else "全部 SKU"
+                    st.caption(f"共 {len(_main_disp):,} 個 SKU（{_scope}；按 Buyer／Brand／SKU 排序）。")
+                else:
+                    st.info("無符合資料")
+            with tab_cov:
+                st.markdown("#### 店舖覆蓋（有訂量 SKU 的每店可用日數與風險旗）")
+                st.markdown("先跟進「已缺貨」與「≤7日」列；訂貨到店前的空窗期以此表安排：")
+                if _cov_disp is not None and not _cov_disp.empty:
+                    st.dataframe(_cov_disp.head(200), width='stretch', hide_index=True)
+                    st.caption(f"僅顯示前 200 筆，完整 {len(_cov_disp):,} 筆資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料（無建議訂量＞0 的 SKU）")
+            with tab_raw:
+                st.markdown("#### RAW 原始資料（逐列訊號欄已附於每一列；不顯示 Item_Shop 與 Value 金額欄）")
+                _fc_display_cols = [c for c in _forecast_raw_display_columns(raw_df) if c in raw_df.columns]
+                _display = raw_df[_fc_display_cols]
+                st.dataframe(_display.head(50).rename(columns=_display_safety_header), width='stretch')
+                st.caption(f"僅顯示前 50 筆，完整 {total_rows:,} 筆資料（已按可讀性重排欄序）將包含在下載的 Excel 報表中。")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"By SKUxShop_Forecast_Output_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載 Forecast 分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -1,6 +1,15 @@
 # 版本記錄
 
-## v1.37.0 (2026-09-08)
+## v1.38.0 (2026-09-09)
+
+新增第 12 個分析模式 **Forecast Review（SKU 級建議訂貨量；第二維度防缺貨）**——現有 11 個模式計算、欄位、欄序零變動：
+
+- **計算** — `transform_forecast()`：逐列月規模訊號（保守＝月均基準、標準＝max(月均, M-1)、樂觀＝max(MTD 月化 × 衰減係數 0.8, 月均, M-1)；MTD 無效退回 max(M-1, 月均)；缺 Shop Monthly 欄退回 P90D ÷ 90 × 30.5）→ SKU 級爆升分類（新起量／加速中／爆升用樂觀、平穩用標準）→ 缺貨還原（取代式：缺貨列取情境訊號與 MTD 實績孰高，重用 Stock Impact 引擎 Is OOS 欄，公式準則一致）→ 位置分流（Warehouse＝店存＋D001 Net＋D001 PO＋在途；Vendor＝店存＋Shop PO＋在途；在途欄實檔別名 `Shop Pending Receive (±7 days)` 相容）→ 缺口與上限封頂（建議訂量＝min(缺口, 上限空間)；全 ND 的 SKU 為 0）→ SKU 主表＋店舖覆蓋表（有訂量 SKU 每店可用日數與風險旗）＋Buyer 彙總＋stats
+- **輸出** — `generate_excel_forecast()`：說明（首頁，參數照錄＋導讀）／Forecast 主表（建議訂量欄醒目底色）／店舖覆蓋／按 Buyer 彙總（分 D001 PO／Shop PO）／RAW（重排欄序，不顯示 Item_Shop 與 Value 金額欄）／Forecast 摘要（指標卡 8 項＋按 Buyer 表）共 6 個工作表
+- **UI** — 模式清單、參數區（MTD 日期／目標覆蓋天數 30／上限月數 2.0／爆升倍數 1.5＋新起量基數 10／加速倍數 1.15／衰減係數 0.8／只顯示爆升 SKU 預設開）、結果 tabs（主表／店舖覆蓋／RAW）與下載鍵；本模式不做 Shop Nature 篩選與 Rate 設定
+- **文件** — 使用說明頁 MODES 條目（用途＋8 點計算規則）、必要欄位檢核（本模式嚴格欄 6 項）、README（功能概述／Forecast 章節／Excel 結構表）、固定表頭（建議訂量、建議訂貨對象等）納入資料契約
+- New: `tests/test_forecast_review.py`（情境訊號／爆升四類邊界／缺貨還原／位置分流／別名相容／缺欄守衛／封頂／全 ND／覆蓋表／Excel 六表與說明首頁）；`tests/test_forecast_cen_file.py`（CEN 實檔回歸：缺檔 skip；SKU 111143702001 判新起量、位置 947、對象 D001 PO）；`tests/_smoke_pipeline.py` 加 forecast 案例
+- Change: `version.py` → 1.38.0
 
 Safety Stock x NetStock Review 的分類引入 **Stock Checking** 與 **Safety Stock Review** 兩個模式（調貨與 Safety 建議計算一律不變，只加分類顯示）：
 

@@ -1,13 +1,13 @@
 # I14 報表轉換與分析系統
 
-自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**Safety Stock Review**（安全庫存審查）與 **Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）等多種模式。
+自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）與 **Forecast Review**（SKU 級建議訂貨量）等多種模式。
 
 ## 功能概述
 
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / Stock Checking / Safety Stock x NetStock Review |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / Stock Checking / Safety Stock x NetStock Review / Forecast Review |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
@@ -16,6 +16,7 @@
 | 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式、調貨門檻、Safety 基準周轉天數（按 Nature）、分類維度（Shop Nature／RP Type／Shop Nature＋RP Type／OM／Shop Nature＋OM／銷量／銷量＋Shop Nature）、允許雙向調貨、ND 優先轉出 |
 | 視覺化看板 | 即時顯示統計指標與交叉分析表 |
 | Excel 導出 | 一鍵下載含 RAW、Shop Stock Status、By Shop、分析摘要之美化報表 |
+| Forecast 分析 | 以 SKU 級計算建議訂貨量（爆升 SKU 用樂觀情境、其餘用標準情境；缺貨店取情境訊號與 MTD 實績孰高還原被壓抑需求；Warehouse 貨對象 D001 PO、Vendor 貨對象 Shop PO；建議訂量＝min(缺口, 上限空間)防 Overstock；全 ND 的 SKU 不建議訂貨），另附店舖覆蓋檢視（有訂量 SKU 的每店可用日數與風險旗） |
 
 ## 系統架構
 
@@ -88,6 +89,8 @@ OOS Review 建議額外包含：
 | Shop Nature | 店舖性質（Tourist / Mix / Non Tourist） |
 
 Safety Stock x NetStock Review 另建議包含 `RP Type`（RF＝可補貨／ND＝不可補貨）——ND 列不作調貨需求方、RP Type／混合分類維度與「ND 優先轉出」均依賴此欄；缺失時全部列按 RF 處理並退回 Shop Nature 維度（列 warning，不停止），「ND 優先轉出」同時自動失效。
+
+Forecast Review 額外必要欄位（缺少時停止並提示）：`Site Code／Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Sold Qty (P90D)／Shop Stock Qty (CM)`；`D001 On Order PO Qty (CM)／Shop On Order PO Qty (CM)／Shop Pending Receive (±7 days)` 缺欄時計 0 並列 warning。
 
 ## 分析模式
 
@@ -188,6 +191,20 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 
 輸出包含 **9 個工作表**：說明（首頁導讀——列出本次執行參數（分類維度／調貨門檻／D001 門檻／Safety 基準天數／雙向／ND 優先轉出／銷量分類門檻／銷量再平衡／參考日期）、核心邏輯（調貨段 14 日線、Review 段 Safety 基準天數、銷量帶與銷量存貨分類、Past 90 Days 0 Sales 轉 ND）與工作表導讀（每頁內容與建議留意的部分）＋實用提示；開啟 Excel 時預設顯示本頁）、RAW（按可讀性重排欄序——識別→品項屬性→庫存與銷售（含銷量帶／銷量存貨分類）→SKU 級判定→Review 結果→調貨 (不限OM)→調貨 (同OM)→其他原始欄；不顯示「Item_Shop」與所有含「Value」的金額欄；非事件列 Review 欄留空；雙向時另含「可轉出貨量 (Tourist)」）、Summary（SKU 級彙總，按所選分類維度分組——nature 三組與 Stock Checking 同格式同值（A–AC 契約欄序：各組加總庫存／加總月銷／TurnDay／涉及店舖數，店舖數為同 SKU 同組 Site Code 不重複計數，空白不計）、rp 兩組（RF／ND）、both 六組、om（動態 OM 名單）、nature_om（三 Nature × OM）、sales（高銷／中銷／低銷／零銷 四帶）、sales_nature（三 Nature × 四帶 12 組）：各組庫存/月銷加總、TurnDay、涉及店舖數、佔比、強制調貨提示、存貨偏重提示（門檻按維度切換：nature／rp／both 為庫存佔比 ≥40% 且差距 ≥20 個百分點，om 為 ≥25% 且差距 ≥12 個百分點，nature_om／sales_nature 為 ≥12% 且差距 ≥8 個百分點，sales 為 ≥30% 且差距 ≥15 個百分點），偏重提示欄與偏重分組的庫存佔比欄以醒目橘底加強顯示；nature 雙向時末尾另加「由Tourist 店舖預計調出數量」欄）、調貨 Review Safety Stock (不限OM) 與 調貨 Review Safety Stock (同OM)（店舖×SKU 逐列主表，含 Site Code／OM／Shop Nature／RP Type 與銷量帶／銷量存貨分類，按 Brand / SKU / 事件類型 / Site Code 排序；Safety Review 欄兩表相同）、店舖問題 SKU（每間店舖需行動列：Safety 設定不足／過高＋Past 90 Days 0 Sales 轉 ND 候選（M-2／M-1／CM-MTD／P90D 皆零銷售且有庫存，距參考日期 90 天內新品、需要調貨列與 ND 列除外；重疊列保留原問題類型並加註）；按店舖分組、店內按嚴重度排序；主表以不限OM為準，另附 Supply Source、D001 Net Stock Qty (CM) 與三個同OM對照欄；調入缺口在建議方法加註，缺口跟進按供貨來源分支 — Warehouse＋D001 有貨由 D001 補貨、Warehouse＋D001 無貨寫 D001缺貨、Vendor 貨向供應商追貨；參考日期由「📅 參考日期」輸入決定，預設昨日）、Review 摘要（指標卡——第 4 排為同OM調貨對照、雙向時另加第 5 排 Tourist 轉出量、銷量再平衡開啟時末尾另加銷量分類概況一排 + Safety Review × 分類維度交叉表（欄位按維度切換：nature 三組／rp 兩組／both 六組／om 動態 OM 名單／nature_om 三 Nature × OM／sales 四銷量帶／sales_nature 12 組）：列數 / SKU 數 / 建議調整量合計，含總計列；其下另加 **Safety 調整方向分類**（增加 / 減少 / 不變 × 列數 / SKU 數 / Safety 建議調整量合計，含總計列）與 **Safety 調整明細（SKU 級彙總）**：Brand / SKU / SKU Desc / Buyer / Review 列數 / 需增加店舖數 / 需減少店舖數 / 設定正常店舖數 / 現有 Safety 設定合計（調整列）/ 建議 Safety 設定合計（調整列）/ 淨調整量，按 Brand / SKU 排序；兩個 Safety 統計區塊與交叉表同母體（事件類型非空的列），且不受 OM 限制、調貨方向與分類維度影響）；最後為 **銷量 × 存貨分類交叉表**（母體為全部店舖×SKU 列，有別於 ①–④ 的事件列母體：各分類 × Shop Nature 列數、總計列數／SKU 數／店舖數、庫存與 P90D 銷量合計，含總計列；無調貨事件時仍輸出）、簡易調貨明細 (不限OM) 與 簡易調貨明細 (同OM)（一列一筆「來源店舖 → 接收店舖」調貨：Brand / SKU / SKU Desc / Supply Site Code(調貨來源) / Supply Shop Name / Supply RP Type / Supply OM / 調貨數量 / Target Site Code(接收店舖) / Target Shop Name / Target RP Type / Target OM；RP Type 緊接對應 Shop Name，調貨數量置於接收欄前分隔 Supply 與 Target；調貨來源如「HB30:2; HB49:3」會拆成兩行；只收錄實際有調入的列）。
 
+### Forecast Review（SKU 級建議訂貨量）
+
+以 **SKU 級**計算建議訂貨量（第二維度防缺貨），另附**店舖覆蓋檢視**確保店舖不斷貨：
+
+1. **逐列訊號（月規模）** — MTD 月化＝Sold Qty (CM - MTD) ÷ MTD 日數 × 當月日數（MTD 日期無效時退回 max(M-1, 月均基準)並列 warning）；保守＝月均基準（Shop Monthly Sold Qty (P90D)，缺欄時以 Sold Qty (P90D) ÷ 90 × 30.5 換算並列 warning）；標準＝max(月均基準, M-1)；樂觀＝max(MTD 月化 × 衰減係數（預設 0.8）, 月均基準, M-1)。保守情境只作參考欄，不用於訂量
+2. **爆升分類（SKU 級）** — 新起量（M-2＋M-1 合計 ≤ 新起量基數（預設 10 件）且近期有量）／加速中（M-1 ≥ 加速倍數（預設 1.15）× M-2 且 MTD 月化 ≥ 加速倍數 × M-1）／爆升（max(M-1, MTD 月化) ÷ max(M-2, 基數) ≥ 爆升倍數（預設 1.5））用樂觀情境；其餘平穩用標準情境
+3. **缺貨還原（取代式）** — 缺貨列（CM 期庫存 0 且 RP Type＝RF，重用 Stock Impact 引擎的 Is OOS 欄；公式準則與該引擎一致）取情境訊號與 MTD 實績孰高，非缺貨列取情境訊號；月預估為各列貢獻值合計後無條件捨去取整
+4. **位置分流** — Warehouse 貨＝店舖庫存合計＋D001 庫存 (Net)＋D001 PO＋在途；Vendor 貨＝店舖庫存合計＋Shop PO 合計＋在途（在途＝Shop Pending Receive (±7 days)，實檔別名相容；缺欄計 0 並列 warning）。Supply Source 缺欄全視 Warehouse，RP Type 缺欄全視 RF；同 SKU 多個 Supply Source 以眾數為準並列 warning
+5. **建議訂量** — 目標覆蓋量＝ceil(月預估 ÷ 30.5 × 目標天數（預設 30 日））；缺口＝max(0, 目標覆蓋量 − 位置）；上限空間＝max(0, ceil(月預估 × 上限月數（預設 2.0 個月）) − 位置）；建議訂量＝min(缺口, 上限空間）；缺口大於上限空間時狀態標「建議訂貨（已封頂）」；全 ND 的 SKU 建議訂量為 0（狀態「ND 不建議訂貨」）。建議訂貨對象：Warehouse→D001 PO，Vendor→Shop PO
+6. **店舖覆蓋（母體：建議訂量＞0 的 SKU，每店一列）** — 店舖日銷＝MTD ÷ MTD 日數（無 MTD 銷售時退回 P90D ÷ 30.5，皆 0 則可用日數留空）；可用日數＝(店舖庫存＋該店在途) ÷ 店舖日銷（1 位小數）；風險旗：已缺貨（庫存 0）／≤7日／≤目標天數／足夠；按 SKU＋風險＋日數排序。主表另計缺貨風險店數（可用日數 ≤7 日，RF／ND 皆計）／現已缺貨店數／鋪貨店數
+7. **輸入檢核** — 共用必要欄位另加本模式嚴格欄（Site Code／三期銷售／P90D／店舖庫存 CM，缺任一即停止）；D001 PO／Shop PO／在途欄為選填（缺欄計 0 並列 warning）；負銷售按 0、負數或非數值庫存按 0（列 warning，不拒絕）
+
+輸出包含 **6 個工作表**：說明（首頁導讀＋本次參數照錄；開啟 Excel 時預設顯示本頁）、Forecast 主表（SKU 級，建議訂量欄醒目底色；按 Buyer／Brand／SKU 排序）、店舖覆蓋、按 Buyer 彙總（建議訂量合計分 D001 PO／Shop PO 兩欄）、RAW（重排欄序，不顯示 Item_Shop 與 Value 金額欄；含逐列訊號欄）與 Forecast 摘要（指標卡 8 項＋按 Buyer 表）。
+
 ## Excel 輸出結構
 
 | 工作表 | 說明 |
@@ -204,6 +221,10 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 | 調貨 Review Safety Stock (不限OM)／(同OM) | 店舖×SKU Review 主表兩版（僅混合模式）— 需要調入／實際轉出／可轉出未使用事件列，按 Nature 的 Safety 基準天數（預設 7 / 9 / 10）Review 與建議調整量，逐列含「Safety 基準天數」與「Safety 周轉所需量」及 RP Type、銷量帶、銷量存貨分類；同OM版來源店須與需求店同 OM |
 | Review 摘要 | 混合模式 — 指標卡（第 4 排為同OM調貨對照；第 5 排為轉出來源對照——雙向調貨時含 Tourist 轉出量兩卡，「ND 優先轉出」開啟且 ND 店舖有實際轉出時另加「ND 來源轉出量」／「ND 來源轉出量 (同OM)」兩卡，該排 2–4 卡；「銷量再平衡」開啟時末尾另加銷量分類概況一排 4 卡）+ Safety Review × 分類維度交叉表（欄位按維度切換：nature 三組／rp 兩組／both 六組／om 動態 OM 名單／nature_om 三 Nature × OM／sales 四銷量帶／sales_nature 三 Nature × 四帶 12 組；列數 / SKU 數 / 建議調整量合計，含總計列）+ Safety 調整方向分類（增加 / 減少 / 不變 × 列數 / SKU 數 / Safety 建議調整量合計，含總計列）+ Safety 調整明細（SKU 級彙總：Review 列數 / 需增加店舖數 / 需減少店舖數 / 設定正常店舖數 / 現有與建議 Safety 設定合計（調整列）/ 淨調整量）＋ 銷量 × 存貨分類交叉表（母體為全部店舖×SKU 列：各分類 × Shop Nature 列數、總計列數／SKU 數／店舖數、庫存與 P90D 銷量合計，含總計列；無調貨事件時仍輸出）；①–④ 同母體（事件類型非空的列），不受 OM 限制影響 |
 | 簡易調貨明細 (不限OM)／(同OM) | 混合模式 — 一列一筆「來源店舖 → 接收店舖」調貨（Brand / SKU / SKU Desc / Supply Site Code(調貨來源) / Supply Shop Name / Supply RP Type / Supply OM / 調貨數量 / Target Site Code(接收店舖) / Target Shop Name / Target RP Type / Target OM）；來源如「HB30:2; HB49:3」拆成兩行；只收錄實際有調入的列；Streamlit 結果頁另有同名 tab（可切換兩版） |
+| Forecast 主表 | Forecast Review — SKU 級建議訂貨主表（一 SKU 一列）：識別／三期銷售＋月化／爆升分類／三情境＋採用月預估／位置分項與合計／目標覆蓋量／缺口／上限空間／建議訂量（醒目底色）／建議訂貨對象（D001 PO／Shop PO）／SKU 狀態／風險店數；按 Buyer／Brand／SKU 排序 |
+| 店舖覆蓋 | Forecast Review — 有訂量 SKU 的每店可用日數與風險旗（按 SKU＋風險＋日數排序） |
+| 按 Buyer 彙總 | Forecast Review — 各 Buyer 的建議訂量合計（分 D001 PO／Shop PO 兩欄） |
+| Forecast 摘要 | Forecast Review Dashboard — 指標卡（SKU 數／爆升 SKU 數／建議總訂量／其中 D001 PO／其中 Shop PO／已封頂 SKU 數／ND 不訂 SKU 數／店舖覆蓋列數）＋按 Buyer 表 |
 
 ## 版本
 

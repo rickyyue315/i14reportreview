@@ -14,6 +14,7 @@ from transformer import (
     transform_combined, generate_excel_combined,
     transform_stock_impact, generate_excel_stock_impact,
     transform_hybrid, generate_excel_hybrid,
+    transform_forecast, generate_excel_forecast,
     _hybrid_dimension_groups,
 )
 
@@ -27,10 +28,17 @@ BASE = {
     "Adj. Safety Stock": 5,
     "Shop Monthly Sold Qty (P90D)": 10,
     "Sold Qty (P90D)": 60,
+    "Sold Qty (M-2)": 20.0,
+    "Sold Qty (M-1)": 25.0,
     "Sold Qty (CM - MTD)": 8.0,
     "Shop Nature": "Local",
     "RP Type": "RF",
+    "Supply Source": "Warehouse",
     "Shop Stock Qty (CM)": 3,
+    "D001 Net Stock Qty (CM)": 50,
+    "D001 On Order PO Qty (CM)": 5,
+    "Shop On Order PO Qty (CM)": 0,
+    "Shop Pending Receive (±7 days)": 2,
     "OM": "OM1",
     "Adj. MCH1": "MchA",
     "Adj. SST": "SstA",
@@ -119,6 +127,13 @@ def main():
     generate_excel_stock_impact(si_brand, si_buyer, si_cat, si_alloc, si_diag, si_inv, si_raw, sku_monthly_analysis=si_mly)
     si_count = int(si_raw["Is Stock Impacted"].sum())
     print("OK Stock Impact Analysis | impacted_rows=%d diagnosis_skus=%d imbalance_skus=%d warnings=%d" % (si_count, len(si_diag), len(si_inv.get("imbalance_sku", [])), len(si_warns)))
+
+    # ── Forecast Review ──
+    fc_main, fc_cov, fc_buyer, fc_raw, fc_stats, fc_w = transform_forecast(
+        df, mtd_days=15, month_total_days=30)
+    generate_excel_forecast(fc_main, fc_cov, fc_buyer, fc_raw, fc_stats)
+    print("OK Forecast Review      | skus=%d surge=%d order=%d warnings=%d" % (
+        fc_stats["total_skus"], fc_stats["surge_skus"], fc_stats["total_order"], len(fc_w)))
 
     print("\nALL PIPELINES COMPLETED")
 
