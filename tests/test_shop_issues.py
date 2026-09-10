@@ -172,6 +172,24 @@ def test_combined_excel_contains_shop_issue_sheet():
     assert wb.sheetnames == ["RAW", "Shop Stock Status", "By Shop", "店舖問題 SKU", "SUMMARY", "Safety Stock 數據分析摘要"]
 
 
+def test_combined_excel_raw_excludes_internal_floor_column():
+    """`_safety_floor3` 屬內部欄：存在於 raw（供店舖問題判定）但不得寫入 Excel RAW。"""
+    df = pd.DataFrame([
+        _cb_row(**{"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+                   "Shop Monthly Sold Qty (P90D)": 6.0, "Sold Qty (CM - MTD)": 0.0,
+                   "Adj. Safety Stock": 0.0}),
+    ])
+    s, r, c, _ = transform_combined(
+        df, rates_overstock=CB_RATES_O, rates_oos=CB_RATES_P,
+        mtd_days=15, month_total_days=30, safety_mode="allow_both")
+    assert "_safety_floor3" in r.columns
+    assert bool(r["_safety_floor3"].iloc[0]) is True
+    buf = generate_excel_combined(s, r, c)
+    wb = load_workbook(buf, read_only=True)
+    headers = [cell.value for cell in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
+    assert "_safety_floor3" not in headers
+
+
 HY_BASE = dict(SC_BASE)
 
 

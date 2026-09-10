@@ -19,6 +19,7 @@ from transformer import (
     _add_recommendation_columns,
     _add_oos_recommendation_columns,
     _add_nd_recommendation_columns,
+    _build_combined_shop_issues,
     _clean_dataframe,
     transform_nd,
     transform_carry,
@@ -644,6 +645,104 @@ def test_fix11_recommend_turnday_column_after_recommend_safety():
     """RAW 白名單欄序：Recommend Safety Stock Turnday 緊隨 Recommend Safety Stock."""
     from transformer import COMBINED_RAW_COLS
     assert COMBINED_RAW_COLS.index("Recommend Safety Stock Turnday") == COMBINED_RAW_COLS.index("Recommend Safety Stock") + 1
+
+
+# ── Fix #14: 建議值受 OOS 底線最低 3 件保底影響（_safety_floor3，v1.40.0）──────
+# 最終建議值 == 3 且未套保底前 < 3 → 保底決定建議值，店舖問題 SKU 建議方法加註原因；
+# 「只可增加」以 max(現有設定, 未保底建議值) 為未保底最終值，避免現有設定本身 ≥ 3 時誤標。
+
+_FLOOR3_RATES_O = _RATES_O
+_FLOOR3_RATES_P = _RATES_P
+
+
+def _floor3_out(rows, mode):
+    return _add_combined_recommendation_columns(
+        _df(rows), _FLOOR3_RATES_O, _FLOOR3_RATES_P,
+        mtd_days=15, month_total_days=30, safety_mode=mode,
+    )
+
+
+def test_floor3_flag_true_when_floor_determines_increase_only():
+    # projected=3 → Y_pre=2、Y=3（保底）；X=floor(3)=3→cap 現值 0；Z=0 → 建議 3
+    out = _floor3_out([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 0, "Shop Monthly Sold Qty (P90D)": 6,
+         "Sold Qty (CM - MTD)": 0.0},
+    ], "increase_only")
+    assert out["Recommend Safety Stock"].tolist()[0] == 3
+    assert bool(out["_safety_floor3"].tolist()[0]) is True
+
+
+def test_floor3_flag_false_when_natural_three():
+    # projected=5 → Y_pre=ceil(2.5)=3（自然 3，未 clip）；不應標示為保底
+    out = _floor3_out([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 2, "Shop Monthly Sold Qty (P90D)": 10,
+         "Sold Qty (CM - MTD)": 0.0},
+    ], "increase_only")
+    assert out["Recommend Safety Stock"].tolist()[0] == 3
+    assert bool(out["_safety_floor3"].tolist()[0]) is False
+
+
+def test_floor3_flag_false_when_x_caps_to_three_allow_both():
+    # Y=3（保底）但 X=3 且 Z=5>X → 建議值由 X（非保底）決定；最終值同為 3 亦不誤標
+    out = _floor3_out([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 6,
+         "Sold Qty (CM - MTD)": 0.0},
+    ], "allow_both")
+    assert out["Recommend Safety Stock"].tolist()[0] == 3
+    assert bool(out["_safety_floor3"].tolist()[0]) is False
+
+
+def test_floor3_flag_true_allow_both():
+    # X=3→cap 2；Z=2 → combined=max(3,2)=3；未保底 combined_pre=max(2,2)=2 → 受保底影響
+    out = _floor3_out([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 2, "Shop Monthly Sold Qty (P90D)": 6,
+         "Sold Qty (CM - MTD)": 0.0},
+    ], "allow_both")
+    assert out["Recommend Safety Stock"].tolist()[0] == 3
+    assert out["Safety Qty Change"].tolist()[0] == 1
+    assert bool(out["_safety_floor3"].tolist()[0]) is True
+
+
+def test_floor3_flag_false_for_zero_overrides():
+    # P90D 0 Sales 舊品歸零 override 優先：最終建議 0，即使未保底值 < 3 亦不標示
+    out = _floor3_out([
+        {"SKU": "1", "Shop Stock Status": "Overstock (P90D 0 Sales)", "RP Type": "RF",
+         "Adj. Safety Stock": 1, "Shop Monthly Sold Qty (P90D)": 0,
+         "Sold Qty (CM - MTD)": 0.0, "Launch Date": "2020-01-01"},
+    ], "allow_both")
+    assert out["Recommend Safety Stock"].tolist()[0] == 0
+    assert bool(out["_safety_floor3"].tolist()[0]) is False
+
+
+def test_shop_issue_advice_turnday_and_floor_note_ssr():
+    """SSR 店舖問題建議方法：所有建議列附周轉；受保底影響列加註保底原因。"""
+    raw = _floor3_out([
+        {"SKU": "1", "Site Code": "S01", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 0, "Shop Monthly Sold Qty (P90D)": 6, "Sold Qty (CM - MTD)": 0.0},
+        {"SKU": "2", "Site Code": "S02", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 2, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 0.0},
+    ], "allow_both")
+    issues = _build_combined_shop_issues(raw)
+    s01 = issues[issues["Site Code"] == "S01"].iloc[0]
+    assert "建議周轉約 15 日" in str(s01["建議方法"])
+    assert "為保障自動補貨，最低建議設定為 3 件（OOS 底線最低 3 件）" in str(s01["建議方法"])
+    s02 = issues[issues["Site Code"] == "S02"].iloc[0]
+    assert "建議周轉約 9 日" in str(s02["建議方法"])
+    assert "為保障自動補貨" not in str(s02["建議方法"])
+
+
+def test_shop_issue_floor_note_missing_flag_is_safe():
+    """舊資料（無 _safety_floor3 欄）不拋錯、不加保底句（預設 False）。"""
+    raw = _floor3_out([
+        {"SKU": "1", "Site Code": "S01", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 2, "Shop Monthly Sold Qty (P90D)": 6, "Sold Qty (CM - MTD)": 0.0},
+    ], "allow_both").drop(columns=["_safety_floor3"])
+    issues = _build_combined_shop_issues(raw)
+    assert all("為保障自動補貨" not in str(v) for v in issues["建議方法"])
 
 
 # ── Fix #12: 只可增加模式 = 全表不得出現扣減 ────────────────────────────────

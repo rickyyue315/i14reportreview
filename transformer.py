@@ -597,13 +597,18 @@ def _add_combined_recommendation_columns(
 
     oos_rate_arr = _nature_rate_arr(shop_nature, _oos_default, _oos_tourist, _oos_mix)
 
-    y_values = np.ceil(projected.values * oos_rate_arr).clip(min=3).astype(int)
+    # y_preclip 保留未套「最低 3 件」保底前的 OOS 底線，供 _safety_floor3 判定用；
+    # y_values 為現行輸出值（clip min=3），兩者計算準則完全相同。
+    y_preclip = np.ceil(projected.values * oos_rate_arr)
+    y_values = y_preclip.clip(min=3).astype(int)
 
     # Z = current Adj. Safety Stock
     z_values = adj_ss.values.astype(int)
 
     # Combined = max(Y, Z if Z <= X else X)
     combined = np.where(z_values <= x_values, np.maximum(y_values, z_values), np.maximum(y_values, x_values))
+    # 同一公式、改用未保底的 y_preclip：代表「沒有最低 3 件保底時」的建議值
+    combined_pre = np.where(z_values <= x_values, np.maximum(y_preclip, z_values), np.maximum(y_preclip, x_values))
 
     df["Overstock Cap (X)"] = x_values
     df["OOS Floor (Y)"] = y_values
@@ -658,6 +663,14 @@ def _add_combined_recommendation_columns(
 
     df["Recommend Safety Stock"] = recommend_safety
     df["Safety Qty Change"] = delta
+
+    # 保底影響偵測（供店舖問題 SKU 建議方法加註）：最終建議值停在 3 件，且未套 OOS 底線
+    # 最低 3 件保底時的本來建議值 < 3 → 建議值是因保底而停在 3（保障自動補貨）。
+    # 「只可增加」模式的最終值 = max(現有設定, 未保底建議值)，故 recommend_pre 亦取兩者較大。
+    recommend_pre = (
+        combined_pre if safety_mode != "increase_only" else np.maximum(z_values, combined_pre)
+    )
+    df["_safety_floor3"] = (recommend_safety == 3) & (recommend_pre < 3)
 
     # Safety Qty Change 分類（增加 / 減少 / 不變）—「只可增加」模式下不會出現「減少」
     df["Safety Qty Change 分類"] = np.where(delta > 0, "增加", np.where(delta < 0, "減少", "不變"))
@@ -1397,6 +1410,22 @@ def _d001_gap_advice(d001_qty: float, gap_n: int, is_warehouse: bool) -> str:
     return "D001缺貨"
 
 
+# 建議方法加註：建議值受保底 3 件影響時，說明保底原因（保障自動補貨之最低設定）。
+# SSR 的 3 件來自 OOS 底線 clip(min=3)；Hybrid 的 3 件來自 SAP MOQ 下調補底。
+_SAFETY_FLOOR3_SSR_NOTE = "；為保障自動補貨，最低建議設定為 3 件（OOS 底線最低 3 件）"
+_SAFETY_FLOOR3_HYBRID_NOTE = "；為保障自動補貨，最低建議設定為 3 件（SAP MOQ：Safety 1–2 件難以補貨）"
+
+
+def _suggest_turnday_clause(turnday) -> str:
+    """建議值的周轉子句（供店舖問題 SKU 建議方法用）。
+
+    月均為 0／未能計算（NaN）時回傳空字串；否則回傳「；建議周轉約 X 日」。
+    """
+    if turnday is None or pd.isna(turnday):
+        return ""
+    return f"；建議周轉約 {float(turnday):g} 日"
+
+
 def _build_stock_checking_shop_issues(
     raw: pd.DataFrame,
     turnday_threshold: int = 14,
@@ -1499,6 +1528,8 @@ def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
     - ND 退場：`Recommendation of new Safety Qty / ND` 為 ND 系列或 0（已是 ND）；
       `New SKU (3 Month)` 屬資訊標記，不收錄。
     - Overstock／OOS 只作問題說明上下文，不單獨成列。
+    - 建議方法附「建議周轉約 X 日」（`Recommend Safety Stock Turnday`；月均 0 略去）；
+      `_safety_floor3` 為 True（建議值受 OOS 底線最低 3 件保底影響）時加註保底原因。
     """
     cols = _COMBINED_SHOP_ISSUE_COLUMNS
     if raw is None or raw.empty:
@@ -1515,6 +1546,14 @@ def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
     nd_w = work.get("Recommendation of new Safety Qty / ND", _safe_default_series("", work.index)).fillna("").astype(str).str.strip()
     adj_w = pd.to_numeric(work.get("Adj. Safety Stock", _safe_default_series(np.nan, work.index)), errors="coerce")
     rec_w = pd.to_numeric(work.get("Recommend Safety Stock", _safe_default_series(np.nan, work.index)), errors="coerce")
+    rec_td_w = pd.to_numeric(
+        work.get("Recommend Safety Stock Turnday", _safe_default_series(np.nan, work.index)), errors="coerce"
+    )
+    floor_w = (
+        work.get("_safety_floor3", _safe_default_series(False, work.index))
+        .fillna(False)
+        .astype(bool)
+    )
     status_w = work.get("Shop Stock Status", _safe_default_series("", work.index)).fillna("").astype(str).str.strip()
 
     issue, desc, advice, sev = [], [], [], []
@@ -1523,17 +1562,25 @@ def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
         rec_txt = nd_w.iloc[i]
         adj_txt = f"{float(adj_w.iloc[i]):g}" if pd.notna(adj_w.iloc[i]) else "未能確認"
         rec_val_txt = f"{float(rec_w.iloc[i]):g}" if pd.notna(rec_w.iloc[i]) else "未能確認"
+        td_clause = _suggest_turnday_clause(rec_td_w.iloc[i])
+        floor_note = _SAFETY_FLOOR3_SSR_NOTE if bool(floor_w.iloc[i]) else ""
         status_txt = str(status_w.iloc[i]).strip()
         status_suffix = f"，狀態為{status_txt}" if status_txt else ""
         if delta > 0:
             issue.append("Safety 設定不足")
             desc.append(f"現時 Safety {adj_txt} 件低於建議 {rec_val_txt} 件（需增加 {delta:g} 件）{status_suffix}")
-            advice.append(f"建議將 Safety 由 {adj_txt} 件調整為 {rec_val_txt} 件（＋{delta:g}），請按建議值補足安全庫存")
+            advice.append(
+                f"建議將 Safety 由 {adj_txt} 件調整為 {rec_val_txt} 件（＋{delta:g}{td_clause}），"
+                f"請按建議值補足安全庫存{floor_note}"
+            )
             sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定不足"])
         elif delta < 0:
             issue.append("Safety 設定過高")
             desc.append(f"現時 Safety {adj_txt} 件高於建議 {rec_val_txt} 件（可減少 {abs(delta):g} 件）{status_suffix}")
-            advice.append(f"建議將 Safety 由 {adj_txt} 件調整為 {rec_val_txt} 件（{delta:g}），請按建議值調低安全庫存")
+            advice.append(
+                f"建議將 Safety 由 {adj_txt} 件調整為 {rec_val_txt} 件（{delta:g}{td_clause}），"
+                f"請按建議值調低安全庫存{floor_note}"
+            )
             sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定過高"])
         elif rec_txt.startswith("ND"):
             issue.append("ND 退場")
@@ -1566,6 +1613,8 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
     - 已屬不足／過高且同時符合零銷售的列保留原問題類型，建議方法末尾加註；
       僅零銷售的列以「ND 退場」收錄（每店×SKU 最多一列）。
     - 主表以不限OM事件為準，另附三個同OM對照欄；調入缺口 > 0 時在建議方法加註。
+    - 建議方法附「建議周轉約 X 日」（`建議 Safety 設定值 Turnday`；月均 0 略去）；
+      `_hybrid_safety_floor3` 為 True（計算層判定受下調補底 3 件影響）時加註保底原因。
     """
     cols = _HYBRID_SHOP_ISSUE_COLUMNS
     if raw is None or raw.empty:
@@ -1590,6 +1639,14 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
     line_w = pd.to_numeric(work.get(_HYBRID_SAFETY_LINE_COLUMN, _safe_default_series(np.nan, work.index)), errors="coerce")
     adj_w = pd.to_numeric(work.get("Adj. Safety Stock", _safe_default_series(np.nan, work.index)), errors="coerce")
     sugg_w = pd.to_numeric(work.get("建議 Safety 設定值", _safe_default_series(np.nan, work.index)), errors="coerce")
+    sugg_td_w = pd.to_numeric(
+        work.get(_HYBRID_SUGGEST_TURNDAY_COLUMN, _safe_default_series(np.nan, work.index)), errors="coerce"
+    )
+    floor_w = (
+        work.get("_hybrid_safety_floor3", _safe_default_series(False, work.index))
+        .fillna(False)
+        .astype(bool)
+    )
     chg_w = pd.to_numeric(work.get("Safety 建議調整量", _safe_default_series(np.nan, work.index)), errors="coerce")
     evt_w = work.get("事件類型", _safe_default_series("", work.index)).fillna("").astype(str)
     gap_w = _safe_numeric(work.get("調入缺口", _safe_default_series(0, work.index))).astype(int)
@@ -1609,12 +1666,13 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
         adj_txt = f"{float(adj_w.iloc[i]):g}" if pd.notna(adj_w.iloc[i]) else "未能確認"
         sugg_txt = f"{float(sugg_w.iloc[i]):g}" if pd.notna(sugg_w.iloc[i]) else "未能確認"
         delta_txt = f"{float(chg_w.iloc[i]):g}" if pd.notna(chg_w.iloc[i]) else "未能確認"
+        td_clause = _suggest_turnday_clause(sugg_td_w.iloc[i])
         evt_txt = str(evt_w.iloc[i]).strip()
         is_zero = bool(zero_w.iloc[i])
         if diag_w.iloc[i] == _HYBRID_DIAG_UNDER:
             issue.append("Safety 設定不足")
             desc.append(f"現時 Safety {adj_txt} 件低於周轉所需 {line_txt} 件（基準 {days_txt}；事件：{evt_txt}）")
-            text = f"建議將 Safety 由 {adj_txt} 件調整為 {sugg_txt} 件（{delta_txt}）"
+            text = f"建議將 Safety 由 {adj_txt} 件調整為 {sugg_txt} 件（{delta_txt}{td_clause}）"
             if int(demand_w.iloc[i]) > 0:
                 src_n = _count_transfer_sources(str(src_w.iloc[i]))
                 text += f"；另需調入 {int(demand_w.iloc[i])} 件（實際可調入 {int(actual_w.iloc[i])} 件，涉及 {src_n} 間來源店舖）"
@@ -1629,11 +1687,15 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
             issue.append("Safety 設定過高")
             desc.append(f"現時 Safety {adj_txt} 件高於周轉所需 {line_txt} 件（基準 {days_txt}；事件：{evt_txt}）")
             text = (
-                f"建議將 Safety 由 {adj_txt} 件調整為 {sugg_txt} 件（{delta_txt}），"
+                f"建議將 Safety 由 {adj_txt} 件調整為 {sugg_txt} 件（{delta_txt}{td_clause}），"
                 f"多餘存貨可轉出（實際轉出 {int(out_w.iloc[i])} 件），詳見「調貨來源 (Site Code)」欄"
             )
             if is_zero:
                 text += f"；{_HYBRID_P90D_ZERO_SALES_ANNOTATION}"
+            # 計算層已判定受下調補底影響（`_hybrid_safety_floor3`）：加註最低建議 3 件
+            # 為保障自動補貨的保底設定（SAP MOQ）
+            if bool(floor_w.iloc[i]):
+                text += _SAFETY_FLOOR3_HYBRID_NOTE
             advice.append(text)
             sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定過高"])
         else:
@@ -6289,6 +6351,9 @@ _HYBRID_SAFETY_DAYS_COLUMN = "Safety 基準天數"
 # 故「Safety 設定過高」列的下調建議最低補至 3 件；現有設定 ≤ 2 件不強制上調
 # （補底不得高於現值）、周轉所需量 = 0 的歸零退場建議不受保底影響。
 _HYBRID_SAFETY_MIN_KEEP = 3
+# 建議值周轉欄（RAW／主表；僅不足／過高列有值）：建議值 ÷ (P90D 月均 ÷ 30)，
+# 與來源「Turnday (P90D Qty)」及 SSR「Recommend Safety Stock Turnday」同一準則。
+_HYBRID_SUGGEST_TURNDAY_COLUMN = "建議 Safety 設定值 Turnday"
 
 
 def _hybrid_safety_days(safety_days: dict | None = None) -> tuple[dict[str, int], list[str]]:
@@ -6373,13 +6438,13 @@ _HYBRID_SAFETY_SKU_COLUMNS = [
 ]
 
 # 「調貨 Review Safety Stock」主表欄序（店舖×SKU 逐列；RAW 則輸出全部欄位 + Review 欄）
-# RP Type 為正規化後值（RF／ND），來源缺「RP Type」欄時該欄不出現（主表退回 25 欄）
+# RP Type 為正規化後值（RF／ND），來源缺「RP Type」欄時該欄不出現（主表退回 28 欄）
 _HYBRID_DIAG_COLUMNS = [
     "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Site Code", "OM", "Shop Nature", "RP Type",
     "事件類型", "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)",
     _HYBRID_SALES_BAND_COLUMN, _HYBRID_SALES_CLASS_COLUMN,
     _HYBRID_SAFETY_DAYS_COLUMN, _HYBRID_SAFETY_LINE_COLUMN, "Adj. Safety Stock", "Safety Review",
-    "建議 Safety 設定值", "Safety 建議調整量",
+    "建議 Safety 設定值", _HYBRID_SUGGEST_TURNDAY_COLUMN, "Safety 建議調整量",
     "調入需求量 (補到14日)", "實際調入量", "調入缺口",
     "可轉出貨量", "轉出量", "調貨來源 (Site Code)",
     "調貨後庫存", "調貨後 TurnDay",
@@ -7411,6 +7476,8 @@ def transform_hybrid(
       （補底不高於現值，現有 3 件而所需 1–2 件者改判設定正常）；現有 1–2 件
       維持原所需量，不強制上調到 3。
       建議 Safety 設定值 = 不足列取所需量、過高列取生效基準（僅不足/過高列），
+      建議 Safety 設定值 Turnday = 建議值 ÷ (P90D 月均 ÷ 30)（月均 0／非建議列留空）；
+      受保底影響（建議值 3 件 > 所需量 ≥ 1 件）時，店舖問題 SKU 的建議方法加註保底原因；
       Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）；
       「Safety 周轉所需量」欄維持原所需量供稽核，保底只體現在建議值與調整量。
     - bidirectional=True（允許雙向調貨，預設 False 維持單向契約）：任何 Nature 缺貨
@@ -7881,7 +7948,15 @@ def transform_hybrid(
     raw["事件類型"] = event
     raw["Safety Review"] = diag
     raw["建議 Safety 設定值"] = sugg
+    # 建議值周轉日數（與來源「Turnday (P90D Qty)」、SSR「Recommend Safety Stock Turnday」
+    # 同一準則）：建議值 ÷ (P90D 月均 ÷ 30)；月均 0 或非建議列留空。
+    _sugg_td = np.full(n_rows, np.nan)
+    _sugg_td[ms_pos] = sugg[ms_pos] / (msold_val[ms_pos] / 30.0)
+    raw[_HYBRID_SUGGEST_TURNDAY_COLUMN] = np.round(_sugg_td, 1)
     raw["Safety 建議調整量"] = np.round(chg, 1)
+    # 受下調補底 3 件影響（生效基準 = max(所需量, 3) > 所需量）— 內部旗標，供店舖問題
+    # SKU 建議方法加註；於計算層一次判定，避免顯示層反推欄位而與補底規則走樣。
+    raw["_hybrid_safety_floor3"] = over_mask & (eff_line > safety_line)
     raw["調貨後庫存"] = np.where(in_table, stock_after, np.nan)
     raw["調貨後 TurnDay"] = np.where(in_table, np.round(td_after, 1), np.nan)
     raw["調貨後庫存 (同OM)"] = np.where(in_table, stock_after_om, np.nan)
@@ -7981,7 +8056,11 @@ def _write_hybrid_diagnosis_sheet(ws, diagnosis: pd.DataFrame, progress_callback
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
     _text_keys = ["Brand", "SKU Desc", "Buyer", "Adj. SST", "Site Code", "事件類型", "Safety Review", "調貨來源 (Site Code)"]
-    _decimal_keys = {"調貨後 TurnDay": "0.0", "Safety 建議調整量": "#,##0.##"}
+    _decimal_keys = {
+        "調貨後 TurnDay": "0.0",
+        _HYBRID_SUGGEST_TURNDAY_COLUMN: "0.0",
+        "Safety 建議調整量": "#,##0.##",
+    }
 
     headers = list(diagnosis.columns)
     header_labels = [_display_safety_header(h) for h in headers]
@@ -8300,7 +8379,7 @@ _HYBRID_RAW_DISPLAY_GROUPS = [
     ["Tourist 加總 TurnDay", "Mix 加總 TurnDay", "Non Tourist 加總 TurnDay",
      "需要調貨", "調入需求量 (補到14日)"],
     ["事件類型", _HYBRID_SAFETY_DAYS_COLUMN, _HYBRID_SAFETY_LINE_COLUMN,
-     "Safety Review", "建議 Safety 設定值", "Safety 建議調整量"],
+     "Safety Review", "建議 Safety 設定值", _HYBRID_SUGGEST_TURNDAY_COLUMN, "Safety 建議調整量"],
     ["可轉出貨量 (Non Tourist)", "可轉出貨量 (Mix)", "可轉出貨量 (Tourist)",
      "實際調入量", "調入缺口", "轉出量", "調貨來源 (Site Code)", "調貨後庫存", "調貨後 TurnDay"],
     ["實際調入量 (同OM)", "調入缺口 (同OM)", "轉出量 (同OM)", "調貨來源 (同OM)",
@@ -8309,14 +8388,15 @@ _HYBRID_RAW_DISPLAY_GROUPS = [
 
 
 def _hybrid_raw_display_columns(raw: pd.DataFrame) -> list[str]:
-    """Safety Stock x NetStock Review RAW 顯示欄序：不顯示「Item_Shop」與所有含「Value」的金額欄，
-    其餘欄位（含 _compute_raw_extra_columns 衍生的 Shop Name / SKU Desc）按 _HYBRID_RAW_DISPLAY_GROUPS
+    """Safety Stock x NetStock Review RAW 顯示欄序：不顯示「Item_Shop」、所有含「Value」的
+    金額欄與底線開頭的內部欄（如 `_hybrid_safety_floor3`），其餘欄位（含
+    _compute_raw_extra_columns 衍生的 Shop Name / SKU Desc）按 _HYBRID_RAW_DISPLAY_GROUPS
     分組排列，未歸組的原始欄位按原序置於最後。"""
     cols = [str(c) for c in raw.columns] + ["Shop Name", "SKU Desc"]
     seen: set[str] = set()
     kept: list[str] = []
     for c in cols:
-        if c in seen or c == "Item_Shop" or "value" in c.lower():
+        if c in seen or c == "Item_Shop" or "value" in c.lower() or c.startswith("_"):
             continue
         seen.add(c)
         kept.append(c)
@@ -8424,7 +8504,8 @@ def _write_hybrid_guide_sheet(ws, stats):
     _bullet("Review 段（Safety 基準天數，按 Shop Nature）：Safety 周轉所需量＝ceil(Sold Qty (P90D) ÷ 90 × 該 Nature 基準天數)。"
             "需要調入列：現有 Safety 設定 < 所需量 → 「Safety 設定不足」；有貨轉出列（實際轉出／可轉出未使用）："
             "現有設定 > 生效基準 → 「Safety 設定過高」；等於邊界屬設定正常。建議值＝不足列取所需量、"
-            "過高列取生效基準（下調補底 3 件——SAP MOQ 使 1–2 件難以補貨）。Safety 設定與調貨 14 日線互相獨立。")
+            "過高列取生效基準（下調補底 3 件——SAP MOQ 使 1–2 件難以補貨）。建議 Safety 設定值 Turnday＝建議值 ÷ (P90D 月均 ÷ 30)；"
+            "受保底影響（建議值 3 件、未套保底前 < 3）時，店舖問題 SKU 的建議方法加註保底原因。Safety 設定與調貨 14 日線互相獨立。")
     _bullet("銷量帶（常開顯示欄）：同 SKU 內按 Sold Qty (P90D) 的店舖平均排名分帶——排名百分比 > 75%＝高銷、"
             "≤ 25%＝低銷、其餘＝中銷、P90D ≤ 0＝零銷；並列同值同帶；有銷售店舖少於 4 間時不設高銷／低銷（全歸中銷）。")
     _bullet("銷量存貨分類（常開顯示欄）：高銷且店舖周轉日數低於缺貨線 → 高銷缺貨；低銷且周轉不少於積壓線且庫存不少於保底件數 → "
@@ -8443,15 +8524,15 @@ def _write_hybrid_guide_sheet(ws, stats):
     r += 1
     _row3("說明（本頁）", "Review 邏輯、本次參數與導讀", "執行任何行動前，先核對上方 ① 的參數是否符合預期")
     _row3("RAW", "全部店舖×SKU 逐列明細與判定欄",
-          "留意「需要調貨」「事件類型」「Safety Review」「建議 Safety 設定值」「Safety 建議調整量」「銷量帶」「銷量存貨分類」；非事件列 Review 欄留空屬正常")
+          "留意「需要調貨」「事件類型」「Safety Review」「建議 Safety 設定值」「建議 Safety 設定值 Turnday」「Safety 建議調整量」「銷量帶」「銷量存貨分類」；非事件列 Review 欄留空屬正常")
     _row3("Summary", "SKU 級庫存／銷量分佈（按分類維度分組）",
           "留意「存貨偏重提示」（橘底）——哪些分組存貨偏重而銷量不高")
     _row3("調貨 Review Safety Stock (不限OM)", "逐列 Safety Review 主表（調貨來源不限 OM）",
-          "按「Safety Review」篩選設定不足／過高；行動看「建議 Safety 設定值」與「Safety 建議調整量」")
+          "按「Safety Review」篩選設定不足／過高；行動看「建議 Safety 設定值」「建議 Safety 設定值 Turnday」與「Safety 建議調整量」")
     _row3("調貨 Review Safety Stock (同OM)", "同上，惟調貨來源須與需求店同一 OM",
           "兩套數值可能不同；(同OM) 限制較嚴，按公司規定選用")
     _row3("店舖問題 SKU", "每間店舖需行動事項（問題＋建議方法）",
-          "店務同事可先從這一頁著手；含調入缺口跟進與 0 Sales 轉 ND 建議")
+          "店務同事可先從這一頁著手；建議方法附建議值周轉日數，受 3 件保底影響時加註保底原因；含調入缺口跟進與 0 Sales 轉 ND 建議")
     _row3("Review 摘要", "指標卡＋Safety Review×分類維度交叉表＋Safety 調整方向分類／明細＋銷量×存貨分類交叉表",
           "管理層概覽；「Safety 調整方向分類」看建議增加／減少的總量")
     _row3("簡易調貨明細 (不限OM)／(同OM)", "一列一筆「來源店舖 → 接收店舖」調貨",

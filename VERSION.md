@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.40.0 (2026-09-10)
+
+Safety Stock Review 與 Safety Stock x NetStock Review 同步新增**建議值 Turnday**與**保底 3 件說明**——建議值、調整量、調貨數字與統計全部不變，只加顯示欄與建議方法文字：
+
+- **建議值 Turnday** — 混合模式 RAW 與兩張 Review 主表新增「建議 Safety 設定值 Turnday」欄（`_HYBRID_SUGGEST_TURNDAY_COLUMN`，緊隨「建議 Safety 設定值」；主表欄序 28 → 29 欄、缺 RP Type 時 27 → 28 欄）：建議值 ÷ (P90D 月均 ÷ 30)，1 位小數，月均 0 或非建議列留空；與來源「Turnday (P90D Qty)」及 SSR 既有 `Recommend Safety Stock Turnday` 同一準則（混合模式月均為回補後 Effective 值）；Excel 兩張主表以 `0.0` 格式顯示，不會四捨五入成整數。SSR RAW 既有 `Recommend Safety Stock Turnday` 維持不變
+- **SSR 保底偵測** — `_add_combined_recommendation_columns` 以未套 OOS 底線保底前的 `y_preclip` 重算 `combined_pre`／`recommend_pre`（「只可增加」模式再取 `max(現有設定, recommend_pre)`），新增內部欄 `_safety_floor3 = 最終建議值 == 3 且未保底前 < 3`；`y_values`（clip min=3）與既有輸出數值零變動；內部欄只供店舖問題 SKU 使用，Excel RAW 白名單天然過濾、Streamlit RAW 預覽同步過濾底線開頭欄
+- **建議方法加註** — 兩模式的店舖問題 SKU 建議方法：所有「Safety 設定不足／過高」列附「建議周轉約 X 日」（月均 0 時略去，`_suggest_turnday_clause`）；受保底影響列另加註——SSR「為保障自動補貨，最低建議設定為 3 件（OOS 底線最低 3 件）」、Hybrid「為保障自動補貨，最低建議設定為 3 件（SAP MOQ：Safety 1–2 件難以補貨）」。Hybrid 保底於計算層一次判定（內部旗標 `_hybrid_safety_floor3 = over_mask & (eff_line > safety_line)`），店舖問題只讀旗標、不再由顯示欄反推，與 SSR `_safety_floor3` 同一模式；`_hybrid_raw_display_columns` 過濾底線開頭內部欄，RAW／主表不顯示；ND 退場列不加註
+- **文件** — README（SSR 第 4 點與店舖問題／Excel 結構表、Hybrid 下調補底與建議值段、輸出與主表描述）、使用說明頁（兩模式條目與輸出描述）、結果頁 caption（SSR Rate 說明、SSR／Hybrid 店舖問題說明、Hybrid Review 基準）、混合模式 Excel「說明」表（核心邏輯與工作表導讀）同步
+- Update: `tests/test_hybrid_mode.py` 主表欄數 27→28 與契約欄序更新＋新增 Turnday（含 Excel `0.0` 格式）／內部旗標不外露／保底建議方法測試；`tests/test_transformer.py` 新增 `_safety_floor3` 五項偵測、`Recommend Safety Stock Turnday` 不變與兩模式建議方法加註測試；`tests/test_shop_issues.py` 新增內部欄不寫入 Excel RAW 測試；共 412 項測試與煙霧測試通過
+- Validation: 實檔 `By SKUxShop_Stock Checking_03Sep2026.xlsx`（22,735 列）——Hybrid 過高列 463 列中 152 列受保底影響（建議值 3 > 所需量 1–2），新欄數值、Excel 1 位小數格式與建議方法加註正確；SSR（allow_both、MTD 10 日）`_safety_floor3` 命中 3 列並只在該等列加註；兩模式 Excel 均可正常產生；SSR `_safety_floor3` 與 Hybrid `_hybrid_safety_floor3` 均不出現在 Excel RAW 或 Streamlit RAW 預覽
+
 ## v1.39.0 (2026-09-10)
 
 Forecast Review 需求模型升級為 **v2（SKU 級加權混合＋趨勢外推）**，提升 SKU 級月需求預估準確度——其餘 11 個模式計算、欄位、欄序零變動；本模式位置／缺口／封頂／狀態／店舖覆蓋／Buyer 彙總規則不變：

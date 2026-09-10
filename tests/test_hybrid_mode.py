@@ -39,6 +39,8 @@ from transformer import (
     _HYBRID_SAFETY_SKU_COLUMNS,
     _HYBRID_SAFETY_LINE_COLUMN,
     _HYBRID_SAFETY_DAYS_COLUMN,
+    _HYBRID_SUGGEST_TURNDAY_COLUMN,
+    _build_hybrid_shop_issues,
     _HYBRID_SAFETY_DAYS_DEFAULT,
     _HYBRID_SAFETY_DAYS_MIN,
     _HYBRID_SAFETY_DAYS_MAX,
@@ -1452,11 +1454,14 @@ def test_safety_days_echoed_in_raw_and_recovered_by_fallback():
 def test_main_table_contract_names_safety_columns():
     assert _HYBRID_SAFETY_LINE_COLUMN in _HYBRID_DIAG_COLUMNS
     assert _HYBRID_SAFETY_DAYS_COLUMN in _HYBRID_DIAG_COLUMNS
+    assert _HYBRID_SUGGEST_TURNDAY_COLUMN in _HYBRID_DIAG_COLUMNS
+    assert _HYBRID_DIAG_COLUMNS.index(_HYBRID_SUGGEST_TURNDAY_COLUMN) == _HYBRID_DIAG_COLUMNS.index("建議 Safety 設定值") + 1
     assert "14日周轉所需量" not in _HYBRID_DIAG_COLUMNS
     raw, _, diagnosis, _, _, _, _ = transform_hybrid(_df(_SCENARIO_A))
-    assert list(diagnosis.columns) == _HYBRID_DIAG_COLUMNS  # 主表 28 欄契約完整（含 RP Type 與銷量帶／銷量存貨分類）
+    assert list(diagnosis.columns) == _HYBRID_DIAG_COLUMNS  # 主表 29 欄契約完整（含 RP Type、建議值 Turnday 與銷量帶／銷量存貨分類）
     display = _hybrid_raw_display_columns(raw)
     assert _HYBRID_SAFETY_LINE_COLUMN in display and _HYBRID_SAFETY_DAYS_COLUMN in display
+    assert _HYBRID_SUGGEST_TURNDAY_COLUMN in display
     assert display.index(_HYBRID_SAFETY_DAYS_COLUMN) < display.index(_HYBRID_SAFETY_LINE_COLUMN)
 
 
@@ -1684,7 +1689,7 @@ def test_missing_rp_type_column_falls_back_to_nature():
     assert stats["dimension"] == "nature"
     assert stats["need_rows"] == 1  # 全部列按 RF 處理，維持舊行為
     assert "RP Type" not in raw.columns  # RAW 不虛構欄位
-    assert "RP Type" not in diagnosis.columns and len(diagnosis.columns) == 27  # 25＋銷量帶／銷量存貨分類（v1.33.0）
+    assert "RP Type" not in diagnosis.columns and len(diagnosis.columns) == 28  # 27＋建議值 Turnday（v1.40.0）
 
 
 # Mix 池整體缺貨（加總 TurnDay < 14）但 M02 有超額——rp 維度允許同 Nature 店間再平衡
@@ -1865,6 +1870,70 @@ def test_min3_floor_not_applied_to_increase_rows():
     assert _get(raw, "T06", "Safety Review") == "Safety 設定不足"
     assert int(_get(raw, "T06", "建議 Safety 設定值")) == 2  # TurnDay 驅動上調照常（目標 1–2 件不合保底）
     assert float(_get(raw, "T06", "Safety 建議調整量")) == 2
+
+
+def test_min3_suggest_turnday_values():
+    """建議 Safety 設定值 Turnday = 建議值 ÷ (P90D 月均 ÷ 30)；非建議列留空。"""
+    raw, _ = _min3_raw_and_stats()
+    # T06：建議 2 件、月均 6.1 → 2 ÷ (6.1/30) = 9.836 → 9.8
+    assert float(_get(raw, "T06", _HYBRID_SUGGEST_TURNDAY_COLUMN)) == 9.8
+    # N06：建議 3 件（保底）、月均 30.5 → 2.951 → 3.0
+    assert float(_get(raw, "N06", _HYBRID_SUGGEST_TURNDAY_COLUMN)) == 3.0
+    # N07：補底後改判設定正常、無建議值 → 留空
+    assert pd.isna(_get(raw, "N07", _HYBRID_SUGGEST_TURNDAY_COLUMN))
+
+
+def test_min3_suggest_turnday_in_diag_tables():
+    """兩張 Review 主表（不限OM／同OM）都帶出建議值 Turnday，數值與 RAW 相同；
+    Excel 主表以 1 位小數格式顯示（不得四捨五入成整數）。"""
+    raw, sc, diag, diag_om, ds, stats, _ = transform_hybrid(_df(_MIN3_ROWS))
+    assert list(diag.columns) == _HYBRID_DIAG_COLUMNS
+    n06 = diag[diag["Site Code"] == "N06"].iloc[0]
+    assert float(n06[_HYBRID_SUGGEST_TURNDAY_COLUMN]) == 3.0
+    n06_om = diag_om[diag_om["Site Code"] == "N06"].iloc[0]
+    assert float(n06_om[_HYBRID_SUGGEST_TURNDAY_COLUMN]) == 3.0
+    td_col = _HYBRID_DIAG_COLUMNS.index(_HYBRID_SUGGEST_TURNDAY_COLUMN) + 1
+    site_col = _HYBRID_DIAG_COLUMNS.index("Site Code") + 1
+    wb = load_workbook(generate_excel_hybrid(raw, sc, diag, diag_om, ds, stats))
+    for sheet in ("調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)"):
+        ws = wb[sheet]
+        for site, expected in (("N06", 3.0), ("T06", 9.8)):
+            excel_row = next(
+                r for r in range(2, ws.max_row + 1)
+                if ws.cell(row=r, column=site_col).value == site
+            )
+            cell = ws.cell(row=excel_row, column=td_col)
+            assert float(cell.value) == expected, (sheet, site, cell.value)
+            assert cell.number_format == "0.0", (sheet, site, cell.number_format)
+
+
+def test_min3_internal_floor_flag_hidden_from_outputs():
+    """`_hybrid_safety_floor3` 屬內部旗標：只在計算層與店舖問題使用，不得寫入 Raw／主表顯示。"""
+    raw, sc, diag, diag_om, ds, stats, _ = transform_hybrid(_df(_MIN3_ROWS))
+    assert "_hybrid_safety_floor3" in raw.columns
+    assert bool(_get(raw, "N06", "_hybrid_safety_floor3")) is True
+    assert bool(_get(raw, "N08", "_hybrid_safety_floor3")) is False
+    assert "_hybrid_safety_floor3" not in _hybrid_raw_display_columns(raw)
+    wb = load_workbook(generate_excel_hybrid(raw, sc, diag, diag_om, ds, stats), read_only=True)
+    raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
+    assert "_hybrid_safety_floor3" not in raw_headers
+
+
+def test_min3_shop_issue_advice_turnday_and_floor_note():
+    """建議方法：所有建議列附建議周轉；受保底影響列（建議 3 > 所需量 ≥ 1）加註保底原因。"""
+    raw, _ = _min3_raw_and_stats()
+    issues = _build_hybrid_shop_issues(raw)
+    n06 = issues[issues["Site Code"] == "N06"].iloc[0]
+    assert "建議周轉約 3 日" in str(n06["建議方法"])
+    assert "為保障自動補貨，最低建議設定為 3 件（SAP MOQ：Safety 1–2 件難以補貨）" in str(n06["建議方法"])
+    # N08 現有 1–2 件不強制上調（建議 1 件＝原所需量）→ 有周轉、無保底句
+    n08 = issues[issues["Site Code"] == "N08"].iloc[0]
+    assert "建議周轉約 1 日" in str(n08["建議方法"])
+    assert "為保障自動補貨" not in str(n08["建議方法"])
+    # T06 不足列照原所需量上調 → 有周轉、無保底句
+    t06 = issues[issues["Site Code"] == "T06"].iloc[0]
+    assert "建議周轉約 9.8 日" in str(t06["建議方法"])
+    assert "為保障自動補貨" not in str(t06["建議方法"])
 
 
 def test_min3_stats_population_matches_masks():
