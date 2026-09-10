@@ -816,6 +816,10 @@ def test_excel_sheets_and_guide_first():
     guide_values = [str(c.value) for row in wb["說明"].iter_rows() for c in row if c.value is not None]
     assert any("模型權重" == v for v in guide_values)
     assert any("模型版本" == v for v in guide_values)
+    # 訂貨路徑字眼：D001 向 Vendor 下單（非「向 D001 下單」）
+    assert any("D001 向 Vendor 下單補貨" in v for v in guide_values)
+    summary_values = [str(c.value) for row in wb["Forecast 摘要"].iter_rows() for c in row if c.value is not None]
+    assert any("Warehouse(D001) 貨向 Vendor 下單（件）" in v for v in summary_values)
 
 
 def test_excel_empty_main():

@@ -1,5 +1,14 @@
 # 版本記錄
 
+## v1.42.1 (2026-09-10)
+
+Forecast Review **訂貨路徑字眼修正**——D001 即 Warehouse 倉庫，Supply Source 寫 Warehouse 是指店舖向 D001 取貨；故 Warehouse 貨的正確落單動作是 **D001 向 Vendor 下單補貨（D001 PO）**，原「Warehouse 貨向 D001 下單」為誤述。只改文字，計算、欄位、欄序、數值零變動：
+
+- **Excel** — 說明表 ② 位置分流條文改為「建議訂貨：Warehouse（D001）貨由 D001 向 Vendor 下單補貨（D001 PO）；Vendor 貨由店舖向 Vendor 下單（Shop PO）」；④ 實用提示同義修訂；Forecast 摘要「其中 D001 PO」指標卡說明改為「Warehouse(D001) 貨向 Vendor 下單（件）」
+- **UI** — Streamlit 摘要「其中 D001 PO」卡說明同步；參數摘要 caption 改為「Warehouse(D001) 貨位置＝…，落單：D001 向 Vendor 下單補貨（D001 PO）；Vendor 貨位置＝…，落單：店舖向供應商下單（Shop PO）」
+- **文件** — 使用說明頁 Forecast 概述、README 功能概述與 Forecast 章節第 6 點同步；契約標籤 `D001 PO`／`Shop PO`（表頭與欄值）維持不變
+- Change: `version.py` → 1.42.1
+
 ## v1.42.0 (2026-09-10)
 
 Forecast Review 新增 **爆升類目標覆蓋月數** 參數——回應採購（Planner）對爆升 SKU 備貨不足的意見（CEN 案例：建議訂量 5,591 → 12,345 件）：爆升類（新起量／加速中／爆升）不再只用 30 日目標覆蓋，改按可調月數預留較長覆蓋；平穩類、其他模式、欄位與欄序零變動：

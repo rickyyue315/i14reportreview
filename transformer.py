@@ -10594,7 +10594,8 @@ def _write_forecast_guide_sheet(ws, stats):
     _bullet("樂觀情境＝max(M-1 折算後, MTD 調整月化) × (1 ＋ 衰減係數 × 趨勢增速)，趨勢增速設上限且不低於標準。"
             "爆升四類（新起量／加速中／爆升）用樂觀情境、其餘平穩用標準情境；分類輸入同為還原＋折算後數值。")
     _bullet("位置分流：Warehouse 貨＝店舖庫存合計＋D001 庫存 (Net)＋D001 PO＋在途；"
-            "Vendor 貨＝店舖庫存合計＋Shop PO 合計＋在途。建議訂貨對象：Warehouse→D001 PO，Vendor→Shop PO。")
+            "Vendor 貨＝店舖庫存合計＋Shop PO 合計＋在途。"
+            "建議訂貨：Warehouse（D001）貨由 D001 向 Vendor 下單補貨（D001 PO）；Vendor 貨由店舖向 Vendor 下單（Shop PO）。")
     _bullet("缺口與上限：目標覆蓋量——平穩類＝ceil(月預估 ÷ 30.5 × 目標覆蓋天數)，爆升類（新起量／加速中／爆升）＝ceil(月預估 × 爆升目標覆蓋月數)；"
             "缺口＝max(0, 目標覆蓋量 − 位置)；上限空間＝max(0, ceil(月預估 × 上限月數) − 位置)；"
             "建議訂量＝min(缺口, 上限空間)；缺口大於上限空間時狀態標「建議訂貨（已封頂）」。全 ND 的 SKU 建議訂量為 0。")
@@ -10623,7 +10624,8 @@ def _write_forecast_guide_sheet(ws, stats):
 
     # ── ④ 實用提示 ──
     _sec("④ 實用提示")
-    _bullet("「FC 建議訂量」為 SKU 級總量；Warehouse 貨向 D001 下單，Vendor 貨向供應商下單（店舖分配由 Buyer 按店舖覆蓋表安排）。")
+    _bullet("「FC 建議訂量」為 SKU 級總量；Warehouse(D001) 貨向 Vendor 下單（替 D001 補貨，D001 PO），"
+            "Vendor 貨由店舖向供應商下單（Shop PO）；店舖分配由 Buyer 按店舖覆蓋表安排。")
     _bullet("月初 MTD 日數少時，MTD 調整月化已按已過日數與月均基準混合，樂觀情境再乘趨勢衰減係數；仍建議對照保守情境欄。")
     _bullet("「建議訂貨（已封頂）」代表需求超過上限月數，訂完仍可能不足，下期複查。")
 
@@ -10764,7 +10766,7 @@ def generate_excel_forecast(
         ("SKU 數", int(st_.get("total_skus", len(main_df))), "本次計算的 SKU 總數", "3B82F6"),
         ("爆升 SKU 數", int(st_.get("surge_skus", 0)), "新起量／加速中／爆升合計", "F59E0B"),
         ("建議總訂量", int(st_.get("total_order", 0)), "全部 SKU 建議訂量合計（件）", "EF4444"),
-        ("其中 D001 PO", int(st_.get("total_order_d001", 0)), "Warehouse 貨向 D001 下單（件）", "8B5CF6"),
+        ("其中 D001 PO", int(st_.get("total_order_d001", 0)), "Warehouse(D001) 貨向 Vendor 下單（件）", "8B5CF6"),
     ]
     row2_metrics = [
         ("其中 Shop PO", int(st_.get("total_order_shop", 0)), "Vendor 貨向供應商下單（件）", "06B6D4"),

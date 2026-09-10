@@ -2162,8 +2162,8 @@ if uploaded_file is not None:
                 f"📐 本次參數：目標覆蓋 **{int(fc_target_days)} 日**｜爆升目標覆蓋 **{float(fc_surge_cover_months):g} 個月**｜上限 **{float(fc_cap_months):g} 個月**｜"
                 f"爆升 **{float(fc_surge_mult):g} 倍**（基數 {int(fc_surge_min_base)} 件）｜加速 **{float(fc_accel_mult):g} 倍**｜"
                 f"衰減 **{float(fc_damp):g}**｜權重 **{float(fc_w_p90d):g}／{float(fc_w_m1):g}／{float(fc_w_mtd):g}**｜趨勢上限 **{float(fc_trend_cap):g} 倍**。"
-                "Warehouse 貨位置＝店存＋D001 Net＋D001 PO＋在途，對象 D001 PO；"
-                "Vendor 貨位置＝店存＋Shop PO＋在途，對象 Shop PO。"
+                "Warehouse(D001) 貨位置＝店存＋D001 Net＋D001 PO＋在途，落單：D001 向 Vendor 下單補貨（D001 PO）；"
+                "Vendor 貨位置＝店存＋Shop PO＋在途，落單：店舖向供應商下單（Shop PO）。"
             )
 
         st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -3338,7 +3338,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #8b5cf6;">
                     <div class="metric-title">其中 D001 PO</div>
                     <div class="metric-value" style="color: #8b5cf6;">{int(stats.get("total_order_d001", 0)):,}</div>
-                    <div class="metric-desc">Warehouse 貨向 D001 下單（件）</div>
+                    <div class="metric-desc">Warehouse(D001) 貨向 Vendor 下單（件）</div>
                 </div>
                 """, unsafe_allow_html=True)
             r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
@@ -3402,7 +3402,7 @@ if uploaded_file is not None:
             tab_main, tab_cov, tab_raw = st.tabs(["📊 Forecast 主表 (SKU 建議訂貨)", "🏪 店舖覆蓋", "RAW 完整明細"])
             with tab_main:
                 st.markdown("#### SKU 級 Forecast 主表（一 SKU 一列）")
-                st.markdown("即為 Excel 導出檔中「Forecast 主表」工作表之即時數據（建議訂量＝min(缺口, 上限空間)；Warehouse 貨對象 D001 PO，Vendor 貨對象 Shop PO）：")
+                st.markdown("即為 Excel 導出檔中「Forecast 主表」工作表之即時數據（建議訂量＝min(缺口, 上限空間)；Warehouse(D001) 貨由 D001 向 Vendor 下單補貨（D001 PO），Vendor 貨由店舖向供應商下單（Shop PO））：")
                 if _main_disp is not None and not _main_disp.empty:
                     st.dataframe(_main_disp, width='stretch', hide_index=True)
                     _scope = "爆升 SKU（新起量／加速中／爆升）" if _surge_only else "全部 SKU"
