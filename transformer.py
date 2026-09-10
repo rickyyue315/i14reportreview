@@ -1105,6 +1105,18 @@ _FC_DAMP_MIN = 0.5
 _FC_DAMP_MAX = 1.0
 _FC_COVERAGE_RISK_DAYS = 7  # 店舖覆蓋缺貨風險線（日），固定
 
+# v2 需求模型（加權混合＋趨勢外推）：三項權重（會自動正規化）與趨勢增速上限
+_FC_WEIGHT_P90D_DEFAULT = 0.4
+_FC_WEIGHT_M1_DEFAULT = 0.3
+_FC_WEIGHT_MTD_DEFAULT = 0.3
+_FC_WEIGHT_MIN = 0.0
+_FC_WEIGHT_MAX = 1.0
+_FC_TREND_CAP_DEFAULT = 1.0
+_FC_TREND_CAP_MIN = 0.2
+_FC_TREND_CAP_MAX = 3.0
+# 開賣日折算的最少有效日數（防開賣首日極端外推；月長上限令 factor 最多約 4.4）
+_FC_LAUNCH_MIN_ACTIVE_DAYS = 7
+
 # 本模式嚴格檢核欄（缺任一即停止；共用必要欄位另由 validate_input 檢核）
 _FORECAST_REQUIRED = [
     "Site Code",
@@ -9405,6 +9417,78 @@ def _fc_rp_series(df: pd.DataFrame, idx, warnings) -> pd.Series:
     return rp.where(rp == "RF", "ND")
 
 
+def _fc_launch_period_factors(
+    df: pd.DataFrame,
+    sku_key: pd.Series,
+    mtd_date,
+    mtd_days,
+    month_total_days,
+    warnings: list[str],
+) -> tuple[dict[str, dict], int]:
+    """v2 開賣日折算：按 SKU 最早 Launch Date 計 M-2／M-1 折算因子與本月有效日數。
+
+    回傳 (facts, prorated_skus)。facts 各 dict 以 SKU 為鍵：
+    factor_m2／factor_m1（≥1，未折算為 1）與 denom_cm（本月有效日數，未折算為 mtd_days）。
+    無 Launch Date 欄、mtd_date 無效或 mtd_days ≤ 0 時全部不折算。
+    """
+    facts: dict[str, dict] = {"factor_m2": {}, "factor_m1": {}, "denom_cm": {}}
+    default_denom = float(mtd_days) if mtd_days and mtd_days > 0 else 0.0
+    try:
+        mtd_ts = pd.Timestamp(mtd_date).normalize() if mtd_date is not None else pd.NaT
+    except (TypeError, ValueError):
+        mtd_ts = pd.NaT
+    if (
+        "Launch Date" not in df.columns
+        or pd.isna(mtd_ts)
+        or mtd_days is None
+        or int(mtd_days) <= 0
+    ):
+        return facts, 0
+
+    cur = mtd_ts
+    cm_start = cur.replace(day=1)
+    prev_end = cm_start - pd.Timedelta(days=1)
+    prev_start = prev_end.replace(day=1)
+    prev2_end = prev_start - pd.Timedelta(days=1)
+    prev2_start = prev2_end.replace(day=1)
+    mtd_days_int = int(mtd_days)
+
+    launch_raw = df["Launch Date"].fillna("").astype(str).str.strip()
+    launch_dt = pd.Series(_parse_launch_dates(launch_raw).values, index=df.index)
+    earliest = launch_dt.groupby(sku_key.values).min()
+
+    def _period_factor(launch, p_start, p_end) -> float:
+        if pd.isna(launch):
+            return 1.0
+        l = pd.Timestamp(launch).normalize()
+        if l < p_start or l > p_end:
+            return 1.0
+        active = int((p_end - l).days) + 1
+        days = int((p_end - p_start).days) + 1
+        return max(1.0, days / max(active, _FC_LAUNCH_MIN_ACTIVE_DAYS))
+
+    def _cm_denom(launch) -> float:
+        if pd.isna(launch):
+            return default_denom
+        l = pd.Timestamp(launch).normalize()
+        if l > cur or l <= cm_start:
+            return default_denom
+        active = min(mtd_days_int, int((cur - l).days) + 1)
+        return float(max(active, _FC_LAUNCH_MIN_ACTIVE_DAYS))
+
+    prorated = 0
+    for sku_val, launch in earliest.items():
+        f_m2 = _period_factor(launch, prev2_start, prev2_end)
+        f_m1 = _period_factor(launch, prev_start, prev_end)
+        d_cm = _cm_denom(launch)
+        facts["factor_m2"][sku_val] = f_m2
+        facts["factor_m1"][sku_val] = f_m1
+        facts["denom_cm"][sku_val] = d_cm
+        if f_m2 != 1.0 or f_m1 != 1.0 or d_cm != default_denom:
+            prorated += 1
+    return facts, prorated
+
+
 def transform_forecast(
     df_input: pd.DataFrame,
     mtd_days: int | None = None,
@@ -9415,18 +9499,26 @@ def transform_forecast(
     surge_min_base: float = _FC_SURGE_MIN_BASE_DEFAULT,
     accel_mult: float = _FC_ACCEL_MULT_DEFAULT,
     damp: float = _FC_DAMP_DEFAULT,
+    w_p90d: float = _FC_WEIGHT_P90D_DEFAULT,
+    w_m1: float = _FC_WEIGHT_M1_DEFAULT,
+    w_mtd: float = _FC_WEIGHT_MTD_DEFAULT,
+    trend_cap: float = _FC_TREND_CAP_DEFAULT,
+    mtd_date=None,
     progress_callback=None,
 ):
     """Forecast Review 核心轉換（SKU 級建議訂貨量；第二維度防缺貨）。
 
-    流程：前處理（重用 validate_input／_clean_dataframe／_add_stock_impact_columns／
-    一致性 warning）→ 逐列月規模訊號（保守／標準／樂觀三情境）→ SKU 級爆升分類
-    （新起量／加速中／爆升／平穩，決定用樂觀或標準情境）→ 缺貨還原（取代式：
-    缺貨列取情境訊號與 MTD 實績孰高）→ 位置（Warehouse／Vendor 分流）→
-    缺口與上限封頂 → SKU 主表＋店舖覆蓋表＋Buyer 彙總＋stats。
+    v2 需求模型（SKU 級聚合後預估）：
+    逐列缺貨還原（M-2／M-1／CM 缺貨列取代式還原至該店月均基準）→ SKU 合計＋
+    開賣日折算（Launch Date 落在期間內按有效日數折算）→ MTD 可信度加權
+    （MTD 月化與月均基準按已過日數混合）→ 標準情境＝三項加權混合
+    （月均基準／M-1／MTD 調整月化）→ 樂觀情境＝趨勢外推（增速上限 trend_cap，
+    再乘衰減係數 damp，且不低於標準）→ SKU 級爆升分類（新起量／加速中／爆升
+    用樂觀、平穩用標準）→ 位置（Warehouse／Vendor 分流）→ 缺口與上限封頂 →
+    SKU 主表＋店舖覆蓋表＋Buyer 彙總＋stats。
 
-    衰減係數 damp 只用於樂觀情境的 MTD 月化（max(mtd_ann × damp, p90d, m1)），
-    樂觀情境不低於標準情境。
+    damp 為趨勢外推的衰減係數（樂觀＝max(S1, MTD 調整月化) × (1 + damp × g)）。
+    MTD 日期無效時 MTD 月化退回 max(M-1, 月均基準) 並列 warning。
 
     回傳 (main_df, coverage_df, buyer_df, raw_df, stats, warnings)。
     stats 另回存全部正規化後參數，供 Excel「說明」表照錄。
@@ -9470,6 +9562,20 @@ def transform_forecast(
     accel_mult = _fc_clamp_number(accel_mult, _FC_ACCEL_MULT_DEFAULT,
                                   _FC_ACCEL_MULT_MIN, _FC_ACCEL_MULT_MAX, warnings, "加速倍數")
     damp = _fc_clamp_number(damp, _FC_DAMP_DEFAULT, _FC_DAMP_MIN, _FC_DAMP_MAX, warnings, "衰減係數")
+    w_p90d = _fc_clamp_number(w_p90d, _FC_WEIGHT_P90D_DEFAULT, _FC_WEIGHT_MIN, _FC_WEIGHT_MAX,
+                              warnings, "月均基準權重")
+    w_m1 = _fc_clamp_number(w_m1, _FC_WEIGHT_M1_DEFAULT, _FC_WEIGHT_MIN, _FC_WEIGHT_MAX,
+                            warnings, "M-1 權重")
+    w_mtd = _fc_clamp_number(w_mtd, _FC_WEIGHT_MTD_DEFAULT, _FC_WEIGHT_MIN, _FC_WEIGHT_MAX,
+                             warnings, "MTD 權重")
+    w_sum = w_p90d + w_m1 + w_mtd
+    if w_sum <= 0:
+        warnings.append("三項模型權重合計為 0，已改用預設 0.4／0.3／0.3。")
+        w_p90d, w_m1, w_mtd = _FC_WEIGHT_P90D_DEFAULT, _FC_WEIGHT_M1_DEFAULT, _FC_WEIGHT_MTD_DEFAULT
+    else:
+        w_p90d, w_m1, w_mtd = w_p90d / w_sum, w_m1 / w_sum, w_mtd / w_sum
+    trend_cap = _fc_clamp_number(trend_cap, _FC_TREND_CAP_DEFAULT, _FC_TREND_CAP_MIN,
+                                 _FC_TREND_CAP_MAX, warnings, "趨勢增速上限")
 
     # ── 銷售／庫存數值（負銷售按 0＋warning；庫存負數／非有限值按 0＋warning）──
     m2 = _safe_numeric(df.get("Sold Qty (M-2)", _safe_default_series(0, idx)))
@@ -9494,33 +9600,9 @@ def transform_forecast(
         p90d_row = (sold_p90d / 90.0 * 30.5).clip(lower=0)
         warnings.append("來源檔案缺少「Shop Monthly Sold Qty (P90D)」，月均基準改以 Sold Qty (P90D) ÷ 90 × 30.5 換算。")
 
-    # ── MTD 月化：mtd_days≤0 或缺 MTD 欄 → 退回 max(M-1, p90d) ──
-    mtd_ok = (
-        mtd_days is not None and month_total_days is not None
-        and mtd_days > 0 and month_total_days > 0
-    )
-    if not mtd_ok:
-        warnings.append("MTD 日期無效（或未提供），MTD 月化改以 max(M-1, 月均基準) 計算。")
-        mtd_ann = np.maximum(m1.to_numpy(dtype=float), p90d_row.to_numpy(dtype=float))
-    else:
-        mtd_ann = mtd.to_numpy(dtype=float) / float(mtd_days) * float(month_total_days)
-    p90d_arr = p90d_row.to_numpy(dtype=float)
-    m1_arr = m1.to_numpy(dtype=float)
-    m2_arr = m2.to_numpy(dtype=float)
-    mtd_arr = mtd.to_numpy(dtype=float)
-
-    # ── 逐列三情境訊號（月規模）──
-    s_cons = p90d_arr
-    s_std = np.maximum(p90d_arr, m1_arr)
-    s_opt = np.maximum.reduce([mtd_ann * damp, p90d_arr, m1_arr])
-    df["FC MTD 月化"] = np.round(mtd_ann, 1)
-    df["FC 保守情境"] = np.round(s_cons, 1)
-    df["FC 標準情境"] = np.round(s_std, 1)
-    df["FC 樂觀情境"] = np.round(s_opt, 1)
-
-    # ── 缺貨還原（重用引擎欄；公式準則與該引擎一致：缺貨期才還原）──
+    # ── v2：缺貨狀態（重用引擎欄；M-2／M-1 缺 stock 欄時不參與還原）──
     if progress_callback:
-        progress_callback(0.35, "計算缺貨還原...")
+        progress_callback(0.3, "逐列缺貨還原中...")
     df = _add_stock_impact_columns(df)
     is_oos_cm = df.get("Is OOS (CM)", _safe_default_series(False, idx))
     if not pd.api.types.is_bool_dtype(is_oos_cm):
@@ -9530,10 +9612,74 @@ def transform_forecast(
     is_rf = (rp == "RF").to_numpy(dtype=bool)
     df["FC 缺貨還原列"] = (oos_cm & is_rf)
     df["FC RP Type (正規)"] = rp.values
+    sku_key = df["SKU"] if "SKU" in df.columns else _safe_default_series(None, idx)
+
+    p90d_arr = p90d_row.to_numpy(dtype=float)
+    m1_arr = m1.to_numpy(dtype=float)
+    m2_arr = m2.to_numpy(dtype=float)
+    mtd_arr = mtd.to_numpy(dtype=float)
+
+    mtd_ok = (
+        mtd_days is not None and month_total_days is not None
+        and mtd_days > 0 and month_total_days > 0
+    )
+    _denom_default = float(mtd_days) if mtd_ok else 0.0
+
+    # ── v2：開賣日折算（Launch Date 落在 M-2／M-1／本月時按有效日數折算）──
+    launch_facts, prorated_skus = _fc_launch_period_factors(
+        df, sku_key, mtd_date, mtd_days, month_total_days, warnings
+    )
+    factor_m2 = sku_key.map(launch_facts["factor_m2"]).fillna(1.0).astype(float)
+    factor_m1 = sku_key.map(launch_facts["factor_m1"]).fillna(1.0).astype(float)
+    denom_cm = sku_key.map(launch_facts["denom_cm"]).fillna(_denom_default).astype(float)
+
+    # ── v2：逐列缺貨還原（取代式；ND 列不還原；還原上限為該列月均基準）──
+    mtd_denom = denom_cm.to_numpy(dtype=float)
+    if not mtd_ok:
+        warnings.append("MTD 日期無效（或未提供），MTD 月化改以 max(M-1, 月均基準) 計算。")
+        mtd_ann_row = np.zeros(len(df))
+        r2_cm = np.zeros(len(df))
+    else:
+        mtd_ann_row = mtd_arr / np.maximum(mtd_denom, 1e-9) * float(month_total_days)
+        r2_cm = np.where(
+            oos_cm & is_rf & (p90d_arr > 0),
+            np.maximum(mtd_ann_row, p90d_arr),
+            mtd_ann_row,
+        )
+    df["FC MTD 月化"] = np.round(mtd_ann_row, 1)
+    m2_stock_col = _resolve_column_name("Shop Stock Qty (M-2)", avail)
+    m1_stock_native = _resolve_column_name("Shop Stock Qty (M-1)", avail)
+    m1_stock_col = m1_stock_native
+    m1_stock_lm_proxy = False
+    if m1_stock_col is None:
+        lm_stock_col = _resolve_column_name("Shop Stock Qty (LM)", avail)
+        if lm_stock_col is not None:
+            m1_stock_col = lm_stock_col
+            m1_stock_lm_proxy = True
+    if m2_stock_col is None:
+        warnings.append("來源檔案缺少「Shop Stock Qty (M-2)」欄，M-2 期缺貨還原略過。")
+    if m1_stock_col is None:
+        warnings.append("來源檔案缺少「Shop Stock Qty (M-1)」欄，M-1 期缺貨還原略過。")
+    elif m1_stock_lm_proxy:
+        warnings.append("來源檔案缺少「Shop Stock Qty (M-1)」欄，M-1 期缺貨還原改用「Shop Stock Qty (LM)」代理。")
+    oos_m2 = df.get("Is OOS (M-2)", _safe_default_series(False, idx)).to_numpy(dtype=bool)
+    if m1_stock_lm_proxy:
+        oos_m1 = _safe_numeric(df[m1_stock_col]).to_numpy(dtype=float) <= 0
+    else:
+        oos_m1 = df.get("Is OOS (M-1)", _safe_default_series(False, idx)).to_numpy(dtype=bool)
+    r2_m2 = m2_arr if m2_stock_col is None else np.where(
+        oos_m2 & is_rf & (p90d_arr > 0), np.maximum(m2_arr, p90d_arr), m2_arr)
+    r2_m1 = m1_arr if m1_stock_col is None else np.where(
+        oos_m1 & is_rf & (p90d_arr > 0), np.maximum(m1_arr, p90d_arr), m1_arr)
+    df["FC M-2 還原值"] = np.round(r2_m2, 1)
+    df["FC M-1 還原值"] = np.round(r2_m1, 1)
+    df["FC MTD 還原月化"] = np.round(r2_cm, 1)
+    restored_rows_m2 = int(np.sum(r2_m2 > m2_arr + 1e-9))
+    restored_rows_m1 = int(np.sum(r2_m1 > m1_arr + 1e-9))
+    restored_rows_cm = int(np.sum(r2_cm > mtd_ann_row + 1e-9))
 
     # ── Supply Source 正規化＋同 SKU 眾數 ──
     supply_raw = _fc_supply_source_series(df, idx, warnings)
-    sku_key = df["SKU"] if "SKU" in df.columns else _safe_default_series(None, idx)
 
     def _mode_or_first(s: pd.Series) -> str:
         vals = [str(v).strip() for v in s.tolist() if str(v).strip() != ""]
@@ -9601,54 +9747,54 @@ def transform_forecast(
         progress_callback(0.5, "SKU 級彙總中...")
     work = pd.DataFrame({
         "_sku": sku_key.values,
+        "_r2_m2": r2_m2,
+        "_r2_m1": r2_m1,
+        "_r2_cm": r2_cm,
         "_m2": m2_arr,
         "_m1": m1_arr,
         "_mtd": mtd_arr,
-        "_mtd_ann": mtd_ann,
         "_sold_p90d": sold_p90d.to_numpy(dtype=float),
-        "_s_cons": s_cons,
-        "_s_std": s_std,
-        "_s_opt": s_opt,
+        "_p90d_m": p90d_arr,
         "_stock": cm_stock.to_numpy(dtype=float),
         "_pending": pending,
         "_d001_po": d001_po,
         "_shop_po": shop_po,
         "_d001_net": d001_net,
         "_is_wh": is_wh_row,
-        "_oos_cm": oos_cm,
         "_is_rf": is_rf,
+        "_f_m2": factor_m2.to_numpy(dtype=float),
+        "_f_m1": factor_m1.to_numpy(dtype=float),
     })
-
     grp = work.groupby("_sku", sort=False)
-    sku_m2 = grp["_m2"].sum()
-    sku_m1 = grp["_m1"].sum()
     sku_mtd = grp["_mtd"].sum()
-    sku_mtd_ann = grp["_mtd_ann"].sum()
     sku_p90d = grp["_sold_p90d"].sum()
-    sku_s_cons = grp["_s_cons"].sum()
-    sku_s_std = grp["_s_std"].sum()
+    B_sku = grp["_p90d_m"].sum()
+    # v2：SKU 聚合後才做情境；M-2／M-1 先按 SKU 折算，CM 月化已在逐列用有效日數處理
+    S2 = grp["_r2_m2"].sum() * grp["_f_m2"].first()
+    S1 = grp["_r2_m1"].sum() * grp["_f_m1"].first()
+    sku_r2_cm = grp["_r2_cm"].sum()
+    if mtd_ok:
+        sku_mtd_ann = sku_r2_cm
+        r_cred = float(mtd_days) / float(month_total_days)
+    else:
+        sku_mtd_ann = pd.concat([S1, B_sku], axis=1).max(axis=1)
+        r_cred = 1.0
+    sku_mtd_adj = r_cred * sku_mtd_ann + (1.0 - r_cred) * B_sku
 
-    # 缺貨還原（取代式）：缺貨列取情境訊號與 MTD 實績孰高，非缺貨列取情境訊號。
-    # 情境選擇先按爆升分類決定（樂觀／標準），此處兩個候選都彙總，分類後再選用。
-    work["_contrib_opt"] = np.where(
-        work["_oos_cm"] & work["_is_rf"],
-        np.maximum(work["_s_opt"], work["_mtd"]),
-        work["_s_opt"],
-    )
-    work["_contrib_std"] = np.where(
-        work["_oos_cm"] & work["_is_rf"],
-        np.maximum(work["_s_std"], work["_mtd"]),
-        work["_s_std"],
-    )
-    sku_opt = grp["_contrib_opt"].sum()
-    sku_std = grp["_contrib_std"].sum()
-
-    # ── 爆升分類 ──
-    m2v = sku_m2.to_numpy(dtype=float)
-    m1v = sku_m1.to_numpy(dtype=float)
+    # ── 情境（SKU 級）：標準＝加權混合；樂觀＝趨勢外推（增速上限＋衰減）──
+    s_std = w_p90d * B_sku + w_m1 * S1 + w_mtd * sku_mtd_adj
+    m2v = S2.to_numpy(dtype=float)
+    m1v = S1.to_numpy(dtype=float)
     mtannv = sku_mtd_ann.to_numpy(dtype=float)
+    stdv = s_std.to_numpy(dtype=float)
+    adjv = sku_mtd_adj.to_numpy(dtype=float)
+    raw_g = np.where(m2v > 0, m1v / np.maximum(m2v, 1e-9) - 1.0, np.where(m1v > 0, trend_cap, 0.0))
+    g = np.clip(raw_g, 0.0, trend_cap)
+    s_opt = np.maximum(np.maximum(m1v, adjv) * (1.0 + damp * g), stdv)
+
+    # ── 爆升分類（輸入改用還原＋折算後的 S2／S1／MTD 月化）──
     base = np.maximum(m2v, surge_min_base)
-    cls = np.full(len(sku_m2), _FC_CLASS_STABLE, dtype=object)
+    cls = np.full(len(S2), _FC_CLASS_STABLE, dtype=object)
     is_new = (m2v + m1v <= surge_min_base) & (np.maximum(m1v, mtannv) > 0)
     is_accel = (~is_new) & (m1v >= accel_mult * m2v) & (mtannv >= accel_mult * m1v) & (m2v > 0)
     is_surge = (~is_new) & (~is_accel) & (
@@ -9659,23 +9805,30 @@ def transform_forecast(
     cls[is_surge] = _FC_CLASS_SURGE
     use_opt = is_new | is_accel | is_surge
 
-    # ── 月預估（採用）：樂觀 SKU 取樂觀還原值，其餘取標準還原值；無條件捨去取整 ──
-    monthly = np.where(use_opt, sku_opt.to_numpy(dtype=float), sku_std.to_numpy(dtype=float))
+    # ── 月預估（採用）：爆升類取樂觀，其餘取標準；無條件捨去取整 ──
+    monthly = np.where(use_opt, s_opt, stdv)
     monthly = np.floor(np.maximum(monthly, 0.0)).astype(int)
 
     main = pd.DataFrame({
-        "SKU": sku_m2.index,
-        "FC M-2 合計": sku_m2.to_numpy(dtype=float),
-        "FC M-1 合計": sku_m1.to_numpy(dtype=float),
+        "SKU": S2.index,
+        "FC M-2 合計": S2.to_numpy(dtype=float),
+        "FC M-1 合計": S1.to_numpy(dtype=float),
         "FC MTD 合計": sku_mtd.to_numpy(dtype=float),
         "FC MTD 月化": np.round(mtannv, 1),
         "FC P90D 合計": sku_p90d.to_numpy(dtype=float),
         "FC 爆升分類": cls,
-        "FC 保守情境": np.floor(sku_s_cons.to_numpy(dtype=float)).astype(int),
-        "FC 標準情境": np.floor(sku_s_std.to_numpy(dtype=float)).astype(int),
-        "FC 樂觀情境": np.floor(sku_opt.to_numpy(dtype=float)).astype(int),
+        "FC 保守情境": np.floor(np.maximum(B_sku.to_numpy(dtype=float), 0.0)).astype(int),
+        "FC 標準情境": np.floor(np.maximum(stdv, 0.0)).astype(int),
+        "FC 樂觀情境": np.floor(np.maximum(s_opt, 0.0)).astype(int),
+        "FC MTD 調整月化": np.round(adjv, 1),
+        "FC 趨勢增速": np.round(g, 2),
     })
     main["FC 月預估 (採用)"] = monthly
+
+    # RAW 三情境欄＝SKU 級數值廣播（v2 情境在 SKU 級計算，逐列供稽核）
+    _scen = main.set_index("SKU")[["FC 保守情境", "FC 標準情境", "FC 樂觀情境"]]
+    for _c in ("FC 保守情境", "FC 標準情境", "FC 樂觀情境"):
+        df[_c] = sku_key.map(_scen[_c]).fillna(0).astype(int)
 
     # ── 識別欄（Brand／Buyer／SKU Desc 取同 SKU 首個非空值；併最早 Launch Date）──
     for col in ("Brand", "Buyer", "SKU Desc"):
@@ -9794,8 +9947,8 @@ def transform_forecast(
 
     # ── 風險店數（SKU 級）：可用日數 ≤7 日店數（RF／ND 皆計）、現已缺貨店數、鋪貨店數 ──
     df["_fc_daily"] = np.where(
-        (mtd_arr > 0) & (mtd_days is not None and mtd_days > 0),
-        mtd_arr / float(mtd_days or 1),
+        (mtd_arr > 0) & (mtd_denom > 0),
+        mtd_arr / np.maximum(mtd_denom, 1e-9),
         np.where(sold_p90d.to_numpy(dtype=float) > 0, sold_p90d.to_numpy(dtype=float) / 30.5, np.nan),
     )
     df["_fc_avail"] = cm_stock.to_numpy(dtype=float) + pending
@@ -9900,6 +10053,23 @@ def transform_forecast(
         "surge_min_base": float(surge_min_base),
         "accel_mult": float(accel_mult),
         "damp": float(damp),
+        "model": "v2",
+        "w_p90d": float(w_p90d),
+        "w_m1": float(w_m1),
+        "w_mtd": float(w_mtd),
+        "trend_cap": float(trend_cap),
+        "mtd_date": (
+            mtd_date.isoformat() if hasattr(mtd_date, "isoformat")
+            else (str(mtd_date) if mtd_date else None)
+        ),
+        "launch_prorated_skus": int(prorated_skus),
+        "restored_rows_m2": int(restored_rows_m2),
+        "restored_rows_m1": int(restored_rows_m1),
+        "restored_rows_cm": int(restored_rows_cm),
+        "m2m1_stock_missing": bool(m2_stock_col is None or m1_stock_native is None),
+        "m2_stock_missing": bool(m2_stock_col is None),
+        "m1_stock_missing": bool(m1_stock_native is None),
+        "m1_lm_proxy": bool(m1_stock_lm_proxy),
         "pending_col": pending_col,
         "d001_net_col": d001_net_col,
         "d001_net_is_stock_fallback": bool(d001_net_is_stock_fallback),
@@ -9926,7 +10096,8 @@ def transform_forecast(
 _FORECAST_MAIN_COLUMNS = [
     "Brand", "SKU", "SKU Desc", "Buyer", "FC Supply Source", "FC RP 概況", "FC 最早 Launch Date",
     "FC M-2 合計", "FC M-1 合計", "FC MTD 合計", "FC MTD 月化", "FC P90D 合計",
-    "FC 爆升分類", "FC 保守情境", "FC 標準情境", "FC 樂觀情境", "FC 月預估 (採用)",
+    "FC 爆升分類", "FC 保守情境", "FC 標準情境", "FC 樂觀情境",
+    "FC MTD 調整月化", "FC 趨勢增速", "FC 月預估 (採用)",
     "FC 店舖庫存合計", "FC D001 庫存 (Net)", "FC D001 PO", "FC Shop PO 合計", "FC 在途合計",
     "FC 位置合計", "FC 目標覆蓋量", "FC 缺口", "FC 上限空間",
     "FC 建議訂量", "FC 建議訂貨對象", "FC SKU 狀態",
@@ -9950,6 +10121,7 @@ _FORECAST_RAW_DISPLAY_GROUPS = [
      "Shop Stock Status"],
     ["Shop Stock Qty (CM)", "Sold Qty (P90D)", "Shop Monthly Sold Qty (P90D)",
      "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
+     "FC M-2 還原值", "FC M-1 還原值", "FC MTD 還原月化",
      "FC MTD 月化", "FC 保守情境", "FC 標準情境", "FC 樂觀情境", "FC 缺貨還原列",
      "FC D001 庫存 (Net)", "FC D001 PO", "FC Shop PO", "FC 在途 (Pending)", "FC 風險旗"],
 ]
@@ -10043,25 +10215,36 @@ def _write_forecast_guide_sheet(ws, stats):
 
     # ── ① 本次執行參數 ──
     _sec("① 本次執行參數（供核對）")
-    _kv("MTD 日期", f'{st_.get("mtd_days", "—")} 日（當月共 {st_.get("month_total_days", "—")} 日；MTD 月化＝MTD ÷ 經過日數 × 當月日數）')
+    _kv("模型版本", "v2（SKU 級聚合：標準＝加權混合、樂觀＝趨勢外推）")
+    _kv("MTD 日期", f'{st_.get("mtd_days", "—")} 日（當月共 {st_.get("month_total_days", "—")} 日；MTD 月化＝MTD ÷ 有效日數 × 當月日數，開賣未滿月按開賣後日數）')
     _kv("目標覆蓋天數", f'{st_.get("target_days", 30):g} 日（目標覆蓋量＝ceil(月預估 ÷ 30.5 × 天數)）')
     _kv("上限月數", f'{st_.get("cap_months", 2.0):g} 個月（上限空間＝ceil(月預估 × 月數) − 位置；建議訂量＝min(缺口, 上限空間)）')
-    _kv("爆升倍數", f'{st_.get("surge_mult", 1.5):g} 倍（max(M-1, MTD 月化) ÷ max(M-2, 新起量基數) 達此倍數判爆升）')
+    _kv("模型權重", f'月均基準 {st_.get("w_p90d", 0.4):g}／M-1 {st_.get("w_m1", 0.3):g}／MTD 調整月化 {st_.get("w_mtd", 0.3):g}（自動正規化；標準情境＝三項加權混合）')
+    _kv("趨勢增速上限", f'{st_.get("trend_cap", 1.0):g} 倍（樂觀情境＝max(M-1 折算後, MTD 調整月化) × (1 ＋ 衰減係數 × 增速)）')
+    _kv("爆升倍數", f'{st_.get("surge_mult", 1.5):g} 倍（max(M-1, MTD 月化) ÷ max(M-2, 新起量基數) 達此倍數判爆升；輸入為還原＋折算後數值）')
     _kv("新起量基數", f'{st_.get("surge_min_base", 10):g} 件（M-2＋M-1 合計不超過此數且近期有量 → 新起量）')
     _kv("加速倍數", f'{st_.get("accel_mult", 1.15):g} 倍（M-1 ≥ 此倍數 × M-2 且 MTD 月化 ≥ 此倍數 × M-1 → 加速中）')
-    _kv("衰減係數", f'{st_.get("damp", 0.8):g}（樂觀情境＝max(MTD 月化 × 係數, 月均基準, M-1)；月初慎用樂觀情境）')
+    _kv("衰減係數", f'{st_.get("damp", 0.8):g}（趨勢外推的衰減；樂觀不低於標準）')
+    _kv("缺貨還原列數", f'M-2 {st_.get("restored_rows_m2", 0):g} 列／M-1 {st_.get("restored_rows_m1", 0):g} 列／CM {st_.get("restored_rows_cm", 0):g} 列（缺貨列還原至該店月均；ND 不還原）'
+        + ("；M-2 期缺 Shop Stock Qty (M-2) 欄不還原" if st_.get("m2_stock_missing") else "")
+        + ("；M-1 期以 Shop Stock Qty (LM) 代理" if st_.get("m1_lm_proxy")
+           else ("；M-1 期缺 Shop Stock Qty (M-1) 欄不還原" if st_.get("m1_stock_missing") else "")))
+    _kv("開賣折算 SKU 數", f'{st_.get("launch_prorated_skus", 0):g} 個（M-2／M-1 按整月折算；本月按開賣後有效日數，最少 7 日）')
     _kv("在途欄", f'{st_.get("pending_col") or "—"}（Warehouse／Vendor 貨皆計入位置）')
     _kv("D001 庫存欄", f'{st_.get("d001_net_col") or "—"}'
         + ("（來源缺 Net 欄，已退用 D001 Stock Qty (CM)）" if st_.get("d001_net_is_stock_fallback") else ""))
 
     # ── ② 核心邏輯 ──
     _sec("② 核心邏輯（這份報告怎樣算出來）")
-    _bullet("情境三選（月規模）：保守＝月均基準（Shop Monthly Sold Qty (P90D)，缺欄時以 P90D ÷ 90 × 30.5 換算）；"
-            "標準＝max(月均基準, M-1)；樂觀＝max(MTD 月化 × 衰減係數, 月均基準, M-1)。保守情境只作參考欄，不用於訂量。")
-    _bullet("爆升四類（SKU 級）：新起量（M-2＋M-1 在基數內且近期有量）／加速中／爆升用樂觀情境；"
-            "其餘平穩用標準情境。")
-    _bullet("缺貨還原（取代式，非疊加）：缺貨列（CM 期庫存 0 且 RF）取情境訊號與 MTD 實績孰高，"
-            "非缺貨列取情境訊號；月預估為各列貢獻值合計後無條件捨去取整。ND 列不參與還原、不參與訂量。")
+    _bullet("逐列缺貨還原（取代式，非疊加）：M-2／M-1／CM 期缺貨（該期店舖庫存 0）且 RF 的列，"
+            "取該期實績與該店月均基準（Shop Monthly Sold Qty (P90D)）孰高；還原上限為該店月均。"
+            "ND 列不還原；來源缺 Shop Stock Qty (M-2) 時該期略過、缺 (M-1) 但有 Shop Stock Qty (LM) 時以 LM 代理，均列 warning。")
+    _bullet("開賣日折算（SKU 級）：最早 Launch Date 落在 M-2／M-1 時，按期內有效日數折算為整月規模"
+            "（最少按 7 日計）；落在本月時 MTD 月化以開賣後有效日數為分母。")
+    _bullet("標準情境（SKU 級聚合後計算）＝月均基準 × 權重 ＋ M-1 折算後 × 權重 ＋ MTD 調整月化 × 權重；"
+            "MTD 調整月化＝按已過日數把 MTD 月化與月均基準混合（月初 MTD 佔比較低）。保守情境＝月均基準（只作參考）。")
+    _bullet("樂觀情境＝max(M-1 折算後, MTD 調整月化) × (1 ＋ 衰減係數 × 趨勢增速)，趨勢增速設上限且不低於標準。"
+            "爆升四類（新起量／加速中／爆升）用樂觀情境、其餘平穩用標準情境；分類輸入同為還原＋折算後數值。")
     _bullet("位置分流：Warehouse 貨＝店舖庫存合計＋D001 庫存 (Net)＋D001 PO＋在途；"
             "Vendor 貨＝店舖庫存合計＋Shop PO 合計＋在途。建議訂貨對象：Warehouse→D001 PO，Vendor→Shop PO。")
     _bullet("缺口與上限：缺口＝max(0, 目標覆蓋量 − 位置)；上限空間＝max(0, ceil(月預估 × 上限月數) − 位置)；"
@@ -10086,13 +10269,13 @@ def _write_forecast_guide_sheet(ws, stats):
     _row3("按 Buyer 彙總", "各 Buyer 的建議訂量合計（分 D001 PO／Shop PO）",
           "採購按人落單；爆升 SKU 數看需求熱度分佈")
     _row3("RAW", "全部店舖×SKU 逐列明細與訊號欄",
-          "留意「FC 缺貨還原列」與三情境欄；SKU 目標欄為同值廣播，供稽核")
+          "留意「FC M-2 還原值」「FC M-1 還原值」「FC MTD 還原月化」；三情境欄為 SKU 級數值同值廣播，供稽核")
     _row3("Forecast 摘要", "指標卡＋按 Buyer 表", "管理層概覽；建議總訂量看 D001 PO／Shop PO 分項")
 
     # ── ④ 實用提示 ──
     _sec("④ 實用提示")
     _bullet("「FC 建議訂量」為 SKU 級總量；Warehouse 貨向 D001 下單，Vendor 貨向供應商下單（店舖分配由 Buyer 按店舖覆蓋表安排）。")
-    _bullet("月初 MTD 日數少時，MTD 月化波動較大，樂觀情境已乘衰減係數緩衝；仍建議對照保守情境欄。")
+    _bullet("月初 MTD 日數少時，MTD 調整月化已按已過日數與月均基準混合，樂觀情境再乘趨勢衰減係數；仍建議對照保守情境欄。")
     _bullet("「建議訂貨（已封頂）」代表需求超過上限月數，訂完仍可能不足，下期複查。")
 
 

@@ -1,11 +1,13 @@
-"""Validation tests for Forecast Review mode (v1.38.0).
+"""Validation tests for Forecast Review mode (v1.39.0, v2 demand model).
 
-SKU 級建議訂貨量（第二維度防缺貨）：三情境訊號、爆升四類、缺貨還原取代式、
-Warehouse／Vendor 位置分流、Pending 別名、缺欄守衛、缺口與上限封頂、
-全 ND 零訂量、店舖覆蓋、Excel 六表。
+SKU 級建議訂貨量（v2 加權混合需求模型）：缺貨還原（M-2／M-1／CM）、開賣日折算、
+MTD 可信度加權、加權標準情境、趨勢外推樂觀情境、SKU 聚合（非逐店 max 相加）、
+爆升四類、位置分流、Pending 別名、缺欄守衛、缺口與上限封頂、全 ND 零訂量、
+店舖覆蓋、Excel 六表。
 """
 import warnings
 warnings.filterwarnings("ignore")
+from datetime import date
 import numpy as np
 import pandas as pd
 import pytest
@@ -13,6 +15,7 @@ from openpyxl import load_workbook
 from transformer import (
     transform_forecast,
     generate_excel_forecast,
+    _forecast_raw_display_columns,
     _FORECAST_MAIN_COLUMNS,
     _FORECAST_COVERAGE_COLUMNS,
     _FORECAST_BUYER_COLUMNS,
@@ -42,6 +45,7 @@ BASE = {
 
 MTD_DAYS = 8
 MONTH_TOTAL = 30
+MTD_DATE = date(2026, 9, 8)  # M-1＝2026-08（31 日）、M-2＝2026-07（31 日）
 
 
 def _row(**kw):
@@ -79,32 +83,39 @@ def test_missing_common_column_stops():
         _run(df)
 
 
-# ── 2. 逐列訊號 ─────────────────────────────────────────────────────────────
-def test_row_signals():
-    # M-2=50, M-1=55, MTD=16 (8日, 月化60), p90d月均=60
-    # 保守=60; 標準=max(60,55)=60; 樂觀=max(60*0.8, 60, 55)=60
+# ── 2. v2 情境（加權混合／MTD 可信度／趨勢外推） ─────────────────────────────
+def test_scenarios_weighted_blend():
+    # B=60, M-1=55, M-2=50, MTD=16（8日→月化60）
+    # MTD 調整月化=8/30×60+22/30×60=60；標準=0.4×60+0.3×55+0.3×60=58.5→58
+    # g=55/50−1=0.1；樂觀=max(60×1.08, 58.5)=64.8→64
     df = _df([{}])
     main, _, _, raw, _, _ = _run(df)
     row = _main_row(main)
     assert row["FC 保守情境"] == 60
-    assert row["FC 標準情境"] == 60
-    assert row["FC 樂觀情境"] == 60
+    assert row["FC 標準情境"] == 58
+    assert row["FC 樂觀情境"] == 64
+    assert row["FC MTD 調整月化"] == pytest.approx(60.0)
+    assert row["FC 趨勢增速"] == pytest.approx(0.1)
     assert raw["FC MTD 月化"].iloc[0] == pytest.approx(60.0)
-    assert raw["FC 保守情境"].iloc[0] == pytest.approx(60.0)
-    assert raw["FC 標準情境"].iloc[0] == pytest.approx(60.0)
-    assert raw["FC 樂觀情境"].iloc[0] == pytest.approx(60.0)
+    # 三情境欄在 RAW 為 SKU 級數值廣播
+    assert raw["FC 保守情境"].iloc[0] == 60
+    assert raw["FC 標準情境"].iloc[0] == 58
+    assert raw["FC 樂觀情境"].iloc[0] == 64
 
 
-def test_optimistic_applies_damp_then_max():
-    # MTD=200 (8日, 月化750), p90d=60, M-1=55 → 樂觀=max(750*0.8, 60, 55)=600
+def test_optimistic_trend_extrapolation():
+    # MTD=200（月化750）→ MTD 調整月化=8/30×750+22/30×60=244
+    # 標準=0.4×60+0.3×55+0.3×244=113.7→113；爆升 → 樂觀=max(244×1.08, 113.7)=263.52→263
     df = _df([{"Sold Qty (CM - MTD)": 200.0}])
-    main, _, _, raw, _, _ = _run(df, damp=0.8)
-    assert _main_row(main)["FC 樂觀情境"] == 600
-    assert raw["FC 樂觀情境"].iloc[0] == pytest.approx(600.0)
+    main, _, _, _, _, _ = _run(df, damp=0.8)
+    row = _main_row(main)
+    assert row["FC 爆升分類"] == _FC_CLASS_SURGE
+    assert row["FC 標準情境"] == 113
+    assert row["FC 樂觀情境"] == 263
+    assert row["FC 月預估 (採用)"] == 263
 
 
 def test_optimistic_never_below_standard():
-    # MTD=0 → 月化0; 樂觀=max(0, 60, 55)=60=標準
     df = _df([{"Sold Qty (CM - MTD)": 0.0}])
     main, _, _, _, _, _ = _run(df, damp=0.5)
     row = _main_row(main)
@@ -114,22 +125,39 @@ def test_optimistic_never_below_standard():
 def test_p90d_monthly_fallback():
     df = _df([{}]).drop(columns=["Shop Monthly Sold Qty (P90D)"])
     main, _, _, _, _, warns = _run(df)
-    # Sold Qty (P90D)=1800 → 1800/90*30.5=610
+    # Sold Qty (P90D)=1800 → 1800/90×30.5=610；保守=610
     assert _main_row(main)["FC 保守情境"] == 610
     assert any("Shop Monthly Sold Qty (P90D)" in w for w in warns)
 
 
 def test_invalid_mtd_falls_back():
     df = _df([{"Sold Qty (CM - MTD)": 200.0}])
-    main, _, _, _, _, warns = _run(df, mtd_days=0, month_total_days=30)
-    assert _main_row(main)["FC 樂觀情境"] == 60  # max(M-1=55, p90d=60)
+    main, _, _, raw, _, warns = _run(df, mtd_days=0, month_total_days=30)
+    row = _main_row(main)
+    # MTD 無效：MTD 月化退回 max(M-1=55, B=60)=60
+    assert row["FC MTD 調整月化"] == pytest.approx(60.0)
+    assert raw["FC MTD 月化"].iloc[0] == pytest.approx(0.0)
+    assert row["FC 月預估 (採用)"] == row["FC 標準情境"]
     assert any("MTD" in w for w in warns)
+
+
+def test_mtd_credibility_increases_with_elapsed_days():
+    # 同一日均銷（10 件／日）：已過日數越多，MTD 調整月化越貼近 MTD 月化 300
+    outs = []
+    for days in (1, 8, 15, 30):
+        main, _, _, _, _, _ = _run(
+            _df([{"Sold Qty (CM - MTD)": 10.0 * days}]), mtd_days=days
+        )
+        outs.append(_main_row(main)["FC MTD 調整月化"])
+    assert outs == pytest.approx([68.0, 124.0, 180.0, 300.0], abs=0.2)
+    assert outs == sorted(outs)
 
 
 def test_negative_sales_clamped_with_warning():
     df = _df([{"Sold Qty (M-1)": -5.0}])
     main, _, _, _, _, warns = _run(df)
-    assert _main_row(main)["FC 標準情境"] == 60  # M-1 按 0 → max(60, 0)
+    # M-1 按 0 → 標準=0.4×60+0.3×0+0.3×60=42
+    assert _main_row(main)["FC 標準情境"] == 42
     assert any("負數" in w for w in warns)
 
 
@@ -140,9 +168,55 @@ def test_negative_stock_clamped_with_warning():
     assert any("Shop Stock Qty (CM)" in w for w in warns)
 
 
-# ── 3. 爆升四類 ─────────────────────────────────────────────────────────────
+# ── 3. SKU 聚合與爆升四類 ────────────────────────────────────────────────────
+def test_sku_aggregate_not_row_max():
+    # 兩店趨勢相反（v1 逐店 max 相加會得 100+100=200；v2 先聚合：標準＝138）
+    df = _df([
+        {"Site Code": "S01", "Shop Monthly Sold Qty (P90D)": 100.0,
+         "Sold Qty (M-2)": 50.0, "Sold Qty (M-1)": 50.0, "Sold Qty (CM - MTD)": 0.0},
+        {"Site Code": "S02", "Item_Shop": "Prod-S02-Shop2",
+         "Shop Monthly Sold Qty (P90D)": 50.0,
+         "Sold Qty (M-2)": 50.0, "Sold Qty (M-1)": 100.0, "Sold Qty (CM - MTD)": 0.0},
+    ])
+    main, _, _, _, _, _ = _run(df)
+    row = _main_row(main)
+    # B=150, S1=150, S2=100；MTD 月化=0 → 調整=22/30×150=110
+    # 標準=0.4×150+0.3×150+0.3×110=138；g=150/100−1=0.5
+    assert row["FC 標準情境"] == 138
+    assert row["FC 標準情境"] != 200
+    assert row["FC M-2 合計"] == pytest.approx(100.0)
+    assert row["FC M-1 合計"] == pytest.approx(150.0)
+    assert row["FC 爆升分類"] == _FC_CLASS_SURGE
+    assert row["FC 趨勢增速"] == pytest.approx(0.5)
+    assert row["FC 月預估 (採用)"] == row["FC 樂觀情境"]
+
+
+def test_trend_growth_zero_when_declining():
+    df = _df([{"Sold Qty (M-2)": 200.0, "Sold Qty (M-1)": 100.0,
+               "Sold Qty (CM - MTD)": 16.0}])
+    main, _, _, _, _, _ = _run(df)
+    row = _main_row(main)
+    assert row["FC 爆升分類"] == _FC_CLASS_STABLE
+    assert row["FC 趨勢增速"] == pytest.approx(0.0)
+    assert row["FC 月預估 (採用)"] == row["FC 標準情境"]
+
+
+def test_trend_growth_cap_applied():
+    df = _df([{"Sold Qty (M-2)": 50.0, "Sold Qty (M-1)": 100.0,
+               "Sold Qty (CM - MTD)": 16.0, "Shop Monthly Sold Qty (P90D)": 60.0}])
+    main, _, _, _, stats, _ = _run(df, trend_cap=0.2)
+    row = _main_row(main)
+    assert row["FC 爆升分類"] == _FC_CLASS_SURGE
+    assert row["FC 趨勢增速"] == pytest.approx(0.2)
+    # MTD 調整=60；標準=72；樂觀=max(max(100,60)×1.16, 72)=116
+    assert row["FC 樂觀情境"] == 116
+    assert stats["trend_cap"] == 0.2
+    # 預設上限 1.0：樂觀=100×1.8=180
+    main2, _, _, _, _, _ = _run(df)
+    assert _main_row(main2)["FC 樂觀情境"] == 180
+
+
 def test_class_new_volume():
-    # M-2=0, M-1=0, MTD=100 → 新起量（用樂觀）
     df = _df([{"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
                "Sold Qty (CM - MTD)": 100.0, "Shop Monthly Sold Qty (P90D)": 10.0}])
     main, _, _, _, _, _ = _run(df)
@@ -152,25 +226,21 @@ def test_class_new_volume():
 
 
 def test_class_accelerating():
-    # M-2=100, M-1=120 (≥1.15×100), MTD月化=140 (≥1.15×120) → 加速中
     df = _df([{"Sold Qty (M-2)": 100.0, "Sold Qty (M-1)": 120.0,
-               "Sold Qty (CM - MTD)": 37.0,  # 37/8*30=138.75
+               "Sold Qty (CM - MTD)": 37.0,  # 37/8×30=138.75
                "Shop Monthly Sold Qty (P90D)": 100.0}])
     main, _, _, _, _, _ = _run(df)
     assert _main_row(main)["FC 爆升分類"] == _FC_CLASS_ACCEL
 
 
 def test_class_surge():
-    # M-2=50, M-1=100, MTD月化=60 → max(100,60)/50=2.0 ≥ 1.5 → 爆升
     df = _df([{"Sold Qty (M-2)": 50.0, "Sold Qty (M-1)": 100.0,
-               "Sold Qty (CM - MTD)": 16.0,
-               "Shop Monthly Sold Qty (P90D)": 60.0}])
+               "Sold Qty (CM - MTD)": 16.0, "Shop Monthly Sold Qty (P90D)": 60.0}])
     main, _, _, _, _, _ = _run(df)
     assert _main_row(main)["FC 爆升分類"] == _FC_CLASS_SURGE
 
 
 def test_surge_boundary_exact():
-    # max(75,60)/50=1.5 恰達門檻 → 爆升；74 則平穩
     kw = {"Sold Qty (M-2)": 50.0, "Sold Qty (CM - MTD)": 16.0,
           "Shop Monthly Sold Qty (P90D)": 60.0}
     m1 = _run(_df([dict(kw, **{"Sold Qty (M-1)": 75.0})]))[0]
@@ -180,11 +250,11 @@ def test_surge_boundary_exact():
 
 
 def test_class_stable_uses_standard():
-    df = _df([{}])  # M-2=50, M-1=55, 月化60 → 平穩
+    df = _df([{}])
     main, _, _, _, _, _ = _run(df)
     row = _main_row(main)
     assert row["FC 爆升分類"] == _FC_CLASS_STABLE
-    assert row["FC 月預估 (採用)"] == row["FC 標準情境"]
+    assert row["FC 月預估 (採用)"] == row["FC 標準情境"] == 58
 
 
 def test_custom_surge_params():
@@ -194,23 +264,22 @@ def test_custom_surge_params():
     assert _main_row(main)["FC 爆升分類"] == _FC_CLASS_SURGE
 
 
-# ── 4. 缺貨還原（取代式） ────────────────────────────────────────────────────
-def test_oos_replacement_picks_mtd_when_higher():
-    # 缺貨列：庫存 0, MTD=76（月化285→樂觀228）, p90d月均=60, M-1=55
-    # M-2=50, M-1=55 → 平穩（max(55,285)/50 雖 ≥1.5……實為爆升，見下）
-    # 此例 MTD 月化 285 令 SKU 判爆升 → 用樂觀還原：max(228, 76)=228
+# ── 4. 缺貨還原（取代式；M-2／M-1／CM） ──────────────────────────────────────
+def test_oos_cm_restored_and_used():
+    # 缺貨列 CM：MTD 月化 285 vs 月均 60 → 還原 285
+    # MTD 調整=8/30×285+22/30×60=120；標準=76.5；爆升 → 樂觀=120×1.08=129.6→129
     df = _df([{"Shop Stock Qty (CM)": 0.0, "Sold Qty (CM - MTD)": 76.0,
-               "Sold Qty (M-2)": 50.0, "Sold Qty (M-1)": 55.0,
                "Shop Monthly Sold Qty (P90D)": 60.0}])
     main, _, _, raw, _, _ = _run(df)
     assert bool(raw["FC 缺貨還原列"].iloc[0]) is True
-    assert _main_row(main)["FC 爆升分類"] == _FC_CLASS_SURGE
-    assert _main_row(main)["FC 月預估 (採用)"] == 228
+    assert raw["FC MTD 還原月化"].iloc[0] == pytest.approx(285.0)
+    row = _main_row(main)
+    assert row["FC 爆升分類"] == _FC_CLASS_SURGE
+    assert row["FC 月預估 (採用)"] == 129
 
 
 def test_oos_std_replacement_picks_mtd_when_higher():
-    # 平穩 SKU 的缺貨列：標準情境訊號 60 vs MTD 實績 76 → 取 76
-    # M-2=200, M-1=55, MTD=76（月化285）→ max(55,285)/200=1.425 <1.5 → 平穩
+    # 平穩 SKU 的缺貨列：還原 285 → 標準=76.5→76
     df = _df([{"Shop Stock Qty (CM)": 0.0, "Sold Qty (CM - MTD)": 76.0,
                "Sold Qty (M-2)": 200.0, "Sold Qty (M-1)": 55.0,
                "Shop Monthly Sold Qty (P90D)": 60.0}])
@@ -220,37 +289,93 @@ def test_oos_std_replacement_picks_mtd_when_higher():
     assert _main_row(main)["FC 月預估 (採用)"] == 76
 
 
-def test_oos_mtd_lower_than_signal_uses_signal():
-    # 缺貨列：MTD=10, p90d=60 → max(60, 10)=60
+def test_oos_cm_mtd_lower_uses_baseline():
+    # 缺貨列：MTD 月化 37.5 vs 月均 60 → 還原 60；標準=58
     df = _df([{"Shop Stock Qty (CM)": 0.0, "Sold Qty (CM - MTD)": 10.0}])
-    main, _, _, _, _, _ = _run(df)
-    assert _main_row(main)["FC 月預估 (採用)"] == 60
+    main, _, _, raw, _, _ = _run(df)
+    assert raw["FC MTD 還原月化"].iloc[0] == pytest.approx(60.0)
+    assert _main_row(main)["FC 月預估 (採用)"] == 58
 
 
-def test_non_oos_row_uses_signal_only():
-    # 非缺貨列：訊號不受 MTD 實績影響。M-2=200, M-1=55, MTD=76 → 平穩，用標準 60
+def test_non_oos_row_not_restored():
     df = _df([{"Shop Stock Qty (CM)": 5.0, "Sold Qty (CM - MTD)": 76.0,
                "Sold Qty (M-2)": 200.0}])
     main, _, _, raw, _, _ = _run(df)
     assert bool(raw["FC 缺貨還原列"].iloc[0]) is False
+    # 非缺貨：MTD 還原月化＝原始月化 285（未被壓低或抬高）
+    assert raw["FC MTD 還原月化"].iloc[0] == pytest.approx(285.0)
     assert _main_row(main)["FC 爆升分類"] == _FC_CLASS_STABLE
-    assert _main_row(main)["FC 月預估 (採用)"] == 60
+    assert _main_row(main)["FC 月預估 (採用)"] == 76
 
 
-def test_oos_nd_row_excluded_from_replacement():
-    # 缺貨但 ND：不還原，取情境訊號；且全 ND → 訂量 0（爆升仍判類，但不用於訂量）
+def test_oos_nd_row_excluded_from_restore():
     df = _df([{"Shop Stock Qty (CM)": 0.0, "Sold Qty (CM - MTD)": 76.0,
                "RP Type": "ND"}])
     main, _, _, raw, _, _ = _run(df)
     assert bool(raw["FC 缺貨還原列"].iloc[0]) is False
-    assert _main_row(main)["FC 月預估 (採用)"] == _main_row(main)["FC 樂觀情境"]
-    assert _main_row(main)["FC 建議訂量"] == 0
-    assert _main_row(main)["FC SKU 狀態"] == _FC_STATUS_ND
+    assert raw["FC MTD 還原月化"].iloc[0] == pytest.approx(285.0)
+    row = _main_row(main)
+    assert row["FC 月預估 (採用)"] == row["FC 樂觀情境"]
+    assert row["FC 建議訂量"] == 0
+    assert row["FC SKU 狀態"] == _FC_STATUS_ND
+
+
+def test_oos_m1_restored_to_baseline():
+    df = _df([{"Shop Stock Qty (M-1)": 0.0, "Shop Stock Qty (M-2)": 5.0,
+               "Sold Qty (M-1)": 10.0,
+               "Shop Monthly Sold Qty (P90D)": 60.0}])
+    main, _, _, raw, stats, _ = _run(df)
+    assert raw["FC M-1 還原值"].iloc[0] == pytest.approx(60.0)
+    assert _main_row(main)["FC M-1 合計"] == pytest.approx(60.0)
+    assert stats["restored_rows_m1"] == 1
+    assert stats["m2m1_stock_missing"] is False
+    assert stats["m1_lm_proxy"] is False
+
+
+def test_oos_m2_restored_to_baseline():
+    df = _df([{"Shop Stock Qty (M-2)": 0.0, "Sold Qty (M-2)": 10.0,
+               "Shop Monthly Sold Qty (P90D)": 60.0}])
+    main, _, _, raw, stats, _ = _run(df)
+    assert raw["FC M-2 還原值"].iloc[0] == pytest.approx(60.0)
+    assert _main_row(main)["FC M-2 合計"] == pytest.approx(60.0)
+    assert stats["restored_rows_m2"] == 1
+
+
+def test_oos_m1_restored_via_lm_proxy():
+    # 來源缺 Shop Stock Qty (M-1)，以 Shop Stock Qty (LM) 代理
+    df = _df([{"Shop Stock Qty (LM)": 0.0, "Sold Qty (M-1)": 10.0,
+               "Shop Monthly Sold Qty (P90D)": 60.0}])
+    main, _, _, raw, stats, warns = _run(df)
+    assert raw["FC M-1 還原值"].iloc[0] == pytest.approx(60.0)
+    assert _main_row(main)["FC M-1 合計"] == pytest.approx(60.0)
+    assert stats["m1_lm_proxy"] is True
+    assert stats["m1_stock_missing"] is True
+    assert stats["restored_rows_m1"] == 1
+    assert any("Shop Stock Qty (LM)" in w for w in warns)
+
+
+def test_missing_stock_columns_skip_restore_with_warning():
+    # BASE 無 Shop Stock Qty (M-2)／(M-1)：即使引擎 Is OOS 全真亦不還原
+    df = _df([{"Sold Qty (M-1)": 10.0}])
+    _, _, _, raw, stats, warns = _run(df)
+    assert raw["FC M-1 還原值"].iloc[0] == pytest.approx(10.0)
+    assert raw["FC M-2 還原值"].iloc[0] == pytest.approx(50.0)
+    assert stats["m2m1_stock_missing"] is True
+    assert stats["restored_rows_m1"] == 0
+    assert any("Shop Stock Qty (M-1)" in w for w in warns)
+    assert any("Shop Stock Qty (M-2)" in w for w in warns)
+
+
+def test_nd_not_restored_m1():
+    df = _df([{"RP Type": "ND", "Shop Stock Qty (M-1)": 0.0,
+               "Sold Qty (M-1)": 10.0}])
+    _, _, _, raw, stats, _ = _run(df)
+    assert raw["FC M-1 還原值"].iloc[0] == pytest.approx(10.0)
+    assert stats["restored_rows_m1"] == 0
 
 
 # ── 5. 位置分流 ─────────────────────────────────────────────────────────────
 def test_warehouse_position():
-    # 店存20 ＋ D001 Net 80 ＋ D001 PO 10 ＋ 在途5 ＝ 115
     df = _df([{}])
     main, _, _, _, _, _ = _run(df)
     row = _main_row(main)
@@ -259,7 +384,6 @@ def test_warehouse_position():
 
 
 def test_vendor_position():
-    # 店存20 ＋ Shop PO 7 ＋ 在途5 ＝ 32（不計 D001）
     df = _df([{"Supply Source": "Vendor",
                "Shop On Order PO Qty (CM)": 7.0,
                "D001 Net Stock Qty (CM)": 80.0,
@@ -281,29 +405,28 @@ def test_pending_missing_warns_zero():
     df = _df([{}]).drop(columns=["Shop Pending Receive (±7 days)"])
     main, _, _, _, stats, warns = _run(df)
     assert stats["pending_col"] is None
-    assert _main_row(main)["FC 位置合計"] == 110  # 20+80+10
+    assert _main_row(main)["FC 位置合計"] == 110
     assert any("Pending Receive" in w for w in warns)
 
 
 def test_d001_po_missing_warns():
     df = _df([{}]).drop(columns=["D001 On Order PO Qty (CM)"])
     main, _, _, _, _, warns = _run(df)
-    assert _main_row(main)["FC 位置合計"] == 105  # 20+80+5
+    assert _main_row(main)["FC 位置合計"] == 105
     assert any("D001 On Order PO" in w for w in warns)
 
 
 def test_d001_first_value_not_summed():
-    # 同 SKU 各列 D001 值相同（實務常態）：取首值，不加總
     df = _df([
         {"Site Code": "S01", "Shop Stock Qty (CM)": 20.0},
         {"Site Code": "S02", "Shop Stock Qty (CM)": 30.0,
          "Item_Shop": "Prod-S02-Shop2"},
     ])
-    main, _, _, _, stats, _ = _run(df)
+    main, _, _, _, _, _ = _run(df)
     row = _main_row(main)
     assert row["FC D001 庫存 (Net)"] == 80
     assert row["FC D001 PO"] == 10
-    assert row["FC 位置合計"] == 50 + 80 + 10 + 10  # 店存50＋Net80＋PO10＋在途10
+    assert row["FC 位置合計"] == 50 + 80 + 10 + 10
 
 
 def test_d001_inconsistent_warns():
@@ -313,7 +436,7 @@ def test_d001_inconsistent_warns():
          "Item_Shop": "Prod-S02-Shop2"},
     ])
     main, _, _, _, _, warns = _run(df)
-    assert _main_row(main)["FC D001 庫存 (Net)"] == 80  # 取首個非空值
+    assert _main_row(main)["FC D001 庫存 (Net)"] == 80
     assert any("D001" in w and "不一致" in w for w in warns)
 
 
@@ -342,45 +465,49 @@ def test_multi_supply_mode_warning():
 
 # ── 6. 缺口與上限 ───────────────────────────────────────────────────────────
 def test_gap_and_cap():
-    # 平穩 SKU: 月預估=60; 目標=ceil(60/30.5*30)=60; 位置=115 → 缺口0 → 倉位足夠, 訂量0
+    # 平穩：月預估 58；目標=ceil(58/30.5×30)=58；位置 115 → 缺口 0 → 倉位足夠
     df = _df([{}])
     main, _, _, _, _, _ = _run(df)
     row = _main_row(main)
-    assert row["FC 目標覆蓋量"] == 60
+    assert row["FC 目標覆蓋量"] == 58
     assert row["FC 缺口"] == 0
     assert row["FC 建議訂量"] == 0
     assert row["FC SKU 狀態"] == _FC_STATUS_ENOUGH
 
 
 def test_order_equals_gap_when_within_cap():
-    # 新起量: 月化285 → 樂觀228; 位置=115; 目標=ceil(228/30.5*30)=225; 缺口=110; 上限=ceil(228*2)-115=341 → 訂110
+    # 新起量：月化 285 → 調整 120；樂觀 120；目標=ceil(120/30.5×30)=119
+    # 位置=20（店存；D001／在途設 0）→ 缺口 99；上限=ceil(240)−20=220 → 訂 99
     df = _df([{"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
-               "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 10.0,
-               "Shop Stock Qty (CM)": 20.0}])
+               "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 60.0,
+               "Shop Stock Qty (CM)": 20.0,
+               "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0,
+               "Shop Pending Receive (±7 days)": 0.0}])
     main, _, _, _, _, _ = _run(df)
     row = _main_row(main)
     assert row["FC 爆升分類"] == _FC_CLASS_NEW
-    assert row["FC 月預估 (採用)"] == 228
-    assert row["FC 缺口"] == 110
-    assert row["FC 建議訂量"] == 110
+    assert row["FC 月預估 (採用)"] == 120
+    assert row["FC 缺口"] == 99
+    assert row["FC 建議訂量"] == 99
     assert row["FC SKU 狀態"] == _FC_STATUS_ORDER
 
 
 def test_cap_binds():
-    # cap_months=0.5: 上限=ceil(228*0.5)-115=114-115<0 → 0 → 訂0, 狀態已封頂（缺口110>上限0）
     df = _df([{"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
-               "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 10.0,
-               "Shop Stock Qty (CM)": 20.0}])
+               "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 60.0,
+               "Shop Stock Qty (CM)": 20.0,
+               "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0,
+               "Shop Pending Receive (±7 days)": 0.0}])
     main, _, _, _, _, _ = _run(df, cap_months=0.5)
     row = _main_row(main)
-    assert row["FC 上限空間"] == 0
-    assert row["FC 建議訂量"] == 0
+    assert row["FC 上限空間"] == 40
+    assert row["FC 建議訂量"] == 40
     assert row["FC SKU 狀態"] == _FC_STATUS_ORDER_CAPPED
 
 
 # ── 7. 店舖覆蓋 ─────────────────────────────────────────────────────────────
 def test_coverage_rows_and_risk_flags():
-    # 建議訂量>0 的 SKU 才有覆蓋列；S02 缺貨(庫存0)→已缺貨；S01 店存20+在途5, 日銷=MTD76/8=9.5 → 2.6日 → ≤7日
+    # S02 缺貨(庫存0)→已缺貨；S01 店存20+在途5, 日銷=76/8=9.5 → 2.6日 → ≤7日
     df = _df([
         {"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
          "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 10.0,
@@ -396,49 +523,48 @@ def test_coverage_rows_and_risk_flags():
     by_site = {r["Site Code"]: r for _, r in cov.iterrows()}
     assert by_site["S02"]["FC 風險旗"] == _FC_RISK_OOS
     assert by_site["S01"]["FC 風險旗"] == _FC_RISK_7D
-    # 排序：已缺貨在前
     assert list(cov["Site Code"]) == ["S02", "S01"]
-    # 主表風險店數=2（兩店可用日數皆 ≤7）
     assert _main_row(main)["FC 缺貨風險店數"] == 2
     assert _main_row(main)["FC 現已缺貨店數"] == 1
     assert _main_row(main)["FC 鋪貨店數"] == 2
 
 
 def test_coverage_target_flag():
-    # 目標30日：可用日數 10日 → ≤目標天數
+    # 目標 30 日：可用日數 8.5 日 → ≤目標天數
     df = _df([{"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
                "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 10.0,
-               "Shop Stock Qty (CM)": 83.0,  # (83+12)/9.5=10.0日
-               "Shop Pending Receive (±7 days)": 12.0}])
-    _, cov, _, _, _, _ = _run(df)
+               "Shop Stock Qty (CM)": 69.0,
+               "Shop Pending Receive (±7 days)": 12.0,
+               "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0}])
+    main, cov, _, _, _, _ = _run(df)
+    assert _main_row(main)["FC 建議訂量"] == 1  # 保證覆蓋表非空
     assert cov["FC 風險旗"].iloc[0] == _FC_RISK_TARGET
 
 
 def test_coverage_daily_fallback_p90d():
-    # 覆蓋表日銷退回公式：MTD=0 的列 → 日銷＝P90D÷30.5
-    # 構造訂量>0：A 店缺貨高 MTD（拉高月預估致缺口），B 店 MTD=0、P90D 高、有小量庫存
+    # MTD=0 的列 → 日銷＝P90D÷30.5
     df = _df([
         {"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
          "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 10.0,
          "Sold Qty (P90D)": 76.0, "Shop Stock Qty (CM)": 0.0,
-         "Shop Pending Receive (±7 days)": 0.0, "Site Code": "S01"},
+         "Shop Pending Receive (±7 days)": 0.0, "Site Code": "S01",
+         "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0},
         {"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
          "Sold Qty (CM - MTD)": 0.0, "Shop Monthly Sold Qty (P90D)": 0.0,
          "Sold Qty (P90D)": 1800.0, "Shop Stock Qty (CM)": 5.0,
          "Shop Pending Receive (±7 days)": 0.0, "Site Code": "S02",
+         "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0,
          "Item_Shop": "Prod-S02-Shop2"},
     ])
     main, cov, _, _, _, _ = _run(df)
     assert _main_row(main)["FC 建議訂量"] > 0
     by_site = {r["Site Code"]: r for _, r in cov.iterrows()}
-    # 覆蓋表店舖日銷取 2 位小數
     assert by_site["S02"]["FC 店舖日銷"] == pytest.approx(round(1800.0 / 30.5, 2), rel=1e-6)
-    # (5+0)/59.02 ≈ 0.08 日 → ≤7日
     assert by_site["S02"]["FC 風險旗"] == _FC_RISK_7D
 
 
 def test_coverage_empty_when_no_order():
-    df = _df([{}])  # 倉位足夠 → 訂量0 → 覆蓋空表
+    df = _df([{}])
     _, cov, _, _, stats, _ = _run(df)
     assert cov.empty
     assert list(cov.columns) == _FORECAST_COVERAGE_COLUMNS
@@ -446,8 +572,6 @@ def test_coverage_empty_when_no_order():
 
 
 def test_coverage_ok_flag():
-    # S01 缺貨高 MTD（拉高月預估致缺口>0）；S02 零 MTD 但 P90D 有量 → 日銷>0；
-    # S02 高庫存 → 可用日數大 → 足夠（S02 店存須計入位置，故月預估須夠大蓋過位置）
     df = _df([
         {"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
          "Sold Qty (CM - MTD)": 760.0, "Shop Monthly Sold Qty (P90D)": 10.0,
@@ -467,7 +591,7 @@ def test_coverage_ok_flag():
     main, cov, _, _, _, _ = _run(df)
     assert _main_row(main)["FC 建議訂量"] > 0
     by_site = {r["Site Code"]: r for _, r in cov.iterrows()}
-    # S02 日銷=300/30.5≈9.84, 可用=(5000)/9.84≈508日 → 足夠
+    # S02 日銷=300/30.5≈9.84, 可用=5000/9.84≈508日 → 足夠
     assert by_site["S02"]["FC 風險旗"] == _FC_RISK_OK
 
 
@@ -476,12 +600,14 @@ def test_buyer_summary():
     df = _df([
         {"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
          "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 10.0,
-         "Shop Stock Qty (CM)": 20.0},
+         "Shop Stock Qty (CM)": 20.0,
+         "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0},
         {"SKU": 2, "Buyer": "B2", "Item_Shop": "P2-S01",
          "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
          "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 10.0,
          "Shop Stock Qty (CM)": 20.0, "Supply Source": "Vendor",
-         "Shop On Order PO Qty (CM)": 3.0},
+         "Shop On Order PO Qty (CM)": 3.0,
+         "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0},
     ])
     main, _, buyer, _, stats, _ = _run(df)
     assert list(buyer.columns) == _FORECAST_BUYER_COLUMNS
@@ -502,33 +628,126 @@ def test_main_sort_and_columns():
     main, _, _, _, _, _ = _run(df)
     assert list(main.columns) == _FORECAST_MAIN_COLUMNS
     assert list(main["SKU"]) == ["1", "2"]
+    assert _FORECAST_MAIN_COLUMNS.index("FC MTD 調整月化") == _FORECAST_MAIN_COLUMNS.index("FC 樂觀情境") + 1
+    assert _FORECAST_MAIN_COLUMNS.index("FC 趨勢增速") == _FORECAST_MAIN_COLUMNS.index("FC MTD 調整月化") + 1
 
 
 def test_stats_params_echo():
     _, _, _, _, stats, _ = _run(_df([{}]), target_days=45, cap_months=3.0,
-                                surge_mult=2.0, surge_min_base=5, accel_mult=1.2, damp=0.9)
+                                surge_mult=2.0, surge_min_base=5, accel_mult=1.2, damp=0.9,
+                                w_p90d=0.5, w_m1=0.25, w_mtd=0.25,
+                                trend_cap=1.5, mtd_date=MTD_DATE)
     assert stats["target_days"] == 45
     assert stats["cap_months"] == 3.0
     assert stats["surge_mult"] == 2.0
     assert stats["surge_min_base"] == 5
     assert stats["accel_mult"] == 1.2
     assert stats["damp"] == 0.9
+    assert stats["model"] == "v2"
+    assert stats["w_p90d"] == pytest.approx(0.5)
+    assert stats["w_m1"] == pytest.approx(0.25)
+    assert stats["w_mtd"] == pytest.approx(0.25)
+    assert stats["trend_cap"] == 1.5
+    assert stats["mtd_date"] == "2026-09-08"
     assert stats["mtd_days"] == MTD_DAYS
+    assert stats["launch_prorated_skus"] == 0
+
+
+def test_stats_v2_fields():
+    _, _, _, _, stats, _ = _run(_df([{}]))
+    assert stats["model"] == "v2"
+    assert stats["w_p90d"] == pytest.approx(0.4)
+    assert stats["w_m1"] == pytest.approx(0.3)
+    assert stats["w_mtd"] == pytest.approx(0.3)
+    assert stats["trend_cap"] == 1.0
+    assert stats["mtd_date"] is None
+    assert stats["restored_rows_m2"] == 0
+    assert stats["restored_rows_m1"] == 0
+    assert stats["restored_rows_cm"] == 0
+    assert stats["m2m1_stock_missing"] is True
+    assert stats["m2_stock_missing"] is True
+    assert stats["m1_stock_missing"] is True
+    assert stats["m1_lm_proxy"] is False
 
 
 def test_param_clamp_warns():
-    _, _, _, _, stats, warns = _run(_df([{}]), target_days=999, damp="bad")
+    _, _, _, _, stats, warns = _run(_df([{}]), target_days=999, damp="bad",
+                                    w_p90d=9, trend_cap=99)
     assert stats["target_days"] == 90
     assert stats["damp"] == 0.8
+    assert stats["trend_cap"] == 3.0
+    # w_p90d 箝制至 1.0，與 0.3／0.3 正規化 → 0.625
+    assert stats["w_p90d"] == pytest.approx(0.625)
     assert len([w for w in warns if "目標覆蓋天數" in w]) == 1
     assert len([w for w in warns if "衰減係數" in w]) == 1
+    assert len([w for w in warns if "月均基準權重" in w]) == 1
+    assert len([w for w in warns if "趨勢增速上限" in w]) == 1
 
 
-# ── 9. Excel 輸出 ───────────────────────────────────────────────────────────
+def test_weight_normalization_and_zero_fallback():
+    _, _, _, _, stats, _ = _run(_df([{}]), w_p90d=0.2, w_m1=0.3, w_mtd=0.5)
+    assert (stats["w_p90d"], stats["w_m1"], stats["w_mtd"]) == pytest.approx((0.2, 0.3, 0.5))
+    _, _, _, _, stats0, warns = _run(_df([{}]), w_p90d=0, w_m1=0, w_mtd=0)
+    assert (stats0["w_p90d"], stats0["w_m1"], stats0["w_mtd"]) == pytest.approx((0.4, 0.3, 0.3))
+    assert any("權重合計為 0" in w for w in warns)
+
+
+# ── 9. 開賣日折算 ───────────────────────────────────────────────────────────
+def test_launch_proration_m1():
+    # 2026-08-20 開賣：M-1（8 月）有效 12 日 → factor=31/12；M-1 120 → 310
+    df = _df([{"Launch Date": "2026-08-20",
+               "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 120.0,
+               "Sold Qty (CM - MTD)": 16.0, "Shop Monthly Sold Qty (P90D)": 60.0}])
+    main, _, _, _, stats, _ = _run(df, mtd_date=MTD_DATE)
+    row = _main_row(main)
+    assert stats["launch_prorated_skus"] == 1
+    assert row["FC M-1 合計"] == pytest.approx(310.0)
+    assert row["FC 爆升分類"] == _FC_CLASS_SURGE
+    assert row["FC 月預估 (採用)"] == row["FC 樂觀情境"]
+
+
+def test_launch_proration_cm_denominator():
+    # 2026-09-05 開賣、MTD 截止 09-08：有效 4 日 → 分母 max(4,7)=7
+    df = _df([{"Launch Date": "2026-09-05",
+               "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
+               "Sold Qty (CM - MTD)": 35.0, "Shop Monthly Sold Qty (P90D)": 10.0}])
+    _, _, _, raw, stats, _ = _run(df, mtd_date=MTD_DATE)
+    assert raw["FC MTD 月化"].iloc[0] == pytest.approx(150.0)  # 35/7×30
+    assert stats["launch_prorated_skus"] == 1
+
+
+def test_launch_proration_min_active_days_7():
+    df = _df([{"Launch Date": "2026-09-07",
+               "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
+               "Sold Qty (CM - MTD)": 14.0, "Shop Monthly Sold Qty (P90D)": 10.0}])
+    _, _, _, raw, _, _ = _run(df, mtd_date=MTD_DATE)
+    assert raw["FC MTD 月化"].iloc[0] == pytest.approx(60.0)  # 14/7×30
+
+
+def test_no_mtd_date_no_proration():
+    df = _df([{"Launch Date": "2026-08-20",
+               "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 120.0,
+               "Sold Qty (CM - MTD)": 16.0, "Shop Monthly Sold Qty (P90D)": 60.0}])
+    main, _, _, _, stats, _ = _run(df)
+    assert stats["launch_prorated_skus"] == 0
+    assert _main_row(main)["FC M-1 合計"] == pytest.approx(120.0)
+
+
+def test_raw_display_columns_include_restored():
+    df = _df([{}])
+    _, _, _, raw, _, _ = _run(df)
+    cols = _forecast_raw_display_columns(raw)
+    for c in ("FC M-2 還原值", "FC M-1 還原值", "FC MTD 還原月化"):
+        assert c in cols
+
+
+# ── 10. Excel 輸出 ──────────────────────────────────────────────────────────
 def test_excel_sheets_and_guide_first():
     df = _df([{"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
                "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 10.0,
-               "Shop Stock Qty (CM)": 20.0}])
+               "Shop Stock Qty (CM)": 20.0,
+               "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0,
+               "Shop Pending Receive (±7 days)": 0.0}])
     main, cov, buyer, raw, stats, _ = _run(df)
     buf = generate_excel_forecast(main, cov, buyer, raw, stats)
     wb = load_workbook(buf)
@@ -537,11 +756,14 @@ def test_excel_sheets_and_guide_first():
     ws = wb["Forecast 主表"]
     headers = [c.value for c in ws[2]]
     assert headers == _FORECAST_MAIN_COLUMNS
-    # 建議訂量欄有醒目底色
     order_idx = _FORECAST_MAIN_COLUMNS.index("FC 建議訂量") + 1
     assert ws.cell(row=3, column=order_idx).fill.start_color.rgb != "00000000"
     ws_cov = wb["店舖覆蓋"]
     assert [c.value for c in ws_cov[2]] == [c for c in _FORECAST_COVERAGE_COLUMNS if c in cov.columns]
+    # 說明表照錄 v2 模型資訊
+    guide_values = [str(c.value) for row in wb["說明"].iter_rows() for c in row if c.value is not None]
+    assert any("模型權重" == v for v in guide_values)
+    assert any("模型版本" == v for v in guide_values)
 
 
 def test_excel_empty_main():

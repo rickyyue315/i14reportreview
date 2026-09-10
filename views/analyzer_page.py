@@ -27,6 +27,9 @@ from transformer import (
     _FC_SURGE_MIN_BASE_DEFAULT, _FC_SURGE_MIN_BASE_MIN, _FC_SURGE_MIN_BASE_MAX,
     _FC_ACCEL_MULT_DEFAULT, _FC_ACCEL_MULT_MIN, _FC_ACCEL_MULT_MAX,
     _FC_DAMP_DEFAULT, _FC_DAMP_MIN, _FC_DAMP_MAX,
+    _FC_WEIGHT_P90D_DEFAULT, _FC_WEIGHT_M1_DEFAULT, _FC_WEIGHT_MTD_DEFAULT,
+    _FC_WEIGHT_MIN, _FC_WEIGHT_MAX,
+    _FC_TREND_CAP_DEFAULT, _FC_TREND_CAP_MIN, _FC_TREND_CAP_MAX,
     _FC_CLASS_NEW, _FC_CLASS_ACCEL, _FC_CLASS_SURGE,
     transform_hybrid, generate_excel_hybrid, _hybrid_dashboard_metrics,
     _hybrid_raw_display_columns, _build_hybrid_transfer_detail,
@@ -2026,11 +2029,14 @@ if uploaded_file is not None:
                 "📅 MTD 日期 (Sold Qty CM-MTD 的截止日期)",
                 value=datetime.now().date() - timedelta(days=1),
                 key="fc_mtd_date",
-                help="MTD 月化＝Sold Qty (CM - MTD) ÷ 經過日數 × 當月日數。預設為昨日，與報表資料基準一致。"
+                help="MTD 月化＝Sold Qty (CM - MTD) ÷ 有效日數 × 當月日數（開賣未滿月按開賣後有效日數）。預設為昨日，與報表資料基準一致。"
             )
             _fc_mtd_days = fc_mtd_date.day
             _fc_month_total_days = calendar.monthrange(fc_mtd_date.year, fc_mtd_date.month)[1]
-            st.caption(f"MTD: {_fc_mtd_days}日，當月共 {_fc_month_total_days} 日。月初 MTD 日數少時 MTD 月化波動較大，樂觀情境已乘衰減係數緩衝。")
+            st.caption(
+                f"MTD: {_fc_mtd_days}日，當月共 {_fc_month_total_days} 日。"
+                "v2 需求模型：MTD 月化按已過日數與月均基準混合（月初 MTD 佔比較低），樂觀情境再乘趨勢衰減係數。"
+            )
             fc_top = st.columns(2)
             with fc_top[0]:
                 fc_target_days = st.number_input(
@@ -2080,7 +2086,7 @@ if uploaded_file is not None:
                     min_value=_FC_DAMP_MIN, max_value=_FC_DAMP_MAX,
                     value=_FC_DAMP_DEFAULT, step=0.05,
                     key="fc_damp",
-                    help="樂觀情境＝max(MTD 月化 × 係數, 月均基準, M-1)，避免直接追逐尖峰。預設 0.8。"
+                    help="樂觀情境＝max(M-1 折算後, MTD 調整月化) × (1 ＋ 係數 × 趨勢增速)，避免直接追逐尖峰。預設 0.8。"
                 )
             with fc_bot[1]:
                 fc_show_surge_only = st.checkbox(
@@ -2089,10 +2095,48 @@ if uploaded_file is not None:
                     key="fc_surge_only",
                     help="只影響主表與店舖覆蓋表的顯示；摘要與按 Buyer 彙總一律按全母體計算。"
                 )
+            with st.expander("⚙️ 進階模型設定 (v2 加權混合)", expanded=False):
+                st.caption(
+                    "v2 需求模型（SKU 級聚合）：標準情境＝三項加權混合；樂觀情境＝趨勢外推（增速上限＋衰減）。"
+                    "三項權重會自動正規化；全為 0 時退回預設。"
+                )
+                _fc_w_cols = st.columns(3)
+                with _fc_w_cols[0]:
+                    fc_w_p90d = st.number_input(
+                        "⚖️ 月均基準權重",
+                        min_value=_FC_WEIGHT_MIN, max_value=_FC_WEIGHT_MAX,
+                        value=_FC_WEIGHT_P90D_DEFAULT, step=0.05,
+                        key="fc_w_p90d",
+                        help="Shop Monthly Sold Qty (P90D) 月均在標準情境的權重。預設 0.4。"
+                    )
+                with _fc_w_cols[1]:
+                    fc_w_m1 = st.number_input(
+                        "⚖️ M-1 權重",
+                        min_value=_FC_WEIGHT_MIN, max_value=_FC_WEIGHT_MAX,
+                        value=_FC_WEIGHT_M1_DEFAULT, step=0.05,
+                        key="fc_w_m1",
+                        help="上月銷售（經缺貨還原與開賣折算）在標準情境的權重。預設 0.3。"
+                    )
+                with _fc_w_cols[2]:
+                    fc_w_mtd = st.number_input(
+                        "⚖️ MTD 調整月化權重",
+                        min_value=_FC_WEIGHT_MIN, max_value=_FC_WEIGHT_MAX,
+                        value=_FC_WEIGHT_MTD_DEFAULT, step=0.05,
+                        key="fc_w_mtd",
+                        help="MTD 月化按已過日數與月均基準混合後，在標準情境的權重。預設 0.3。"
+                    )
+                fc_trend_cap = st.number_input(
+                    "📈 趨勢增速上限 (倍)",
+                    min_value=_FC_TREND_CAP_MIN, max_value=_FC_TREND_CAP_MAX,
+                    value=_FC_TREND_CAP_DEFAULT, step=0.1,
+                    key="fc_trend_cap",
+                    help="樂觀情境的趨勢增速 g＝M-1 ÷ M-2 − 1（只取正增速）上限；預設 1.0 倍（最多翻倍）。"
+                )
             st.caption(
                 f"📐 本次參數：目標覆蓋 **{int(fc_target_days)} 日**｜上限 **{float(fc_cap_months):g} 個月**｜"
                 f"爆升 **{float(fc_surge_mult):g} 倍**（基數 {int(fc_surge_min_base)} 件）｜加速 **{float(fc_accel_mult):g} 倍**｜"
-                f"衰減 **{float(fc_damp):g}**。Warehouse 貨位置＝店存＋D001 Net＋D001 PO＋在途，對象 D001 PO；"
+                f"衰減 **{float(fc_damp):g}**｜權重 **{float(fc_w_p90d):g}／{float(fc_w_m1):g}／{float(fc_w_mtd):g}**｜趨勢上限 **{float(fc_trend_cap):g} 倍**。"
+                "Warehouse 貨位置＝店存＋D001 Net＋D001 PO＋在途，對象 D001 PO；"
                 "Vendor 貨位置＝店存＋Shop PO＋在途，對象 Shop PO。"
             )
 
@@ -2295,6 +2339,11 @@ if uploaded_file is not None:
                         surge_min_base=float(fc_surge_min_base),
                         accel_mult=float(fc_accel_mult),
                         damp=float(fc_damp),
+                        w_p90d=float(fc_w_p90d),
+                        w_m1=float(fc_w_m1),
+                        w_mtd=float(fc_w_mtd),
+                        trend_cap=float(fc_trend_cap),
+                        mtd_date=fc_mtd_date,
                         progress_callback=_cb_transform,
                     )
                     _fc_stats = dict(_fc_stats or {})

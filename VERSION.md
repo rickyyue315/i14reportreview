@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.39.0 (2026-09-10)
+
+Forecast Review 需求模型升級為 **v2（SKU 級加權混合＋趨勢外推）**，提升 SKU 級月需求預估準確度——其餘 11 個模式計算、欄位、欄序零變動；本模式位置／缺口／封頂／狀態／店舖覆蓋／Buyer 彙總規則不變：
+
+- **計算（六項改造）** — ① **SKU 聚合後預估**：情境與爆升分類改以 SKU 聚合後計算，取消 v1「逐店 max 相加」（店舖趨勢相反時的高估來源）；② **加權混合取代 max**：標準情境＝月均基準 × 權重 ＋ M-1 折算後 × 權重 ＋ MTD 調整月化 × 權重（預設 0.4／0.3／0.3，自動正規化）；③ **趨勢外推增速**：樂觀情境＝max(M-1 折算後, MTD 調整月化) × (1 ＋ 衰減係數 × g)，g＝max(0, M-1 ÷ M-2 − 1) 設增速上限（預設 1.0 倍，0.2–3.0），樂觀不低於標準；④ **MTD 可信度加權**：MTD 調整月化＝按已過日數把 MTD 月化與月均基準混合（r＝MTD 日數 ÷ 當月日數），MTD 日期無效時退回 max(M-1, 月均基準) 並列 warning；⑤ **損失基準還原**：M-2／M-1／CM 期缺貨（該期庫存 ≤ 0）且 RF 的列，取該期實績與該店月均孰高（取代式、上限為月均不疊加），ND 列不還原；`Shop Stock Qty (M-2)／(M-1)` 為選填——實檔只有 `Shop Stock Qty (LM)`，M-1 期自動以 LM 代理（來源同時有 (M-1) 欄時優先），M-2 期缺欄則略過，均列 warning（避免引擎缺欄補 0 令 Is OOS 全真）；⑥ **新 SKU 開賣日折算**：最早 Launch Date 落在 M-2／M-1 時按期內有效日數折算整月規模（最少按 7 日計），落在本月時 MTD 月化以開賣後有效日數為分母；爆升分類輸入改用還原＋折算後數值
+- **UI** — 參數區新增「⚙️ 進階模型設定 (v2 加權混合)」收合區：三項權重（0–1 step 0.05）與趨勢增速上限（0.2–3.0 step 0.1）；`fc_damp` 語意改為趨勢衰減係數；MTD caption 與參數摘要 caption 同步 v2 說明；`transform_forecast()` 新增 `w_p90d／w_m1／w_mtd／trend_cap／mtd_date` 關鍵字參數（全部帶預設，舊呼叫零影響）
+- **契約新增** — 主表於「FC 樂觀情境」後新增 `FC MTD 調整月化`、`FC 趨勢增速` 兩欄（`FC M-2 合計`／`FC M-1 合計` 語意改為還原＋折算後月規模、`FC MTD 月化` 改用有效日數，欄名不變）；RAW 顯示欄新增 `FC M-2 還原值`、`FC M-1 還原值`、`FC MTD 還原月化`（三情境欄改為 SKU 級數值廣播，供稽核）；stats 新增 `model`／三權重／`trend_cap`／`mtd_date`／`launch_prorated_skus`／`restored_rows_m2/m1/cm`／`m2m1_stock_missing`／`m2_stock_missing`／`m1_stock_missing`／`m1_lm_proxy`
+- **文件** — Excel 說明表（① 參數照錄加模型版本／權重／趨勢上限／還原列數／開賣折算；② 核心邏輯與 ④ 實用提示改寫 v2）、使用說明頁 Forecast 條目 9 點、README Forecast 章節與輸入檢核／Excel 結構表同步
+- Update: `tests/test_forecast_review.py` 全面更新 v2 斷言並新增（SKU 聚合 vs 逐店 max、權重正規化與退回、MTD 可信度、趨勢上限與樂觀不低於標準、還原與缺 stock 欄守衛、LM 代理、ND 不還原、開賣折算含本月有效日數、契約欄位與 stats）；`tests/test_forecast_cen_file.py` 實檔回歸重跑更新；`tests/_smoke_pipeline.py` 通過
+- Validation: 實檔對照（v1.38.0 → v1.39.0，同一輸入、UI 預設參數）——`By SKUxShop_26Aug2026.xlsx`（548 SKU）建議訂量同為 0 件；`By SKUxShop_CEN_09Sep2026.xlsx`（SKU 111143702001，爆升、D001 PO）建議訂量 3621 → 5591 件（+1970，主因 S2＝0 的新起量趨勢外推取上限 1.0 倍；可用「趨勢增速上限／衰減係數」下調），店舖覆蓋風險旗完全相同。此兩檔缺 `Shop Stock Qty (M-2)／(M-1)`：M-2 期還原未觸發、M-1 期自動以 LM 代理
+
 ## v1.38.0 (2026-09-09)
 
 新增第 12 個分析模式 **Forecast Review（SKU 級建議訂貨量；第二維度防缺貨）**——現有 11 個模式計算、欄位、欄序零變動：

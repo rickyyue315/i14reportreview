@@ -1,8 +1,11 @@
-"""Regression test for Forecast Review on the real CEN surge file (v1.38.0).
+"""Regression test for Forecast Review on the real CEN surge file (v1.39.0, v2 demand model).
 
 來源：By SKUxShop_CEN_09Sep2026.xlsx（SKU 111143702001，MTD=2026-09-08）。
-預期：該 SKU 判「新起量」、SKU 位置合計＝947（店存 426＋D001 Net 1＋D001 PO 0＋在途 520）、
-建議訂貨對象＝D001 PO。檔案不存在時 skip（不阻塞 CI）。
+預期：該 SKU 判「爆升」（M-2=0、M-1=178），SKU 位置合計＝947
+（店存 426＋D001 Net 1＋D001 PO 0＋在途 520）、建議訂貨對象＝D001 PO。
+v2 下 M-2 還原與開賣折算未觸發（實檔缺 Shop Stock Qty (M-2) 欄、亦未傳 MTD 日期），
+爆升分類與位置欄與 v1.38.0 相同；建議訂量因趨勢外推（S2=0 取增速上限）而高於 v1。
+檔案不存在時 skip（不阻塞 CI）。
 """
 import pathlib
 import warnings
