@@ -476,8 +476,8 @@ def test_gap_and_cap():
 
 
 def test_order_equals_gap_when_within_cap():
-    # 新起量：月化 285 → 調整 120；樂觀 120；目標=ceil(120/30.5×30)=119
-    # 位置=20（店存；D001／在途設 0）→ 缺口 99；上限=ceil(240)−20=220 → 訂 99
+    # 新起量（爆升類）：月化 285 → 調整 120；樂觀 120；目標＝ceil(120×2.0)＝240
+    # 位置=20（店存；D001／在途設 0）→ 缺口 220；上限＝ceil(240)−20=220 → 訂 220（未封頂）
     df = _df([{"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
                "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 60.0,
                "Shop Stock Qty (CM)": 20.0,
@@ -487,8 +487,9 @@ def test_order_equals_gap_when_within_cap():
     row = _main_row(main)
     assert row["FC 爆升分類"] == _FC_CLASS_NEW
     assert row["FC 月預估 (採用)"] == 120
-    assert row["FC 缺口"] == 99
-    assert row["FC 建議訂量"] == 99
+    assert row["FC 目標覆蓋量"] == 240
+    assert row["FC 缺口"] == 220
+    assert row["FC 建議訂量"] == 220
     assert row["FC SKU 狀態"] == _FC_STATUS_ORDER
 
 
@@ -503,6 +504,33 @@ def test_cap_binds():
     assert row["FC 上限空間"] == 40
     assert row["FC 建議訂量"] == 40
     assert row["FC SKU 狀態"] == _FC_STATUS_ORDER_CAPPED
+
+
+def test_surge_cover_custom_months():
+    df = _df([{"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
+               "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 60.0,
+               "Shop Stock Qty (CM)": 20.0,
+               "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0,
+               "Shop Pending Receive (±7 days)": 0.0}])
+    main, _, _, _, stats, _ = _run(df, surge_cover_months=1.0)
+    row = _main_row(main)
+    assert stats["surge_cover_months"] == 1.0
+    assert row["FC 目標覆蓋量"] == 120  # ceil(120×1.0)
+    assert row["FC 缺口"] == 100
+    assert row["FC 建議訂量"] == 100
+
+
+def test_surge_cover_clamp_warns():
+    _, _, _, _, stats, warns = _run(_df([{}]), surge_cover_months=99)
+    assert stats["surge_cover_months"] == 6.0
+    assert any("爆升目標覆蓋月數" in w for w in warns)
+
+
+def test_stable_ignores_surge_cover():
+    main, _, _, _, _, _ = _run(_df([{}]), surge_cover_months=3.0)
+    row = _main_row(main)
+    assert row["FC 爆升分類"] == _FC_CLASS_STABLE
+    assert row["FC 目標覆蓋量"] == 58  # ceil(58÷30.5×30) 不變
 
 
 # ── 7. 店舖覆蓋 ─────────────────────────────────────────────────────────────
@@ -530,15 +558,37 @@ def test_coverage_rows_and_risk_flags():
 
 
 def test_coverage_target_flag():
-    # 目標 30 日：可用日數 8.5 日 → ≤目標天數
+    # 爆升類（新起量）門檻 61 日：可用日數 8.5 日 → ≤目標天數
     df = _df([{"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
                "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 10.0,
                "Shop Stock Qty (CM)": 69.0,
                "Shop Pending Receive (±7 days)": 12.0,
                "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0}])
     main, cov, _, _, _, _ = _run(df)
-    assert _main_row(main)["FC 建議訂量"] == 1  # 保證覆蓋表非空
+    assert _main_row(main)["FC 建議訂量"] == 85  # 保證覆蓋表非空
     assert cov["FC 風險旗"].iloc[0] == _FC_RISK_TARGET
+
+
+def test_coverage_target_flag_uses_surge_cover():
+    # 爆升類門檻＝2 個月（61 日）：S02 可用 31.6 日仍標「≤目標天數」（若為平穩類 30 日則會視為足夠）
+    df = _df([
+        {"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
+         "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 10.0,
+         "Shop Stock Qty (CM)": 0.0, "Site Code": "S01",
+         "Shop Pending Receive (±7 days)": 0.0,
+         "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0},
+        {"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
+         "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 10.0,
+         "Shop Stock Qty (CM)": 300.0, "Site Code": "S02",
+         "Shop Pending Receive (±7 days)": 0.0,
+         "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0,
+         "Item_Shop": "Prod-S02-Shop2"},
+    ])
+    main, cov, _, _, _, _ = _run(df)
+    assert _main_row(main)["FC 建議訂量"] > 0
+    by_site = {r["Site Code"]: r for _, r in cov.iterrows()}
+    assert by_site["S02"]["FC 可用日數"] == pytest.approx(31.6, abs=0.1)
+    assert by_site["S02"]["FC 風險旗"] == _FC_RISK_TARGET
 
 
 def test_coverage_daily_fallback_p90d():
@@ -582,7 +632,7 @@ def test_coverage_ok_flag():
         {"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
          "Sold Qty (CM - MTD)": 0.0, "Shop Monthly Sold Qty (P90D)": 0.0,
          "Sold Qty (P90D)": 300.0,
-         "Shop Stock Qty (CM)": 500.0, "Site Code": "S02",
+         "Shop Stock Qty (CM)": 700.0, "Site Code": "S02",
          "Shop Pending Receive (±7 days)": 0.0,
          "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0,
          "D001 Stock Qty (CM)": 0.0,
@@ -591,7 +641,7 @@ def test_coverage_ok_flag():
     main, cov, _, _, _, _ = _run(df)
     assert _main_row(main)["FC 建議訂量"] > 0
     by_site = {r["Site Code"]: r for _, r in cov.iterrows()}
-    # S02 日銷=300/30.5≈9.84, 可用=5000/9.84≈508日 → 足夠
+    # S02 日銷=300/30.5≈9.84, 可用=700/9.84≈71.2 日 > 爆升類門檻 61 日 → 足夠
     assert by_site["S02"]["FC 風險旗"] == _FC_RISK_OK
 
 
@@ -636,7 +686,7 @@ def test_stats_params_echo():
     _, _, _, _, stats, _ = _run(_df([{}]), target_days=45, cap_months=3.0,
                                 surge_mult=2.0, surge_min_base=5, accel_mult=1.2, damp=0.9,
                                 w_p90d=0.5, w_m1=0.25, w_mtd=0.25,
-                                trend_cap=1.5, mtd_date=MTD_DATE)
+                                trend_cap=1.5, surge_cover_months=1.25, mtd_date=MTD_DATE)
     assert stats["target_days"] == 45
     assert stats["cap_months"] == 3.0
     assert stats["surge_mult"] == 2.0
@@ -648,6 +698,7 @@ def test_stats_params_echo():
     assert stats["w_m1"] == pytest.approx(0.25)
     assert stats["w_mtd"] == pytest.approx(0.25)
     assert stats["trend_cap"] == 1.5
+    assert stats["surge_cover_months"] == 1.25
     assert stats["mtd_date"] == "2026-09-08"
     assert stats["mtd_days"] == MTD_DAYS
     assert stats["launch_prorated_skus"] == 0
@@ -660,6 +711,7 @@ def test_stats_v2_fields():
     assert stats["w_m1"] == pytest.approx(0.3)
     assert stats["w_mtd"] == pytest.approx(0.3)
     assert stats["trend_cap"] == 1.0
+    assert stats["surge_cover_months"] == 2.0
     assert stats["mtd_date"] is None
     assert stats["restored_rows_m2"] == 0
     assert stats["restored_rows_m1"] == 0

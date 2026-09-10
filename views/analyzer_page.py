@@ -30,6 +30,7 @@ from transformer import (
     _FC_WEIGHT_P90D_DEFAULT, _FC_WEIGHT_M1_DEFAULT, _FC_WEIGHT_MTD_DEFAULT,
     _FC_WEIGHT_MIN, _FC_WEIGHT_MAX,
     _FC_TREND_CAP_DEFAULT, _FC_TREND_CAP_MIN, _FC_TREND_CAP_MAX,
+    _FC_SURGE_COVER_DEFAULT, _FC_SURGE_COVER_MIN, _FC_SURGE_COVER_MAX,
     _FC_CLASS_NEW, _FC_CLASS_ACCEL, _FC_CLASS_SURGE,
     transform_hybrid, generate_excel_hybrid, _hybrid_dashboard_metrics,
     _hybrid_raw_display_columns, _build_hybrid_transfer_detail,
@@ -2053,14 +2054,14 @@ if uploaded_file is not None:
                 f"MTD: {_fc_mtd_days}日，當月共 {_fc_month_total_days} 日。"
                 "v2 需求模型：MTD 月化按已過日數與月均基準混合（月初 MTD 佔比較低），樂觀情境再乘趨勢衰減係數。"
             )
-            fc_top = st.columns(2)
+            fc_top = st.columns(3)
             with fc_top[0]:
                 fc_target_days = st.number_input(
                     "🎯 目標覆蓋天數 (日)",
                     min_value=_FC_TARGET_DAYS_MIN, max_value=_FC_TARGET_DAYS_MAX,
                     value=_FC_TARGET_DAYS_DEFAULT, step=1,
                     key="fc_target_days",
-                    help="目標覆蓋量＝ceil(月預估 ÷ 30.5 × 天數)。預設 30 日。"
+                    help="平穩類目標覆蓋量＝ceil(月預估 ÷ 30.5 × 天數)。預設 30 日。"
                 )
             with fc_top[1]:
                 fc_cap_months = st.number_input(
@@ -2069,6 +2070,15 @@ if uploaded_file is not None:
                     value=_FC_CAP_MONTHS_DEFAULT, step=0.5,
                     key="fc_cap_months",
                     help="上限空間＝ceil(月預估 × 月數) − 位置；建議訂量＝min(缺口, 上限空間)。防止嚴重 Overstock 的封頂。預設 2.0 個月。"
+                )
+            with fc_top[2]:
+                fc_surge_cover_months = st.number_input(
+                    "🔥 爆升目標覆蓋月數 (個月)",
+                    min_value=_FC_SURGE_COVER_MIN, max_value=_FC_SURGE_COVER_MAX,
+                    value=_FC_SURGE_COVER_DEFAULT, step=0.25,
+                    key="fc_surge_cover_months",
+                    help="新起量／加速中／爆升的目標覆蓋量＝ceil(月預估 × 月數)；平穩類沿用目標覆蓋天數。"
+                         "預設 2.0 個月（熱銷 SKU 預留較長覆蓋，仍受上限月數封頂）。"
                 )
             fc_mid = st.columns(3)
             with fc_mid[0]:
@@ -2149,7 +2159,7 @@ if uploaded_file is not None:
                     help="樂觀情境的趨勢增速 g＝M-1 ÷ M-2 − 1（只取正增速）上限；預設 1.0 倍（最多翻倍）。"
                 )
             st.caption(
-                f"📐 本次參數：目標覆蓋 **{int(fc_target_days)} 日**｜上限 **{float(fc_cap_months):g} 個月**｜"
+                f"📐 本次參數：目標覆蓋 **{int(fc_target_days)} 日**｜爆升目標覆蓋 **{float(fc_surge_cover_months):g} 個月**｜上限 **{float(fc_cap_months):g} 個月**｜"
                 f"爆升 **{float(fc_surge_mult):g} 倍**（基數 {int(fc_surge_min_base)} 件）｜加速 **{float(fc_accel_mult):g} 倍**｜"
                 f"衰減 **{float(fc_damp):g}**｜權重 **{float(fc_w_p90d):g}／{float(fc_w_m1):g}／{float(fc_w_mtd):g}**｜趨勢上限 **{float(fc_trend_cap):g} 倍**。"
                 "Warehouse 貨位置＝店存＋D001 Net＋D001 PO＋在途，對象 D001 PO；"
@@ -2359,6 +2369,7 @@ if uploaded_file is not None:
                         w_m1=float(fc_w_m1),
                         w_mtd=float(fc_w_mtd),
                         trend_cap=float(fc_trend_cap),
+                        surge_cover_months=float(fc_surge_cover_months),
                         mtd_date=fc_mtd_date,
                         progress_callback=_cb_transform,
                     )

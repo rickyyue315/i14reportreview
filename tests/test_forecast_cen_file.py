@@ -1,10 +1,11 @@
-"""Regression test for Forecast Review on the real CEN surge file (v1.39.0, v2 demand model).
+"""Regression test for Forecast Review on the real CEN surge file (v1.42.0, v2 demand model).
 
 來源：By SKUxShop_CEN_09Sep2026.xlsx（SKU 111143702001，MTD=2026-09-08）。
 預期：該 SKU 判「爆升」（M-2=0、M-1=178），SKU 位置合計＝947
 （店存 426＋D001 Net 1＋D001 PO 0＋在途 520）、建議訂貨對象＝D001 PO。
-v2 下 M-2 還原與開賣折算未觸發（實檔缺 Shop Stock Qty (M-2) 欄、亦未傳 MTD 日期），
-爆升分類與位置欄與 v1.38.0 相同；建議訂量因趨勢外推（S2=0 取增速上限）而高於 v1。
+月預估 6,646；爆升目標覆蓋月數 2.0 → 目標覆蓋量 13,292、建議訂量 12,345
+（≥ Planner 要求的 12,000）。v2 下 M-2 還原與開賣折算未觸發
+（實檔缺 Shop Stock Qty (M-2) 欄、亦未傳 MTD 日期），爆升分類與位置欄與 v1.38.0 相同。
 檔案不存在時 skip（不阻塞 CI）。
 """
 import pathlib
@@ -48,8 +49,8 @@ def test_cen_surge_sku_class_position_target():
     assert row["FC 在途合計"] == 520
     assert row["FC 位置合計"] == 947  # 426＋1＋0＋520
     assert row["FC 建議訂貨對象"] == "D001 PO"
-    assert row["FC 建議訂量"] > 0  # 倉端斷供，必有訂量
-    assert row["FC 建議訂量"] == row["FC 缺口"]  # 上限不應綁住（月預估×2 遠大於缺口）
+    assert row["FC 建議訂量"] >= 12000  # 爆升目標覆蓋 2 個月：12,345 件
+    assert row["FC 建議訂量"] == row["FC 缺口"]  # 上限不應綁住（= 目標 13,292 − 位置 947）
     # 缺貨還原：約三成店列為 CM 缺貨還原列
     assert int(raw["FC 缺貨還原列"].sum()) >= 25
     # 店舖覆蓋：有訂量 → 非空，且含已缺貨列

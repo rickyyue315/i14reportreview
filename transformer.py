@@ -1130,6 +1130,12 @@ _FC_TREND_CAP_MAX = 3.0
 # 開賣日折算的最少有效日數（防開賣首日極端外推；月長上限令 factor 最多約 4.4）
 _FC_LAUNCH_MIN_ACTIVE_DAYS = 7
 
+# 爆升類（新起量／加速中／爆升）目標覆蓋月數：熱銷 SKU 預留較長覆蓋，
+# 目標覆蓋量＝ceil(月預估 × 月數)；平穩類沿用目標覆蓋天數；訂量仍受上限月數封頂。
+_FC_SURGE_COVER_DEFAULT = 2.0
+_FC_SURGE_COVER_MIN = 0.5
+_FC_SURGE_COVER_MAX = 6.0
+
 # 本模式嚴格檢核欄（缺任一即停止；共用必要欄位另由 validate_input 檢核）
 _FORECAST_REQUIRED = [
     "Site Code",
@@ -9830,6 +9836,7 @@ def transform_forecast(
     w_m1: float = _FC_WEIGHT_M1_DEFAULT,
     w_mtd: float = _FC_WEIGHT_MTD_DEFAULT,
     trend_cap: float = _FC_TREND_CAP_DEFAULT,
+    surge_cover_months: float = _FC_SURGE_COVER_DEFAULT,
     mtd_date=None,
     progress_callback=None,
 ):
@@ -9841,9 +9848,11 @@ def transform_forecast(
     （MTD 月化與月均基準按已過日數混合）→ 標準情境＝三項加權混合
     （月均基準／M-1／MTD 調整月化）→ 樂觀情境＝趨勢外推（增速上限 trend_cap，
     再乘衰減係數 damp，且不低於標準）→ SKU 級爆升分類（新起量／加速中／爆升
-    用樂觀、平穩用標準）→ 位置（Warehouse／Vendor 分流）→ 缺口與上限封頂 →
-    SKU 主表＋店舖覆蓋表＋Buyer 彙總＋stats。
+    用樂觀、平穩用標準）→ 位置（Warehouse／Vendor 分流）→ 目標覆蓋與上限封頂
+    → SKU 主表＋店舖覆蓋表＋Buyer 彙總＋stats。
 
+    目標覆蓋：平穩類＝ceil(月預估 ÷ 30.5 × target_days)；爆升類（新起量／加速中／
+    爆升）＝ceil(月預估 × surge_cover_months)，仍受上限月數 cap_months 封頂。
     damp 為趨勢外推的衰減係數（樂觀＝max(S1, MTD 調整月化) × (1 + damp × g)）。
     MTD 日期無效時 MTD 月化退回 max(M-1, 月均基準) 並列 warning。
 
@@ -9903,6 +9912,9 @@ def transform_forecast(
         w_p90d, w_m1, w_mtd = w_p90d / w_sum, w_m1 / w_sum, w_mtd / w_sum
     trend_cap = _fc_clamp_number(trend_cap, _FC_TREND_CAP_DEFAULT, _FC_TREND_CAP_MIN,
                                  _FC_TREND_CAP_MAX, warnings, "趨勢增速上限")
+    surge_cover_months = _fc_clamp_number(surge_cover_months, _FC_SURGE_COVER_DEFAULT,
+                                          _FC_SURGE_COVER_MIN, _FC_SURGE_COVER_MAX,
+                                          warnings, "爆升目標覆蓋月數")
 
     # ── 銷售／庫存數值（負銷售按 0＋warning；庫存負數／非有限值按 0＋warning）──
     m2 = _safe_numeric(df.get("Sold Qty (M-2)", _safe_default_series(0, idx)))
@@ -10252,7 +10264,9 @@ def transform_forecast(
     # ── 目標／缺口／上限／建議訂量 ──
     monthly_f = main["FC 月預估 (採用)"].to_numpy(dtype=float)
     pos_f = main["FC 位置合計"].to_numpy(dtype=float)
-    target = np.ceil(monthly_f / 30.5 * target_days).astype(int)
+    # 目標覆蓋：平穩類按目標覆蓋天數；爆升類（新起量／加速中／爆升）按爆升目標覆蓋月數
+    cover_days = np.where(use_opt, surge_cover_months * 30.5, float(target_days))
+    target = np.ceil(monthly_f / 30.5 * cover_days).astype(int)
     gap = np.maximum(0, target - pos_f).astype(int)
     cap_room = np.maximum(0, np.ceil(monthly_f * cap_months) - pos_f).astype(int)
     order = np.minimum(gap, cap_room)
@@ -10280,6 +10294,10 @@ def transform_forecast(
     )
     df["_fc_avail"] = cm_stock.to_numpy(dtype=float) + pending
     df["_fc_days"] = df["_fc_avail"] / df["_fc_daily"]
+    # 覆蓋風險旗的「目標天數」：爆升類用爆升目標覆蓋月數換算（每 SKU 廣播）
+    df["_fc_cover_days"] = (
+        sku_key.map(pd.Series(cover_days, index=S2.index)).fillna(float(target_days))
+    )
     risk_flag = pd.Series("", index=df.index, dtype=object)
     risk_flag[(cm_stock.to_numpy(dtype=float) <= 0)] = _FC_RISK_OOS
     mask_7 = (risk_flag == "") & df["_fc_days"].notna() & (df["_fc_days"] <= _FC_COVERAGE_RISK_DAYS)
@@ -10334,10 +10352,11 @@ def transform_forecast(
             "FC 可用日數": np.round(cov["_fc_days"].to_numpy(dtype=float), 1),
             "FC 風險旗": cov["FC 風險旗"].values,
         })
-        # 風險旗第二層：≤目標天數（僅尚未標旗且有日數者）
+        # 風險旗第二層：≤目標天數（僅尚未標旗且有日數者；目標天數按 SKU 類別）
         _days = coverage["FC 可用日數"].to_numpy(dtype=float)
         _blank = coverage["FC 風險旗"].to_numpy() == ""
-        _le_target = _blank & np.isfinite(_days) & (_days <= target_days)
+        _cover_days = cov["_fc_cover_days"].to_numpy(dtype=float)
+        _le_target = _blank & np.isfinite(_days) & (_days <= _cover_days)
         coverage.loc[_le_target, "FC 風險旗"] = _FC_RISK_TARGET
         coverage.loc[coverage["FC 風險旗"] == "", "FC 風險旗"] = _FC_RISK_OK
         _risk_order = {_FC_RISK_OOS: 0, _FC_RISK_7D: 1, _FC_RISK_TARGET: 2, _FC_RISK_OK: 3}
@@ -10385,6 +10404,7 @@ def transform_forecast(
         "w_m1": float(w_m1),
         "w_mtd": float(w_mtd),
         "trend_cap": float(trend_cap),
+        "surge_cover_months": float(surge_cover_months),
         "mtd_date": (
             mtd_date.isoformat() if hasattr(mtd_date, "isoformat")
             else (str(mtd_date) if mtd_date else None)
@@ -10544,7 +10564,8 @@ def _write_forecast_guide_sheet(ws, stats):
     _sec("① 本次執行參數（供核對）")
     _kv("模型版本", "v2（SKU 級聚合：標準＝加權混合、樂觀＝趨勢外推）")
     _kv("MTD 日期", f'{st_.get("mtd_days", "—")} 日（當月共 {st_.get("month_total_days", "—")} 日；MTD 月化＝MTD ÷ 有效日數 × 當月日數，開賣未滿月按開賣後日數）')
-    _kv("目標覆蓋天數", f'{st_.get("target_days", 30):g} 日（目標覆蓋量＝ceil(月預估 ÷ 30.5 × 天數)）')
+    _kv("目標覆蓋天數", f'{st_.get("target_days", 30):g} 日（平穩類目標覆蓋量＝ceil(月預估 ÷ 30.5 × 天數)）')
+    _kv("爆升目標覆蓋月數", f'{st_.get("surge_cover_months", 2.0):g} 個月（新起量／加速中／爆升：目標覆蓋量＝ceil(月預估 × 月數)，仍受上限月數封頂）')
     _kv("上限月數", f'{st_.get("cap_months", 2.0):g} 個月（上限空間＝ceil(月預估 × 月數) − 位置；建議訂量＝min(缺口, 上限空間)）')
     _kv("模型權重", f'月均基準 {st_.get("w_p90d", 0.4):g}／M-1 {st_.get("w_m1", 0.3):g}／MTD 調整月化 {st_.get("w_mtd", 0.3):g}（自動正規化；標準情境＝三項加權混合）')
     _kv("趨勢增速上限", f'{st_.get("trend_cap", 1.0):g} 倍（樂觀情境＝max(M-1 折算後, MTD 調整月化) × (1 ＋ 衰減係數 × 增速)）')
@@ -10574,10 +10595,11 @@ def _write_forecast_guide_sheet(ws, stats):
             "爆升四類（新起量／加速中／爆升）用樂觀情境、其餘平穩用標準情境；分類輸入同為還原＋折算後數值。")
     _bullet("位置分流：Warehouse 貨＝店舖庫存合計＋D001 庫存 (Net)＋D001 PO＋在途；"
             "Vendor 貨＝店舖庫存合計＋Shop PO 合計＋在途。建議訂貨對象：Warehouse→D001 PO，Vendor→Shop PO。")
-    _bullet("缺口與上限：缺口＝max(0, 目標覆蓋量 − 位置)；上限空間＝max(0, ceil(月預估 × 上限月數) − 位置)；"
+    _bullet("缺口與上限：目標覆蓋量——平穩類＝ceil(月預估 ÷ 30.5 × 目標覆蓋天數)，爆升類（新起量／加速中／爆升）＝ceil(月預估 × 爆升目標覆蓋月數)；"
+            "缺口＝max(0, 目標覆蓋量 − 位置)；上限空間＝max(0, ceil(月預估 × 上限月數) − 位置)；"
             "建議訂量＝min(缺口, 上限空間)；缺口大於上限空間時狀態標「建議訂貨（已封頂）」。全 ND 的 SKU 建議訂量為 0。")
     _bullet("店舖覆蓋：店舖日銷＝MTD ÷ MTD 日數（無 MTD 銷售時退回 P90D ÷ 30.5）；"
-            "可用日數＝(店舖庫存＋該店在途) ÷ 店舖日銷；風險旗：已缺貨（庫存 0）／≤7日／≤目標天數／足夠。")
+            "可用日數＝(店舖庫存＋該店在途) ÷ 店舖日銷；風險旗：已缺貨（庫存 0）／≤7日／≤目標天數（平穩類用目標覆蓋天數、爆升類用爆升目標覆蓋月數）／足夠。")
 
     # ── ③ 工作表導讀 ──
     _sec("③ 工作表導讀（先看哪一頁、應留意什麼）")
