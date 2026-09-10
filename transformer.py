@@ -1780,10 +1780,13 @@ def generate_excel_combined(
     progress_callback=None,
     dimension: str = "nature",
     om_groups=None,
+    stats: dict | None = None,
 ) -> BytesIO:
     """Safety Stock Review 輸出。dimension／om_groups 決定 SUMMARY 區塊 ③
     「Safety Qty Change 分類 × 分類維度交叉表」的分組（只影響顯示，不影響任何建議計算）；
-    om_groups 缺省時由 raw 即時推導。"""
+    om_groups 缺省時由 raw 即時推導。stats 只供首頁「說明」導讀表照錄本次執行參數
+    （缺失時顯示預設值），不參與任何計算。輸出 7 工作表：說明（首頁導讀）＋
+    RAW／Shop Stock Status／By Shop／店舖問題 SKU／SUMMARY／Safety Stock 數據分析摘要。"""
     wb = Workbook()
 
     if progress_callback:
@@ -1805,9 +1808,13 @@ def generate_excel_combined(
     bold_font = Font(bold=True, size=11)
     desc_font = Font(size=9, color="6B7280", italic=True)
 
+    # ── Sheet 0: 說明（邏輯、本次執行參數與導讀；置於工作簿首位）──
+    ws_guide = wb.active
+    ws_guide.title = "說明"
+    _write_combined_guide_sheet(ws_guide, stats, _dim)
+
     # ── Sheet 1: RAW ──
-    ws_raw = wb.active
-    ws_raw.title = "RAW"
+    ws_raw = wb.create_sheet(title="RAW")
 
     _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.15, columns=COMBINED_RAW_COLS)
 
@@ -8546,6 +8553,245 @@ def _write_hybrid_guide_sheet(ws, stats):
     _bullet("「可轉出未使用」＝該列有 14 日超額庫存但本次未被取用，可留作後備來源。")
 
 
+def _write_guide_sheet(ws, *, title, subtitle, params, logic, sheet_rows, tips):
+    """通用「說明」導讀表 writer：版面與 _write_hybrid_guide_sheet 相同。
+    params: [(標籤, 內容)]；logic: [段落]；sheet_rows: [(工作表, 內容, 建議留意)]；tips: [段落]。"""
+    def _dw(text):
+        # 顯示寬度估算（全形字元約 2、半形約 1），供換行高度估算
+        return sum(2 if ord(ch) > 0x2E7F else 1 for ch in str(text))
+
+    ws.column_dimensions["A"].width = 26
+    ws.column_dimensions["B"].width = 56
+    ws.column_dimensions["C"].width = 66
+    title_font = Font(size=15, bold=True, color="1A1A2E")
+    sub_font = Font(size=9, color="6B7280", italic=True)
+    section_fill = PatternFill("solid", start_color="0077A3")
+    section_font = Font(size=11, bold=True, color="FFFFFF")
+    head_fill = PatternFill("solid", start_color="E4EEF5")
+    label_font = Font(size=10, bold=True)
+    body_font = Font(size=10)
+    wrap = Alignment(vertical="top", wrap_text=True)
+    r = 1
+
+    def _merged(text, font, height=None, fill=None):
+        nonlocal r
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=3)
+        c = ws.cell(row=r, column=1, value=text)
+        c.font = font
+        c.alignment = Alignment(vertical="center", wrap_text=True)
+        if fill:
+            c.fill = fill
+        ws.row_dimensions[r].height = height or 18
+        r += 1
+
+    def _sec(text):
+        _merged(text, section_font, height=20, fill=section_fill)
+
+    def _kv(label, value):
+        nonlocal r
+        ws.cell(row=r, column=1, value=label).font = label_font
+        ws.cell(row=r, column=1).alignment = wrap
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
+        c = ws.cell(row=r, column=2, value=value)
+        c.font = body_font
+        c.alignment = wrap
+        lines = max(1, -(-_dw(value) // 110))
+        ws.row_dimensions[r].height = 14 * lines + 6
+        r += 1
+
+    def _bullet(text):
+        _kv("•", text)
+
+    def _row3(a, b, c):
+        nonlocal r
+        for col, val, f in ((1, a, label_font), (2, b, body_font), (3, c, body_font)):
+            cell = ws.cell(row=r, column=col, value=val)
+            cell.font = f
+            cell.alignment = wrap
+        lines = max(1, -(-_dw(a) // 25), -(-_dw(b) // 54), -(-_dw(c) // 64))
+        ws.row_dimensions[r].height = 14 * lines + 6
+        r += 1
+
+    _merged(title, title_font, height=26)
+    _merged(subtitle, sub_font, height=16)
+
+    _sec("① 本次執行參數（供核對）")
+    for label, value in params:
+        _kv(label, value)
+
+    _sec("② 核心邏輯（這份報告怎樣算出來）")
+    for text in logic:
+        _bullet(text)
+
+    _sec("③ 工作表導讀（先看哪一頁、應留意什麼）")
+    for col, val in ((1, "工作表"), (2, "內容"), (3, "建議留意")):
+        c = ws.cell(row=r, column=col, value=val)
+        c.font = label_font
+        c.fill = head_fill
+        c.alignment = Alignment(vertical="center")
+    ws.row_dimensions[r].height = 16
+    r += 1
+    for row in sheet_rows:
+        _row3(*row)
+
+    _sec("④ 實用提示")
+    for text in tips:
+        _bullet(text)
+
+
+def _write_combined_guide_sheet(ws, stats, dimension):
+    """Safety Stock Review「說明」工作表（工作簿首位）：列出本次執行參數、
+    講解 Review 邏輯，並逐頁導讀各工作表應留意的部分。"""
+    st_ = stats or {}
+    dim = _hybrid_dimension(dimension)
+    _os = st_.get("rates_overstock") or {}
+    _oos = st_.get("rates_oos") or {}
+    os_t = int(round(float(_os.get("tourist", 0.30)) * 100))
+    os_m = int(round(float(_os.get("mix", 0.40)) * 100))
+    os_n = int(round(float(_os.get("default", 0.50)) * 100))
+    oos_t = int(round(float(_oos.get("tourist", 0.50)) * 100))
+    oos_m = int(round(float(_oos.get("mix", 0.50)) * 100))
+    oos_n = int(round(float(_oos.get("default", 0.50)) * 100))
+    mode_txt = ("可加可減（允許減少並套用退場建議）" if st_.get("safety_mode") == "allow_both"
+                else "只可增加（Safety 只增不減，ND／P90D 0 Sales 退場建議不套用）")
+
+    params = [
+        ("分類維度",
+         f"{_HYBRID_DIMENSION_LABELS[dim]}（只影響 SUMMARY 區塊 ③ 的分組，不影響 Safety 建議計算）"),
+        ("Safety Qty 計算模式", mode_txt),
+        ("Overstock Rate",
+         f"Tourist {os_t}%／Mix {os_m}%／Non Tourist {os_n}%（庫存上限 X = floor(月均銷售 × Rate)，上限不超過現有 Safety）"),
+        ("OOS Rate",
+         f"Tourist {oos_t}%／Mix {oos_m}%／Non Tourist {oos_n}%（缺貨底線 Y = ceil(月銷預估 × Rate)，最低 3 件）"),
+        ("MTD 日期",
+         f'MTD {st_.get("mtd_days", "—")} 日（當月共 {st_.get("month_total_days", "—")} 日；'
+         "月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均，月初以 P90D 為主）"),
+        ("參考日期（New SKU 保護）",
+         f'{st_.get("ref_date", st_.get("mtd_date", "—"))}（Launch Date 起 90 天內視為新品，預設 MTD 日期）'),
+        ("銷量分類門檻",
+         f'缺貨線 {st_.get("sales_oos_days", _HYBRID_SALES_OOS_DAYS_DEFAULT)} 日／'
+         f'積壓線 {st_.get("sales_overstock_days", _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT)} 日／'
+         f'保底 {st_.get("sales_overstock_min_units", _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT)} 件'
+         "（銷量帶與銷量存貨分類恆按此計算）"),
+    ]
+
+    logic = [
+        "Overstock Cap (X) = floor(月均銷售 × Overstock Rate)，上限不超過現有 Safety 設定"
+        "（Safety Stock (現時)，即來源檔案的 Adj. Safety Stock）。",
+        "OOS Floor (Y) = ceil(月銷預估 × OOS Rate)，最低 3 件；月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均"
+        "（月初以 P90D 為主，月尾收斂至 MTD；P90D 缺值時退回純 MTD 線性外推）。",
+        "建議 Safety Stock = max(Y, Z if Z ≤ X else X)（Z = 現有 Safety 設定）；"
+        "Safety Qty Change = 建議值 − Z（正=增加、負=減少、零=不變）。",
+        "Recommend Safety Stock Turnday = 建議值 ÷ (P90D 月均 ÷ 30)（月均 0 留空；"
+        "與來源「Turnday (P90D Qty)」同一準則）。",
+        "「只可增加」模式全表只增不減（ND／P90D 0 Sales 的歸零與 ND 退場建議不套用）；"
+        "「可加可減」模式套用退場建議：ND 列 → 0；P90D 0 Sales 舊品 → ND"
+        "（並依 Adj. MCH1／Adj. SST 加註 ND 類別）。",
+        "New SKU 保護：Launch Date 距參考日期 90 天內的列排除「P90D 0 Sales → Safety=0/ND」override，"
+        "改走正常 X／Y 計算並標記 New SKU (3 Month)。",
+        "銷量帶（常開顯示欄）：同 SKU 內按 Sold Qty (P90D) 的店舖平均排名分帶——排名 > 75%＝高銷、"
+        "≤ 25%＝低銷、其餘＝中銷、P90D ≤ 0＝零銷；並列同值同帶；有銷售店舖少於 4 間時不設高銷／低銷。",
+        "銷量存貨分類（常開顯示欄）：高銷且店舖周轉日數 < 缺貨線 → 高銷缺貨；低銷且周轉 ≥ 積壓線且"
+        "庫存 ≥ 保底件數 → 低銷積壓；零銷且庫存 ≥ 保底件數 → 零銷積壓；其餘 → 正常（門檻見上方 ①）；"
+        "兩欄與 Safety 建議計算互相獨立。",
+        "建議值受「OOS 底線最低 3 件」保底影響時（最終建議值 = 3 件且未套保底前 < 3），"
+        "店舖問題 SKU 的建議方法加註保底原因；建議方法亦附「建議周轉約 X 日」。",
+    ]
+
+    sheet_rows = [
+        ("說明（本頁）", "Review 邏輯、本次參數與導讀", "執行任何行動前，先核對上方 ① 的參數是否符合預期"),
+        ("RAW", "全部店舖×SKU 逐列明細與判定欄",
+         "留意「Shop Stock Status」「Safety Qty Change」「Recommend Safety Stock Turnday」「銷量帶」「銷量存貨分類」；"
+         "「只可增加」模式不會出現「減少」"),
+        ("Shop Stock Status", "採購人員×品牌之庫存異常交叉統計", "各 Buyer／品牌的分類分佈概覽"),
+        ("By Shop", "各店舖層級彙總", "留意「安全庫存調整總量」與需增／需減 SKU 數較多的店舖"),
+        ("店舖問題 SKU", "每間店舖需行動列（問題＋建議方法）",
+         "店務同事可先從這一頁著手；含 Safety 需增加／減少、ND 退場建議與調入缺口跟進；建議方法附建議周轉日數"),
+        ("SUMMARY", "① Safety Qty Change 分類 ／ ② ND 建議分類 ／ ③ 分類維度交叉表",
+         "看調整方向與總量；③ 的分組按上方分類維度切換"),
+        ("Safety Stock 數據分析摘要", "指標卡總覽", "留意 Overstock／OOS／調整行數與調整總量"),
+    ]
+
+    tips = [
+        "「Safety Qty Change」正數＝建議增加、負數＝建議減少、零＝不變；「只可增加」模式下不會出現負數。",
+        "「只可增加」模式下 Overstock Rate 不產生壓縮效果；要壓縮庫存請選「可加可減」。",
+        "建議值最低 3 件為保障自動補貨的保底；受影響的店舖問題列會加註原因。",
+        "分類維度只改變 SUMMARY 區塊 ③ 的分組顯示，不影響任何 Safety 建議計算。",
+    ]
+
+    _write_guide_sheet(
+        ws, title="Safety Stock Review 說明與導讀",
+        subtitle="本頁講解此報告的 Review 邏輯與本次執行參數，並逐頁說明應留意的部分；各項判定以 RAW 逐列欄位為準。",
+        params=params, logic=logic, sheet_rows=sheet_rows, tips=tips,
+    )
+
+
+def _write_stock_checking_guide_sheet(ws, stats):
+    """Stock Checking「說明」工作表（工作簿首位）：列出本次執行參數、
+    講解調貨邏輯，並逐頁導讀各工作表應留意的部分。"""
+    st_ = stats or {}
+    dim = _hybrid_dimension(st_.get("dimension"))
+    td = int(st_.get("turnday_threshold", 14))
+    d001 = int(st_.get("d001_threshold", 100))
+
+    params = [
+        ("分類維度", f"{_HYBRID_DIMENSION_LABELS[dim]}（只影響 Summary 分組，不影響調貨計算）"),
+        ("調貨門檻", f"{td} 日（SKU 級 Nature 池加總 TurnDay）"),
+        ("D001 庫存門檻", f"{d001} 件（D001 Net Stock Qty (CM) 低於此值才標示需要調貨）"),
+        ("調貨方向", "固定單向——只向遊客區（Tourist）調入，Mix／Non Tourist 為來源"),
+        ("銷量分類門檻",
+         f'缺貨線 {st_.get("sales_oos_days", _HYBRID_SALES_OOS_DAYS_DEFAULT)} 日／'
+         f'積壓線 {st_.get("sales_overstock_days", _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT)} 日／'
+         f'保底 {st_.get("sales_overstock_min_units", _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT)} 件'
+         "（銷量帶與銷量存貨分類恆按此計算）"),
+    ]
+
+    logic = [
+        f"觸發條件（SKU 級，同時符合才標示）：該 SKU 的「Tourist 加總 TurnDay」"
+        f"（各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5）< {td} 日，"
+        f"且 D001 Net Stock Qty (CM) < {d001} 件，且 Mix／Non Tourist 至少一個 Nature 的加總 TurnDay ≥ {td} 日（有貨可調）。",
+        "調入需求量 = ceil(P90D ÷ 90 × 14) − Shop Stock Qty (CM)（補到 14 日周轉）；"
+        "只為已標示 SKU 且個別 Tourist 店需求 > 0 的列計算。",
+        "可轉出貨量（來源店）= max(0, Shop Stock Qty (CM) − P90D ÷ 90 × 14)；「無銷售但有存貨」全數可釋放；"
+        "RF 與 ND 店皆可作來源；該 Nature 的 SKU 級加總 TurnDay < 門檻時視為無貨可調（可轉出量歸零）。",
+        "分配：按 SKU 彙總需求，Non Tourist 店優先轉出、不足由 Mix 店補足；需求量大→小依序分配；"
+        "來源店與需求店同為一店（Site Code 相同）一律排除，防止自我調貨。",
+        "分類維度只改 Summary 分組與顯示欄，調貨觸發、分配與數量一律按 Shop Nature 準則計算；"
+        "銷量帶與銷量存貨分類（準則見上方 ①）恆附於 RAW 與店舖問題 SKU。",
+        "存貨偏重提示：某分組庫存佔比 ≥ 門檻且（庫存佔比 − 銷量佔比）≥ 差距門檻 → 以醒目橘底標示；"
+        "門檻按分類維度切換（nature／rp／both 40%／20 個百分點、om 25%／12、sales 30%／15、"
+        "nature_om／sales_nature 12%／8）。",
+    ]
+
+    sheet_rows = [
+        ("說明（本頁）", "調貨邏輯、本次參數與導讀", "執行任何行動前，先核對上方 ① 的參數是否符合預期"),
+        ("Summary", "SKU 級庫存／銷量分組（按分類維度）",
+         "留意「存貨偏重提示」（橘底）——哪些分組存貨偏重而銷量不高；TurnDay = 加總庫存 ÷ 加總月銷 × 30.5"),
+        ("RAW", "全部店舖×SKU 逐列明細與判定欄",
+         "留意「需要調貨」「調入需求量 (補到14日)」「實際調入量」「調入缺口」「轉出量」"
+         "「調貨來源 (Site Code)」「銷量帶」「銷量存貨分類」"),
+        ("店舖問題 SKU", "每間店舖需行動列（問題＋建議方法）",
+         "店務同事可先從這一頁著手；含需要調入／可轉出供應與缺口跟進"
+         "（Warehouse＋D001 有貨由 D001 補貨、D001 無貨寫 D001缺貨、Vendor 貨向供應商追貨）"),
+        ("調貨分析摘要", "指標卡＋Buyer 需調貨 SKU 統計",
+         "管理層概覽；需要調貨列數／SKU 數、調入需求量、缺口"),
+    ]
+
+    tips = [
+        "本模式調貨方向固定單向（只向 Tourist 店舖調入）；「允許雙向調貨」只適用於 Safety Stock x NetStock Review。",
+        "「需要調貨」為 SKU 級判定：Tourist 加總 TurnDay 達標時，個別 Tourist 店缺貨不會標示。",
+        "來源店與需求店同一店舖（Site Code 相同）時一律排除，避免自我調貨。",
+        "Summary 橘底＝觸發存貨偏重提示的分組；分類維度只改變分組顯示，不影響調貨計算。",
+        "缺口代表無足夠可轉出貨量；跟進方法見「店舖問題 SKU」的建議方法。",
+    ]
+
+    _write_guide_sheet(
+        ws, title="Stock Checking 說明與導讀",
+        subtitle="本頁講解此報告的調貨邏輯與本次執行參數，並逐頁說明應留意的部分；各項判定以 Summary 與 RAW 逐列欄位為準。",
+        params=params, logic=logic, sheet_rows=sheet_rows, tips=tips,
+    )
+
+
 def generate_excel_hybrid(
     raw: pd.DataFrame,
     sc_summary: pd.DataFrame | None = None,
@@ -11440,7 +11686,8 @@ def generate_excel_stock_checking(
     stats: dict | None = None,
     progress_callback=None,
 ) -> BytesIO:
-    """Stock Checking 輸出：Summary（SKU 級彙總，按 stats["dimension"] 分類維度分組，
+    """Stock Checking 輸出 5 工作表：說明（首頁導讀：本次執行參數＋核心邏輯＋工作表導讀＋實用提示，
+    開啟 Excel 時預設顯示本頁）+ Summary（SKU 級彙總，按 stats["dimension"] 分類維度分組，
     偏重提示以醒目橘底加強顯示）+ RAW（重排欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄）
     + 店舖問題 SKU（每間店舖需行動列；空表寫「無符合資料」）+ 調貨分析摘要（Dashboard）。"""
     wb = Workbook()
@@ -11452,8 +11699,12 @@ def generate_excel_stock_checking(
     if summary is None:
         summary = _build_stock_checking_summary(raw, dimension=_dim, om_groups=_om_groups)
 
-    ws_summary = wb.active
-    ws_summary.title = "Summary"
+    # ── Sheet 0: 說明（邏輯、本次執行參數與導讀；置於工作簿首位）──
+    ws_guide = wb.active
+    ws_guide.title = "說明"
+    _write_stock_checking_guide_sheet(ws_guide, stats)
+
+    ws_summary = wb.create_sheet(title="Summary")
     _write_stock_checking_summary_sheet(ws_summary, summary, progress_callback, highlight_skew=True,
                                         dimension=_dim, om_groups=_om_groups)
 

@@ -108,7 +108,7 @@ def test_sc_excel_contains_shop_issue_sheet():
     raw, summary, stats, _ = transform_stock_checking(df)
     buf = generate_excel_stock_checking(raw, summary, stats)
     wb = load_workbook(buf, read_only=True)
-    assert wb.sheetnames == ["Summary", "RAW", "店舖問題 SKU", "調貨分析摘要"]
+    assert wb.sheetnames == ["說明", "Summary", "RAW", "店舖問題 SKU", "調貨分析摘要"]
     headers = [c.value for c in next(wb["店舖問題 SKU"].iter_rows(min_row=3, max_row=3))]
     assert headers[:11] == list(_STOCK_CHECKING_SHOP_ISSUE_COLUMNS[:11])
     wb2 = load_workbook(buf)
@@ -169,7 +169,7 @@ def test_combined_excel_contains_shop_issue_sheet():
         mtd_days=15, month_total_days=30, safety_mode="allow_both")
     buf = generate_excel_combined(s, r, c)
     wb = load_workbook(buf, read_only=True)
-    assert wb.sheetnames == ["RAW", "Shop Stock Status", "By Shop", "店舖問題 SKU", "SUMMARY", "Safety Stock 數據分析摘要"]
+    assert wb.sheetnames == ["說明", "RAW", "Shop Stock Status", "By Shop", "店舖問題 SKU", "SUMMARY", "Safety Stock 數據分析摘要"]
 
 
 def test_combined_excel_raw_excludes_internal_floor_column():

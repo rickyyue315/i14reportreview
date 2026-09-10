@@ -297,7 +297,7 @@ def test_combined_excel_summary_contains_dimension_cross_tab():
     )
     buf = generate_excel_combined(s, r, c, dimension="sales")
     wb = load_workbook(BytesIO(buf.getvalue()))
-    assert wb.sheetnames == ["RAW", "Shop Stock Status", "By Shop", "店舖問題 SKU", "SUMMARY", "Safety Stock 數據分析摘要"]
+    assert wb.sheetnames == ["說明", "RAW", "Shop Stock Status", "By Shop", "店舖問題 SKU", "SUMMARY", "Safety Stock 數據分析摘要"]
     ws = wb["SUMMARY"]
     col_a = [ws.cell(row=i, column=1).value for i in range(1, ws.max_row + 1)]
     assert "① Safety Qty Change 分類（增加 / 減少 / 不變）" in col_a

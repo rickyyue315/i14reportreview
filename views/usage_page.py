@@ -104,7 +104,7 @@ MODES = [
 - 支援逐 Site 檢視、Overstock / OOS Rate 自訂、Safety 只增或加減模式
 - 可選擇 **分類維度**（七選一，預設「以 Shop Nature 分類」，選項與 Safety Stock x NetStock Review 相同）：決定 SUMMARY「③ Safety Qty Change 分類 × 分類維度交叉表」的分組；所有維度均只改分組顯示，Safety 建議計算不變
 - RAW／店舖問題 SKU 恆附 **銷量帶** 與 **銷量存貨分類** 顯示欄（缺貨線 7 日／積壓線 30 日／保底 2 件，UI 可調）；結果頁「🧮 分類交叉表」tab 另顯示銷量 × 存貨分類分佈
-- 輸出：RAW、Shop Stock Status、By Shop、店舖問題 SKU、SUMMARY（① Safety Qty Change 分類 / ② ND 建議分類統計 / ③ 分類 × 分類維度交叉表）、Safety Stock 數據分析摘要
+- 輸出：說明（首頁導讀：Review 邏輯＋本次執行參數＋工作表導讀；開啟 Excel 時預設顯示本頁）、RAW、Shop Stock Status、By Shop、店舖問題 SKU、SUMMARY（① Safety Qty Change 分類 / ② ND 建議分類統計 / ③ 分類 × 分類維度交叉表）、Safety Stock 數據分析摘要共 7 個工作表
 - 新增「🏪 店舖問題 SKU」：每間店舖需行動列（Safety 需增加／減少、ND 退場；New SKU 標記不收錄），按店舖分組、店內按嚴重度排序，逐列顯示問題說明與建議方法（數量＋行動指引＋建議值周轉日數；建議值受 OOS 底線最低 3 件保底影響時另加註保底原因）
      """,
      """
@@ -176,7 +176,7 @@ MODES = [
 - RAW／店舖問題 SKU 恆附 **銷量帶** 與 **銷量存貨分類** 兩個顯示欄：銷量帶＝同 SKU 內按 Sold Qty (P90D) 排名分帶（前 25%＝高銷、最低 25%＝低銷、其餘＝中銷、P90D≤0＝零銷；有銷店舖少於 4 間時不區分高低，全歸中銷）；銷量存貨分類＝高銷且店舖周轉日數低於缺貨線（預設 7 日）→「高銷缺貨」；低銷且周轉日數達積壓線（預設 30 日）且庫存達保底件數（預設 2 件）→「低銷積壓」；零銷且庫存達保底件數→「零銷積壓」；其餘→「正常」。三條門檻於參數區可調，與調貨 14 日線互相獨立；分帶按本次上傳資料計算，篩選範圍不同時結果會不同
 - 存貨偏重提示：某 Nature 庫存佔比 ≥ 40% 且庫存佔比 − 銷量佔比 ≥ 20 個百分點 →「存貨偏重 {Nature}（庫存 x% / 銷量 y%）」，多個 Nature 以；分隔（差距大者在前）；偏重提示欄與偏重 Nature 的庫存佔比欄以醒目橘底加強顯示（Streamlit 與 Excel 同步）；門檻隨分類維度切換（與 Safety Stock x NetStock Review 同表）
 - 新增「🏪 店舖問題 SKU」：每間店舖需行動列（需要調入／可轉出供應，缺口在同一列加註），按店舖分組、店內按嚴重度排序，逐列顯示問題說明與建議方法（數量＋行動指引；建議方法只計涉及來源店舖數量，不重複列出店號，店號請查閱「調貨來源 (Site Code)」欄）；另顯示 Supply Source 與 D001 Net Stock Qty (CM)；缺口跟進按供貨來源分支 — Warehouse＋D001 有貨由 D001 補貨、Warehouse＋D001 無貨寫 D001缺貨、Vendor 貨向供應商追貨（Vendor 由供應商直送店舖，不經 D001）
-- 輸出：Summary（SKU 彙總：Brand / SKU / SKU Desc / Buyer / Adj. SST / Supply Source / D001、各 Nature 庫存/月銷加總（取整）、TurnDay（取整）、涉及店舖數（同 SKU 同組 Site Code 不重複計數，空白不計，置於該組 TurnDay 之後）、各 Nature 庫存/月銷佔比 (%)（0.00%）、強制調貨提示、NT/Mix 預計調出量、存貨偏重提示）+ RAW（欄位按可讀性重排——識別→品項屬性→庫存與銷售→SKU 級判定→調貨執行→其他；不顯示「Item_Shop」與所有含「Value」的金額欄；調貨計算欄位附於每一列）+ 店舖問題 SKU + 調貨分析摘要（Dashboard：8 項指標卡 + Buyer 需調貨 SKU 統計表）
+- 輸出：說明（首頁導讀：調貨邏輯＋本次執行參數＋工作表導讀；開啟 Excel 時預設顯示本頁）+ Summary（SKU 彙總：Brand / SKU / SKU Desc / Buyer / Adj. SST / Supply Source / D001、各 Nature 庫存/月銷加總（取整）、TurnDay（取整）、涉及店舖數（同 SKU 同組 Site Code 不重複計數，空白不計，置於該組 TurnDay 之後）、各 Nature 庫存/月銷佔比 (%)（0.00%）、強制調貨提示、NT/Mix 預計調出量、存貨偏重提示）+ RAW（欄位按可讀性重排——識別→品項屬性→庫存與銷售→SKU 級判定→調貨執行→其他；不顯示「Item_Shop」與所有含「Value」的金額欄；調貨計算欄位附於每一列）+ 店舖問題 SKU + 調貨分析摘要（Dashboard：8 項指標卡 + Buyer 需調貨 SKU 統計表）共 5 個工作表
      """,
      """
 Tourist 缺貨、Mix/NT 調撥計算：

@@ -1064,7 +1064,8 @@ def test_fix15_excel_contains_summary_sheet():
     buf = generate_excel_combined(s, r, c)
 
     wb = openpyxl.load_workbook(BytesIO(buf.getvalue()))
-    assert wb.sheetnames == ["RAW", "Shop Stock Status", "By Shop", "店舖問題 SKU", "SUMMARY", "Safety Stock 數據分析摘要"]
+    assert wb.sheetnames == ["說明", "RAW", "Shop Stock Status", "By Shop", "店舖問題 SKU", "SUMMARY", "Safety Stock 數據分析摘要"]
+    assert wb.active.title == "說明"
 
     ws = wb["SUMMARY"]
     col_a = [ws.cell(row=i, column=1).value for i in range(1, ws.max_row + 1)]
@@ -1076,3 +1077,74 @@ def test_fix15_excel_contains_summary_sheet():
     for expected in ("行數", "SKU 數", "Safety Qty Change 合計", "增加", "減少", "不變",
                      "ND", "0（已是 ND）", "(空白) 維持 Safety Stock", "總計"):
         assert expected in all_values
+
+
+# ── 說明導讀表（v1.41.0）───────────────────────────────────────────────────────
+
+def test_combined_guide_sheet_first_with_params_echo():
+    """「說明」導讀表：首位且為開啟預設頁；本次參數按 stats 照錄；②③④ 區塊齊備。"""
+    from io import BytesIO
+
+    import openpyxl
+    from transformer import transform_combined, generate_excel_combined
+
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF"},
+        {"SKU": "2", "Shop Stock Status": "OOS (0 Stock)", "RP Type": "RF",
+         "Shop Monthly Sold Qty (P90D)": 0, "Sold Qty (CM - MTD)": 0.0},
+    ])
+    s, r, c, _ = transform_combined(
+        df, rates_overstock={"tourist": 0.35, "mix": 0.40, "default": 0.45},
+        rates_oos={"tourist": 0.55, "mix": 0.50, "default": 0.50},
+        mtd_days=10, month_total_days=31, safety_mode="allow_both",
+    )
+    buf = generate_excel_combined(
+        s, r, c, dimension="sales",
+        stats={
+            "safety_mode": "allow_both",
+            "rates_overstock": {"tourist": 0.35, "mix": 0.40, "default": 0.45},
+            "rates_oos": {"tourist": 0.55, "mix": 0.50, "default": 0.50},
+            "mtd_date": "2026-09-10", "mtd_days": 10, "month_total_days": 31,
+            "ref_date": "2026-09-10",
+            "sales_oos_days": 8, "sales_overstock_days": 45, "sales_overstock_min_units": 3,
+        },
+    )
+    wb = openpyxl.load_workbook(BytesIO(buf.getvalue()))
+    assert wb.sheetnames[0] == "說明"
+    assert wb.active.title == "說明"
+    ws = wb["說明"]
+    col_a = [ws.cell(row=i, column=1).value for i in range(1, ws.max_row + 1)]
+    col_b = [ws.cell(row=i, column=2).value for i in range(1, ws.max_row + 1)]
+    pairs = dict(zip(col_a, col_b))
+    for block in ("① 本次執行參數（供核對）", "② 核心邏輯（這份報告怎樣算出來）",
+                  "③ 工作表導讀（先看哪一頁、應留意什麼）", "④ 實用提示"):
+        assert block in col_a
+    assert pairs["Safety Qty 計算模式"].startswith("可加可減")
+    assert "Tourist 35%／Mix 40%／Non Tourist 45%" in pairs["Overstock Rate"]
+    assert "Tourist 55%／Mix 50%／Non Tourist 50%" in pairs["OOS Rate"]
+    assert pairs["MTD 日期"].startswith("MTD 10 日（當月共 31 日")
+    assert pairs["參考日期（New SKU 保護）"].startswith("2026-09-10")
+    assert "缺貨線 8 日" in pairs["銷量分類門檻"]
+    assert "積壓線 45 日" in pairs["銷量分類門檻"]
+    assert pairs["分類維度"].startswith("銷量（")
+    assert "店舖問題 SKU" in col_a and "Safety Stock 數據分析摘要" in col_a
+
+
+def test_combined_guide_sheet_defaults_without_stats():
+    """未提供 stats 時導讀表仍置首並顯示預設值（直接呼叫相容路徑）。"""
+    from io import BytesIO
+
+    import openpyxl
+    from transformer import transform_combined, generate_excel_combined
+
+    df = _df([{"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF"}])
+    s, r, c, _ = transform_combined(df, rates_overstock=_RATES_O, rates_oos=_RATES_P)
+    buf = generate_excel_combined(s, r, c)
+    wb = openpyxl.load_workbook(BytesIO(buf.getvalue()))
+    assert wb.sheetnames[0] == "說明"
+    ws = wb["說明"]
+    pairs = {ws.cell(row=i, column=1).value: ws.cell(row=i, column=2).value
+             for i in range(1, ws.max_row + 1)}
+    assert pairs["Safety Qty 計算模式"].startswith("只可增加")
+    assert pairs["Overstock Rate"].startswith("Tourist 30%／Mix 40%／Non Tourist 50%")
+    assert pairs["分類維度"].startswith("Shop Nature（")

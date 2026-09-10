@@ -137,7 +137,7 @@ Forecast Review 額外必要欄位（缺少時停止並提示）：`Site Code／
 7. **計算模式** — 「只可增加」：全表只有增加或保持原有 Safety，ND / P90D 0 Sales 的歸零+ND 退場建議不套用（ND 欄僅保留 New SKU 標記）；「可加可減」：允許減少並套用退場建議（ND 列 → 0；P90D 0 Sales 舊品 → ND 建議，並依 Adj. MCH1 / Adj. SST 加註：02 - MAKE UP → ND(02 - MAKE UP)、03 - Private Label 系 → ND(Private Label)、兩者皆是 → ND(Private Label - MAKE UP)）
 
 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因。
-輸出包含 RAW、Shop Stock Status、By Shop、店舖問題 SKU（每間店舖需行動列：Safety 需增加／減少、ND 退場，問題＋建議方法（附建議值周轉日數，受 OOS 底線最低 3 件保底影響時加註保底原因）；表末另附「銷量帶」「銷量存貨分類」兩欄）、SUMMARY、Safety Stock 數據分析摘要共 6 個工作表。
+輸出包含 **說明（首頁導讀：Review 邏輯＋本次執行參數＋工作表導讀，開啟 Excel 時預設顯示本頁）**、RAW、Shop Stock Status、By Shop、店舖問題 SKU（每間店舖需行動列：Safety 需增加／減少、ND 退場，問題＋建議方法（附建議值周轉日數，受 OOS 底線最低 3 件保底影響時加註保底原因）；表末另附「銷量帶」「銷量存貨分類」兩欄）、SUMMARY、Safety Stock 數據分析摘要共 **7 個工作表**。
 SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）與 Recommendation of new Safety Qty / ND 分類（空白維持 / New SKU / 0 已是 ND / ND 系列加註）的行數、SKU 數與調整量合計；另附 **③ Safety Qty Change 分類 × 分類維度交叉表**（見下）。
 
 可選擇 **分類維度**（七選一，選項與 Safety Stock x NetStock Review 相同：Shop Nature／RP Type／Shop Nature＋RP Type／OM／Shop Nature＋OM／銷量／銷量＋Shop Nature；預設 Shop Nature）——本模式所有維度**只改分組顯示**（SUMMARY 區塊 ③），倍率、MTD 月銷預估、退場建議等 Safety 計算一律不變。RAW 恆附「銷量帶」與「銷量存貨分類」顯示欄（門檻缺貨線 7 日／積壓線 30 日／保底 2 件，UI 可調，準則與 Safety Stock x NetStock Review 相同；銷量帶按本次上傳資料內同 SKU 排名計算，篩選範圍不同時分帶結果會不同）。來源缺「Sold Qty (P90D)」時不輸出銷量兩欄並列 warning；缺「Shop Stock Qty (CM)」時只輸出銷量帶並列 warning；缺「Shop Monthly Sold Qty (P90D)」時店舖周轉日數以 Sold Qty (P90D) ÷ 90 × 30.5 換算並列 warning；OM 兩個維度缺「OM」欄或全欄空白時退回 Shop Nature。結果頁「🧮 分類交叉表」tab 即時顯示區塊 ③ 與銷量 × 存貨分類分佈（後者母體為全部店舖×SKU 列）。
@@ -152,7 +152,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 4. **分配** — 按 SKU 彙總需求，Non Tourist 店優先轉出，不足由 Mix 店補足；需求量大→小依序分配；來源店與需求店同為一店（Site Code 相同）時一律排除，防止自我調貨
 5. **分類維度與銷量分類** — 可選擇 **分類維度**（七選一，選項與 Safety Stock x NetStock Review 相同；預設 Shop Nature）決定 Summary 的分組欄位；**調貨觸發、分配與數量一律按 Shop Nature 準則計算，不隨維度改變**。RAW／店舖問題 SKU 恆附「銷量帶」與「銷量存貨分類」顯示欄（門檻缺貨線 7 日／積壓線 30 日／保底 2 件，UI 可調，準則與 Safety Stock x NetStock Review 相同；銷量帶按本次上傳資料內同 SKU 排名計算，篩選範圍不同時分帶結果會不同）；來源缺「Sold Qty (P90D)」或「Shop Stock Qty (CM)」時對應欄不輸出並列 warning。存貨偏重提示門檻按維度切換（與 Safety Stock x NetStock Review 同表：nature／rp／both 40%／20pp、om 25%／12pp、sales 30%／15pp、nature_om／sales_nature 12%／8pp）
 
-輸出包含 Summary、RAW、店舖問題 SKU（每間店舖需行動列：需要調入／可轉出供應，問題＋建議方法；表末另附「銷量帶」「銷量存貨分類」兩欄）與調貨分析摘要四個工作表：
+輸出包含 **說明（首頁導讀：調貨邏輯＋本次執行參數＋工作表導讀，開啟 Excel 時預設顯示本頁）**、Summary、RAW、店舖問題 SKU（每間店舖需行動列：需要調入／可轉出供應，問題＋建議方法；表末另附「銷量帶」「銷量存貨分類」兩欄）與調貨分析摘要共 **5 個工作表**：
 
 - **Summary** — SKU 級彙總（每 SKU 一列，按 Brand / SKU 排序；**按所選分類維度分組**，nature 三組為 A–AC 契約欄序且與 Safety Stock x NetStock Review 同格式同值）：Brand / SKU / SKU Desc / Buyer / Adj. SST / Supply Source / D001 Net Stock Qty (CM)；各分組加總 Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)（取整）、TurnDay = ROUND(加總庫存 ÷ 加總月銷 × 30.5, 0)（取整，月銷 0 留空）、涉及店舖數（同 SKU 同組 Site Code 不重複計數，空白不計，置於該組 TurnDay 之後）、各分組佔比 (%)（庫存/月銷各 N 欄，活公式 + 0.00% 顯示，合計 0 留空）；強制調貨提示（該 SKU 有 Tourist 店需要調貨時標示）、由各分組店舖預計調出數量（nature 維度為 Non Tourist / Mix 兩欄固定順序）；存貨偏重提示（某分組庫存佔比 ≥ 門檻且庫存佔比 − 銷量佔比 ≥ 差距門檻 →「存貨偏重 {分組}（庫存 x% / 銷量 y%）」，多個分組以；分隔、差距大者在前；偏重提示欄與偏重分組的庫存佔比欄以醒目橘底加強顯示，Streamlit 同步）；文字欄靠左、數值置中、間隔列底紋、凍結表頭 + 自動篩選
 - **RAW** — 按可讀性重排欄序（識別→品項屬性→庫存與銷售→SKU 級判定→調貨執行→其他原始欄），不顯示「Item_Shop」與所有含「Value」的金額欄；新增：Tourist / Mix / Non Tourist 加總 TurnDay / 需要調貨 / 調入需求量 (補到14日) / 實際調入量 / 調入缺口 / 可轉出貨量 (Mix) / 可轉出貨量 (Non Tourist) / 轉出量 / 調貨來源 (Site Code)
@@ -210,7 +210,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 
 | 工作表 | 說明 |
 |--------|------|
-| 說明 | 混合模式首頁導讀 — 列出本次執行參數、講解 Review 邏輯（調貨段 14 日線／Review 段 Safety 基準／銷量帶與銷量存貨分類／0 Sales 轉 ND），並逐頁說明各工作表內容與建議留意的部分；開啟 Excel 時預設顯示本頁 |
+| 說明 | 首頁導讀（混合模式、Safety Stock Review、Stock Checking 與 Forecast Review）— 列出本次執行參數、講解模式核心邏輯（如調貨段 14 日線／Review 段 Safety 基準／銷量帶與銷量存貨分類／0 Sales 轉 ND），並逐頁說明各工作表內容與建議留意的部分；開啟 Excel 時預設顯示本頁 |
 | RAW | 完整明細資料（含所有原始及計算欄位；Stock Checking 與混合模式另重排欄序，不顯示 Item_Shop 與 Value 金額欄） |
 | 店舖問題 SKU | 每間店舖需行動列（問題＋建議方法；Stock Checking／Safety Stock Review／混合模式；Safety Stock Review 與混合模式的建議方法附建議值周轉日數，建議值受最低 3 件保底影響時另加註保底原因；Stock Checking 與 Safety Stock Review 表末另附「銷量帶」「銷量存貨分類」兩欄） |
 | Shop Stock Status | 採購人員 x 品牌之庫存異常交叉統計表 |

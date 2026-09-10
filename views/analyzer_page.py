@@ -518,6 +518,18 @@ if uploaded_file is not None:
                 buf = generate_excel_combined(
                     summary_df, raw_df, categories, progress_callback=_cb_excel,
                     dimension=_ss_dimension,
+                    stats={
+                        "safety_mode": safety_mode_value,
+                        "rates_overstock": rates_overstock,
+                        "rates_oos": rates_oos,
+                        "mtd_date": str(mtd_date),
+                        "mtd_days": mtd_days,
+                        "month_total_days": month_total_days,
+                        "ref_date": str(mtd_date),
+                        "sales_oos_days": _ss_sales_oos,
+                        "sales_overstock_days": _ss_sales_over,
+                        "sales_overstock_min_units": _ss_sales_minu,
+                    },
                 )
                 st.session_state.combined_processed = True
                 st.session_state.combined_summary_df = summary_df

@@ -526,7 +526,8 @@ def test_generate_excel():
     buf = generate_excel_stock_checking(raw, summary)
     assert isinstance(buf, BytesIO)
     wb = load_workbook(buf, read_only=True)
-    assert wb.sheetnames == ["Summary", "RAW", "店舖問題 SKU", "調貨分析摘要"]
+    assert wb.sheetnames == ["說明", "Summary", "RAW", "店舖問題 SKU", "調貨分析摘要"]
+    assert wb.active.title == "說明"
     ws = wb["Summary"]
     headers = [c.value for c in next(ws.iter_rows(min_row=5, max_row=5))]
     for col in ["Brand", "SKU", "Buyer", "Adj. SST", "強制調貨提示",
@@ -748,3 +749,55 @@ def test_self_transfer_guarded_and_no_site_both_in_and_out():
     g = raw.groupby(["SKU", "Site Code"])[["實際調入量", "轉出量"]].sum()
     assert not ((g["實際調入量"] > 0) & (g["轉出量"] > 0)).any()
     assert int(raw["實際調入量"].sum()) == int(raw["轉出量"].sum())
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 說明導讀表（v1.41.0）
+# ──────────────────────────────────────────────────────────────────────────────
+def test_stock_checking_guide_sheet_first_with_params_echo():
+    """「說明」導讀表：首位且為開啟預設頁；本次參數按 stats 照錄；②③④ 區塊齊備。"""
+    df = _df([
+        {"SKU": 1, "Site Code": "S01", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+        {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+    ])
+    raw, summary, stats, _ = transform_stock_checking(
+        df, turnday_threshold=13, d001_threshold=120,
+        dimension="sales", sales_oos_days=8, sales_overstock_days=45, sales_overstock_min_units=3,
+    )
+    buf = generate_excel_stock_checking(raw, summary, stats)
+    wb = load_workbook(buf)
+    assert wb.sheetnames[0] == "說明"
+    assert wb.active.title == "說明"
+    ws = wb["說明"]
+    col_a = [ws.cell(row=i, column=1).value for i in range(1, ws.max_row + 1)]
+    col_b = [ws.cell(row=i, column=2).value for i in range(1, ws.max_row + 1)]
+    pairs = dict(zip(col_a, col_b))
+    for block in ("① 本次執行參數（供核對）", "② 核心邏輯（這份報告怎樣算出來）",
+                  "③ 工作表導讀（先看哪一頁、應留意什麼）", "④ 實用提示"):
+        assert block in col_a
+    assert pairs["調貨門檻"].startswith("13 日")
+    assert pairs["D001 庫存門檻"].startswith("120 件")
+    assert pairs["分類維度"].startswith("銷量（")
+    assert "缺貨線 8 日" in pairs["銷量分類門檻"]
+    assert "積壓線 45 日" in pairs["銷量分類門檻"]
+    assert "固定單向" in pairs["調貨方向"]
+    assert "Summary" in col_a and "調貨分析摘要" in col_a
+
+
+def test_stock_checking_guide_sheet_defaults_without_stats():
+    """未提供 stats 時導讀表仍置首並顯示預設值（直接呼叫相容路徑）。"""
+    df = _df([
+        {"SKU": 1, "Site Code": "S01", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+    ])
+    raw, summary, _, _ = transform_stock_checking(df)
+    buf = generate_excel_stock_checking(raw, summary)
+    wb = load_workbook(buf)
+    assert wb.sheetnames[0] == "說明"
+    ws = wb["說明"]
+    pairs = {ws.cell(row=i, column=1).value: ws.cell(row=i, column=2).value
+             for i in range(1, ws.max_row + 1)}
+    assert pairs["調貨門檻"].startswith("14 日")
+    assert pairs["D001 庫存門檻"].startswith("100 件")
+    assert pairs["分類維度"].startswith("Shop Nature（")

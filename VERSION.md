@@ -1,5 +1,17 @@
 # 版本記錄
 
+## v1.41.0 (2026-09-10)
+
+Safety Stock Review 與 Stock Checking 輸出新增首頁「說明」導讀工作表（與 Safety Stock x NetStock Review／Forecast Review 同格局）——只新增首頁說明，其餘工作表名稱、欄位、數值與排序零變動：
+
+- **Safety Stock Review（6→7 工作表）** — `generate_excel_combined()` 尾加可選 `stats` 參數（`views/analyzer_page.py` 傳入本次 safety_mode／Overstock 與 OOS Rate／MTD／參考日期／銷量分類門檻），新增 `_write_combined_guide_sheet()`：① 本次執行參數（分類維度／計算模式／各 Nature 倍率／MTD／參考日期／銷量分類門檻）＋② 核心邏輯（Overstock Cap／OOS Floor／建議值與調整量／Turnday／只可增加 vs 可加可減／New SKU 保護／銷量帶與銷量存貨分類／最低 3 件保底）＋③ 工作表導讀＋④ 實用提示。工作表序：說明（預設開啟頁）／RAW／Shop Stock Status／By Shop／店舖問題 SKU／SUMMARY／Safety Stock 數據分析摘要
+- **Stock Checking（4→5 工作表）** — `generate_excel_stock_checking()` 以既有 stats 產生 `_write_stock_checking_guide_sheet()`：① 分類維度／調貨門檻／D001 門檻／單向調貨方向／銷量分類門檻＋② 觸發條件、調入需求、可轉出與分配、分類維度、存貨偏重提示邏輯＋③ 工作表導讀＋④ 實用提示。工作表序：說明（預設開啟頁）／Summary／RAW／店舖問題 SKU／調貨分析摘要
+- **通用 writer** — 新增 `_write_guide_sheet()`（版面與 `_write_hybrid_guide_sheet` 相同）供兩個新導讀表共用；hybrid／forecast 既有導讀表實作不動。無 stats 的直接呼叫照樣輸出導讀表（顯示預設值，向後相容）
+- **文件** — README（兩模式輸出描述與 Excel 結構表）、使用說明頁（兩模式輸出條目）、本檔同步
+- Update: `tests/test_transformer.py`／`tests/test_dimension_other_modes.py`／`tests/test_shop_issues.py`／`tests/test_stock_checking.py` 工作表契約更新為 7／5 表；`tests/test_transformer.py` 與 `tests/test_stock_checking.py` 各新增導讀表測試兩項（首位且為預設開啟頁、本次參數照錄、②③④ 區塊齊備、無 stats 相容路徑）；共 416 項測試與煙霧測試通過
+- Validation: 實檔 `By SKUxShop_Stock Checking_03Sep2026.xlsx`（22,735 列）——兩模式輸出首頁皆為「說明」且為預設開啟頁，① 參數與呼叫參數一致（SC：門檻 14／100、銷量門檻 7／30／2；SSR：只可增加、30/40/50%、50/50/50%、MTD 15/30 日），其餘工作表（SC 4 表／SSR 6 表）名稱與內容零變動
+- Change: `version.py` → 1.41.0
+
 ## v1.40.0 (2026-09-10)
 
 Safety Stock Review 與 Safety Stock x NetStock Review 同步新增**建議值 Turnday**與**保底 3 件說明**——建議值、調整量、調貨數字與統計全部不變，只加顯示欄與建議方法文字：
