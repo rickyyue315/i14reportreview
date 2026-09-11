@@ -1,5 +1,18 @@
 # 版本記錄
 
+## v1.43.0 (2026-09-11)
+
+Safety Stock x NetStock Review 新增 **ND 可調出規劃（參考）**——回應「3 件保底影響建議調出量」的規劃需求：為所有 RP Type＝ND（不可補貨）的店舖×SKU 列提供參考可調出量，只加顯示欄與一張工作表，現有調貨分配、Safety Review、建議調整量與統計零變動：
+
+- **計算** — `transform_hybrid()` 新增 RAW 欄「ND 建議調出量（參考）」＝max(0, Shop Stock Qty (CM) − Sold Qty (P90D) ÷ 90 × 14)，取整（floor）；零銷有存＝全數可調出；**不設 3 件保底、不套池級門檻**；RP Type 正規化後非 RF 的列才輸出（其他／空白歸入 ND），RF 列留空；缺「RP Type」欄（全列按 RF）時全欄留空
+- **新工作表（9→10）** — 「ND 可調出規劃」置於「店舖問題 SKU」之後：只列建議調出量 > 0 的 ND 列，欄位 Buyer／Brand／SKU／SKU Desc／Site Code／Shop Name／OM／Shop Nature／RP Type／Shop Stock Qty (CM)／Sold Qty (P90D)／14 日周轉所需（0.0 格式，負銷售按 0，與建議調出量同一口徑）／ND 建議調出量（參考）／銷量帶／銷量存貨分類；按 Site Code / Brand / SKU 排序；空表寫「無符合資料」；標題列列數／SKU 數／合計
+- **UI** — 結果頁新增「📤 ND 可調出規劃」tab（置於「店舖問題 SKU」後），即時顯示同一清單與合計；只作參考，實際調貨仍按 Review 主表分配
+- **說明表** — ① 加「ND 可調出規劃」參數列；② 核心邏輯加一條；③ 工作表導讀加一列；④ 實用提示提醒未扣 Safety 與 3 件保底
+- **不變** — `可轉出貨量`／`轉出量`／事件類型／Safety Review／建議 Safety 設定值／調整量／兩張 Review 主表與所有統計完全不變（新欄為純附加；兩張主表不加新欄）
+- Change: `version.py` → 1.43.0
+- Update: 新增 `tests/test_hybrid_nd_clearance.py` ×9（公式與範圍、零銷全數、負銷售按 0、不套池級門檻、維度無關、builder 欄序／排序／1 位小數、缺 RP Type 空表、Excel 10 表契約與 RAW 新欄、主表契約不變）；`tests/test_hybrid_mode.py`／`tests/test_shop_issues.py` sheet 契約 9→10；共 429 項測試與煙霧測試通過
+- Validation: 實檔 `By SKUxShop_Stock Checking_03Sep2026.xlsx`（22,732 列；RP Type ND 205 列）——新欄 205 列有值、合計 2,223 件；「ND 可調出規劃」170 列 / 80 SKU / 2,223 件；Excel 10 工作表、RAW 含新欄；現有欄位與數值零變動
+
 ## v1.42.1 (2026-09-10)
 
 Forecast Review **訂貨路徑字眼修正**——D001 即 Warehouse 倉庫，Supply Source 寫 Warehouse 是指店舖向 D001 取貨；故 Warehouse 貨的正確落單動作是 **D001 向 Vendor 下單補貨（D001 PO）**，原「Warehouse 貨向 D001 下單」為誤述。只改文字，計算、欄位、欄序、數值零變動：

@@ -1730,8 +1730,48 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
     return work[[c for c in cols if c in work.columns]].reset_index(drop=True)
 
 
-def _write_shop_issue_sheet(ws, issue_df, *, title, progress_callback=None, progress_start=0.0, progress_end=0.0):
-    """店舖問題 SKU 工作表：店舖×SKU 逐列（僅含需行動列），問題類型置中、說明／建議靠左換行。"""
+def _build_hybrid_nd_clearance(raw: pd.DataFrame) -> pd.DataFrame:
+    """ND 可調出規劃（參考）：只收錄 RP Type 正規化為 ND 且建議調出量 > 0 的店舖×SKU 列。
+
+    建議調出量＝max(0, Shop Stock Qty (CM) − Sold Qty (P90D) ÷ 90 × 14)（無銷售但有存貨
+    全數可調出）；只扣 14 日周轉所需，不設 3 件保底、不套池級門檻，只作人手調貨／退倉
+    規劃參考，不影響調貨分配與 Safety Review。缺「RP Type」欄（來源全列按 RF 處理）時
+    輸出空表；按 Site Code / Brand / SKU 排序。
+    """
+    cols = _HYBRID_ND_CLEARANCE_COLUMNS
+    if (
+        raw is None or raw.empty
+        or _HYBRID_ND_CLEARANCE_COLUMN not in raw.columns
+        or "RP Type" not in raw.columns
+    ):
+        return pd.DataFrame(columns=cols)
+    qty = _safe_numeric(raw[_HYBRID_ND_CLEARANCE_COLUMN])
+    rp = raw["RP Type"].fillna("").astype(str).str.strip().str.upper()
+    sel_mask = (rp == "ND").fillna(False) & qty.gt(0).fillna(False)
+    if not bool(sel_mask.any()):
+        return pd.DataFrame(columns=cols)
+    work = _shop_issue_base_frame(raw, sel_mask)
+    work["RP Type"] = "ND"
+    if "Brand" not in work.columns:
+        work["Brand"] = ""
+    if "SKU" not in work.columns:
+        work["SKU"] = ""
+    if "Buyer" not in work.columns:
+        work["Buyer"] = ""
+    if "SKU Desc" not in work.columns:
+        work["SKU Desc"] = _compute_raw_extra_columns(work)["SKU Desc"]
+    # 負銷售按 0（與 transform_hybrid 的 sold_p90d 同一口徑），避免負數需求與建議調出量互相矛盾
+    work["14 日周轉所需"] = (
+        _safe_numeric(work.get("Sold Qty (P90D)", _safe_default_series(0, work.index))).clip(lower=0) / 90.0 * 14
+    ).round(1)
+    work[_HYBRID_ND_CLEARANCE_COLUMN] = qty.reindex(work.index).fillna(0).astype(int)
+    work = work.sort_values(["Site Code", "Brand", "SKU"], kind="stable")
+    return work[[c for c in cols if c in work.columns]].reset_index(drop=True)
+
+
+def _write_shop_issue_sheet(ws, issue_df, *, title, progress_callback=None, progress_start=0.0, progress_end=0.0, decimal_keys=()):
+    """店舖問題 SKU 工作表：店舖×SKU 逐列（僅含需行動列），問題類型置中、說明／建議靠左換行。
+    decimal_keys 內的數值欄以 0.0 格式顯示（如 ND 可調出規劃的「14 日周轉所需」），其餘用 #,##0。"""
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
@@ -1742,6 +1782,7 @@ def _write_shop_issue_sheet(ws, issue_df, *, title, progress_callback=None, prog
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
     _text_keys = ["Brand", "SKU Desc", "Buyer", "問題說明", "建議方法", "調貨來源 (Site Code)"]
+    _decimal_keys = set(decimal_keys or ())
 
     if issue_df is None or issue_df.empty:
         ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=12, color="1E40AF")
@@ -1768,7 +1809,7 @@ def _write_shop_issue_sheet(ws, issue_df, *, title, progress_callback=None, prog
             cell.border = thin_border
             cell.alignment = left_wrap if h in _text_keys else center
             if isinstance(val, (int, float)) and not isinstance(val, bool) and h not in _text_keys:
-                cell.number_format = "#,##0"
+                cell.number_format = "0.0" if h in _decimal_keys else "#,##0"
             if is_band:
                 cell.fill = band_fill
         if progress_callback and (r_idx % 200 == 0 or r_idx == total - 1):
@@ -6367,6 +6408,15 @@ _HYBRID_SAFETY_MIN_KEEP = 3
 # 建議值周轉欄（RAW／主表；僅不足／過高列有值）：建議值 ÷ (P90D 月均 ÷ 30)，
 # 與來源「Turnday (P90D Qty)」及 SSR「Recommend Safety Stock Turnday」同一準則。
 _HYBRID_SUGGEST_TURNDAY_COLUMN = "建議 Safety 設定值 Turnday"
+# ND 可調出規劃（參考）：所有 RP Type＝ND 店舖×SKU 列的參考可調出量——
+# 只扣 14 日周轉所需（零銷有存＝全數），不設 3 件保底、不套池級門檻；
+# 只作人手調貨／退倉規劃參考，不影響調貨分配、Safety Review 與建議調整量。
+_HYBRID_ND_CLEARANCE_COLUMN = "ND 建議調出量（參考）"
+_HYBRID_ND_CLEARANCE_COLUMNS = [
+    "Buyer", "Brand", "SKU", "SKU Desc", "Site Code", "Shop Name", "OM", "Shop Nature",
+    "RP Type", "Shop Stock Qty (CM)", "Sold Qty (P90D)", "14 日周轉所需",
+    _HYBRID_ND_CLEARANCE_COLUMN, _HYBRID_SALES_BAND_COLUMN, _HYBRID_SALES_CLASS_COLUMN,
+]
 
 
 def _hybrid_safety_days(safety_days: dict | None = None) -> tuple[dict[str, int], list[str]]:
@@ -7724,6 +7774,9 @@ def transform_hybrid(
         nt_excess = np.where(nt_pool_ok, np.where(is_nt, per_row_excess, 0), 0)
     df["可轉出貨量 (Mix)"] = mix_excess.astype(int)
     df["可轉出貨量 (Non Tourist)"] = nt_excess.astype(int)
+    # ND 可調出規劃（參考）：只計 RP Type 正規化後非 RF 的列，沿用逐列 14 日超額公式
+    # （零銷有存＝全數可調出），不套池級門檻、不扣 Safety 與 3 件保底；非 ND 列留空。
+    df[_HYBRID_ND_CLEARANCE_COLUMN] = np.where(~is_rf, np.floor(per_row_excess), np.nan)
 
     demand = np.maximum(0, np.ceil(ideal_14d) - cm_stock_val)
     d001_np = eff_d001.to_numpy(dtype=float)
@@ -8394,6 +8447,7 @@ _HYBRID_RAW_DISPLAY_GROUPS = [
     ["事件類型", _HYBRID_SAFETY_DAYS_COLUMN, _HYBRID_SAFETY_LINE_COLUMN,
      "Safety Review", "建議 Safety 設定值", _HYBRID_SUGGEST_TURNDAY_COLUMN, "Safety 建議調整量"],
     ["可轉出貨量 (Non Tourist)", "可轉出貨量 (Mix)", "可轉出貨量 (Tourist)",
+     _HYBRID_ND_CLEARANCE_COLUMN,
      "實際調入量", "調入缺口", "轉出量", "調貨來源 (Site Code)", "調貨後庫存", "調貨後 TurnDay"],
     ["實際調入量 (同OM)", "調入缺口 (同OM)", "轉出量 (同OM)", "調貨來源 (同OM)",
      "調貨後庫存 (同OM)", "調貨後 TurnDay (同OM)"],
@@ -8506,6 +8560,7 @@ def _write_hybrid_guide_sheet(ws, stats):
         f'保底 {st_.get("sales_overstock_min_units", 2)} 件（銷量存貨分類恆按此計算）')
     _kv("銷量再平衡", "開啟（高銷缺貨列豁免池門檻加入調貨需求方）" if st_.get("sales_rebalance")
         else "關閉（調貨需求判定按現行規則）")
+    _kv("ND 可調出規劃", "常開輸出；保留量＝14 日周轉所需（不設 3 件保底、不套池級門檻）")
     _kv("參考日期", f'{st_.get("ref_date", "—")}（Past 90 Days 0 Sales 轉 ND 提示的新品判定基準，預設昨日）')
 
     # ── ② 核心邏輯 ──
@@ -8525,6 +8580,9 @@ def _write_hybrid_guide_sheet(ws, stats):
             "低銷積壓；零銷且庫存不少於保底件數 → 零銷積壓；其餘 → 正常（門檻見上方 ①）。")
     _bullet("Past 90 Days 0 Sales 轉 ND：M-2／M-1／CM-MTD／P90D 皆零銷售且有庫存的列，於「店舖問題 SKU」"
             "標示 ND 退場建議（距參考日期 90 天內新品除外）。")
+    _bullet("ND 可調出規劃（常開輸出）：RP Type＝ND 的店舖×SKU 列，參考可調出量＝max(0, 店舖庫存 − 14 日周轉所需)；"
+            "無銷售但有存貨全數可調出；不套用池級門檻、不扣 Safety 與 3 件保底；只供人手調貨／退倉規劃參考，"
+            "不影響調貨分配、Safety Review 與建議調整量（實際調貨仍按「調貨 Review Safety Stock」的分配結果）。")
 
     # ── ③ 工作表導讀 ──
     _sec("③ 工作表導讀（先看哪一頁、應留意什麼）")
@@ -8546,6 +8604,8 @@ def _write_hybrid_guide_sheet(ws, stats):
           "兩套數值可能不同；(同OM) 限制較嚴，按公司規定選用")
     _row3("店舖問題 SKU", "每間店舖需行動事項（問題＋建議方法）",
           "店務同事可先從這一頁著手；建議方法附建議值周轉日數，受 3 件保底影響時加註保底原因；含調入缺口跟進與 0 Sales 轉 ND 建議")
+    _row3("ND 可調出規劃", "ND（不可補貨）店舖的可調出量參考清單",
+          "庫存超過 14 日銷量的 ND 店舖×SKU；數量只作人手調貨／退倉規劃參考，實際調貨仍按 Review 主表的分配結果")
     _row3("Review 摘要", "指標卡＋Safety Review×分類維度交叉表＋Safety 調整方向分類／明細＋銷量×存貨分類交叉表",
           "管理層概覽；「Safety 調整方向分類」看建議增加／減少的總量")
     _row3("簡易調貨明細 (不限OM)／(同OM)", "一列一筆「來源店舖 → 接收店舖」調貨",
@@ -8557,6 +8617,7 @@ def _write_hybrid_guide_sheet(ws, stats):
     _bullet("Summary 橘底＝觸發「存貨偏重提示」的分組（庫存佔比高而銷量佔比低）。")
     _bullet("分類維度只改變 Summary／交叉表的分組顯示，不影響調貨與 Safety 計算。")
     _bullet("「可轉出未使用」＝該列有 14 日超額庫存但本次未被取用，可留作後備來源。")
+    _bullet("「ND 可調出規劃」的建議調出量未扣 Safety 與 3 件保底；人手調貨／退倉時請自行預留所需安全存貨。")
 
 
 def _write_guide_sheet(ws, *, title, subtitle, params, logic, sheet_rows, tips):
@@ -8807,7 +8868,7 @@ def generate_excel_hybrid(
     stats: dict | None = None,
     progress_callback=None,
 ) -> BytesIO:
-    """Safety Stock x NetStock Review 輸出（9 工作表，順序固定）：
+    """Safety Stock x NetStock Review 輸出（10 工作表，順序固定）：
     說明（首頁導讀：本次執行參數列出＋模式核心邏輯＋各工作表應留意的部分）/
     RAW（重新排列欄序提升可讀性，不顯示 Item_Shop 與 Value 金額欄；含不限OM與同OM兩套調貨結果；
     雙向時另含「可轉出貨量 (Tourist)」）/
@@ -8819,6 +8880,9 @@ def generate_excel_hybrid(
     nature 雙向時另加 AD 欄「由Tourist 店舖預計調出數量」）/
     調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM)（店舖×SKU 主表含 RP Type 欄）/
     店舖問題 SKU（每間店舖需行動列：問題＋建議方法）/
+    ND 可調出規劃（只列 RP Type＝ND 且建議調出量 > 0 的店舖×SKU 參考清單：
+    建議調出量＝max(0, 店舖庫存 − 14 日周轉所需)，零銷有存＝全數；不設 3 件保底、
+    不套池級門檻，只作規劃參考）/
   Review 摘要（指標卡 4–6 排（雙向或 ND 店舖有實際轉出時 5 排；銷量再平衡開啟時末尾另加銷量分類概況一排）
   + Safety Review × 分類維度交叉表
  + Safety 調整方向分類 + Safety 調整明細（SKU 級彙總）
@@ -8898,13 +8962,33 @@ def generate_excel_hybrid(
     _write_shop_issue_sheet(
         ws_shop_issue, _build_hybrid_shop_issues(raw, ref_date=_ref_date),
         title="店舖問題 SKU — 每間店舖需行動列（問題＋建議方法）",
-        progress_callback=progress_callback, progress_start=0.71, progress_end=0.74,
+        progress_callback=progress_callback, progress_start=0.71, progress_end=0.735,
     )
 
     if progress_callback:
-        progress_callback(0.75, "建立 Review 摘要...")
+        progress_callback(0.735, "建立 ND 可調出規劃...")
 
-    # ── Sheet 6: Review 摘要 ──
+    # ── Sheet 6: ND 可調出規劃（參考；只列 RP Type＝ND 且建議調出量 > 0 的列）──
+    _nd_clearance = _build_hybrid_nd_clearance(raw)
+    if _nd_clearance.empty:
+        _nd_title = "ND 可調出規劃 — 建議調出參考（無符合資料）"
+    else:
+        _nd_title = (
+            f"ND 可調出規劃 — 建議調出參考（共 {len(_nd_clearance):,} 列 / "
+            f"{_nd_clearance['SKU'].nunique() if 'SKU' in _nd_clearance.columns else 0:,} 個 SKU / "
+            f"合計 {int(_nd_clearance[_HYBRID_ND_CLEARANCE_COLUMN].sum()):,} 件）"
+        )
+    ws_nd = wb.create_sheet(title="ND 可調出規劃")
+    _write_shop_issue_sheet(
+        ws_nd, _nd_clearance, title=_nd_title,
+        progress_callback=progress_callback, progress_start=0.735, progress_end=0.76,
+        decimal_keys=("14 日周轉所需",),
+    )
+
+    if progress_callback:
+        progress_callback(0.76, "建立 Review 摘要...")
+
+    # ── Sheet 7: Review 摘要 ──
     ws_sum = wb.create_sheet(title="Review 摘要")
     _write_hybrid_diag_summary_sheet(ws_sum, diag_summary, stats, raw, thin_border, desc_font, progress_callback)
 
