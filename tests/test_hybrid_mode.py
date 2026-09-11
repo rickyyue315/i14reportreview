@@ -11,7 +11,7 @@
 - 調貨分兩變體：不限OM（契約欄位）與同OM（來源店與需求店同 OM，欄位加「(同OM)」後綴）；
   OM 限制只影響分配，Safety Review 與建議調整兩變體相同
 - Shop Nature：Other/空白/大小寫差異一律正規化為 Non Tourist
-- 輸出 10 工作表（v1.43.0 起含 ND 可調出規劃）：說明 / RAW / Summary / 調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) / 店舖問題 SKU / ND 可調出規劃 / Review 摘要 / 簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)
+- 輸出 8 工作表：RAW / Summary / 調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM) / 店舖問題 SKU / Review 摘要 / 簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)
 - 「Review 摘要」的三個統計區塊同母體（事件類型非空的列）：① Safety Review × Shop Nature 交叉表、
   ② Safety 調整方向分類（增加／減少／不變）、③ Safety 調整明細（SKU 級彙總）；②③ 於 v1.16.0 新增，
   由 RAW 即時彙算，不受 OM 限制影響，且不改動 transform_hybrid／generate_excel_hybrid 簽名
@@ -532,7 +532,7 @@ def test_no_candidates_warns_but_completes():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 9. Excel 契約（10 工作表）
+# 9. Excel 契約（9 工作表）
 # ──────────────────────────────────────────────────────────────────────────────
 def test_guide_sheet_first_with_params_echo():
     """「說明」導讀表：首位且為開啟預設頁；參數按 stats 還原列出；導讀與實用提示區塊齊備。"""
@@ -571,7 +571,7 @@ def test_generate_excel_sheets_and_headers():
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
-        "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "ND 可調出規劃", "Review 摘要",
+        "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]
     raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
@@ -1000,7 +1000,7 @@ def test_bidir_excel_headers_and_dashboard_rows():
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
-        "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "ND 可調出規劃", "Review 摘要",
+        "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]
     raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
@@ -1303,9 +1303,9 @@ def test_excel_safety_blocks_appended_after_cross():
     buf = generate_excel_hybrid(raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats)
     wb = load_workbook(buf)
     assert wb.sheetnames == [
-        "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "ND 可調出規劃", "Review 摘要",
+        "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
-    ]  # 10 表契約（v1.35.0 起首位為「說明」導讀表；v1.43.0 加「ND 可調出規劃」），新統計只在「Review 摘要」內延伸
+    ]  # 9 表契約（v1.35.0 起首位為「說明」導讀表），新統計只在「Review 摘要」內延伸
     ws = wb["Review 摘要"]
     # ① 交叉表位置完全未變（單向：標題 19 / 表頭 20 / 資料 21–25）
     assert ws.cell(row=19, column=1).value == "Safety Review × Shop Nature 交叉表"

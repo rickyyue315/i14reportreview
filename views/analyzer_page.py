@@ -40,12 +40,9 @@ from transformer import (
     _hybrid_buyer_combined_stats, _hybrid_buyer_combined_detail,
     _build_stock_checking_shop_issues, _build_combined_shop_issues,
     _build_hybrid_shop_issues,
-    _build_hybrid_nd_clearance,
     _build_combined_dimension_cross_tab,
     _STOCK_CHECKING_SHOP_ISSUE_COLUMNS, _COMBINED_SHOP_ISSUE_COLUMNS,
     _HYBRID_SHOP_ISSUE_COLUMNS,
-    _HYBRID_ND_CLEARANCE_COLUMNS,
-    _HYBRID_ND_CLEARANCE_COLUMN,
     _HYBRID_SAFETY_DAYS_DEFAULT, _HYBRID_SAFETY_DAYS_MIN, _HYBRID_SAFETY_DAYS_MAX,
     _hybrid_safety_days_label,
     _HYBRID_DIMENSION_LABELS,
@@ -1125,13 +1122,11 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            (tab_diag, tab_diag_om, tab_sc, tab_issue, tab_nd,
-             tab_cross, tab_detail, tab_raw) = st.tabs([
+            tab_diag, tab_diag_om, tab_sc, tab_issue, tab_cross, tab_detail, tab_raw = st.tabs([
                 "🧭 調貨 Review Safety Stock（不限OM）",
                 "🔗 調貨 Review Safety Stock（同OM）",
                 "📋 Summary（SKU 存貨偏重）",
                 "🏪 店舖問題 SKU",
-                "📤 ND 可調出規劃",
                 "📊 Review 摘要（Safety 調整統計）",
                 "🧾 簡易調貨明細",
                 "📄 RAW 完整明細",
@@ -1180,29 +1175,6 @@ if uploaded_file is not None:
                     _hy_cols = [c for c in _HYBRID_SHOP_ISSUE_COLUMNS if c in _hy_issues.columns]
                     st.dataframe(_hy_issues[_hy_cols].rename(columns=_display_safety_header), width='stretch', hide_index=True)
                     st.caption(f"共 {len(_hy_issues):,} 列需行動（Safety 設定不足＋過高＋ND 退場；調入缺口另於建議方法加註）。")
-                else:
-                    st.info("無符合資料")
-            with tab_nd:
-                st.markdown("#### ND 可調出規劃（參考）— 不可補貨店舖的建議調出量")
-                st.markdown(
-                    "只收錄 **RP Type＝ND** 且「建議調出量」> 0 的店舖×SKU 列；"
-                    "建議調出量＝max(0, 店舖庫存 − 14 日周轉所需)，無銷售但有存貨視為全數可調出。"
-                    "**不設 3 件保底、不套用池級門檻**，只作人手調貨／退倉規劃參考："
-                    "現有調貨分配、Safety Review 與建議調整量不受影響（實際調貨仍按「調貨 Review Safety Stock」的分配結果）。"
-                )
-                try:
-                    _nd_clear_df = _build_hybrid_nd_clearance(raw_df)
-                except Exception:
-                    _nd_clear_df = None
-                if _nd_clear_df is not None and not _nd_clear_df.empty:
-                    _nd_cols = [c for c in _HYBRID_ND_CLEARANCE_COLUMNS if c in _nd_clear_df.columns]
-                    st.dataframe(_nd_clear_df[_nd_cols], width='stretch', hide_index=True)
-                    _nd_sku_n = _nd_clear_df["SKU"].nunique() if "SKU" in _nd_clear_df.columns else 0
-                    _nd_total = int(_nd_clear_df[_HYBRID_ND_CLEARANCE_COLUMN].sum())
-                    st.caption(
-                        f"共 {len(_nd_clear_df):,} 列 / {_nd_sku_n:,} 個 SKU / 建議調出合計 {_nd_total:,} 件"
-                        "（按 Site Code / Brand / SKU 排序）。"
-                    )
                 else:
                     st.info("無符合資料")
             with tab_cross:
