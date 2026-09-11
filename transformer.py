@@ -1432,6 +1432,21 @@ def _suggest_turnday_clause(turnday) -> str:
     return f"；建議周轉約 {float(turnday):g} 日"
 
 
+def _safety_delta_text(delta) -> str:
+    """Safety 調整量的文字（供店舖問題 SKU 建議方法用）。
+
+    正數回傳「增加 X 件」、負數回傳「減少 X 件」；未能計算（NaN）回傳「未能確認」。
+    """
+    if delta is None or pd.isna(delta):
+        return "未能確認"
+    val = float(delta)
+    if val > 0:
+        return f"增加 {val:g} 件"
+    if val < 0:
+        return f"減少 {abs(val):g} 件"
+    return f"{val:g} 件"
+
+
 def _build_stock_checking_shop_issues(
     raw: pd.DataFrame,
     turnday_threshold: int = 14,
@@ -1534,7 +1549,7 @@ def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
     - ND 退場：`Recommendation of new Safety Qty / ND` 為 ND 系列或 0（已是 ND）；
       `New SKU (3 Month)` 屬資訊標記，不收錄。
     - Overstock／OOS 只作問題說明上下文，不單獨成列。
-    - 建議方法附「建議周轉約 X 日」（`Recommend Safety Stock Turnday`；月均 0 略去）；
+    - 建議方法以「增加／減少 X 件」標明調整方向，並附「建議周轉約 X 日」（`Recommend Safety Stock Turnday`；月均 0 略去）；
       `_safety_floor3` 為 True（建議值受 OOS 底線最低 3 件保底影響）時加註保底原因。
     """
     cols = _COMBINED_SHOP_ISSUE_COLUMNS
@@ -1576,7 +1591,7 @@ def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
             issue.append("Safety 設定不足")
             desc.append(f"現時 Safety {adj_txt} 件低於建議 {rec_val_txt} 件（需增加 {delta:g} 件）{status_suffix}")
             advice.append(
-                f"建議將 Safety 由 {adj_txt} 件調整為 {rec_val_txt} 件（＋{delta:g}{td_clause}），"
+                f"建議將 Safety 由 {adj_txt} 件調整為 {rec_val_txt} 件（{_safety_delta_text(delta)}{td_clause}），"
                 f"請按建議值補足安全庫存{floor_note}"
             )
             sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定不足"])
@@ -1584,7 +1599,7 @@ def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
             issue.append("Safety 設定過高")
             desc.append(f"現時 Safety {adj_txt} 件高於建議 {rec_val_txt} 件（可減少 {abs(delta):g} 件）{status_suffix}")
             advice.append(
-                f"建議將 Safety 由 {adj_txt} 件調整為 {rec_val_txt} 件（{delta:g}{td_clause}），"
+                f"建議將 Safety 由 {adj_txt} 件調整為 {rec_val_txt} 件（{_safety_delta_text(delta)}{td_clause}），"
                 f"請按建議值調低安全庫存{floor_note}"
             )
             sev.append(_SHOP_ISSUE_SEVERITY["Safety 設定過高"])
@@ -1619,7 +1634,7 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
     - 已屬不足／過高且同時符合零銷售的列保留原問題類型，建議方法末尾加註；
       僅零銷售的列以「ND 退場」收錄（每店×SKU 最多一列）。
     - 主表以不限OM事件為準，另附三個同OM對照欄；調入缺口 > 0 時在建議方法加註。
-    - 建議方法附「建議周轉約 X 日」（`建議 Safety 設定值 Turnday`；月均 0 略去）；
+    - 建議方法以「增加／減少 X 件」標明調整方向，並附「建議周轉約 X 日」（`建議 Safety 設定值 Turnday`；月均 0 略去）；
       `_hybrid_safety_floor3` 為 True（計算層判定受下調補底 3 件影響）時加註保底原因。
     """
     cols = _HYBRID_SHOP_ISSUE_COLUMNS
@@ -1671,7 +1686,7 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
         line_txt = f"{float(line_w.iloc[i]):g}" if pd.notna(line_w.iloc[i]) else "未能確認"
         adj_txt = f"{float(adj_w.iloc[i]):g}" if pd.notna(adj_w.iloc[i]) else "未能確認"
         sugg_txt = f"{float(sugg_w.iloc[i]):g}" if pd.notna(sugg_w.iloc[i]) else "未能確認"
-        delta_txt = f"{float(chg_w.iloc[i]):g}" if pd.notna(chg_w.iloc[i]) else "未能確認"
+        delta_txt = _safety_delta_text(chg_w.iloc[i])
         td_clause = _suggest_turnday_clause(sugg_td_w.iloc[i])
         evt_txt = str(evt_w.iloc[i]).strip()
         is_zero = bool(zero_w.iloc[i])

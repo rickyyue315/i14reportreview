@@ -719,20 +719,27 @@ def test_floor3_flag_false_for_zero_overrides():
 
 
 def test_shop_issue_advice_turnday_and_floor_note_ssr():
-    """SSR 店舖問題建議方法：所有建議列附周轉；受保底影響列加註保底原因。"""
+    """SSR 店舖問題建議方法：調整量以「增加／減少 X 件」標明方向；建議列附周轉；受保底影響列加註保底原因。"""
     raw = _floor3_out([
         {"SKU": "1", "Site Code": "S01", "Shop Stock Status": "Normal", "RP Type": "RF",
          "Adj. Safety Stock": 0, "Shop Monthly Sold Qty (P90D)": 6, "Sold Qty (CM - MTD)": 0.0},
         {"SKU": "2", "Site Code": "S02", "Shop Stock Status": "Normal", "RP Type": "RF",
          "Adj. Safety Stock": 2, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 0.0},
+        {"SKU": "3", "Site Code": "S03", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 6, "Sold Qty (CM - MTD)": 0.0},
     ], "allow_both")
     issues = _build_combined_shop_issues(raw)
     s01 = issues[issues["Site Code"] == "S01"].iloc[0]
+    assert "增加 3 件" in str(s01["建議方法"])
     assert "建議周轉約 15 日" in str(s01["建議方法"])
     assert "為保障自動補貨，最低建議設定為 3 件（OOS 底線最低 3 件）" in str(s01["建議方法"])
     s02 = issues[issues["Site Code"] == "S02"].iloc[0]
+    assert "增加 1 件" in str(s02["建議方法"])
     assert "建議周轉約 9 日" in str(s02["建議方法"])
     assert "為保障自動補貨" not in str(s02["建議方法"])
+    s03 = issues[issues["Site Code"] == "S03"].iloc[0]
+    assert "減少 2 件" in str(s03["建議方法"])
+    assert "為保障自動補貨" not in str(s03["建議方法"])
 
 
 def test_shop_issue_floor_note_missing_flag_is_safe():

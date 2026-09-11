@@ -1920,18 +1920,21 @@ def test_min3_internal_floor_flag_hidden_from_outputs():
 
 
 def test_min3_shop_issue_advice_turnday_and_floor_note():
-    """建議方法：所有建議列附建議周轉；受保底影響列（建議 3 > 所需量 ≥ 1）加註保底原因。"""
+    """建議方法：調整量以「增加／減少 X 件」標明方向；所有建議列附建議周轉；受保底影響列（建議 3 > 所需量 ≥ 1）加註保底原因。"""
     raw, _ = _min3_raw_and_stats()
     issues = _build_hybrid_shop_issues(raw)
     n06 = issues[issues["Site Code"] == "N06"].iloc[0]
+    assert "減少 7 件" in str(n06["建議方法"])
     assert "建議周轉約 3 日" in str(n06["建議方法"])
     assert "為保障自動補貨，最低建議設定為 3 件（SAP MOQ：Safety 1–2 件難以補貨）" in str(n06["建議方法"])
     # N08 現有 1–2 件不強制上調（建議 1 件＝原所需量）→ 有周轉、無保底句
     n08 = issues[issues["Site Code"] == "N08"].iloc[0]
+    assert "減少 1 件" in str(n08["建議方法"])
     assert "建議周轉約 1 日" in str(n08["建議方法"])
     assert "為保障自動補貨" not in str(n08["建議方法"])
     # T06 不足列照原所需量上調 → 有周轉、無保底句
     t06 = issues[issues["Site Code"] == "T06"].iloc[0]
+    assert "增加 2 件" in str(t06["建議方法"])
     assert "建議周轉約 9.8 日" in str(t06["建議方法"])
     assert "為保障自動補貨" not in str(t06["建議方法"])
 
