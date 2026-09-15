@@ -26,6 +26,7 @@ from transformer import (
     _HYBRID_RETURN_D001_SHEET,
     _HYBRID_RETURN_D001_COLUMNS,
     _HYBRID_DIAG_COLUMNS,
+    _display_safety_header,
 )
 
 BASE = {
@@ -197,6 +198,9 @@ def test_raw_display_order_and_builder():
     assert ordered.index(_HYBRID_RETURN_D001_COLUMN) == ordered.index("轉出量") + 1
     ret = _build_hybrid_return_d001(raw)
     assert list(ret.columns) == _HYBRID_RETURN_D001_COLUMNS
+    # Safety Qty（來源欄 Adj. Safety Stock，顯示名「Safety Stock (現時)」）緊隨店舖庫存之後
+    assert ret.columns.get_loc("Adj. Safety Stock") == ret.columns.get_loc("Shop Stock Qty (CM)") + 1
+    assert float(ret.loc[ret["Site Code"] == "N01", "Adj. Safety Stock"].iloc[0]) == 30.0
     assert list(ret["Site Code"]) == ["M01", "N01"]  # 按 Site Code 排序
     assert list(ret["可轉出貨量"]) == [11, 16]
     assert list(ret["轉出量"]) == [0, 9]
@@ -220,7 +224,9 @@ def test_excel_ten_sheets_and_headers():
     ]
     ws = wb[_HYBRID_RETURN_D001_SHEET]
     headers = [c.value for c in next(ws.iter_rows(min_row=3, max_row=3))]
-    assert headers == _HYBRID_RETURN_D001_COLUMNS
+    # 表頭經 _display_safety_header 轉顯示名（與店舖問題 SKU 同一慣例）
+    assert headers == [_display_safety_header(c) for c in _HYBRID_RETURN_D001_COLUMNS]
+    assert headers[10] == "Safety Stock (現時)"
     # 明細兩列（M01 / N01）＋標題列列數
     data_rows = [r for r in ws.iter_rows(min_row=4, min_col=5, max_col=5) if r[0].value]
     assert len(data_rows) == 2

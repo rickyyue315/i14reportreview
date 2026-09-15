@@ -1,5 +1,14 @@
 # 版本記錄
 
+## v1.44.1 (2026-09-15)
+
+「退D001 建議」清單新增 **Safety Stock (現時)** 欄（來源檔的 Adj. Safety Stock）——檢視退倉建議時同時看到該店×SKU 的現有 Safety 設定；只加顯示欄，計算零變動：
+
+- **欄序** — `_HYBRID_RETURN_D001_COLUMNS` 於「Shop Stock Qty (CM)」之後插入「Adj. Safety Stock」：Buyer／Brand／SKU／SKU Desc／Site Code／Shop Name／OM／Shop Nature／RP Type／Shop Stock Qty (CM)／Adj. Safety Stock／可轉出貨量／轉出量／建議退D001 量／銷量帶／銷量存貨分類（Excel 工作表顯示來源名「Adj. Safety Stock」，結果頁 tab 沿用既有顯示名轉換為「Safety Stock (現時)」，與兩張 Review 主表同一慣例）
+- **不變** — 退D001 建議的列集合、數值、排序與所有計算零變動；RAW 欄序契約不變
+- **測試** — `tests/test_hybrid_return_d001.py` builder 測試加斷言新欄位置與數值；共 433 項測試與煙霧測試通過
+- Change: `version.py` → 1.44.1
+
 ## v1.44.0 (2026-09-15)
 
 Safety Stock x NetStock Review 新增 **「建議退D001」選項**（預設關閉）——在店舖間調貨建議之外，新增以 **D001（Warehouse，可無限接收貨量）** 為接收目標的退倉建議：各列可轉出量扣除已轉出後的剩餘全數建議退回，不跑分配。開關關閉時輸出與現行完全一致（9 工作表）：

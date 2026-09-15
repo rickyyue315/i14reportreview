@@ -6391,7 +6391,7 @@ _HYBRID_RETURN_D001_COLUMN = "建議退D001 量"
 _HYBRID_RETURN_D001_SHEET = "退D001 建議"
 _HYBRID_RETURN_D001_COLUMNS = [
     "Buyer", "Brand", "SKU", "SKU Desc", "Site Code", "Shop Name", "OM", "Shop Nature",
-    "RP Type", "Shop Stock Qty (CM)", "可轉出貨量", "轉出量",
+    "RP Type", "Shop Stock Qty (CM)", "Adj. Safety Stock", "可轉出貨量", "轉出量",
     _HYBRID_RETURN_D001_COLUMN, _HYBRID_SALES_BAND_COLUMN, _HYBRID_SALES_CLASS_COLUMN,
 ]
 
