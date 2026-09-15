@@ -6384,14 +6384,19 @@ _HYBRID_SAFETY_MIN_KEEP = 3
 # 建議值周轉欄（RAW／主表；僅不足／過高列有值）：建議值 ÷ (P90D 月均 ÷ 30)，
 # 與來源「Turnday (P90D Qty)」及 SSR「Recommend Safety Stock Turnday」同一準則。
 _HYBRID_SUGGEST_TURNDAY_COLUMN = "建議 Safety 設定值 Turnday"
-# 建議退D001（選開；return_to_d001）：接收目標為 D001（Warehouse，可無限接收），
-# 退回量＝該列可轉出量（池級門檻通過的 14 日超額）扣除已轉出後的剩餘；
-# 因 D001 無接收上限，不跑分配（調貨優先，剩餘全數退回）。
+# 建議退D001（選開；return_to_d001）：接收目標為 D001（Warehouse，可無限接收）。
+# 退貨基準為 Safety Stock (現時)（非調貨段的 14 日線，與池級門檻脫鉤，逐列判定）：
+# 中銷／低銷／零銷列退回超出 Safety 的庫存；高銷列原則上不退，僅當 Safety > 0 且
+# 庫存 ≥ 3×Safety（高於 Safety 200%）時退至 2×Safety；調貨優先——先扣「轉出量」
+# （不限OM 分配實績），「需要調貨」列一律不退。
 _HYBRID_RETURN_D001_COLUMN = "建議退D001 量"
+_HYBRID_RETURN_D001_GROSS_COLUMN = "可退D001 貨量"
+_HYBRID_RETURN_D001_GROSS_INTERNAL = "_hybrid_return_d001_gross"
 _HYBRID_RETURN_D001_SHEET = "退D001 建議"
 _HYBRID_RETURN_D001_COLUMNS = [
     "Buyer", "Brand", "SKU", "SKU Desc", "Site Code", "Shop Name", "OM", "Shop Nature",
-    "RP Type", "Shop Stock Qty (CM)", "Adj. Safety Stock", "可轉出貨量", "轉出量",
+    "RP Type", "Shop Stock Qty (CM)", "Adj. Safety Stock",
+    _HYBRID_RETURN_D001_GROSS_COLUMN, "轉出量",
     _HYBRID_RETURN_D001_COLUMN, _HYBRID_SALES_BAND_COLUMN, _HYBRID_SALES_CLASS_COLUMN,
 ]
 
@@ -6689,12 +6694,16 @@ def _build_hybrid_diagnosis(raw: pd.DataFrame, variant: str = "free") -> pd.Data
 def _build_hybrid_return_d001(raw: pd.DataFrame) -> pd.DataFrame:
     """退D001 建議明細（店舖×SKU 逐列）：只收錄「建議退D001 量」> 0 的列。
 
-    「可轉出貨量」為三 Nature 可轉出欄加總（Tourist 欄僅雙向時存在）；
-    「建議退D001 量」＝可轉出量扣除已轉出後的剩餘（接收目標 D001＝Warehouse，
-    可無限接收）。RAW 缺本欄（開關未開）時輸出空表；按 Site Code / Brand / SKU 排序。
+    「可退D001 貨量」＝扣除已轉出前的可退額度（中銷／低銷／零銷列＝庫存 − Safety；
+    高銷列＝庫存 − 2×Safety，須庫存 ≥ 3×Safety），「建議退D001 量」＝可退額度 − 轉出量。
+    RAW 缺本欄（開關未開）時輸出空表；按 Site Code / Brand / SKU 排序。
     """
     cols = _HYBRID_RETURN_D001_COLUMNS
-    if raw is None or raw.empty or _HYBRID_RETURN_D001_COLUMN not in raw.columns:
+    if (
+        raw is None or raw.empty
+        or _HYBRID_RETURN_D001_COLUMN not in raw.columns
+        or _HYBRID_RETURN_D001_GROSS_INTERNAL not in raw.columns
+    ):
         return pd.DataFrame(columns=cols)
     qty = _safe_numeric(raw[_HYBRID_RETURN_D001_COLUMN])
     sel_mask = qty.gt(0).fillna(False)
@@ -6709,11 +6718,8 @@ def _build_hybrid_return_d001(raw: pd.DataFrame) -> pd.DataFrame:
         work["Buyer"] = ""
     if "SKU Desc" not in work.columns:
         work["SKU Desc"] = _compute_raw_extra_columns(work)["SKU Desc"]
-    work["可轉出貨量"] = (
-        _safe_numeric(work.get("可轉出貨量 (Mix)", _safe_default_series(0, work.index)))
-        + _safe_numeric(work.get("可轉出貨量 (Non Tourist)", _safe_default_series(0, work.index)))
-        + _safe_numeric(work.get("可轉出貨量 (Tourist)", _safe_default_series(0, work.index)))
-    ).astype(int)
+    gross = _safe_numeric(raw[_HYBRID_RETURN_D001_GROSS_INTERNAL])
+    work[_HYBRID_RETURN_D001_GROSS_COLUMN] = gross.reindex(work.index).fillna(0).astype(int)
     work["轉出量"] = _safe_numeric(work.get("轉出量", _safe_default_series(0, work.index))).fillna(0).astype(int)
     work[_HYBRID_RETURN_D001_COLUMN] = qty.reindex(work.index).fillna(0).astype(int)
     work = work.sort_values(["Site Code", "Brand", "SKU"], kind="stable")
@@ -7591,11 +7597,15 @@ def transform_hybrid(
       事件類型／調貨後庫存與 TurnDay），不影響 Safety Review、建議調整值與調整量。
       來源檔缺 RP Type 欄時自動失效（全部列按 RF）並列 warning。
     - return_to_d001=True（建議退D001，預設 False 維持現行契約）：新增 RAW 欄
-      「建議退D001 量」＝該列可轉出量（池級門檻通過的 14 日超額；雙向時含 Tourist 欄）
-      扣除「轉出量」（不限OM 分配實績）後的剩餘，取整、下限 0——接收目標為 D001
-      （Warehouse，可無限接收），故不跑分配、調貨優先、剩餘全數退回；來源檔缺
-      「RP Type」欄、OM 限制與分類維度均不影響本欄（本欄只作退倉建議，
-      不改變調貨分配、Safety Review 與建議調整量）。
+      「建議退D001 量」——接收目標為 D001（Warehouse，可無限接收），故不跑分配。
+      退貨基準為 Safety Stock (現時)（非調貨段的 14 日線，與池級門檻脫鉤，逐列判定）：
+      中銷／低銷／零銷列可退＝max(0, Shop Stock Qty (CM) − Adj. Safety Stock)；
+      高銷列原則上不退，僅當 Safety > 0 且庫存 ≥ 3×Safety（高於 Safety 200%）時
+      可退＝庫存 − 2×Safety；「需要調貨」列一律不退；建議退D001 量＝可退 − 轉出量
+      （不限OM 分配實績，調貨優先），取整、下限 0。另存內部欄
+      「_hybrid_return_d001_gross」（可退額度毛額，RAW 顯示不輸出）供退D001 建議
+      清單對照。缺「RP Type」欄、OM 限制與分類維度均不影響本欄；本欄只作退倉建議，
+      不改變調貨分配、Safety Review 與建議調整量。
     - 銷量分類（常開，與 sales_rebalance 開關無關）：RAW／主表新增「銷量帶」
       （高銷／中銷／低銷／零銷，同 SKU 內按 Sold Qty (P90D) 平均排名分帶，
       見 _hybrid_sales_bands）與「銷量存貨分類」（高銷缺貨／低銷積壓／零銷積壓／正常，
@@ -7969,21 +7979,6 @@ def transform_hybrid(
     df["轉出量 (同OM)"] = donate_om
     df["調貨來源 (同OM)"] = desc_om
 
-    # ── 建議退D001（選開）：接收目標 D001（Warehouse）可無限接收，故不跑分配——
-    # 調貨優先，各列可轉出量（池級門檻通過的 14 日超額；雙向時含 Tourist 欄）
-    # 扣除不限OM 已轉出後的剩餘即建議退回量；缺 RP Type 欄、OM 與分類維度均不影響本欄。
-    _return_units = 0
-    if return_to_d001:
-        _return_eligible = mix_excess + nt_excess + (tourist_excess if bidirectional else 0.0)
-        _return_qty = np.maximum(0, np.floor(_return_eligible - donate_np)).astype(int)
-        df[_HYBRID_RETURN_D001_COLUMN] = _return_qty
-        _return_units = int(_return_qty.sum())
-        if _return_units == 0:
-            warnings.append(
-                "「建議退D001」已開啟：沒有可退回 D001 的店舖×SKU 列"
-                "（可轉出量扣除已轉出後無剩餘；池級門檻不通過的 Nature 池一律不建議退貨）。"
-            )
-
     if not need_mask.any():
         if dim == "rp":
             warnings.append("沒有符合調貨條件的 RF 列（任何 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且補到 14 日周轉的需求 > 0 且有貨可調；ND 列不作需求方）。")
@@ -8078,6 +8073,32 @@ def transform_hybrid(
     raw["調貨後 TurnDay"] = np.where(in_table, np.round(td_after, 1), np.nan)
     raw["調貨後庫存 (同OM)"] = np.where(in_table, stock_after_om, np.nan)
     raw["調貨後 TurnDay (同OM)"] = np.where(in_table, np.round(td_after_om, 1), np.nan)
+
+    # ── 建議退D001（選開）：接收目標 D001（Warehouse）可無限接收，故不跑分配。
+    # 退貨基準為 Safety Stock (現時)（非調貨段的 14 日線，與池級門檻脫鉤，逐列判定）：
+    # 中銷／低銷／零銷列退回超出 Safety 的庫存；高銷列原則上不退，僅當 Safety > 0 且
+    # 庫存 ≥ 3×Safety（高於 Safety 200%）時退至 2×Safety；調貨優先——先扣「轉出量」
+    # （不限OM 分配實績），「需要調貨」列一律不退；缺 RP Type 欄、OM 與分類維度均不影響。
+    _return_units = 0
+    if return_to_d001:
+        _band_np = df[_HYBRID_SALES_BAND_COLUMN].to_numpy(dtype=object)
+        _adj_ret = np.maximum(adj_val, 0.0)
+        _is_high_band = _band_np == _HYBRID_SALES_BANDS[0]
+        _high_gate = _is_high_band & (_adj_ret > 0) & (cm_stock_val >= 3.0 * _adj_ret)
+        # 高銷未達 200% 門檻 → 保留線設為庫存本身（可退歸 0）
+        _ret_keep = np.where(_is_high_band & ~_high_gate, cm_stock_val,
+                             np.where(_is_high_band, 2.0 * _adj_ret, _adj_ret))
+        _ret_gross = np.where(need_mask, 0.0, np.maximum(0.0, cm_stock_val - _ret_keep))
+        _ret_net = np.where(need_mask, 0.0, np.maximum(0.0, np.floor(_ret_gross - donate_np)))
+        df[_HYBRID_RETURN_D001_GROSS_INTERNAL] = np.floor(_ret_gross).astype(int)
+        df[_HYBRID_RETURN_D001_COLUMN] = _ret_net.astype(int)
+        _return_units = int(_ret_net.sum())
+        if _return_units == 0:
+            warnings.append(
+                "「建議退D001」已開啟：沒有可退回 D001 的店舖×SKU 列"
+                "（僅中銷／低銷／零銷列建議退回超出 Safety Stock (現時) 的庫存；"
+                "高銷列須庫存高於 Safety 200% 才退至 2 倍 Safety；需要調貨列一律不退）。"
+            )
 
     if progress_callback:
         progress_callback(0.55, "建立 Review 表...")
@@ -8616,7 +8637,7 @@ def _write_hybrid_guide_sheet(ws, stats):
         f'保底 {st_.get("sales_overstock_min_units", 2)} 件（銷量存貨分類恆按此計算）')
     _kv("銷量再平衡", "開啟（高銷缺貨列豁免池門檻加入調貨需求方）" if st_.get("sales_rebalance")
         else "關閉（調貨需求判定按現行規則）")
-    _kv("建議退D001", "開啟（可轉出量扣除已轉出後的剩餘退回 D001；D001＝Warehouse 可無限接收）" if st_.get("return_to_d001")
+    _kv("建議退D001", "開啟（中銷／低銷／零銷列退回超出 Safety 的庫存；高銷列須庫存高於 Safety 200% 才退至 2 倍 Safety）" if st_.get("return_to_d001")
         else "關閉（不產生退倉建議）")
     _kv("參考日期", f'{st_.get("ref_date", "—")}（Past 90 Days 0 Sales 轉 ND 提示的新品判定基準，預設昨日）')
 
@@ -8638,10 +8659,11 @@ def _write_hybrid_guide_sheet(ws, stats):
     _bullet("Past 90 Days 0 Sales 轉 ND：M-2／M-1／CM-MTD／P90D 皆零銷售且有庫存的列，於「店舖問題 SKU」"
             "標示 ND 退場建議（距參考日期 90 天內新品除外）。")
     if st_.get("return_to_d001"):
-        _bullet("建議退D001（本份已開啟）：接收目標 D001＝Warehouse，可無限接收——各列「建議退D001 量」＝"
-                "可轉出量（池級門檻通過的 14 日超額）扣除「轉出量」（不限OM 分配實績）後的剩餘，調貨優先、"
-                "剩餘全數退回，不跑分配；池級門檻不通過的 Nature 池一律不建議退貨。本欄只作退倉建議，"
-                "不影響調貨分配、Safety Review 與建議調整量。")
+        _bullet("建議退D001（本份已開啟）：接收目標 D001＝Warehouse，可無限接收，不跑分配。"
+                "退貨基準為 Safety Stock (現時)（非調貨段的 14 日線，與池級門檻脫鉤）：中銷／低銷／零銷列"
+                "退回超出 Safety 的庫存（庫存 − Safety）；高銷列原則上不退，僅當 Safety > 0 且庫存 ≥ 3×Safety"
+                "（高於 Safety 200%）時退至 2×Safety。調貨優先——建議退D001 量＝可退額度 − 轉出量（不限OM），"
+                "需要調貨列一律不退。本欄只作退倉建議，不影響調貨分配、Safety Review 與建議調整量。")
 
     # ── ③ 工作表導讀 ──
     _sec("③ 工作表導讀（先看哪一頁、應留意什麼）")
@@ -8665,7 +8687,7 @@ def _write_hybrid_guide_sheet(ws, stats):
           "店務同事可先從這一頁著手；建議方法附建議值周轉日數，受 3 件保底影響時加註保底原因；含調入缺口跟進與 0 Sales 轉 ND 建議")
     if st_.get("return_to_d001"):
         _row3("退D001 建議", "超額庫存退回 D001（Warehouse）的店舖×SKU 清單",
-              "數量＝可轉出量扣除已轉出後的剩餘（調貨優先）；D001 可無限接收，數量即全數剩餘")
+              "留意「可退D001 貨量」（庫存 − Safety；高銷為庫存 − 2×Safety）與「轉出量」的差額即建議退回量")
     _row3("Review 摘要", "指標卡＋Safety Review×分類維度交叉表＋Safety 調整方向分類／明細＋銷量×存貨分類交叉表",
           "管理層概覽；「Safety 調整方向分類」看建議增加／減少的總量")
     _row3("簡易調貨明細 (不限OM)／(同OM)", "一列一筆「來源店舖 → 接收店舖」調貨",
@@ -8678,7 +8700,7 @@ def _write_hybrid_guide_sheet(ws, stats):
     _bullet("分類維度只改變 Summary／交叉表的分組顯示，不影響調貨與 Safety 計算。")
     _bullet("「可轉出未使用」＝該列有 14 日超額庫存但本次未被取用，可留作後備來源。")
     if st_.get("return_to_d001"):
-        _bullet("「建議退D001 量」以「不限OM」分配後的剩餘超額計算；(同OM) 分配轉出較少時，"
+        _bullet("「建議退D001 量」＝可退D001 貨量 − 轉出量（不限OM 分配實績）；(同OM) 分配轉出較少時，"
                 "實際可退量可能更多，執行前請按選用的調貨變體自行核對。")
 
 
@@ -9033,7 +9055,7 @@ def generate_excel_hybrid(
         ws_return = wb.create_sheet(title=_HYBRID_RETURN_D001_SHEET)
         _write_shop_issue_sheet(
             ws_return, _build_hybrid_return_d001(raw),
-            title="退D001 建議 — 超額庫存扣除已轉出後退回 D001（Warehouse，可無限接收）",
+            title="退D001 建議 — 中銷／低銷／零銷退回超出 Safety 的庫存；高銷須庫存高於 Safety 200%（退至 2 倍 Safety）；退回 D001（Warehouse）",
             progress_callback=progress_callback, progress_start=0.745, progress_end=0.75,
         )
 
