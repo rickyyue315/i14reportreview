@@ -10013,6 +10013,8 @@ def transform_forecast(
     爆升）＝ceil(月預估 × surge_cover_months)，仍受上限月數 cap_months 封頂。
     damp 為趨勢外推的衰減係數（樂觀＝max(S1, MTD 調整月化) × (1 + damp × g)）。
     MTD 日期無效時 MTD 月化退回 max(M-1, 月均基準) 並列 warning。
+    另輸出 4 個月 FC 拆分參考欄：本月 (M)＝MTD 調整月化；M+1＝月預估 (採用)；
+    爆升類 M+2／M+3 按趨勢增速 × 衰減係數逐月遞推，平穩類與 M+1 相同。
 
     回傳 (main_df, coverage_df, buyer_df, raw_df, stats, warnings)。
     stats 另回存全部正規化後參數，供 Excel「說明」表照錄。
@@ -10322,6 +10324,16 @@ def transform_forecast(
     })
     main["FC 月預估 (採用)"] = monthly
 
+    # ── 4 個月 FC 拆分（參考欄，不影響訂量）：本月＝MTD 調整月化；M+1＝月預估 (採用)；
+    #    爆升類 M+2／M+3 按趨勢增速 × 衰減係數逐月遞推，平穩類與 M+1 相同（平推）──
+    growth_step = 1.0 + damp * g
+    fc_m2_ = np.where(use_opt, monthly * growth_step, monthly.astype(float))
+    fc_m3_ = np.where(use_opt, monthly * growth_step ** 2, monthly.astype(float))
+    main["FC 本月 (M)"] = np.floor(np.maximum(sku_mtd_adj.to_numpy(dtype=float), 0.0)).astype(int)
+    main["FC M+1 預估"] = monthly
+    main["FC M+2 預估"] = np.floor(np.maximum(fc_m2_, 0.0)).astype(int)
+    main["FC M+3 預估"] = np.floor(np.maximum(fc_m3_, 0.0)).astype(int)
+
     # RAW 三情境欄＝SKU 級數值廣播（v2 情境在 SKU 級計算，逐列供稽核）
     _scen = main.set_index("SKU")[["FC 保守情境", "FC 標準情境", "FC 樂觀情境"]]
     for _c in ("FC 保守情境", "FC 標準情境", "FC 樂觀情境"):
@@ -10603,6 +10615,7 @@ _FORECAST_MAIN_COLUMNS = [
     "FC M-2 合計", "FC M-1 合計", "FC MTD 合計", "FC MTD 月化", "FC P90D 合計",
     "FC 爆升分類", "FC 保守情境", "FC 標準情境", "FC 樂觀情境",
     "FC MTD 調整月化", "FC 趨勢增速", "FC 月預估 (採用)",
+    "FC 本月 (M)", "FC M+1 預估", "FC M+2 預估", "FC M+3 預估",
     "FC 店舖庫存合計", "FC D001 庫存 (Net)", "FC D001 PO", "FC Shop PO 合計", "FC 在途合計",
     "FC 位置合計", "FC 目標覆蓋量", "FC 缺口", "FC 上限空間",
     "FC 建議訂量", "FC 建議訂貨對象", "FC SKU 狀態",
@@ -10751,6 +10764,8 @@ def _write_forecast_guide_sheet(ws, stats):
             "MTD 調整月化＝按已過日數把 MTD 月化與月均基準混合（月初 MTD 佔比較低）。保守情境＝月均基準（只作參考）。")
     _bullet("樂觀情境＝max(M-1 折算後, MTD 調整月化) × (1 ＋ 衰減係數 × 趨勢增速)，趨勢增速設上限且不低於標準。"
             "爆升四類（新起量／加速中／爆升）用樂觀情境、其餘平穩用標準情境；分類輸入同為還原＋折算後數值。")
+    _bullet("4 個月 FC 拆分（參考欄）：本月 (M)＝MTD 調整月化（MTD 日期所在月份）；M+1＝月預估 (採用)；"
+            "爆升類 M+2／M+3 按趨勢增速 × 衰減係數逐月遞推，平穩類與 M+1 相同。此 4 欄僅供參考，建議訂量仍按月預估 (採用) 計算。")
     _bullet("位置分流：Warehouse 貨＝店舖庫存合計＋D001 庫存 (Net)＋D001 PO＋在途；"
             "Vendor 貨＝店舖庫存合計＋Shop PO 合計＋在途。"
             "建議訂貨：Warehouse（D001）貨由 D001 向 Vendor 下單補貨（D001 PO）；Vendor 貨由店舖向 Vendor 下單（Shop PO）。")
@@ -10771,7 +10786,7 @@ def _write_forecast_guide_sheet(ws, stats):
     r += 1
     _row3("說明（本頁）", "Forecast 邏輯、本次參數與導讀", "執行任何行動前，先核對上方 ① 的參數是否符合預期")
     _row3("Forecast 主表", "SKU 級建議訂貨主表（一 SKU 一列）",
-          "留意「爆升分類」「FC 月預估 (採用)」「FC 建議訂量」「FC 建議訂貨對象」「FC SKU 狀態」；已封頂列代表需求超過上限")
+          "留意「爆升分類」「FC 月預估 (採用)」「FC 本月 (M)」「FC M+1／M+2／M+3 預估」「FC 建議訂量」「FC 建議訂貨對象」「FC SKU 狀態」；已封頂列代表需求超過上限")
     _row3("店舖覆蓋", "有訂量 SKU 的每店可用日數與風險旗",
           "先跟進「已缺貨」與「≤7日」列；訂貨到店前的空窗期以此表安排")
     _row3("按 Buyer 彙總", "各 Buyer 的建議訂量合計（分 D001 PO／Shop PO）",

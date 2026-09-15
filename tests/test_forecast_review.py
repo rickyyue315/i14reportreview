@@ -122,6 +122,42 @@ def test_optimistic_never_below_standard():
     assert row["FC 樂觀情境"] >= row["FC 標準情境"]
 
 
+def test_four_month_fc_stable_flat():
+    # 平穩類平推：B=55、MTD 月化 60 → MTD 調整月化=16+22/30×55=56.33→56；
+    # 標準=0.4×55+0.3×55+0.3×56.33=55.4→55；M+1＝M+2＝M+3＝月預估 (採用) 55
+    df = _df([{"Shop Monthly Sold Qty (P90D)": 55.0}])
+    main, _, _, _, _, _ = _run(df)
+    row = _main_row(main)
+    assert row["FC 爆升分類"] == _FC_CLASS_STABLE
+    assert row["FC 本月 (M)"] == 56
+    assert row["FC M+1 預估"] == 55
+    assert row["FC M+2 預估"] == 55
+    assert row["FC M+3 預估"] == 55
+    assert row["FC M+1 預估"] == row["FC 月預估 (採用)"]
+
+
+def test_four_month_fc_surge_compound():
+    # 爆升類遞推：M+1＝樂觀 263；M+2＝floor(263×1.08)＝284；M+3＝floor(263×1.08²)＝306
+    df = _df([{"Sold Qty (CM - MTD)": 200.0}])
+    main, _, _, _, _, _ = _run(df, damp=0.8)
+    row = _main_row(main)
+    assert row["FC 爆升分類"] == _FC_CLASS_SURGE
+    assert row["FC M+1 預估"] == 263
+    assert row["FC M+2 預估"] == 284
+    assert row["FC M+3 預估"] == 306
+
+
+def test_four_month_fc_in_contract_order():
+    # 契約欄序：4 個月 FC 欄緊接「FC 月預估 (採用)」之後，且 transform 輸出含全欄
+    i = _FORECAST_MAIN_COLUMNS.index("FC 月預估 (採用)")
+    assert _FORECAST_MAIN_COLUMNS[i + 1:i + 5] == [
+        "FC 本月 (M)", "FC M+1 預估", "FC M+2 預估", "FC M+3 預估",
+    ]
+    main, _, _, _, _, _ = _run(_df([{}]))
+    for c in ("FC 本月 (M)", "FC M+1 預估", "FC M+2 預估", "FC M+3 預估"):
+        assert c in main.columns
+
+
 def test_p90d_monthly_fallback():
     df = _df([{}]).drop(columns=["Shop Monthly Sold Qty (P90D)"])
     main, _, _, _, _, warns = _run(df)
