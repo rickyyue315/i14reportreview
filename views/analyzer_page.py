@@ -40,6 +40,8 @@ from transformer import (
     _hybrid_buyer_combined_stats, _hybrid_buyer_combined_detail,
     _build_stock_checking_shop_issues, _build_combined_shop_issues,
     _build_hybrid_shop_issues,
+    _build_hybrid_return_d001,
+    _HYBRID_RETURN_D001_COLUMN, _HYBRID_RETURN_D001_SHEET, _HYBRID_RETURN_D001_COLUMNS,
     _build_combined_dimension_cross_tab,
     _STOCK_CHECKING_SHOP_ISSUE_COLUMNS, _COMBINED_SHOP_ISSUE_COLUMNS,
     _HYBRID_SHOP_ISSUE_COLUMNS,
@@ -885,6 +887,18 @@ if uploaded_file is not None:
                 help="低銷／零銷積壓分類要求庫存不少於此件數，避免尾數庫存誤報積壓。"
                      + _sales_hint
             )
+        return_to_d001 = st.checkbox(
+            "📤 建議退D001（超額庫存扣除已轉出後退回倉庫 D001）",
+            value=False, key="hy_return_d001",
+            help="預設關閉：只輸出店舖間調貨建議。"
+                 "開啟後新增 RAW 欄「建議退D001 量」與「退D001 建議」工作表："
+                 "接收目標為 D001（Warehouse，可無限接收貨量），故不跑分配——"
+                 "各列可轉出量（池級門檻通過的 14 日超額；雙向時含 Tourist）扣除已轉出後的剩餘即建議退回量，"
+                 "調貨優先、剩餘全數退回。"
+                 "池級門檻不通過的 Nature 池一律不建議退貨（該池自身缺貨）；"
+                 "ND 列可作供應方，同樣適用退D001 建議；"
+                 "本欄只作退倉建議，不影響調貨分配、Safety Review 與建議調整量。"
+        )
         hy_ref_date = st.date_input(
             "📅 參考日期（New SKU 判定基準；Launch Date 起 90 天內視為新品）",
             value=datetime.now().date() - timedelta(days=1),
@@ -895,6 +909,7 @@ if uploaded_file is not None:
             turnday_threshold, d001_threshold, _safety_days, bidirectional, _dimension,
             hy_ref_date, nd_priority,
             sales_rebalance, sales_oos_days, sales_overstock_days, sales_overstock_min_units,
+            return_to_d001,
         )
         if bidirectional:
             st.caption(
@@ -928,6 +943,15 @@ if uploaded_file is not None:
                 + ("目前已勾選雙向：兩端放寬至任何 Nature。" if bidirectional
                    else "未勾選雙向：需求方仍限 Tourist 列、轉出池仍限 Mix／Non Tourist。")
                 + "自我調貨／同 Nature／同OM 守衛與池級歸零全部保留；ND 列仍不作需求方。"
+            )
+        if return_to_d001:
+            st.caption(
+                f"📤 建議退D001 已開啟：接收目標為 **D001（Warehouse，可無限接收貨量）**，故不跑分配——"
+                "各列「建議退D001 量」＝可轉出量（池級門檻通過的 14 日超額；雙向時含 Tourist 欄）"
+                "扣除「轉出量」（不限OM 分配實績）後的剩餘，**調貨優先、剩餘全數退回**；"
+                "池級門檻不通過的 Nature 池一律不建議退貨（該池自身缺貨）。"
+                "本欄只作退倉建議，不影響調貨分配、Safety Review 與建議調整量；"
+                "OM 限制與分類維度均不影響本欄。"
             )
         if _dimension == "rp":
             st.caption(
@@ -1016,6 +1040,7 @@ if uploaded_file is not None:
                     sales_oos_days=int(sales_oos_days),
                     sales_overstock_days=int(sales_overstock_days),
                     sales_overstock_min_units=int(sales_overstock_min_units),
+                    return_to_d001=bool(return_to_d001),
                 )
                 buf = generate_excel_hybrid(
                     raw_df, sc_summary, diagnosis, diagnosis_om, diag_summary, _stats,
@@ -1070,6 +1095,7 @@ if uploaded_file is not None:
                 (stats or {}).get("sales_oos_days", sales_oos_days),
                 (stats or {}).get("sales_overstock_days", sales_overstock_days),
                 (stats or {}).get("sales_overstock_min_units", sales_overstock_min_units),
+                return_to_d001=(stats or {}).get("return_to_d001", return_to_d001),
             )
             hybrid_is_stale = hybrid_params_changed(applied_hybrid_params, _current_hybrid_params)
             if hybrid_is_stale:
@@ -1122,11 +1148,12 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_diag, tab_diag_om, tab_sc, tab_issue, tab_cross, tab_detail, tab_raw = st.tabs([
+            tab_diag, tab_diag_om, tab_sc, tab_issue, tab_return, tab_cross, tab_detail, tab_raw = st.tabs([
                 "🧭 調貨 Review Safety Stock（不限OM）",
                 "🔗 調貨 Review Safety Stock（同OM）",
                 "📋 Summary（SKU 存貨偏重）",
                 "🏪 店舖問題 SKU",
+                "📤 退D001 建議",
                 "📊 Review 摘要（Safety 調整統計）",
                 "🧾 簡易調貨明細",
                 "📄 RAW 完整明細",
@@ -1177,6 +1204,33 @@ if uploaded_file is not None:
                     st.caption(f"共 {len(_hy_issues):,} 列需行動（Safety 設定不足＋過高＋ND 退場；調入缺口另於建議方法加註）。")
                 else:
                     st.info("無符合資料")
+            with tab_return:
+                st.markdown("#### 退D001 建議 — 超額庫存扣除已轉出後退回 D001（Warehouse）")
+                if _HYBRID_RETURN_D001_COLUMN in raw_df.columns:
+                    st.markdown(
+                        "接收目標為 **D001（Warehouse，可無限接收貨量）**，故不跑分配："
+                        "「建議退D001 量」＝該列可轉出量（池級門檻通過的 14 日超額）扣除「轉出量」"
+                        "（不限OM 分配實績）後的剩餘——**調貨優先、剩餘全數退回**；"
+                        "池級門檻不通過的 Nature 池一律不建議退貨。"
+                        "本表只作退倉建議，實際調貨仍按「調貨 Review Safety Stock」的分配結果。"
+                    )
+                    try:
+                        _ret_df = _build_hybrid_return_d001(raw_df)
+                    except Exception:
+                        _ret_df = None
+                    if _ret_df is not None and not _ret_df.empty:
+                        _ret_cols = [c for c in _HYBRID_RETURN_D001_COLUMNS if c in _ret_df.columns]
+                        st.dataframe(_ret_df[_ret_cols].rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                        _ret_sku_n = _ret_df["SKU"].nunique() if "SKU" in _ret_df.columns else 0
+                        _ret_total = int(_ret_df[_HYBRID_RETURN_D001_COLUMN].sum())
+                        st.caption(
+                            f"共 {len(_ret_df):,} 列 / {_ret_sku_n:,} 個 SKU / 建議退回合計 {_ret_total:,} 件"
+                            "（按 Site Code / Brand / SKU 排序；與 Excel「退D001 建議」工作表同一份清單）。"
+                        )
+                    else:
+                        st.info("無符合資料（可轉出量扣除已轉出後無剩餘；池級門檻不通過的列不建議退貨）")
+                else:
+                    st.info("未開啟「建議退D001」：本次結果不含退倉建議；請勾選開關後重新執行。")
             with tab_cross:
                 st.markdown(f"#### ① Safety Review × {_dim_label_applied} 交叉表（列數 / SKU 數 / 建議調整量合計）")
                 if diag_summary is not None and not diag_summary.empty:

@@ -15,6 +15,7 @@ def build_hybrid_params(
     sales_oos_days: int = 7,
     sales_overstock_days: int = 30,
     sales_overstock_min_units: int = 2,
+    return_to_d001: bool = False,
 ) -> dict:
     if ref_date is None:
         ref_text = ""
@@ -35,6 +36,7 @@ def build_hybrid_params(
         "sales_oos_days": int(sales_oos_days),
         "sales_overstock_days": int(sales_overstock_days),
         "sales_overstock_min_units": int(sales_overstock_min_units),
+        "return_to_d001": bool(return_to_d001),
     }
 
 
@@ -50,6 +52,7 @@ def hybrid_params_changed(applied: dict | None, current: dict) -> bool:
             "sales_oos_days": 7,
             "sales_overstock_days": 30,
             "sales_overstock_min_units": 2,
+            "return_to_d001": False,
         }
         applied = {**{k: applied.get(k, d) for k, d in defaults.items()}, **applied}
         current = {**{k: current.get(k, d) for k, d in defaults.items()}, **current}

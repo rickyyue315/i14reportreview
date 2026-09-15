@@ -120,6 +120,12 @@ def main():
     print("OK Hybrid Sales x Nature  | rows=%d need=%d groups=%d warnings=%d" % (
         len(r3b), h_stats3b["need_rows"], len(_hybrid_dimension_groups("sales_nature")), len(h_w3b)))
 
+    # ── Safety Stock x NetStock Review（建議退D001：超額庫存退回 Warehouse）──
+    r4, h_sc4, h_diag4, h_diag4_om, h_cross4, h_stats4, h_w4 = transform_hybrid(df, return_to_d001=True)
+    generate_excel_hybrid(r4, h_sc4, h_diag4, h_diag4_om, h_cross4, h_stats4)
+    print("OK Hybrid Return D001  | rows=%d return_rows=%d return_units=%d warnings=%d" % (
+        len(r4), h_stats4["return_rows"], h_stats4["return_units"], len(h_w4)))
+
     # ── Stock Impact Analysis ──
     _, si_brand, si_buyer, si_cat, _, si_alloc, si_diag, si_inv, si_mly, si_raw, si_warns = transform_stock_impact(
         df, warehouse_only=False, stock_threshold=300
