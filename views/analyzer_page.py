@@ -88,27 +88,42 @@ def _release_os_memory():
         pass
 
 
-def _style_inventory_skew(df: pd.DataFrame):
+def _style_inventory_skew(df: pd.DataFrame, zero_sales: bool = False):
     """Summary 顯示：存貨偏重提示非空時，以醒目橘底加強顯示提示欄與偏重分組的庫存佔比欄。
-    分組名稱按提示文字解析（Shop Nature 三組／RP Type 兩組／Nature＋RP Type 六組通用）。"""
+    分組名稱按提示文字解析（Shop Nature 三組／RP Type 兩組／Nature＋RP Type 六組通用）。
+    zero_sales=True 時（僅銷量兩維度傳入）另以醒目紅底標示零銷組庫存佔比大於 0% 的儲存格
+    （零銷售而仍有存貨，理論上全屬 Overstock；同格與橘底重疊時以紅底優先）。"""
     hint_col = "存貨偏重提示"
-    if df is None or df.empty or hint_col not in df.columns:
+    suffix = " 加總 - Shop Stock Qty (CM) %"
+    if df is None or df.empty:
+        return df
+    if hint_col not in df.columns and not zero_sales:
         return df
 
     def _row_styles(row):
         hint = str(row.get(hint_col, "") or "")
         styles = [""] * len(row)
+        targets = {}
         if hint.strip():
-            targets = {hint_col}
-            # 由欄位反推群組名（不以正則解析提示文字，避免群組名含全形括號時截斷）
-            _suffix = " 加總 - Shop Stock Qty (CM) %"
-            for col in row.index:
-                if isinstance(col, str) and col.endswith(_suffix):
-                    if f"存貨偏重 {col[:-len(_suffix)]}" in hint:
-                        targets.add(col)
-            for i, col in enumerate(row.index):
-                if col in targets:
-                    styles[i] = "background-color: #FFC000; font-weight: 700"
+            targets[hint_col] = "background-color: #FFC000; font-weight: 700"
+        # 由欄位反推群組名（不以正則解析提示文字，避免群組名含全形括號時截斷）
+        for col in row.index:
+            if not (isinstance(col, str) and col.endswith(suffix)):
+                continue
+            gname = col[:-len(suffix)]
+            if hint.strip() and f"存貨偏重 {gname}" in hint:
+                targets[col] = "background-color: #FFC000; font-weight: 700"
+            if zero_sales and (gname == "零銷" or gname.endswith("-零銷")):
+                stock = row.get(f"{gname} 加總 - Shop Stock Qty (CM)")
+                if stock is not None and pd.notna(stock):
+                    try:
+                        if float(stock) > 0:
+                            targets[col] = "background-color: #FFC7CE; font-weight: 700; color: #9C0006"
+                    except (TypeError, ValueError):
+                        pass
+        for i, col in enumerate(row.index):
+            if col in targets:
+                styles[i] = targets[col]
         return pd.Series(styles, index=row.index)
 
     return df.style.apply(_row_styles, axis=1)
@@ -757,7 +772,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。主表另附「建議 Safety 設定值 Turnday」（建議值 ÷ (P90D 月均 ÷ 30)，月均 0 留空），受保底影響的建議在店舖問題 SKU 建議方法加註保底原因。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM、Shop Nature＋OM、銷量（高銷／中銷／低銷／零銷 四帶）或 銷量＋Shop Nature（Nature×銷量帶 12 組）分類；其中 OM／銷量／銷量＋Shop Nature 維度計算與預設相同，僅 Summary／交叉表改按 OM、Nature×OM、銷量帶或 Nature×銷量帶分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。RAW／主表恆附 **銷量帶**（同 SKU 內按 Sold Qty (P90D) 排名分帶）與 **銷量存貨分類**（高銷缺貨／低銷積壓／零銷積壓／正常；店舖周轉日數門檻預設缺貨 7 日、積壓 30 日、保底 2 件，與調貨 14 日線及 Safety 基準天數互相獨立）；「Review 摘要」另附 **⑤ 銷量 × 存貨分類交叉表**（母體為全部店舖×SKU 列）。可勾選 **啟用銷量再平衡**（預設關閉）：高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方（仍須 D001 低於門檻、補到 14 日需求 > 0 且同 SKU 有貨可調），積壓列經既有轉出判定提供來源；跟隨單向／雙向框架，自我調貨／同 Nature／同OM 守衛與池級歸零不放寬。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示）。")
+        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。主表另附「建議 Safety 設定值 Turnday」（建議值 ÷ (P90D 月均 ÷ 30)，月均 0 留空），受保底影響的建議在店舖問題 SKU 建議方法加註保底原因。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM、Shop Nature＋OM、銷量（高銷／中銷／低銷／零銷 四帶）或 銷量＋Shop Nature（Nature×銷量帶 12 組）分類；其中 OM／銷量／銷量＋Shop Nature 維度計算與預設相同，僅 Summary／交叉表改按 OM、Nature×OM、銷量帶或 Nature×銷量帶分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。RAW／主表恆附 **銷量帶**（同 SKU 內按 Sold Qty (P90D) 排名分帶）與 **銷量存貨分類**（高銷缺貨／低銷積壓／零銷積壓／正常；店舖周轉日數門檻預設缺貨 7 日、積壓 30 日、保底 2 件，與調貨 14 日線及 Safety 基準天數互相獨立）；「Review 摘要」另附 **⑤ 銷量 × 存貨分類交叉表**（母體為全部店舖×SKU 列）。可勾選 **啟用銷量再平衡**（預設關閉）：高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方（仍須 D001 低於門檻、補到 14 日需求 > 0 且同 SKU 有貨可調），積壓列經既有轉出判定提供來源；跟隨單向／雙向框架，自我調貨／同 Nature／同OM 守衛與池級歸零不放寬。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示；以銷量／銷量＋Shop Nature 分類時，零銷組「加總 - Shop Stock Qty (CM) %」大於 0% 另以醒目紅底標示——零銷售而仍有存貨，理論上全屬 Overstock）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -1177,14 +1192,16 @@ if uploaded_file is not None:
             _dim_label_applied = _HYBRID_DIMENSION_LABELS.get(applied_hybrid_dimension, "Shop Nature")
             with tab_sc:
                 st.markdown(f"#### SKU 級彙總（按 {_dim_label_applied} 分組）：各組庫存/月銷加總、TurnDay、涉及店舖數、佔比 (%)、強制調貨提示、存貨偏重提示")
+                _hy_zero_on = applied_hybrid_dimension in ("sales", "sales_nature")
                 if sc_summary is not None and not sc_summary.empty:
                     _skewed = sc_summary[sc_summary["存貨偏重提示"].fillna("").astype(str) != ""] if "存貨偏重提示" in sc_summary.columns else sc_summary.iloc[0:0]
                     if not _skewed.empty:
                         st.markdown(f"**存貨偏重 SKU（{len(_skewed):,} 個）**")
-                        st.dataframe(_style_inventory_skew(_skewed), width='stretch', hide_index=True)
+                        st.dataframe(_style_inventory_skew(_skewed, zero_sales=_hy_zero_on), width='stretch', hide_index=True)
                     st.markdown("**全部 SKU Summary**")
-                    st.dataframe(_style_inventory_skew(sc_summary), width='stretch', hide_index=True)
-                    st.caption(f"共 {len(sc_summary):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = {_hybrid_skew_hint_text(applied_hybrid_dimension)}；偏重數值以橘色底色加強顯示。")
+                    st.dataframe(_style_inventory_skew(sc_summary, zero_sales=_hy_zero_on), width='stretch', hide_index=True)
+                    _hy_zero_txt = "；零銷組庫存佔比大於 0% 以紅底標示（零銷售而仍有存貨，理論上全屬 Overstock）" if _hy_zero_on else ""
+                    st.caption(f"共 {len(sc_summary):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = {_hybrid_skew_hint_text(applied_hybrid_dimension)}；偏重數值以橘色底色加強顯示{_hy_zero_txt}。")
                 else:
                     st.info("無符合資料")
             with tab_issue:

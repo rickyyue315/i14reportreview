@@ -534,3 +534,117 @@ def test_params_snapshot_backward_compatible():
                                   False, "sales", None, False,
                                   False, 7, 30, 2)
     assert hybrid_params_changed(old, new_dim)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 9. Summary 零銷有貨紅底標示（v1.47.0）
+# ──────────────────────────────────────────────────────────────────────────────
+
+_ZERO_ROW_TZ = {"SKU": 500, "Site Code": "TZ", "Shop Nature": "Tourist",
+                "Sold Qty (P90D)": 0.0, "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
+                "Sold Qty (CM - MTD)": 0.0, "Shop Stock Qty (CM)": 12.0,
+                "Shop Monthly Sold Qty (P90D)": 0.0, "Adj. Safety Stock": 0}
+_ZERO_ROW_MZ = {"SKU": 500, "Site Code": "MZ", "Shop Nature": "Mix",
+                "Sold Qty (P90D)": 0.0, "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
+                "Sold Qty (CM - MTD)": 0.0, "Shop Stock Qty (CM)": 7.0,
+                "Shop Monthly Sold Qty (P90D)": 0.0, "Adj. Safety Stock": 0}
+
+
+def _fill_rgb(cell):
+    return str(cell.fill.start_color.rgb)
+
+
+def test_zero_sales_groups_registry():
+    from transformer import _hybrid_zero_sales_groups
+    assert _hybrid_zero_sales_groups("sales") == ("零銷",)
+    assert _hybrid_zero_sales_groups("sales_nature") == (
+        "Tourist-零銷", "Mix-零銷", "Non Tourist-零銷")
+    for d in ("nature", "rp", "both", "om", "nature_om"):
+        assert _hybrid_zero_sales_groups(d) == ()
+
+
+def test_summary_zero_sales_highlight_sales_dim():
+    raw, sc, dg, dg_om, ds, stats, _ = transform_hybrid(
+        _df(_SCENARIO_SALES + [_ZERO_ROW_TZ]), dimension="sales")
+    assert int(sc["零銷 加總 - Shop Stock Qty (CM)"].iloc[0]) == 12
+    assert sc["零銷 加總 - Shop Stock Qty (CM) %"].iloc[0] > 0
+    ws = load_workbook(generate_excel_hybrid(raw, sc, dg, dg_om, ds, stats))["Summary"]
+    # sales 維度 G=4：佔比區起點 24；零銷（第 4 組）庫存 % 欄 = 30
+    assert ws.cell(row=4, column=30).value == "零銷"
+    assert _fill_rgb(ws.cell(row=6, column=30)).endswith("FFC7CE")
+    assert ws.cell(row=6, column=30).font.bold
+    for col in (24, 26, 28):  # 高銷／中銷／低銷 庫存 % 欄不標示
+        assert not _fill_rgb(ws.cell(row=6, column=col)).endswith("FFC7CE")
+
+
+def test_summary_zero_sales_highlight_sales_nature_dim():
+    raw, sc, dg, dg_om, ds, stats, _ = transform_hybrid(
+        _df(_SCENARIO_SALES + [_ZERO_ROW_TZ, _ZERO_ROW_MZ]), dimension="sales_nature")
+    ws = load_workbook(generate_excel_hybrid(raw, sc, dg, dg_om, ds, stats))["Summary"]
+    # sales_nature G=12：佔比區起點 56；三條零銷組庫存 % 欄 = 62 / 70 / 78（各自獨立判定）
+    assert ws.cell(row=4, column=62).value == "Tourist-零銷"
+    assert ws.cell(row=4, column=70).value == "Mix-零銷"
+    assert ws.cell(row=4, column=78).value == "Non Tourist-零銷"
+    assert _fill_rgb(ws.cell(row=6, column=62)).endswith("FFC7CE")      # TZ 有貨
+    assert _fill_rgb(ws.cell(row=6, column=70)).endswith("FFC7CE")      # MZ 有貨
+    assert not _fill_rgb(ws.cell(row=6, column=78)).endswith("FFC7CE")  # NT-零銷 無貨
+
+
+def test_summary_zero_sales_highlight_requires_stock():
+    _no_stock = {**_ZERO_ROW_TZ, "Site Code": "TE", "Shop Stock Qty (CM)": 0.0}
+    raw, sc, dg, dg_om, ds, stats, _ = transform_hybrid(
+        _df(_SCENARIO_SALES + [_no_stock]), dimension="sales")
+    assert int(sc["零銷 加總 - Shop Stock Qty (CM)"].iloc[0]) == 0
+    ws = load_workbook(generate_excel_hybrid(raw, sc, dg, dg_om, ds, stats))["Summary"]
+    for row_cells in ws.iter_rows():
+        for cell in row_cells:
+            assert not _fill_rgb(cell).endswith("FFC7CE")
+
+
+def test_summary_zero_sales_highlight_wins_over_skew():
+    # 零銷庫存佔比 62.5%（≥ 30%）且差距 62.5 個百分點（≥ 15）→ 同組同時觸發存貨偏重
+    rows = [
+        {"SKU": 600, "Site Code": "TZ", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 0.0, "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
+         "Sold Qty (CM - MTD)": 0.0, "Shop Stock Qty (CM)": 50.0,
+         "Shop Monthly Sold Qty (P90D)": 0.0, "Adj. Safety Stock": 0},
+        {"SKU": 600, "Site Code": "A6", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 10.0,
+         "Shop Monthly Sold Qty (P90D)": 120.0, "Adj. Safety Stock": 3,
+         "D001 Net Stock Qty (CM)": 500.0},
+        {"SKU": 600, "Site Code": "B6", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 10.0,
+         "Shop Monthly Sold Qty (P90D)": 120.0, "Adj. Safety Stock": 3},
+        {"SKU": 600, "Site Code": "C6", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 10.0,
+         "Shop Monthly Sold Qty (P90D)": 120.0, "Adj. Safety Stock": 3},
+    ]
+    raw, sc, dg, dg_om, ds, stats, _ = transform_hybrid(_df(rows), dimension="sales")
+    assert str(sc.iloc[0]["存貨偏重提示"]).startswith("存貨偏重 零銷")
+    ws = load_workbook(generate_excel_hybrid(raw, sc, dg, dg_om, ds, stats))["Summary"]
+    assert _fill_rgb(ws.cell(row=6, column=30)).endswith("FFC7CE")  # 零銷庫存 % → 紅底優先
+    assert _fill_rgb(ws.cell(row=6, column=37)).endswith("FFC000")  # 提示欄維持橘底
+    assert ws.cell(row=6, column=37).font.bold
+
+
+def test_summary_zero_sales_highlight_absent_in_other_dims():
+    raw, sc, dg, dg_om, ds, stats, _ = transform_hybrid(
+        _df(_SCENARIO_SALES + [_ZERO_ROW_TZ]))  # 預設 nature 維度
+    ws = load_workbook(generate_excel_hybrid(raw, sc, dg, dg_om, ds, stats))["Summary"]
+    for row_cells in ws.iter_rows():
+        for cell in row_cells:
+            assert not _fill_rgb(cell).endswith("FFC7CE")
+
+
+def test_guide_sheet_zero_sales_tip_only_for_sales_dims():
+    raw, sc, dg, dg_om, ds, stats, _ = transform_hybrid(
+        _df(_SCENARIO_SALES + [_ZERO_ROW_TZ]), dimension="sales")
+    ws = load_workbook(generate_excel_hybrid(raw, sc, dg, dg_om, ds, stats))["說明"]
+    text = " ".join(str(ws.cell(row=r, column=c).value)
+                    for r in range(1, 80) for c in (1, 2, 3))
+    assert "紅底" in text and "Overstock" in text
+    raw2, sc2, dg2, dgo2, ds2, stats2, _ = transform_hybrid(_df(_SCENARIO_SALES))
+    ws2 = load_workbook(generate_excel_hybrid(raw2, sc2, dg2, dgo2, ds2, stats2))["說明"]
+    text2 = " ".join(str(ws2.cell(row=r, column=c).value)
+                     for r in range(1, 80) for c in (1, 2, 3))
+    assert "紅底" not in text2

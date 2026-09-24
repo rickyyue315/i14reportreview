@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.47.0 (2026-09-24)
+
+Safety Stock x NetStock Review「Summary」新增**零銷有貨紅底標示**——以「以銷量分類」或「以銷量＋Shop Nature分類」執行時，零銷組的「加總 - Shop Stock Qty (CM) %」只要大於 0%（即零銷組仍有庫存）即以醒目紅底（FFC7CE）加粗深紅字標示。原因：零銷售而仍有存貨，理論上全屬 Overstock，不應只靠存貨偏重門檻攔截：
+
+- **新標示** — `sales` 維度標示「零銷」組、`sales_nature` 維度標示「Tourist-零銷」「Mix-零銷」「Non Tourist-零銷」三組（各自獨立判定）的庫存佔比欄；觸發條件＝該組 Shop Stock Qty (CM) 加總 > 0（即庫存佔比 > 0%），無存貨不標示、**不設佔比門檻**；同格同時觸發存貨偏重橘底時以紅底優先（「存貨偏重提示」欄維持橘底）；新 helper `_hybrid_zero_sales_groups()`（sales 回傳（零銷,）、sales_nature 回傳三 Nature 的零銷組、其餘維度回傳空元組）
+- **不變** — 其餘維度（nature／rp／both／om／nature_om）與 Stock Checking 輸出零變動（`_write_stock_checking_summary_sheet()` 新參數 `highlight_zero_sales` 預設 False，僅 `generate_excel_hybrid()` 傳 True）；計算、欄位、數值與排序一律不變（純標示）
+- **Streamlit 同步** — 混合模式「📋 Summary（SKU 存貨偏重）」分頁 `_style_inventory_skew()` 加 `zero_sales` 參數同式紅底（僅銷量兩維度傳入），caption 與模式說明文字同步；Stock Checking 分頁零變動
+- **文件** — Excel「說明」表（Summary 導讀與實用提示，僅銷量兩維度顯示紅底說明）、README 同步
+- **測試** — `tests/test_hybrid_sales.py` 新增 7 項（零銷組名 registry、sales 紅底與其他帶不標示、sales_nature 三組各自判定、無存貨不標示、與存貨偏重重疊時紅底優先、nature 維度零變動、說明表提示按維度顯示）；`tests/test_stock_checking.py` 新增 1 項（Stock Checking sales 維度零變動）；共 447 項測試與煙霧測試通過
+- Change: `version.py` → 1.47.0
+
 ## v1.46.1 (2026-09-24)
 
 修復 Streamlit Cloud（`i14reportreview.streamlit.app`）依賴安裝失敗，同時保持 Zeabur 部署不受影響——兩個平台共用同一組 `requirements.txt` 版本：

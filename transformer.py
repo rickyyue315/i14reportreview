@@ -6328,6 +6328,19 @@ def _hybrid_dimension_groups(dimension, om_groups=None) -> tuple[str, ...]:
     return tuple(_HYBRID_DIAG_NATURES)
 
 
+def _hybrid_zero_sales_groups(dimension) -> tuple[str, ...]:
+    """零銷分組名稱（Summary 紅底標示用）：sales 回傳（零銷,）；
+    sales_nature 回傳三 Nature 的「{Nature}-零銷」；其餘維度回傳空元組
+    （零銷帶只存在於銷量相關維度）。"""
+    d = _hybrid_dimension(dimension)
+    zero = _HYBRID_SALES_BANDS[3]
+    if d == "sales":
+        return (zero,)
+    if d == "sales_nature":
+        return tuple(f"{n}-{zero}" for n in _HYBRID_DIAG_NATURES)
+    return ()
+
+
 # OM 空白群組顯示名（空白 OM 自成一組，令使用者察覺未安排 OM 的店舖）
 _HYBRID_OM_BLANK_LABEL = "空白"
 
@@ -8677,8 +8690,10 @@ def _write_hybrid_guide_sheet(ws, stats):
     _row3("說明（本頁）", "Review 邏輯、本次參數與導讀", "執行任何行動前，先核對上方 ① 的參數是否符合預期")
     _row3("RAW", "全部店舖×SKU 逐列明細與判定欄",
           "留意「需要調貨」「事件類型」「Safety Review」「建議 Safety 設定值」「建議 Safety 設定值 Turnday」「Safety 建議調整量」「銷量帶」「銷量存貨分類」；非事件列 Review 欄留空屬正常")
-    _row3("Summary", "SKU 級庫存／銷量分佈（按分類維度分組）",
-          "留意「存貨偏重提示」（橘底）——哪些分組存貨偏重而銷量不高")
+    _summary_watch = "留意「存貨偏重提示」（橘底）——哪些分組存貨偏重而銷量不高"
+    if dim in ("sales", "sales_nature"):
+        _summary_watch += "；零銷組「加總 - Shop Stock Qty (CM) %」大於 0% 以紅底標示——零銷售而仍有存貨，理論上全屬 Overstock"
+    _row3("Summary", "SKU 級庫存／銷量分佈（按分類維度分組）", _summary_watch)
     _row3("調貨 Review Safety Stock (不限OM)", "逐列 Safety Review 主表（調貨來源不限 OM）",
           "按「Safety Review」篩選設定不足／過高；行動看「建議 Safety 設定值」「建議 Safety 設定值 Turnday」與「Safety 建議調整量」")
     _row3("調貨 Review Safety Stock (同OM)", "同上，惟調貨來源須與需求店同一 OM",
@@ -8697,6 +8712,9 @@ def _write_hybrid_guide_sheet(ws, stats):
     _sec("④ 實用提示")
     _bullet("「Safety 建議調整量」正數＝建議上調設定；負數＝建議下調設定（僅不足／過高列有值）。")
     _bullet("Summary 橘底＝觸發「存貨偏重提示」的分組（庫存佔比高而銷量佔比低）。")
+    if dim in ("sales", "sales_nature"):
+        _bullet("Summary 紅底＝零銷組仍有庫存（「加總 - Shop Stock Qty (CM) %」大於 0%）——零銷售而仍有存貨，"
+                "理論上全屬 Overstock，不設佔比門檻一律標示；同格同時觸發橘底時以紅底優先。")
     _bullet("分類維度只改變 Summary／交叉表的分組顯示，不影響調貨與 Safety 計算。")
     _bullet("「可轉出未使用」＝該列有 14 日超額庫存但本次未被取用，可留作後備來源。")
     if st_.get("return_to_d001"):
@@ -8961,6 +8979,8 @@ def generate_excel_hybrid(
     sales_nature 三 Nature × 四帶 12 組（動態 OM 名單由 stats["om_groups"] 還原，
     缺失時由 raw 即時推導）；
     各組加總/TurnDay/涉及店舖數/佔比、強制調貨提示、存貨偏重提示（門檻按維度切換）；
+    sales／sales_nature 維度另以醒目紅底標示零銷組庫存佔比 > 0%（零銷組仍有庫存，
+    零銷售而仍有存貨理論上全屬 Overstock）；
     nature 雙向時另加 AD 欄「由Tourist 店舖預計調出數量」）/
     調貨 Review Safety Stock (不限OM) / 調貨 Review Safety Stock (同OM)（店舖×SKU 主表含 RP Type 欄）/
     店舖問題 SKU（每間店舖需行動列：問題＋建議方法）/
@@ -9020,7 +9040,7 @@ def generate_excel_hybrid(
 
     # ── Sheet 2: Summary（SKU 級彙總，按分類維度分組；雙向時另加 AD 欄；偏重提示以醒目橘底加強顯示）──
     ws_sc = wb.create_sheet(title="Summary")
-    _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38, bidirectional=_bidirectional, highlight_skew=True, dimension=_dim, om_groups=_om_groups)
+    _write_stock_checking_summary_sheet(ws_sc, sc_summary, progress_callback, progress_start=0.25, progress_end=0.38, bidirectional=_bidirectional, highlight_skew=True, dimension=_dim, om_groups=_om_groups, highlight_zero_sales=True)
 
     if progress_callback:
         progress_callback(0.40, "建立調貨 Review 主表 (不限OM)...")
@@ -11518,7 +11538,7 @@ def _hybrid_om_groups_from_summary_columns(summary: pd.DataFrame, dimension: str
     return tuple(sorted(oms)) if oms else None
 
 
-def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30, bidirectional: bool = False, highlight_skew: bool = False, dimension: str = "nature", om_groups=None):
+def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30, bidirectional: bool = False, highlight_skew: bool = False, dimension: str = "nature", om_groups=None, highlight_zero_sales: bool = False):
     """Summary 工作表：SKU 級彙總（雙列表頭模仿 By SKUxShop_Stock Checking_Output 樞紐佈局）。
 
     欄位配置按分類維度分組數 G（nature 3／rp 2／both 6／om N／nature_om 3×N／
@@ -11535,6 +11555,11 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     （加總區每組 4 欄；佔比 T–Y、提示 Z、調出 AA–AB、偏重 AC、雙向 AD）。
     highlight_skew=True 時，存貨偏重提示非空的列以醒目橘底（FFC000）加強顯示
     提示欄與偏重分組的庫存佔比欄。
+    highlight_zero_sales=True 時（僅 sales／sales_nature 維度生效），零銷組的
+    庫存佔比欄（加總 - Shop Stock Qty (CM) %）只要該組庫存 > 0（即佔比 > 0%）
+    即以醒目紅底（FFC7CE）加粗深紅字標示——零銷售而仍有存貨，理論上全屬 Overstock，
+    不設佔比門檻；同格與存貨偏重橘底重疊時以紅底優先。Stock Checking 不傳本參數
+    （預設 False，輸出零變動）。
     om_groups 缺省時由 summary 欄位反推（om／nature_om 維度）；無法反推時退回單一群組。
     """
     dim = _hybrid_dimension(dimension)
@@ -11555,6 +11580,10 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
         block_label = _HYBRID_DIMENSION_LABELS[dim]
         pct_label = f"各 {block_label} 佔比 (%)"
     hint_col = tip_col + 1 + len(out_keys)
+    _zero_idx = (
+        [i for i, g in enumerate(groups) if g in set(_hybrid_zero_sales_groups(dim))]
+        if highlight_zero_sales else []
+    )
 
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
@@ -11566,6 +11595,8 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     band_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
     skew_fill = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
     skew_font = Font(bold=True)
+    zero_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    zero_font = Font(bold=True, color="9C0006")
     header_font = Font(bold=True, size=11)
     nature_font = Font(bold=True, size=11, color="FFFFFF")
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -11717,6 +11748,14 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
                     _pc = ws.cell(row=excel_row, column=pct_start + i * 2)
                     _pc.fill = skew_fill
                     _pc.font = skew_font
+        # 零銷組仍有庫存（庫存佔比 > 0%）以醒目紅底標示——零銷售而仍有存貨，
+        # 理論上全屬 Overstock；同格與存貨偏重橘底重疊時以紅底優先
+        for i in _zero_idx:
+            _zstock = row.get(f"{groups[i]} 加總 - Shop Stock Qty (CM)", 0)
+            if pd.notna(_zstock) and float(_zstock) > 0:
+                _zc = ws.cell(row=excel_row, column=pct_start + i * 2)
+                _zc.fill = zero_fill
+                _zc.font = zero_font
         # nature 維度雙向：由Tourist 店舖預計調出數量（附於最後，A–AC 契約欄序不動）
         for j, key in enumerate(tail_keys):
             val = row.get(key, 0)

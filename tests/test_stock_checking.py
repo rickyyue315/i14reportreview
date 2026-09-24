@@ -501,6 +501,24 @@ def test_generate_excel_summary_skew_highlighted():
     assert not str(ws.cell(row=6, column=20).fill.start_color.rgb).endswith("FFC000")  # T Tourist 未偏重
 
 
+def test_generate_excel_summary_zero_sales_highlight_not_applied():
+    # 零銷有貨紅底標示僅 Safety Stock x NetStock Review 啟用；Stock Checking 輸出零變動
+    df = _df([
+        {"SKU": 710, "Site Code": "T01", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 0.0, "Shop Stock Qty (CM)": 12.0,
+         "Shop Monthly Sold Qty (P90D)": 0.0},
+        {"SKU": 710, "Site Code": "T02", "Shop Nature": "Tourist",
+         "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
+         "Shop Monthly Sold Qty (P90D)": 120.0},
+    ])
+    raw, summary, _, _ = transform_stock_checking(df, dimension="sales")
+    assert int(summary["零銷 加總 - Shop Stock Qty (CM)"].iloc[0]) == 12
+    ws = load_workbook(generate_excel_stock_checking(raw, summary))["Summary"]
+    for row_cells in ws.iter_rows():
+        for cell in row_cells:
+            assert not str(cell.fill.start_color.rgb).endswith("FFC7CE")
+
+
 def test_summary_sorted_by_brand_sku():
     df = _df([
         {"SKU": 2, "Brand": "BB", "Site Code": "M01", "Shop Nature": "Mix", "Shop Monthly Sold Qty (P90D)": 10.0},
