@@ -1,4 +1,6 @@
-streamlit==1.51.0
+streamlit==1.52.0
 pandas==2.3.3
 numpy==2.3.4
 openpyxl==3.1.5
+# pyarrow 22.0.0 為首個提供 Python 3.14 wheel 的版本（Streamlit Cloud 預設 Python 3.14），同時相容 Zeabur 的 Python 3.13
+pyarrow==22.0.0

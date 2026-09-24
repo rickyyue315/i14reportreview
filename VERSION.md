@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.46.1 (2026-09-24)
+
+修復 Streamlit Cloud（`i14reportreview.streamlit.app`）依賴安裝失敗，同時保持 Zeabur 部署不受影響——兩個平台共用同一組 `requirements.txt` 版本：
+
+- **問題** — Streamlit Cloud 已改用 Python 3.14.7 建置環境，而 streamlit 1.51.0 限定 `pyarrow>=7.0,<22`；pyarrow 21.0.0 沒有 Python 3.14 的預建 wheel，雲端在無 cmake 的環境下嘗試以原始碼編譯失敗，依賴安裝中止、應用無法啟動
+- **修復** — `requirements.txt` 兩處：streamlit `1.51.0` → `1.52.0`（1.52.0 起解除 pyarrow 版本上限），並新增 `pyarrow==22.0.0` 鎖定版本（pyarrow 22.0.0 為首個提供 Python 3.14 wheel 的版本，同時保有 Python 3.13 wheel）
+- **兩平台共用** — Zeabur（`Dockerfile` 的 `python:3.13-slim`，安裝 cp313 wheel）與 Streamlit Cloud（Python 3.14.7，安裝 cp314 wheel）皆直接取用預建 wheel，無需編譯；Zeabur 的部署設定零變動
+- **不變** — 應用程式碼、Excel 輸出與 RAW 欄序契約零變動
+- **測試** — streamlit 1.52.0 + pyarrow 22.0.0 環境下共 439 項測試通過
+- Change: `version.py` → 1.46.1
+
 ## v1.46.0 (2026-09-15)
 
 Forecast Review 新增 **4 個月 FC 拆分參考欄**（本月 M／M+1／M+2／M+3）——把單一月度需求率按月展開，方便對照本月與未來三個月的需求走勢；建議訂量邏輯零變動：
