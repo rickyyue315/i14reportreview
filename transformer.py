@@ -6125,6 +6125,18 @@ _HYBRID_SKEW_THRESHOLDS = {
     "sales": (0.30, 0.15),
     "sales_nature": (0.12, 0.08),
 }
+# 存貨偏低標示門檻（銷量佔比下限，銷量佔比 − 庫存佔比差距下限）：
+# 與存貨偏重對稱，但採用較寬鬆門檻——缺貨風險較積壓更需及早發現，
+# 故各維度佔比與差距要求均低於偏重側；只作儲存格標示，不新增文字提示欄。
+_HYBRID_SHORTAGE_THRESHOLDS = {
+    "nature": (0.30, 0.10),
+    "rp": (0.30, 0.10),
+    "both": (0.30, 0.10),
+    "om": (0.20, 0.08),
+    "nature_om": (0.10, 0.05),
+    "sales": (0.20, 0.10),
+    "sales_nature": (0.10, 0.05),
+}
 _HYBRID_RP_GROUPS = ("RF", "ND")
 _HYBRID_COMBINED_GROUPS = tuple(
     f"{n}-{r}" for n in ("Tourist", "Mix", "Non Tourist") for r in _HYBRID_RP_GROUPS
@@ -6381,6 +6393,20 @@ def _hybrid_skew_hint_text(dimension) -> str:
     """存貨偏重提示門檻的文字描述（供 UI 與文件使用）。"""
     share, gap = _hybrid_skew_thresholds(dimension)
     return f"某分組庫存佔比 ≥ {share:.0%} 且較銷量佔比高 ≥ {gap * 100:.0f} 個百分點"
+
+
+def _hybrid_shortage_thresholds(dimension) -> tuple[float, float]:
+    """存貨偏低標示門檻（銷量佔比下限，差距下限），按分類維度切換。
+
+    與存貨偏重對稱（銷量佔比 − 庫存佔比），但採用較寬鬆門檻，只作儲存格標示。
+    """
+    return _HYBRID_SHORTAGE_THRESHOLDS.get(_hybrid_dimension(dimension), (0.30, 0.10))
+
+
+def _hybrid_shortage_hint_text(dimension) -> str:
+    """存貨偏低標示門檻的文字描述（供 UI 與文件使用）。"""
+    share, gap = _hybrid_shortage_thresholds(dimension)
+    return f"某分組銷量佔比 ≥ {share:.0%} 且較庫存佔比高 ≥ {gap * 100:.0f} 個百分點"
 
 # ── Safety 基準周轉天數（Review 線；與調貨段的 14 日線分開，Safety 不跟隨存貨周轉）──
 _HYBRID_SAFETY_DAYS_DEFAULT = {"Tourist": 7, "Mix": 9, "Non Tourist": 10}
@@ -8690,7 +8716,7 @@ def _write_hybrid_guide_sheet(ws, stats):
     _row3("說明（本頁）", "Review 邏輯、本次參數與導讀", "執行任何行動前，先核對上方 ① 的參數是否符合預期")
     _row3("RAW", "全部店舖×SKU 逐列明細與判定欄",
           "留意「需要調貨」「事件類型」「Safety Review」「建議 Safety 設定值」「建議 Safety 設定值 Turnday」「Safety 建議調整量」「銷量帶」「銷量存貨分類」；非事件列 Review 欄留空屬正常")
-    _summary_watch = "留意「存貨偏重提示」（橘底）——哪些分組存貨偏重而銷量不高"
+    _summary_watch = "留意「存貨偏重提示」（橘底）——哪些分組存貨偏重而銷量不高；另留意淺藍底——庫存佔比明顯低於銷量佔比的分組（潛在缺貨風險，只標示儲存格）"
     if dim in ("sales", "sales_nature"):
         _summary_watch += "；零銷組「加總 - Shop Stock Qty (CM) %」大於 0% 以紅底標示——零銷售而仍有存貨，理論上全屬 Overstock"
     _row3("Summary", "SKU 級庫存／銷量分佈（按分類維度分組）", _summary_watch)
@@ -8712,6 +8738,7 @@ def _write_hybrid_guide_sheet(ws, stats):
     _sec("④ 實用提示")
     _bullet("「Safety 建議調整量」正數＝建議上調設定；負數＝建議下調設定（僅不足／過高列有值）。")
     _bullet("Summary 橘底＝觸發「存貨偏重提示」的分組（庫存佔比高而銷量佔比低）。")
+    _bullet(f"Summary 淺藍底＝存貨偏低分組（{_hybrid_shortage_hint_text(dim)}，門檻較偏重側寬鬆）——庫存佔比明顯低於銷量佔比，提示潛在缺貨風險；只標示庫存佔比欄，不另設文字欄。")
     if dim in ("sales", "sales_nature"):
         _bullet("Summary 紅底＝零銷組仍有庫存（「加總 - Shop Stock Qty (CM) %」大於 0%）——零銷售而仍有存貨，"
                 "理論上全屬 Overstock，不設佔比門檻一律標示；同格同時觸發橘底時以紅底優先。")
@@ -8930,12 +8957,16 @@ def _write_stock_checking_guide_sheet(ws, stats):
         "存貨偏重提示：某分組庫存佔比 ≥ 門檻且（庫存佔比 − 銷量佔比）≥ 差距門檻 → 以醒目橘底標示；"
         "門檻按分類維度切換（nature／rp／both 40%／20 個百分點、om 25%／12、sales 30%／15、"
         "nature_om／sales_nature 12%／8）。",
+        f"存貨偏低標示：{_hybrid_shortage_hint_text(dim)} → 以淺藍底標示該分組的庫存佔比欄；"
+        "門檻較偏重側寬鬆，只標示儲存格，不新增文字欄；"
+        "門檻按分類維度切換（nature／rp／both 30%／10 個百分點、om 20%／8、sales 20%／10、"
+        "nature_om／sales_nature 10%／5）。",
     ]
 
     sheet_rows = [
         ("說明（本頁）", "調貨邏輯、本次參數與導讀", "執行任何行動前，先核對上方 ① 的參數是否符合預期"),
         ("Summary", "SKU 級庫存／銷量分組（按分類維度）",
-         "留意「存貨偏重提示」（橘底）——哪些分組存貨偏重而銷量不高；TurnDay = 加總庫存 ÷ 加總月銷 × 30.5"),
+         "留意「存貨偏重提示」（橘底）——哪些分組存貨偏重而銷量不高；另留意淺藍底——庫存佔比明顯低於銷量佔比的分組（潛在缺貨風險）；TurnDay = 加總庫存 ÷ 加總月銷 × 30.5"),
         ("RAW", "全部店舖×SKU 逐列明細與判定欄",
          "留意「需要調貨」「調入需求量 (補到14日)」「實際調入量」「調入缺口」「轉出量」"
          "「調貨來源 (Site Code)」「銷量帶」「銷量存貨分類」"),
@@ -8950,7 +8981,7 @@ def _write_stock_checking_guide_sheet(ws, stats):
         "本模式調貨方向固定單向（只向 Tourist 店舖調入）；「允許雙向調貨」只適用於 Safety Stock x NetStock Review。",
         "「需要調貨」為 SKU 級判定：Tourist 加總 TurnDay 達標時，個別 Tourist 店缺貨不會標示。",
         "來源店與需求店同一店舖（Site Code 相同）時一律排除，避免自我調貨。",
-        "Summary 橘底＝觸發存貨偏重提示的分組；分類維度只改變分組顯示，不影響調貨計算。",
+        "Summary 橘底＝觸發存貨偏重提示的分組；淺藍底＝存貨偏低分組（庫存佔比明顯低於銷量佔比，潛在缺貨風險）；分類維度只改變分組顯示，不影響調貨計算。",
         "缺口代表無足夠可轉出貨量；跟進方法見「店舖問題 SKU」的建議方法。",
     ]
 
@@ -11538,7 +11569,7 @@ def _hybrid_om_groups_from_summary_columns(summary: pd.DataFrame, dimension: str
     return tuple(sorted(oms)) if oms else None
 
 
-def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30, bidirectional: bool = False, highlight_skew: bool = False, dimension: str = "nature", om_groups=None, highlight_zero_sales: bool = False):
+def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30, bidirectional: bool = False, highlight_skew: bool = False, dimension: str = "nature", om_groups=None, highlight_zero_sales: bool = False, highlight_shortage: bool = True):
     """Summary 工作表：SKU 級彙總（雙列表頭模仿 By SKUxShop_Stock Checking_Output 樞紐佈局）。
 
     欄位配置按分類維度分組數 G（nature 3／rp 2／both 6／om N／nature_om 3×N／
@@ -11560,6 +11591,11 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     即以醒目紅底（FFC7CE）加粗深紅字標示——零銷售而仍有存貨，理論上全屬 Overstock，
     不設佔比門檻；同格與存貨偏重橘底重疊時以紅底優先。Stock Checking 不傳本參數
     （預設 False，輸出零變動）。
+    highlight_shortage=True 時（預設開啟，兩模式全維度生效），存貨偏低分組
+    （銷量佔比達標且銷量佔比 − 庫存佔比達差距門檻，門檻較偏重側寬鬆，
+    見 _HYBRID_SHORTAGE_THRESHOLDS）的庫存佔比欄以淺藍底（BDD7EE）加粗深藍字標示——
+    庫存佔比明顯低於銷量佔比，提示潛在缺貨風險；只標示儲存格，不新增文字欄；
+    與橘底／紅底互斥（同一儲存格不會同時觸發），欄位、數值與排序一律不變（純標示）。
     om_groups 缺省時由 summary 欄位反推（om／nature_om 維度）；無法反推時退回單一群組。
     """
     dim = _hybrid_dimension(dimension)
@@ -11597,6 +11633,9 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     skew_font = Font(bold=True)
     zero_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
     zero_font = Font(bold=True, color="9C0006")
+    shortage_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
+    shortage_font = Font(bold=True, color="1F4E78")
+    _short_share, _short_gap = _hybrid_shortage_thresholds(dim)
     header_font = Font(bold=True, size=11)
     nature_font = Font(bold=True, size=11, color="FFFFFF")
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -11750,12 +11789,48 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
                     _pc.font = skew_font
         # 零銷組仍有庫存（庫存佔比 > 0%）以醒目紅底標示——零銷售而仍有存貨，
         # 理論上全屬 Overstock；同格與存貨偏重橘底重疊時以紅底優先
+        _zero_cells = set()
         for i in _zero_idx:
             _zstock = row.get(f"{groups[i]} 加總 - Shop Stock Qty (CM)", 0)
             if pd.notna(_zstock) and float(_zstock) > 0:
                 _zc = ws.cell(row=excel_row, column=pct_start + i * 2)
                 _zc.fill = zero_fill
                 _zc.font = zero_font
+                _zero_cells.add(i)
+        # 存貨偏低標示（庫存佔比明顯低於銷量佔比）以淺藍底標示庫存佔比欄——
+        # 銷量佔比達標且銷量佔比 − 庫存佔比達差距門檻（門檻較偏重側寬鬆）；
+        # 只標示儲存格，不新增文字欄；與橘底／紅底互斥（已標示橘底／紅底的儲存格不重疊）。
+        if highlight_shortage:
+            _stock_sums = []
+            _sold_sums = []
+            for gname in groups:
+                _s = row.get(f"{gname} 加總 - Shop Stock Qty (CM)", 0)
+                _m = row.get(f"{gname} 加總 - Shop Monthly Sold Qty (P90D)", 0)
+                _stock_sums.append(0.0 if pd.isna(_s) else float(_s))
+                _sold_sums.append(0.0 if pd.isna(_m) else float(_m))
+            _total_stock = sum(_stock_sums)
+            _total_sold = sum(_sold_sums)
+            if _total_sold > 0:
+                for i, gname in enumerate(groups):
+                    if i in _zero_cells:
+                        continue
+                    _pc_col = pct_start + i * 2
+                    _pc_cell = ws.cell(row=excel_row, column=_pc_col)
+                    # 已有橘底（偏重）不重疊
+                    try:
+                        _is_skew = (
+                            _pc_cell.fill.start_color.rgb is not None
+                            and str(_pc_cell.fill.start_color.rgb).endswith("FFC000")
+                        )
+                    except Exception:
+                        _is_skew = False
+                    if _is_skew:
+                        continue
+                    s_share = (_stock_sums[i] / _total_stock) if _total_stock > 0 else 0.0
+                    v_share = _sold_sums[i] / _total_sold
+                    if v_share >= _short_share and (v_share - s_share) >= _short_gap:
+                        _pc_cell.fill = shortage_fill
+                        _pc_cell.font = shortage_font
         # nature 維度雙向：由Tourist 店舖預計調出數量（附於最後，A–AC 契約欄序不動）
         for j, key in enumerate(tail_keys):
             val = row.get(key, 0)

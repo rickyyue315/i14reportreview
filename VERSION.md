@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.48.0 (2026-09-25)
+
+Safety Stock x NetStock Review 與 Stock Checking「Summary」新增**存貨偏低淺藍底標示**——某分組「加總 - Shop Stock Qty (CM) %」明顯低於「加總 - Shop Monthly Sold Qty (P90D) %」時，以淺藍底（BDD7EE）加粗深藍字標示該分組的庫存佔比欄。原因：現時超額側有橘底（存貨偏重）與紅底（零銷有貨）提示，缺貨側卻無對應標示：
+
+- **新標示** — 銷量佔比達標且銷量佔比 − 庫存佔比達差距門檻即標示，只標示儲存格，不新增文字欄；門檻與偏重側對稱但較寬鬆（nature／rp／both 為銷量佔比 ≥30% 且差距 ≥10 個百分點，om 為 ≥20% 且差距 ≥8 個百分點，sales 為 ≥20% 且差距 ≥10 個百分點，nature_om／sales_nature 為 ≥10% 且差距 ≥5 個百分點）；總月銷為 0 時不標示；與橘底／紅底互斥（已標示橘底／紅底的儲存格不重疊）；新 helper `_hybrid_shortage_thresholds()`／`_hybrid_shortage_hint_text()`，`_write_stock_checking_summary_sheet()` 新參數 `highlight_shortage` 預設開啟
+- **不變** — 計算、欄位、數值與排序一律不變（純標示）；兩模式全維度生效（共用同一 Summary 產生函數）
+- **Streamlit 同步** — 兩模式「Summary」分頁 `_style_inventory_skew()` 加 `dimension`／`shortage` 參數同式淺藍底，caption 與模式說明文字同步
+- **文件** — Excel「說明」表（Summary 導讀與實用提示，兩模式同步）、README 同步
+- **測試** — `tests/test_shortage_highlight.py` 新增 7 項（門檻 registry、提示文字、Stock Checking 藍底與欄位契約、與橘底互斥、均衡不標示、無銷量不標示、混合模式藍底與說明表）；共 454 項測試通過
+- Change: `version.py` → 1.48.0
+
 ## v1.47.0 (2026-09-24)
 
 Safety Stock x NetStock Review「Summary」新增**零銷有貨紅底標示**——以「以銷量分類」或「以銷量＋Shop Nature分類」執行時，零銷組的「加總 - Shop Stock Qty (CM) %」只要大於 0%（即零銷組仍有庫存）即以醒目紅底（FFC7CE）加粗深紅字標示。原因：零銷售而仍有存貨，理論上全屬 Overstock，不應只靠存貨偏重門檻攔截：
