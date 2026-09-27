@@ -60,6 +60,7 @@ from transformer import (
     transform_excess_capital, generate_excel_excess_capital,
     transform_rp_review, generate_excel_rp_review,
     transform_d001_health, generate_excel_d001_health,
+    transform_new_sku, generate_excel_new_sku,
     _HYBRID_FULL_SAFETY_SHEET,
 )
 import time
@@ -263,7 +264,7 @@ st.markdown("""
     <div class="step"><span class="n">4</span><b>執行並下載</b><small>看板預覽＋一鍵導出</small></div>
 </div>
 """, unsafe_allow_html=True)
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "銷售損失量化 Review", "積壓資金 Review", "RP Type 覆核 Review", "D001 健康檢查 Review"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "銷售損失量化 Review", "積壓資金 Review", "RP Type 覆核 Review", "D001 健康檢查 Review", "新品追蹤 Review"]
 st.caption("🔄 調貨與補貨：Stock Checking · Safety Stock x NetStock Review　｜　🔒 安全庫存：Safety Stock Review · Forecast Review　｜　📦 庫存健康：Overstock · OOS · Stock Impact　｜　✂️ 商品與對比：Carry SKU · SKU 精簡 · NDRF 月份對比 · 90 日零銷售")
 MODE_DESCRIPTIONS = {
     "Overstock Review": "篩選庫存過剩品項，計算建議安全庫存與可轉出貨量。",
@@ -282,6 +283,7 @@ MODE_DESCRIPTIONS = {
     "積壓資金 Review": "彙總佔用資金最多的滯銷存貨，排列去庫存優先次序。",
     "RP Type 覆核 Review": "檢查可補貨與不可補貨設定與實際銷量是否相符。",
     "D001 健康檢查 Review": "檢查倉庫備貨與店舖需求是否脫節。",
+    "新品追蹤 Review": "追蹤上市 90 天內新品的鋪貨與起量情況。",
 }
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0, key="mode_selector")
 st.caption(f"用途：{MODE_DESCRIPTIONS.get(current_mode, '')}")
@@ -356,6 +358,7 @@ MODE_KEYS = {
     "積壓資金 Review": {"prefix": "exc_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": []},
     "RP Type 覆核 Review": {"prefix": "rp_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": []},
     "D001 健康檢查 Review": {"prefix": "d001_", "processed": False, "check_df": None, "by_buyer": None, "raw_df": None, "excel_data": None, "warnings": []},
+    "新品追蹤 Review": {"prefix": "ns_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": [], "ref_date": None},
 }
 
 for cfg in MODE_KEYS.values():
@@ -2411,6 +2414,15 @@ if uploaded_file is not None:
                 "Vendor 貨位置＝店存＋Shop PO＋在途，落單：店舖向供應商下單（Shop PO）。"
             )
 
+        if mode == "新品追蹤 Review":
+            ns_ref_date = st.date_input(
+                "📅 參考日期（Launch Date 起 90 天內視為新品）",
+                value=datetime.now().date() - timedelta(days=1),
+                key="ns_ref_date_input",
+                help="上市日數＝參考日期 − Launch Date；0 至 90 天內視為新品。預設為昨日，與報表資料基準一致。"
+            )
+            st.caption(f"參考日期：{ns_ref_date.isoformat()}（上市 90 天內視為新品；無法解析或晚於參考日期的列視為非新品）。")
+
         st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
         SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
@@ -2430,7 +2442,7 @@ if uploaded_file is not None:
         _is_carry_mode = (mode == "Carry SKU Review")
         # Modes that don't use the Shop Nature Rate sliders (no Safety Qty calculation):
         # Carry SKU Review, SKU 精簡 Review, NDRF 月份對比 (pivot/comparison only).
-        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review")
+        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "新品追蹤 Review")
 
         if not _skip_rates_mode:
             _tourist_default = 30 if _is_overstock_mode else 50
@@ -2635,6 +2647,21 @@ if uploaded_file is not None:
                     st.session_state.d001_raw_df = raw_df
                     st.session_state.d001_excel_data = buf
                     st.session_state.d001_warnings = _warnings
+                elif mode == "新品追蹤 Review":
+                    raw_df, by_sku_df, by_shop_df, _warnings = transform_new_sku(
+                        df_input,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                        ref_date=ns_ref_date,
+                    )
+                    buf = generate_excel_new_sku(raw_df, by_sku_df, by_shop_df, progress_callback=_cb_excel, include_raw=_include_raw)
+                    st.session_state.ns_processed = True
+                    st.session_state.ns_raw_df = raw_df
+                    st.session_state.ns_by_sku = by_sku_df
+                    st.session_state.ns_by_shop = by_shop_df
+                    st.session_state.ns_excel_data = buf
+                    st.session_state.ns_warnings = _warnings
+                    st.session_state.ns_ref_date = ns_ref_date.isoformat()
                 elif mode == "Stock Checking":
                     raw_df, summary_df, _stats, _warnings = transform_stock_checking(
                         df_input,
@@ -4125,6 +4152,105 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載 D001 健康檢查報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+            )
+
+        if mode == "新品追蹤 Review" and st.session_state.ns_processed:
+            raw_df = st.session_state.ns_raw_df
+            by_sku_df = st.session_state.ns_by_sku
+            by_shop_df = st.session_state.ns_by_shop
+            excel_data = st.session_state.ns_excel_data
+            _ns_ref_txt = st.session_state.get("ns_ref_date", "")
+
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+            st.markdown("### 🌱 新品追蹤分析摘要")
+            if _ns_ref_txt:
+                st.caption(f"參考日期 {_ns_ref_txt} 起 90 天內上市視為新品。")
+
+            total_rows = len(raw_df) if raw_df is not None else 0
+            if by_sku_df is not None and not by_sku_df.empty:
+                _data = by_sku_df[by_sku_df["Buyer"] != "總計"]
+                total_skus = int(_data["SKU"].dropna().nunique()) if not _data.empty else 0
+            else:
+                total_skus = 0
+            if raw_df is not None and not raw_df.empty:
+                _st = raw_df["起量狀態"].fillna("").astype(str)
+                started_rows = int((_st == "已起量").sum())
+                not_started_rows = int((_st == "未起量").sum())
+            else:
+                started_rows = 0
+                not_started_rows = 0
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #10b981;">
+                    <div class="metric-title">新品行數</div>
+                    <div class="metric-value" style="color: #10b981;">{total_rows:,}</div>
+                    <div class="metric-desc">上市 90 天內的店舖列數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #3b82f6;">
+                    <div class="metric-title">新品 SKU 數</div>
+                    <div class="metric-value" style="color: #3b82f6;">{total_skus:,}</div>
+                    <div class="metric-desc">已刪除重複</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #f59e0b;">
+                    <div class="metric-title">已起量行數</div>
+                    <div class="metric-value" style="color: #f59e0b;">{started_rows:,}</div>
+                    <div class="metric-desc">任一期有銷售的列數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ef4444;">
+                    <div class="metric-title">未起量行數</div>
+                    <div class="metric-value" style="color: #ef4444;">{not_started_rows:,}</div>
+                    <div class="metric-desc">四期皆零銷售的列數</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            tab_sku, tab_shop, tab_raw = st.tabs(["📊 By SKU", "🏪 By Shop", "RAW"])
+            with tab_sku:
+                st.markdown("#### 按 SKU 彙總（按上市日期由新至舊排序）")
+                if by_sku_df is not None and not by_sku_df.empty:
+                    st.dataframe(by_sku_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_shop:
+                st.markdown("#### 按店舖彙總（按新品 SKU 數由大至小排序）")
+                if by_shop_df is not None and not by_shop_df.empty:
+                    st.dataframe(by_shop_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_raw:
+                st.markdown("#### RAW 原始明細（前 50 筆）")
+                if raw_df is not None and not raw_df.empty:
+                    st.dataframe(raw_df.head(50).rename(columns=_display_safety_header), width='stretch')
+                    st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 新品追蹤 Review_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載新品追蹤分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

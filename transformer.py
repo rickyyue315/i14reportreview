@@ -552,3 +552,7 @@ from modes.rp_review import *  # noqa: F401,F403
 
 # ─── D001 健康檢查 Review：實作已遷至 modes/d001_health.py（墊片 re-export）───
 from modes.d001_health import *  # noqa: F401,F403
+
+
+# ─── 新品追蹤 Review：實作已遷至 modes/new_sku.py（墊片 re-export）───
+from modes.new_sku import *  # noqa: F401,F403

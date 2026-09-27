@@ -102,3 +102,9 @@ MODE_REGISTRY["D001 健康檢查 Review"] = {
     "transform": "transform_d001_health",
     "generate_excel": "generate_excel_d001_health",
 }
+
+MODE_REGISTRY["新品追蹤 Review"] = {
+    "module": "modes.new_sku",
+    "transform": "transform_new_sku",
+    "generate_excel": "generate_excel_new_sku",
+}

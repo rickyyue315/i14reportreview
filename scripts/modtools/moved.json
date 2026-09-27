@@ -393,5 +393,19 @@
  "_build_hybrid_full_safety_change_summary": "hybrid",
  "_build_hybrid_full_safety_detail": "hybrid",
  "_build_hybrid_full_safety_sku_detail": "hybrid",
- "_write_hybrid_full_safety_sheet": "hybrid"
+ "_write_hybrid_full_safety_sheet": "hybrid",
+ "_NS_WINDOW_DAYS": "new_sku",
+ "_NS_AGE_COLUMN": "new_sku",
+ "_NS_STATUS_COLUMN": "new_sku",
+ "_NS_STARTED": "new_sku",
+ "_NS_NOT_STARTED": "new_sku",
+ "_NS_RAW_OUTPUT_COLUMNS": "new_sku",
+ "_NS_BY_SKU_COLUMNS": "new_sku",
+ "_NS_BY_SHOP_COLUMNS": "new_sku",
+ "_ns_raw_columns": "new_sku",
+ "_build_ns_by_sku": "new_sku",
+ "_build_ns_by_shop": "new_sku",
+ "_write_ns_table": "new_sku",
+ "generate_excel_new_sku": "new_sku",
+ "transform_new_sku": "new_sku"
 }
