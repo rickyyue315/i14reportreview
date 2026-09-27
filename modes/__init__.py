@@ -78,3 +78,9 @@ MODE_REGISTRY["Stock Impact Analysis (簡化)"] = {
     "transform": "transform_stock_impact",
     "generate_excel": "generate_excel_stock_impact_simplified",
 }
+
+MODE_REGISTRY["銷售損失量化 Review"] = {
+    "module": "modes.sales_loss",
+    "transform": "transform_sales_loss",
+    "generate_excel": "generate_excel_sales_loss",
+}

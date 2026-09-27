@@ -54,6 +54,7 @@ from transformer import (
     _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT, _HYBRID_SALES_OVERSTOCK_DAYS_MIN, _HYBRID_SALES_OVERSTOCK_DAYS_MAX,
     _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT, _HYBRID_SALES_OVERSTOCK_MIN_UNITS_MIN, _HYBRID_SALES_OVERSTOCK_MIN_UNITS_MAX,
     _optimize_input_dtypes,
+    transform_sales_loss, generate_excel_sales_loss,
 )
 import time
 import traceback
@@ -231,9 +232,25 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# 3. 模式選擇器
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review"]
+# 3. 模式選擇器（維持單列，不分組；下方註解說明各模式用途）
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "銷售損失量化 Review"]
+MODE_DESCRIPTIONS = {
+    "Overstock Review": "篩選庫存過剩品項，計算建議安全庫存與可轉出貨量。",
+    "OOS Review": "篩選缺貨與潛在缺貨品項，偵測安全庫存不足。",
+    "Carry SKU Review": "統計各店舖實際經營品項數量與結構。",
+    "SKU 精簡 Review": "針對不可補貨品項，建議退倉安排。",
+    "NDRF 月份對比": "對比兩個月份各店舖經營與不可補貨品項變化。",
+    "Safety Stock Review": "全面審查安全庫存設定，計算平衡建議值。",
+    "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
+    "Stock Impact Analysis (簡化)": "快速檢視各品項三期存貨與銷售趨勢。",
+    "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
+    "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
+    "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
+    "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
+    "銷售損失量化 Review": "彙總缺貨造成的銷售損失金額，排列補貨優先次序。",
+}
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0, key="mode_selector")
+st.caption(f"用途：{MODE_DESCRIPTIONS.get(current_mode, '')}")
 
 # 3a. 分類維度選項（Safety Stock x NetStock Review／Stock Checking／Safety Stock Review 共用）
 _DIMENSION_OPTIONS = {
@@ -301,6 +318,7 @@ MODE_KEYS = {
     "Stock Checking": {"prefix": "stock_chk_", "processed": False, "summary_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
     "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "sc_summary": None, "diagnosis": None, "diagnosis_om": None, "diag_summary": None, "stats": None, "excel_data": None, "params": None, "warnings": []},
     "Forecast Review": {"prefix": "fc_", "processed": False, "main_df": None, "coverage_df": None, "buyer_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
+    "銷售損失量化 Review": {"prefix": "loss_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -2488,6 +2506,19 @@ if uploaded_file is not None:
                     st.session_state.p90ds_raw_df = raw_df
                     st.session_state.p90ds_excel_data = buf
                     st.session_state.p90ds_warnings = _warnings
+                elif mode == "銷售損失量化 Review":
+                    raw_df, by_sku_df, by_shop_df, _warnings = transform_sales_loss(
+                        df_input,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                    )
+                    buf = generate_excel_sales_loss(raw_df, by_sku_df, by_shop_df, progress_callback=_cb_excel, include_raw=_include_raw)
+                    st.session_state.loss_processed = True
+                    st.session_state.loss_raw_df = raw_df
+                    st.session_state.loss_by_sku = by_sku_df
+                    st.session_state.loss_by_shop = by_shop_df
+                    st.session_state.loss_excel_data = buf
+                    st.session_state.loss_warnings = _warnings
                 elif mode == "Stock Checking":
                     raw_df, summary_df, _stats, _warnings = transform_stock_checking(
                         df_input,
@@ -3589,6 +3620,99 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載 Forecast 分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+            )
+
+        if mode == "銷售損失量化 Review" and st.session_state.loss_processed:
+            raw_df = st.session_state.loss_raw_df
+            by_sku_df = st.session_state.loss_by_sku
+            by_shop_df = st.session_state.loss_by_shop
+            excel_data = st.session_state.loss_excel_data
+
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+            st.markdown("### 💸 銷售損失量化分析摘要")
+
+            total_rows = len(raw_df) if raw_df is not None else 0
+            if by_sku_df is not None and not by_sku_df.empty:
+                _data = by_sku_df[by_sku_df["Buyer"] != "總計"]
+                total_skus = int(_data["SKU"].dropna().nunique()) if not _data.empty else 0
+                total_m2 = int(pd.to_numeric(_data["Total Sales Loss (M-2) 合計"], errors="coerce").fillna(0).sum()) if not _data.empty else 0
+                total_p90d = int(pd.to_numeric(_data["Total Sales Loss (P90D) 合計"], errors="coerce").fillna(0).sum()) if not _data.empty else 0
+            else:
+                total_skus = int(raw_df["SKU"].dropna().nunique()) if raw_df is not None and not raw_df.empty else 0
+                total_m2 = 0
+                total_p90d = 0
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ef4444;">
+                    <div class="metric-title">受影響行數</div>
+                    <div class="metric-value" style="color: #ef4444;">{total_rows:,}</div>
+                    <div class="metric-desc">缺貨影響或損失大於 0 的列數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #f59e0b;">
+                    <div class="metric-title">受影響 SKU 數</div>
+                    <div class="metric-value" style="color: #f59e0b;">{total_skus:,}</div>
+                    <div class="metric-desc">已刪除重複</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #3b82f6;">
+                    <div class="metric-title">總損失 (M-2 基準)</div>
+                    <div class="metric-value" style="color: #3b82f6;">{total_m2:,}</div>
+                    <div class="metric-desc">Total Sales Loss (M-2) 合計（件）</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #10b981;">
+                    <div class="metric-title">總損失 (P90D 基準)</div>
+                    <div class="metric-value" style="color: #10b981;">{total_p90d:,}</div>
+                    <div class="metric-desc">Total Sales Loss (P90D) 合計（件）</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            tab_sku, tab_shop, tab_raw = st.tabs(["📊 By SKU（補貨優先）", "🏪 By Shop", "RAW"])
+            with tab_sku:
+                st.markdown("#### 按 SKU 彙總（按 P90D 損失由大至小排序）")
+                if by_sku_df is not None and not by_sku_df.empty:
+                    st.dataframe(by_sku_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_shop:
+                st.markdown("#### 按店舖彙總（按 P90D 損失由大至小排序）")
+                if by_shop_df is not None and not by_shop_df.empty:
+                    st.dataframe(by_shop_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_raw:
+                st.markdown("#### RAW 原始明細（前 50 筆）")
+                if raw_df is not None and not raw_df.empty:
+                    st.dataframe(raw_df.head(50).rename(columns=_display_safety_header), width='stretch')
+                    st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 銷售損失量化 Review_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載銷售損失量化分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

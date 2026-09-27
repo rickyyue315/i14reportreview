@@ -330,5 +330,16 @@
  "_FC_SURGE_MULT_MAX": "forecast",
  "_write_sku_allocation_sheet": "stock_impact",
  "_NATURE_PRIORITY": "stock_impact",
- "_NATURE_ORDER": "stock_impact"
+ "_NATURE_ORDER": "stock_impact",
+ "_BY_SHOP_COLUMNS": "sales_loss",
+ "_BY_SKU_COLUMNS": "sales_loss",
+ "_LOSS_SIGNAL_COLUMNS": "sales_loss",
+ "_SALES_LOSS_RAW_OUTPUT_COLUMNS": "sales_loss",
+ "_as_bool": "sales_loss",
+ "_build_sales_loss_by_shop": "sales_loss",
+ "_build_sales_loss_by_sku": "sales_loss",
+ "_sales_loss_raw_columns": "sales_loss",
+ "_write_simple_table": "sales_loss",
+ "generate_excel_sales_loss": "sales_loss",
+ "transform_sales_loss": "sales_loss"
 }

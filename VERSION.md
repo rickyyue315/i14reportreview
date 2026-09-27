@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.49.0 (2026-09-27)
+
+新增第 13 個分析模式**銷售損失量化 Review**——彙總缺貨造成的銷售損失，排列補貨優先次序；其餘 12 個模式計算、欄位、欄序零變動：
+
+- **計算** — `modes/sales_loss.py`：受影響判定（Is Stock Impacted 為真，或 Total Sales Loss (M-2)／(P90D) 大於 0；文字 TRUE／Y／YES／1／是亦視為真）→ RAW（限定 25 個欄位）→ By SKU（影響店舖數、OOS 期數合計、兩種基準損失合計，按 P90D 損失排序）→ By Shop（影響 SKU 數、兩種基準損失總數，按 P90D 損失排序）
+- **輸出** — RAW／By SKU／By Shop 共 3 個工作表，支援略過 RAW 選項
+- **UI** — 模式選擇器維持單列不分組，下方新增各模式用途註解；結果頁新增指標卡 4 項與三個分頁
+- **文件** — 使用說明頁、README 同步
+- **測試** — 新增 `tests/test_sales_loss.py` ×7；`scripts/modtools/moved.json` 登記新名稱；`check_modes.py` 0 錯誤 0 警告；共 458 項測試通過，3 項略過
+- Change: `version.py` → 1.49.0
+
 ## v1.48.1 (2026-09-27)
 
 - 

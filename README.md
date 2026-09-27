@@ -1,13 +1,13 @@
 # I14 報表轉換與分析系統
 
-自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）與 **Forecast Review**（SKU 級建議訂貨量）等多種模式。
+自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）、**Forecast Review**（SKU 級建議訂貨量）與 **銷售損失量化 Review**（缺貨損失彙總）等多種模式。
 
 ## 功能概述
 
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / Stock Checking / Safety Stock x NetStock Review / Forecast Review |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / Stock Checking / Safety Stock x NetStock Review / Forecast Review / 銷售損失量化 Review |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
@@ -205,6 +205,17 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 8. **輸入檢核** — 共用必要欄位另加本模式嚴格欄（Site Code／三期銷售／P90D／店舖庫存 CM，缺任一即停止）；`Shop Stock Qty (M-2)`／`(M-1)`、D001 PO／Shop PO／在途欄為選填（缺欄計 0、略過該期還原或以 `Shop Stock Qty (LM)` 代理 M-1，並列 warning）；負銷售按 0、負數或非數值庫存按 0（列 warning，不拒絕）
 
 輸出包含 **6 個工作表**：說明（首頁導讀＋本次參數照錄，含 v2 權重與趨勢上限；開啟 Excel 時預設顯示本頁）、Forecast 主表（SKU 級，含 MTD 調整月化與趨勢增速欄；建議訂量欄醒目底色；按 Buyer／Brand／SKU 排序）、店舖覆蓋、按 Buyer 彙總（建議訂量合計分 D001 PO／Shop PO 兩欄）、RAW（重排欄序，不顯示 Item_Shop 與 Value 金額欄；含還原值欄與逐列訊號欄）與 Forecast 摘要（指標卡 8 項＋按 Buyer 表）。
+
+### 銷售損失量化 Review
+
+彙總缺貨造成的銷售損失，按 SKU 與店舖排列補貨優先次序：
+
+1. **受影響判定** — Is Stock Impacted 為真，或 Total Sales Loss (M-2)／(P90D) 大於 0（文字 TRUE／Y／YES／1／是亦視為真）
+2. **By SKU** — 按 Buyer／Brand／SKU 彙總影響店舖數、OOS 期數合計、兩種基準損失合計，按 P90D 損失由大至小排序
+3. **By Shop** — 按 Site Code 彙總影響 SKU 數與兩種基準損失總數，按 P90D 損失由大至小排序
+4. **輸入檢核** — 共用必要欄位另加 Site Code；損失訊號欄（Is Stock Impacted／OOS Periods Count／各損失欄）至少需具備一個，否則停止
+
+輸出包含 **3 個工作表**：RAW（限定 25 個欄位）、By SKU、By Shop。
 
 ## Excel 輸出結構
 

@@ -249,6 +249,20 @@ SKU 級 Forecast 計算（v2 加權混合）：
 8. **輸入檢核** = `Buyer / Brand / SKU / Shop Stock Status`（共用）＋ `Site Code / Sold Qty (M-2) / Sold Qty (M-1) / Sold Qty (CM - MTD) / Sold Qty (P90D) / Shop Stock Qty (CM)`（本模式嚴格欄，缺任一即停止）；`Shop Stock Qty (M-2)`／`(M-1)` 為選填（M-2 缺欄時該期還原略過；M-1 缺欄但有 `Shop Stock Qty (LM)` 時以 LM 代理；均列 warning）；D001 PO／Shop PO／在途欄缺欄時計 0 並列 warning；負銷售按 0、負庫存或非數值庫存按 0（列 warning，不拒絕）
 9. **輸出 6 工作表** = 說明（首頁導讀：本次參數＋核心邏輯＋工作表導讀＋實用提示；開啟 Excel 時預設顯示本頁）/ Forecast 主表（SKU 級：識別／三期銷售＋月化／爆升分類／三情境＋MTD 調整月化＋趨勢增速＋採用月預估／位置分項與合計／目標覆蓋量／缺口／上限空間／建議訂量（醒目底色）／建議訂貨對象（D001 PO／Shop PO）／SKU 狀態／風險店數；按 Buyer／Brand／SKU 排序）/ 店舖覆蓋 / 按 Buyer 彙總（建議訂量合計分 D001 PO／Shop PO 兩欄）/ RAW（重排欄序，不顯示 Item_Shop 與 Value 金額欄；含還原值欄、逐列訊號欄與 FC 缺貨還原列旗）/ Forecast 摘要（指標卡 8 項＋按 Buyer 表）
      """),
+
+    ("💸 銷售損失量化 Review",
+     """
+- 彙總缺貨造成的銷售損失，按 SKU 與店舖排列補貨優先次序
+- 母體為受缺貨影響列（Is Stock Impacted 或損失金額大於 0）
+- 輸出：RAW、By SKU、By Shop 共 3 個工作表
+     """,
+     """
+銷售損失量化計算：
+1. **受影響判定** = Is Stock Impacted 為真，或 Total Sales Loss (M-2)／(P90D) 大於 0
+2. **By SKU** = 按 Buyer／Brand／SKU 彙總影響店舖數、OOS 期數合計、兩種基準損失合計，按 P90D 損失由大至小排序
+3. **By Shop** = 按 Site Code 彙總影響 SKU 數與兩種基準損失總數，按 P90D 損失由大至小排序
+4. **輸入檢核** = 共用必要欄位＋Site Code；損失訊號欄（Is Stock Impacted／OOS Periods Count／各損失欄）至少需具備一個，否則停止
+     """),
 ]
 
 for _label, _desc, _rules, *_extra in MODES:
