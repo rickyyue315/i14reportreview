@@ -114,3 +114,9 @@ MODE_REGISTRY["退場清倉 Review"] = {
     "transform": "transform_phaseout",
     "generate_excel": "generate_excel_phaseout",
 }
+
+MODE_REGISTRY["銷售趨勢 Review"] = {
+    "module": "modes.sales_trend",
+    "transform": "transform_sales_trend",
+    "generate_excel": "generate_excel_sales_trend",
+}

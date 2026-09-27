@@ -422,5 +422,21 @@
  "_build_po_by_shop": "phaseout",
  "_write_po_table": "phaseout",
  "generate_excel_phaseout": "phaseout",
- "transform_phaseout": "phaseout"
+ "transform_phaseout": "phaseout",
+ "_TR_UP": "sales_trend",
+ "_TR_DOWN": "sales_trend",
+ "_TR_FLAT": "sales_trend",
+ "_TR_COLUMN": "sales_trend",
+ "_TR_RATE_COLUMN": "sales_trend",
+ "_TR_THRESHOLD": "sales_trend",
+ "_TR_RAW_OUTPUT_COLUMNS": "sales_trend",
+ "_TR_BY_SKU_COLUMNS": "sales_trend",
+ "_TR_BY_SHOP_COLUMNS": "sales_trend",
+ "_tr_classify": "sales_trend",
+ "_tr_raw_columns": "sales_trend",
+ "_build_tr_by_sku": "sales_trend",
+ "_build_tr_by_shop": "sales_trend",
+ "_write_tr_table": "sales_trend",
+ "generate_excel_sales_trend": "sales_trend",
+ "transform_sales_trend": "sales_trend"
 }
