@@ -96,3 +96,9 @@ MODE_REGISTRY["RP Type 覆核 Review"] = {
     "transform": "transform_rp_review",
     "generate_excel": "generate_excel_rp_review",
 }
+
+MODE_REGISTRY["D001 健康檢查 Review"] = {
+    "module": "modes.d001_health",
+    "transform": "transform_d001_health",
+    "generate_excel": "generate_excel_d001_health",
+}

@@ -548,3 +548,7 @@ from modes.excess_capital import *  # noqa: F401,F403
 
 # ─── RP Type 覆核 Review：實作已遷至 modes/rp_review.py（墊片 re-export）───
 from modes.rp_review import *  # noqa: F401,F403
+
+
+# ─── D001 健康檢查 Review：實作已遷至 modes/d001_health.py（墊片 re-export）───
+from modes.d001_health import *  # noqa: F401,F403

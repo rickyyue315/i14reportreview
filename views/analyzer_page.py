@@ -57,6 +57,7 @@ from transformer import (
     transform_sales_loss, generate_excel_sales_loss,
     transform_excess_capital, generate_excel_excess_capital,
     transform_rp_review, generate_excel_rp_review,
+    transform_d001_health, generate_excel_d001_health,
 )
 import time
 import traceback
@@ -235,7 +236,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 3. 模式選擇器（維持單列，不分組；下方註解說明各模式用途）
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "銷售損失量化 Review", "積壓資金 Review", "RP Type 覆核 Review"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "銷售損失量化 Review", "積壓資金 Review", "RP Type 覆核 Review", "D001 健康檢查 Review"]
 MODE_DESCRIPTIONS = {
     "Overstock Review": "篩選庫存過剩品項，計算建議安全庫存與可轉出貨量。",
     "OOS Review": "篩選缺貨與潛在缺貨品項，偵測安全庫存不足。",
@@ -252,6 +253,7 @@ MODE_DESCRIPTIONS = {
     "銷售損失量化 Review": "彙總缺貨造成的銷售損失金額，排列補貨優先次序。",
     "積壓資金 Review": "彙總佔用資金最多的滯銷存貨，排列去庫存優先次序。",
     "RP Type 覆核 Review": "檢查可補貨與不可補貨設定與實際銷量是否相符。",
+    "D001 健康檢查 Review": "檢查倉庫備貨與店舖需求是否脫節。",
 }
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0, key="mode_selector")
 st.caption(f"用途：{MODE_DESCRIPTIONS.get(current_mode, '')}")
@@ -325,6 +327,7 @@ MODE_KEYS = {
     "銷售損失量化 Review": {"prefix": "loss_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": []},
     "積壓資金 Review": {"prefix": "exc_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": []},
     "RP Type 覆核 Review": {"prefix": "rp_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": []},
+    "D001 健康檢查 Review": {"prefix": "d001_", "processed": False, "check_df": None, "by_buyer": None, "raw_df": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -2551,6 +2554,19 @@ if uploaded_file is not None:
                     st.session_state.rp_by_shop = by_shop_df
                     st.session_state.rp_excel_data = buf
                     st.session_state.rp_warnings = _warnings
+                elif mode == "D001 健康檢查 Review":
+                    check_df, by_buyer_df, raw_df, _warnings = transform_d001_health(
+                        df_input,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                    )
+                    buf = generate_excel_d001_health(check_df, by_buyer_df, raw_df, progress_callback=_cb_excel, include_raw=_include_raw)
+                    st.session_state.d001_processed = True
+                    st.session_state.d001_check_df = check_df
+                    st.session_state.d001_by_buyer = by_buyer_df
+                    st.session_state.d001_raw_df = raw_df
+                    st.session_state.d001_excel_data = buf
+                    st.session_state.d001_warnings = _warnings
                 elif mode == "Stock Checking":
                     raw_df, summary_df, _stats, _warnings = transform_stock_checking(
                         df_input,
@@ -3939,6 +3955,100 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載 RP Type 覆核分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+            )
+
+        if mode == "D001 健康檢查 Review" and st.session_state.d001_processed:
+            check_df = st.session_state.d001_check_df
+            by_buyer_df = st.session_state.d001_by_buyer
+            raw_df = st.session_state.d001_raw_df
+            excel_data = st.session_state.d001_excel_data
+
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+            st.markdown("### 🏭 D001 健康檢查分析摘要")
+
+            if check_df is not None and not check_df.empty:
+                _rec = check_df["檢查結論"].fillna("").astype(str)
+                total_skus = int(check_df["SKU"].dropna().nunique())
+                shortage = int((_rec == "D001 缺貨需補").sum())
+                overstock = int((_rec == "倉庫積壓").sum())
+                low_cover = int((_rec == "覆蓋偏低").sum())
+            else:
+                total_skus = 0
+                shortage = 0
+                overstock = 0
+                low_cover = 0
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ef4444;">
+                    <div class="metric-title">需跟進 SKU 數</div>
+                    <div class="metric-value" style="color: #ef4444;">{total_skus:,}</div>
+                    <div class="metric-desc">已刪除重複</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #f59e0b;">
+                    <div class="metric-title">D001 缺貨需補</div>
+                    <div class="metric-value" style="color: #f59e0b;">{shortage:,}</div>
+                    <div class="metric-desc">倉庫無貨但店舖有需求</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #3b82f6;">
+                    <div class="metric-title">倉庫積壓</div>
+                    <div class="metric-value" style="color: #3b82f6;">{overstock:,}</div>
+                    <div class="metric-desc">倉庫有貨但全渠道零銷售</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #10b981;">
+                    <div class="metric-title">覆蓋偏低</div>
+                    <div class="metric-value" style="color: #10b981;">{low_cover:,}</div>
+                    <div class="metric-desc">倉庫加在途不足一個月銷量</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            tab_check, tab_buyer, tab_raw = st.tabs(["📊 D001 檢查（SKU 級）", "👤 By Buyer", "RAW"])
+            with tab_check:
+                st.markdown("#### SKU 級檢查表（按嚴重度與覆蓋日數排序）")
+                if check_df is not None and not check_df.empty:
+                    st.dataframe(check_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_buyer:
+                st.markdown("#### 按採購人員彙總")
+                if by_buyer_df is not None and not by_buyer_df.empty:
+                    st.dataframe(by_buyer_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_raw:
+                st.markdown("#### RAW 原始明細（前 50 筆，需跟進 SKU 的店舖列）")
+                if raw_df is not None and not raw_df.empty:
+                    st.dataframe(raw_df.head(50).rename(columns=_display_safety_header), width='stretch')
+                    st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 D001 健康檢查 Review_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載 D001 健康檢查報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

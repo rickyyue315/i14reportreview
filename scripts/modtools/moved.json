@@ -365,5 +365,19 @@
  "_build_rp_by_shop": "rp_review",
  "_write_rp_table": "rp_review",
  "generate_excel_rp_review": "rp_review",
- "transform_rp_review": "rp_review"
+ "transform_rp_review": "rp_review",
+ "_D001_SHORTAGE": "d001_health",
+ "_D001_OVERSTOCK": "d001_health",
+ "_D001_LOW_COVER": "d001_health",
+ "_D001_CHECK_COLUMN": "d001_health",
+ "_D001_RAW_OUTPUT_COLUMNS": "d001_health",
+ "_D001_CHECK_COLUMNS": "d001_health",
+ "_D001_BY_BUYER_COLUMNS": "d001_health",
+ "_d001_raw_columns": "d001_health",
+ "_d001_sku_value": "d001_health",
+ "_build_d001_check_table": "d001_health",
+ "_build_d001_by_buyer": "d001_health",
+ "_write_d001_table": "d001_health",
+ "generate_excel_d001_health": "d001_health",
+ "transform_d001_health": "d001_health"
 }
