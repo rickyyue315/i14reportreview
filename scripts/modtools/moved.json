@@ -379,5 +379,19 @@
  "_build_d001_by_buyer": "d001_health",
  "_write_d001_table": "d001_health",
  "generate_excel_d001_health": "d001_health",
- "transform_d001_health": "d001_health"
+ "transform_d001_health": "d001_health",
+ "_HYBRID_FULL_SAFETY_CHANGE_COLUMNS": "hybrid",
+ "_HYBRID_FULL_SAFETY_CHG_COLUMN": "framework",
+ "_HYBRID_FULL_SAFETY_DETAIL_COLUMNS": "framework",
+ "_HYBRID_FULL_SAFETY_LINE_COLUMN": "framework",
+ "_HYBRID_FULL_SAFETY_NORMAL": "framework",
+ "_HYBRID_FULL_SAFETY_REVIEW_COLUMN": "framework",
+ "_HYBRID_FULL_SAFETY_SHEET": "framework",
+ "_HYBRID_FULL_SAFETY_SKU_COLUMNS": "hybrid",
+ "_HYBRID_FULL_SAFETY_SUGGEST_COLUMN": "framework",
+ "_HYBRID_FULL_SAFETY_TURNDAY_COLUMN": "framework",
+ "_build_hybrid_full_safety_change_summary": "hybrid",
+ "_build_hybrid_full_safety_detail": "hybrid",
+ "_build_hybrid_full_safety_sku_detail": "hybrid",
+ "_write_hybrid_full_safety_sheet": "hybrid"
 }
