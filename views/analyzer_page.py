@@ -53,6 +53,7 @@ from transformer import (
     _HYBRID_SALES_OOS_DAYS_DEFAULT, _HYBRID_SALES_OOS_DAYS_MIN, _HYBRID_SALES_OOS_DAYS_MAX,
     _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT, _HYBRID_SALES_OVERSTOCK_DAYS_MIN, _HYBRID_SALES_OVERSTOCK_DAYS_MAX,
     _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT, _HYBRID_SALES_OVERSTOCK_MIN_UNITS_MIN, _HYBRID_SALES_OVERSTOCK_MIN_UNITS_MAX,
+    _optimize_input_dtypes,
 )
 import time
 import traceback
@@ -115,11 +116,14 @@ def _style_inventory_skew(df: pd.DataFrame, zero_sales: bool = False, dimension:
     （零銷售而仍有存貨，理論上全屬 Overstock；同格與橘底重疊時以紅底優先）。
     shortage=True 時（預設開啟，兩模式全維度生效）另以淺藍底標示存貨偏低分組的庫存佔比欄——
     銷量佔比達標且銷量佔比 − 庫存佔比達差距門檻（門檻較偏重側寬鬆，只標示儲存格，不新增文字欄）；
-    與橘底／紅底互斥。"""
+    與橘底／紅底互斥。
+    P0：列數超過 3000 時略過逐列樣式，直接回傳原表，避免 apply(axis=1) 卡頓。"""
     from transformer import _hybrid_shortage_thresholds as _short_thr
     hint_col = "存貨偏重提示"
     suffix = " 加總 - Shop Stock Qty (CM) %"
     if df is None or df.empty:
+        return df
+    if len(df) > 3000:
         return df
     if hint_col not in df.columns and not zero_sales and not shortage:
         return df
@@ -377,25 +381,50 @@ if uploaded_file is not None:
         _t0 = time.time()
         try:
             _raw = uploaded_file.read()
-            _wb = load_workbook(BytesIO(_raw), data_only=True, read_only=True)
-            _ws = _wb.active
-            _hdr = list(next(_ws.iter_rows(min_row=1, max_row=1, values_only=True)))
-            _rows = []
-            _i = 0
-            for _i, _r in enumerate(_ws.iter_rows(min_row=2, values_only=True), start=1):
-                _rows.append(list(_r))
-                if _i % 500 == 0:
-                    _elapsed = time.time() - _t0
-                    _prog.progress(min(_i / (_i + 500), 0.99), text=f"讀取檔案中... {_i} 行 | 已用: {_elapsed:.0f}s")
-            if _i == 0:
-                _prog.empty()
+            _t_read0 = time.time()
+            df_input = None
+            # P0：優先向量化讀取（pandas＋openpyxl），較逐列 iter_rows 快數倍
+            try:
+                _prog.progress(0.3, text="讀取檔案中... 30% | 向量化解析中...")
+                df_input = pd.read_excel(BytesIO(_raw), engine="openpyxl")
+            except Exception:
+                df_input = None
+            if df_input is None:
+                # 後備：逐列讀取（相容特殊格式）
+                _wb = load_workbook(BytesIO(_raw), data_only=True, read_only=True)
+                _ws = _wb.active
+                _hdr = list(next(_ws.iter_rows(min_row=1, max_row=1, values_only=True)))
+                _rows = []
+                _i = 0
+                for _i, _r in enumerate(_ws.iter_rows(min_row=2, values_only=True), start=1):
+                    _rows.append(list(_r))
+                    if _i % 2000 == 0:
+                        _elapsed = time.time() - _t0
+                        _prog.progress(min(_i / (_i + 2000), 0.99), text=f"讀取檔案中... {_i} 行 | 已用: {_elapsed:.0f}s")
+                if _i == 0:
+                    _prog.empty()
+                    _wb.close()
+                    del _raw, _wb, _rows, _hdr
+                    st.error("❌ 上傳的 Excel 檔案沒有資料列（僅含標題或完全空白），請確認檔案內容後再試。")
+                    st.stop()
+                df_input = pd.DataFrame(_rows, columns=_hdr)
                 _wb.close()
-                del _raw, _wb, _rows, _hdr
+                del _wb, _rows, _hdr
+            if df_input is None or df_input.empty:
+                _prog.empty()
+                del _raw
                 st.error("❌ 上傳的 Excel 檔案沒有資料列（僅含標題或完全空白），請確認檔案內容後再試。")
                 st.stop()
-            df_input = pd.DataFrame(_rows, columns=_hdr)
-            _wb.close()
-            del _raw, _wb, _rows, _hdr
+            _prog.progress(0.8, text=f"讀取檔案中... 80% | 瘦身優化中（{len(df_input):,} 行）...")
+            # P0：上傳後一次瘦身（去全空 Unnamed 欄＋數值降精度），不改欄名與數值
+            try:
+                df_input = _optimize_input_dtypes(df_input)
+            except Exception:
+                pass
+            del _raw
+            gc.collect()
+            _read_s = time.time() - _t_read0
+            st.session_state.df_read_seconds = round(_read_s, 2)
             st.session_state.df_input = df_input
         except Exception as e:
             _prog.empty()
@@ -456,6 +485,15 @@ if uploaded_file is not None:
         st.dataframe(df_input.head(20), width='stretch')
         st.caption(f"目前顯示第 1 至第 20 筆明細（總共 {len(df_input):,} 筆原始資料）")
     st.markdown('</div>', unsafe_allow_html=True)
+
+    # P0：全域匯出選項（各模式共用，略過 RAW 明細可省三至七成匯出時間）
+    _skip_raw = st.checkbox(
+        "⚡ 略過 RAW 明細工作表（匯出較快、檔案較小）",
+        value=False,
+        key="perf_skip_raw",
+        help="勾選後 Excel 仍保留 RAW 工作表名稱，但只寫入一行說明，不寫入逐列明細。摘要與主表不受影響。",
+    )
+    _include_raw = not _skip_raw
 
     if mode == "Safety Stock Review":
         mtd_date = st.date_input(
@@ -605,6 +643,7 @@ if uploaded_file is not None:
                         "sales_overstock_days": _ss_sales_over,
                         "sales_overstock_min_units": _ss_sales_minu,
                     },
+                    include_raw=_include_raw,
                 )
                 st.session_state.combined_processed = True
                 st.session_state.combined_summary_df = summary_df
@@ -1125,6 +1164,7 @@ if uploaded_file is not None:
                 buf = generate_excel_hybrid(
                     raw_df, sc_summary, diagnosis, diagnosis_om, diag_summary, _stats,
                     progress_callback=_cb_excel,
+                    include_raw=_include_raw,
                 )
                 st.session_state.hybrid_processed = True
                 st.session_state.hybrid_raw_df = raw_df
@@ -1477,7 +1517,7 @@ if uploaded_file is not None:
                     stock_threshold=stock_threshold,
                     ref_date=mtd_date,
                 )
-                buf = generate_excel_stock_impact(summary_brand, summary_buyer, summary_category, summary_item_class, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_analysis, stock_threshold=stock_threshold)
+                buf = generate_excel_stock_impact(summary_brand, summary_buyer, summary_category, summary_item_class, sku_diagnosis, inv_distribution, raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_analysis, stock_threshold=stock_threshold, include_raw=_include_raw)
 
                 st.session_state.stock_impact_processed = True
                 st.session_state.stock_impact_summary_brand = summary_brand
@@ -1869,7 +1909,7 @@ if uploaded_file is not None:
                 )
                 sku_monthly_simp = _build_sku_monthly_analysis_simplified(raw_df, stock_threshold=stock_threshold)
                 sku_soh_summary = _build_sku_soh_tier_summary(raw_df)
-                buf = generate_excel_stock_impact_simplified(raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_simp, stock_threshold=stock_threshold, sku_soh_summary=sku_soh_summary)
+                buf = generate_excel_stock_impact_simplified(raw_df, progress_callback=_cb_excel, sku_monthly_analysis=sku_monthly_simp, stock_threshold=stock_threshold, sku_soh_summary=sku_soh_summary, include_raw=_include_raw)
 
                 # 儲存 Dashboard 需要的精簡欄位（節省 ~90% 記憶體）
                 _slim_cols = ["Is Stock Impacted", "Shop Nature", "Shop Stock Qty (CM)",
@@ -2370,6 +2410,7 @@ if uploaded_file is not None:
             )
             safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
 
+        # P0 全域選項已於檔案預覽後定義（_include_raw），此處直接沿用
         if st.button("⚙️ 執行報表轉換與分析", type="primary", width='stretch'):
             _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
             _t0_2 = time.time()
@@ -2393,7 +2434,7 @@ if uploaded_file is not None:
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                         rates=rates,
                     )
-                    buf = generate_excel(summary_df, raw_df, categories, progress_callback=_cb_excel)
+                    buf = generate_excel(summary_df, raw_df, categories, progress_callback=_cb_excel, include_raw=_include_raw)
                     st.session_state.processed = True
                     st.session_state.summary_df = summary_df
                     st.session_state.raw_df = raw_df
@@ -2406,7 +2447,7 @@ if uploaded_file is not None:
                         progress_callback=_cb_transform,
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                     )
-                    buf = generate_excel_carry(summary_left, summary_right, dashboard_df, raw_df, progress_callback=_cb_excel)
+                    buf = generate_excel_carry(summary_left, summary_right, dashboard_df, raw_df, progress_callback=_cb_excel, include_raw=_include_raw)
                     st.session_state.carry_processed = True
                     st.session_state.carry_summary_left = summary_left
                     st.session_state.carry_summary_right = summary_right
@@ -2420,7 +2461,7 @@ if uploaded_file is not None:
                         progress_callback=_cb_transform,
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                     )
-                    buf = generate_excel_nd(summary_df, raw_df, categories, progress_callback=_cb_excel)
+                    buf = generate_excel_nd(summary_df, raw_df, categories, progress_callback=_cb_excel, include_raw=_include_raw)
                     st.session_state.nd_processed = True
                     st.session_state.nd_summary_df = summary_df
                     st.session_state.nd_raw_df = raw_df
@@ -2438,6 +2479,7 @@ if uploaded_file is not None:
                     buf = generate_excel_ndrf_comparison(
                         comparison_by_shop, adj_sst_pivot, mch2_pivot, raw_df,
                         month_a_selected, month_b_selected, progress_callback=_cb_excel,
+                        include_raw=_include_raw,
                     )
                     st.session_state.ndrf_comp_processed = True
                     st.session_state.ndrf_comp_comparison_by_shop = comparison_by_shop
@@ -2457,7 +2499,7 @@ if uploaded_file is not None:
                         safety_mode=safety_mode_value,
                         oos_calc_mode=oos_calc_mode_value,
                     )
-                    buf = generate_excel_oos(summary_df, raw_df, categories, progress_callback=_cb_excel)
+                    buf = generate_excel_oos(summary_df, raw_df, categories, progress_callback=_cb_excel, include_raw=_include_raw)
                     st.session_state.oos_processed = True
                     st.session_state.oos_summary_df = summary_df
                     st.session_state.oos_raw_df = raw_df
@@ -2470,7 +2512,7 @@ if uploaded_file is not None:
                         progress_callback=_cb_transform,
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                     )
-                    buf = generate_excel_p90d_zero_sales(raw_df, summary_df, progress_callback=_cb_excel)
+                    buf = generate_excel_p90d_zero_sales(raw_df, summary_df, progress_callback=_cb_excel, include_raw=_include_raw)
                     st.session_state.p90ds_processed = True
                     st.session_state.p90ds_summary_df = summary_df
                     st.session_state.p90ds_raw_df = raw_df
@@ -2487,7 +2529,7 @@ if uploaded_file is not None:
                         sales_overstock_days=_sc_sales_over,
                         sales_overstock_min_units=_sc_sales_minu,
                     )
-                    buf = generate_excel_stock_checking(raw_df, summary_df, _stats, progress_callback=_cb_excel)
+                    buf = generate_excel_stock_checking(raw_df, summary_df, _stats, progress_callback=_cb_excel, include_raw=_include_raw)
                     st.session_state.stock_chk_processed = True
                     st.session_state.stock_chk_summary_df = summary_df
                     st.session_state.stock_chk_raw_df = raw_df
@@ -2516,7 +2558,7 @@ if uploaded_file is not None:
                     _fc_stats = dict(_fc_stats or {})
                     _fc_stats["mtd_date"] = fc_mtd_date.isoformat()
                     _fc_stats["surge_only"] = bool(fc_show_surge_only)
-                    buf = generate_excel_forecast(_main_df, _cov_df, _buyer_df, _raw_df, _fc_stats, progress_callback=_cb_excel)
+                    buf = generate_excel_forecast(_main_df, _cov_df, _buyer_df, _raw_df, _fc_stats, progress_callback=_cb_excel, include_raw=_include_raw)
                     st.session_state.fc_processed = True
                     st.session_state.fc_main_df = _main_df
                     st.session_state.fc_coverage_df = _cov_df
@@ -2533,7 +2575,13 @@ if uploaded_file is not None:
                 st.stop()
 
             _prog2.empty()
-            st.success("🎉 報表產生成功！數據彙總已完成。")
+            _total_s = time.time() - _t0_2
+            _rss_after = _process_rss_mb()
+            _rss_txt = f"｜記憶體 {_rss_after:.0f} MB" if _rss_after else ""
+            _raw_txt = "（已略過 RAW）" if not _include_raw else ""
+            st.success(f"🎉 報表產生成功！數據彙總已完成。耗時 {_total_s:.1f} 秒{_raw_txt}{_rss_txt}")
+            st.session_state.last_run_seconds = round(_total_s, 2)
+            gc.collect()
             if _warnings:
                 for _w in _warnings:
                     st.warning(f"⚠️ {_w}")
