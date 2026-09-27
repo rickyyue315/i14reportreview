@@ -171,6 +171,37 @@ def _standardize_safety_column(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _drop_unnamed_empty_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """P0：移除 Excel 尾端全空的 Unnamed 欄，減少寬表記憶體與後續計算欄數。"""
+    drop = [
+        c for c in df.columns
+        if isinstance(c, str) and c.strip().startswith("Unnamed")
+        and pd.to_numeric(df[c], errors="coerce").isna().all()
+        and df[c].fillna("").astype(str).str.strip().eq("").all()
+    ]
+    return df.drop(columns=drop) if drop else df
+
+
+def _downcast_numeric_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """P0：數值欄降精度（int64→int32、float64→float32），不改值、不改欄名。"""
+    for col in df.columns:
+        try:
+            kind = df[col].dtype.kind
+        except Exception:
+            continue
+        if kind == "i":
+            df[col] = pd.to_numeric(df[col], downcast="integer")
+        elif kind == "f":
+            df[col] = pd.to_numeric(df[col], downcast="float")
+    return df
+
+
+def _optimize_input_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """P0：上傳後一次瘦身（去空欄＋降精度），各模式共用，行為不變。"""
+    df = _drop_unnamed_empty_columns(df)
+    return _downcast_numeric_dtypes(df)
+
+
 def _reorder_raw_columns(df: pd.DataFrame) -> pd.DataFrame:
     available = set(df.columns)
     ordered: list[str] = []
@@ -294,7 +325,8 @@ try:
     import streamlit as st
     # 必須限制緩存大小與壽命 — 無 TTL/無 max_entries 時每次轉換都累積一份 DataFrame 拷貝，
     # 長時間運作的容器記憶體會持續增長且「釋放記憶體」按鈕前的執行間隔內無法自動回收
-    _compute_raw_extra_columns_impl = st.cache_data(_compute_raw_extra_columns_impl, max_entries=4, ttl=3600)
+    # P0（單人使用）：由 4 份降為 1 份，TTL 縮短，減少常駐記憶體
+    _compute_raw_extra_columns_impl = st.cache_data(_compute_raw_extra_columns_impl, max_entries=1, ttl=1800)
 except ImportError:
     pass
 
@@ -1059,19 +1091,27 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
     ws.append(header_row)
 
     total_raw = len(raw_df)
-    _batch = []
-    _batch_size = 500
-    # 使用 itertuples 避免 to_numpy() 的記憶體峰值
-    for i, row in enumerate(raw_df.itertuples(index=False)):
-        _batch.append([
-            None if pd.isna(v) else (round(float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else v)
-            for v in row
-        ])
-        if len(_batch) >= _batch_size or i == total_raw - 1:
-            for _r in _batch:
-                ws.append(_r)
-            _batch.clear()
-        if progress_callback and (i % 1000 == 0 or i == total_raw - 1):
+    if total_raw == 0:
+        ws.auto_filter.ref = ws.dimensions
+        _auto_width(ws)
+        return
+    # P0：數值欄預先四捨五入，避免逐格 isinstance＋round；bool 欄除外
+    _round_cols = [
+        c for c in raw_cols
+        if pd.api.types.is_numeric_dtype(raw_df[c])
+        and not pd.api.types.is_bool_dtype(raw_df[c])
+    ]
+    if _round_cols:
+        raw_df = raw_df.copy()
+        for c in _round_cols:
+            try:
+                raw_df[c] = np.round(raw_df[c].astype(float), 1)
+            except Exception:
+                pass
+    # P0：直接逐列 append，免除批次暫存串列的二次迴圈與峰值
+    for i, row in enumerate(raw_df.itertuples(index=False, name=None)):
+        ws.append([None if v is None or (isinstance(v, float) and np.isnan(v)) else v for v in row])
+        if progress_callback and (i % 2000 == 0 or i == total_raw - 1):
             p = progress_start + (progress_end - progress_start) * ((i + 1) / total_raw)
             progress_callback(p, f"寫入 RAW ({i+1}/{total_raw})...")
 
@@ -1090,6 +1130,13 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
 
     ws.auto_filter.ref = ws.dimensions
     _auto_width(ws)
+
+
+def _write_raw_placeholder(ws, reason="已略過 RAW 明細（匯出選項：只匯出主表與摘要）"):
+    """P0：略過 RAW 時仍保留同名工作表，維持表數契約，僅寫入一行說明。"""
+    ws.append(["RAW"])
+    ws.append([reason])
+    ws.column_dimensions["A"].width = 60
 
 
 # ─── Forecast Review（SKU 級建議訂貨量；第二維度防缺貨）Functions ──────────────
@@ -1804,6 +1851,7 @@ def generate_excel_combined(
     dimension: str = "nature",
     om_groups=None,
     stats: dict | None = None,
+    include_raw: bool = True,
 ) -> BytesIO:
     """Safety Stock Review 輸出。dimension／om_groups 決定 SUMMARY 區塊 ③
     「Safety Qty Change 分類 × 分類維度交叉表」的分組（只影響顯示，不影響任何建議計算）；
@@ -1839,7 +1887,7 @@ def generate_excel_combined(
     # ── Sheet 1: RAW ──
     ws_raw = wb.create_sheet(title="RAW")
 
-    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.15, columns=COMBINED_RAW_COLS)
+    (_write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.15, columns=COMBINED_RAW_COLS) if include_raw else _write_raw_placeholder(ws_raw))
 
     if progress_callback:
         progress_callback(0.2, "建立摘要工作表...")
@@ -2094,7 +2142,7 @@ def transform(df_input: pd.DataFrame, progress_callback=None, shop_natures=None,
     return summary, raw, categories, warnings
 
 
-def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: list[str], progress_callback=None) -> BytesIO:
+def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: list[str], progress_callback=None, include_raw: bool = True) -> BytesIO:
     wb = Workbook()
 
     if progress_callback:
@@ -2103,7 +2151,7 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     ws_raw = wb.active
     ws_raw.title = "RAW"
 
-    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.3)
+    (_write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.3) if include_raw else _write_raw_placeholder(ws_raw))
 
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
@@ -2536,6 +2584,7 @@ def generate_excel_nd(
     raw_df: pd.DataFrame,
     categories: list[str],
     progress_callback=None,
+    include_raw: bool = True,
 ) -> BytesIO:
     wb = Workbook()
 
@@ -2545,7 +2594,7 @@ def generate_excel_nd(
     ws_raw = wb.active
     ws_raw.title = "RAW"
 
-    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.3)
+    (_write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.3) if include_raw else _write_raw_placeholder(ws_raw))
 
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
@@ -2969,7 +3018,7 @@ def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=Non
     return summary, raw, categories, warnings
 
 
-def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
+def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None, include_raw: bool = True):
     wb = Workbook()
 
     if progress_callback:
@@ -2978,7 +3027,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None):
     ws_raw = wb.active
     ws_raw.title = "RAW"
 
-    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.3)
+    (_write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.3) if include_raw else _write_raw_placeholder(ws_raw))
 
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
@@ -3412,6 +3461,7 @@ def generate_excel_carry(
     dashboard_df: pd.DataFrame,
     raw_df: pd.DataFrame,
     progress_callback=None,
+    include_raw: bool = True,
 ) -> BytesIO:
     wb = Workbook()
 
@@ -3431,7 +3481,7 @@ def generate_excel_carry(
     ws_raw = wb.active
     ws_raw.title = "RAW"
 
-    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.1)
+    (_write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.1) if include_raw else _write_raw_placeholder(ws_raw))
 
     if progress_callback:
         progress_callback(0.15, "建立 Summary 工作表...")
@@ -3840,6 +3890,7 @@ def generate_excel_ndrf_comparison(
     month_a: str,
     month_b: str,
     progress_callback=None,
+    include_raw: bool = True,
 ) -> BytesIO:
     wb = Workbook()
 
@@ -3901,7 +3952,7 @@ def generate_excel_ndrf_comparison(
 
     # ── Sheet 4: RAW ──
     ws_raw = wb.create_sheet(title="RAW")
-    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.6, progress_end=0.9)
+    (_write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.6, progress_end=0.9) if include_raw else _write_raw_placeholder(ws_raw))
 
     if progress_callback:
         progress_callback(0.95, "正在儲存 Excel 檔案...")
@@ -5939,6 +5990,7 @@ def generate_excel_stock_impact(
     progress_callback=None,
     sku_monthly_analysis: pd.DataFrame | None = None,
     stock_threshold: int = 1000,
+    include_raw: bool = True,
 ) -> BytesIO:
     wb = Workbook()
 
@@ -5956,7 +6008,7 @@ def generate_excel_stock_impact(
     # Sheet 1: RAW（只輸出分析相關欄位以節省記憶體）
     ws_raw = wb.active
     ws_raw.title = "RAW"
-    _write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.08, columns=_OOS_DETAIL_COLS)
+    (_write_raw_sheet(ws_raw, raw_df, progress_callback, progress_start=0.0, progress_end=0.08, columns=_OOS_DETAIL_COLS) if include_raw else _write_raw_placeholder(ws_raw))
 
     if progress_callback:
         progress_callback(0.1, "建立缺貨影響明細工作表...")
@@ -9000,6 +9052,7 @@ def generate_excel_hybrid(
     diag_summary: pd.DataFrame | None = None,
     stats: dict | None = None,
     progress_callback=None,
+    include_raw: bool = True,
 ) -> BytesIO:
     """Safety Stock x NetStock Review 輸出（9 工作表，順序固定；開啟「建議退D001」時 10 表）：
     說明（首頁導讀：本次執行參數列出＋模式核心邏輯＋各工作表應留意的部分）/
@@ -9063,8 +9116,8 @@ def generate_excel_hybrid(
 
     # ── Sheet 1: RAW（重排欄序；不顯示 Item_Shop 與 Value 金額欄）──
     ws_raw = wb.create_sheet(title="RAW")
-    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.0, progress_end=0.24,
-                     columns=_hybrid_raw_display_columns(raw))
+    (_write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.0, progress_end=0.24,
+                     columns=_hybrid_raw_display_columns(raw)) if include_raw else _write_raw_placeholder(ws_raw))
 
     if progress_callback:
         progress_callback(0.25, "建立 SKU Summary（存貨偏重提示）...")
@@ -9600,6 +9653,7 @@ def generate_excel_stock_impact_simplified(
     sku_monthly_analysis: pd.DataFrame | None = None,
     stock_threshold: int = 1000,
     sku_soh_summary: pd.DataFrame | None = None,
+    include_raw: bool = True,
 ) -> BytesIO:
     """簡化版 Excel 輸出：輸出 RAW（Joseph 擴充欄位）、SKU Monthly Sales&Store、New、Stock Impact Dashboard 四個工作表。"""
     wb = Workbook()
@@ -9621,7 +9675,7 @@ def generate_excel_stock_impact_simplified(
     # Sheet 1: RAW (Joseph 擴充欄位順序)
     ws_raw = wb.active
     ws_raw.title = "RAW"
-    _write_raw_sheet(ws_raw, enriched, progress_callback, progress_start=0.0, progress_end=0.2, columns=_JOSEPH_RAW_COLS)
+    (_write_raw_sheet(ws_raw, enriched, progress_callback, progress_start=0.0, progress_end=0.2, columns=_JOSEPH_RAW_COLS) if include_raw else _write_raw_placeholder(ws_raw))
 
     if progress_callback:
         progress_callback(0.25, "建立 SKU Monthly Sales&Store 工作表...")
@@ -9842,6 +9896,7 @@ def generate_excel_p90d_zero_sales(
     raw: pd.DataFrame,
     summary_by_shop: pd.DataFrame,
     progress_callback=None,
+    include_raw: bool = True,
 ) -> BytesIO:
     wb = Workbook()
     if progress_callback:
@@ -9860,7 +9915,7 @@ def generate_excel_p90d_zero_sales(
     # ── Sheet 1: RAW ──
     ws_raw = wb.active
     ws_raw.title = "RAW"
-    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.0, progress_end=0.55, columns=out_cols)
+    (_write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.0, progress_end=0.55, columns=out_cols) if include_raw else _write_raw_placeholder(ws_raw))
 
     # ── Sheet 2: Summary by Shop ──
     if progress_callback:
@@ -10910,6 +10965,7 @@ def generate_excel_forecast(
     raw: pd.DataFrame | None = None,
     stats: dict | None = None,
     progress_callback=None,
+    include_raw: bool = True,
 ) -> BytesIO:
     """Forecast Review 輸出（6 工作表，順序固定）：
     說明（首頁導讀：本次執行參數列出＋模式核心邏輯＋各工作表應留意的部分）/
@@ -10979,9 +11035,9 @@ def generate_excel_forecast(
     if progress_callback:
         progress_callback(0.7, "建立 RAW...")
     ws_raw = wb.create_sheet(title="RAW")
-    _write_raw_sheet(ws_raw, pd.DataFrame() if raw is None else raw,
+    (_write_raw_sheet(ws_raw, pd.DataFrame() if raw is None else raw,
                      progress_callback, progress_start=0.7, progress_end=0.85,
-                     columns=_forecast_raw_display_columns(pd.DataFrame() if raw is None else raw))
+                     columns=_forecast_raw_display_columns(pd.DataFrame() if raw is None else raw)) if include_raw else _write_raw_placeholder(ws_raw))
 
     if progress_callback:
         progress_callback(0.87, "建立 Forecast 摘要...")
@@ -11996,6 +12052,7 @@ def generate_excel_stock_checking(
     summary: pd.DataFrame | None = None,
     stats: dict | None = None,
     progress_callback=None,
+    include_raw: bool = True,
 ) -> BytesIO:
     """Stock Checking 輸出 5 工作表：說明（首頁導讀：本次執行參數＋核心邏輯＋工作表導讀＋實用提示，
     開啟 Excel 時預設顯示本頁）+ Summary（SKU 級彙總，按 stats["dimension"] 分類維度分組，
@@ -12022,8 +12079,8 @@ def generate_excel_stock_checking(
     if progress_callback:
         progress_callback(0.35, "建立 RAW...")
     ws_raw = wb.create_sheet(title="RAW")
-    _write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.35, progress_end=0.80,
-                     columns=_stock_checking_raw_display_columns(raw))
+    (_write_raw_sheet(ws_raw, raw, progress_callback, progress_start=0.35, progress_end=0.80,
+                     columns=_stock_checking_raw_display_columns(raw)) if include_raw else _write_raw_placeholder(ws_raw))
 
     if progress_callback:
         progress_callback(0.82, "建立店舖問題 SKU...")

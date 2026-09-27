@@ -1,5 +1,9 @@
 # 版本記錄
 
+## v1.48.1 (2026-09-27)
+
+- 
+
 ## v1.48.0 (2026-09-25)
 
 Safety Stock x NetStock Review 與 Stock Checking「Summary」新增**存貨偏低淺藍底標示**——某分組「加總 - Shop Stock Qty (CM) %」明顯低於「加總 - Shop Monthly Sold Qty (P90D) %」時，以淺藍底（BDD7EE）加粗深藍字標示該分組的庫存佔比欄。原因：現時超額側有橘底（存貨偏重）與紅底（零銷有貨）提示，缺貨側卻無對應標示：
