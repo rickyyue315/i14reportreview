@@ -89,6 +89,25 @@ def _release_os_memory():
         pass
 
 
+def _top_download_button(excel_data, prefix, key):
+    """結果頁置頂下載按鈕（內容與底部下載按鈕相同，免捲動；計算邏輯不變）。"""
+    if excel_data is None:
+        return
+    try:
+        _hk = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+    except Exception:
+        _hk = datetime.now().strftime("%Y%m%d_%H%M")
+    st.download_button(
+        label=f"📥 下載{prefix}分析報表 (.xlsx)（置頂）",
+        data=excel_data,
+        file_name=f"{prefix}_{_hk}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary",
+        use_container_width=True,
+        key=key,
+    )
+
+
 def _style_inventory_skew(df: pd.DataFrame, zero_sales: bool = False, dimension: str = "nature", shortage: bool = True):
     """Summary 顯示：存貨偏重提示非空時，以醒目橘底加強顯示提示欄與偏重分組的庫存佔比欄。
     分組名稱按提示文字解析（Shop Nature 三組／RP Type 兩組／Nature＋RP Type 六組通用）。
@@ -173,25 +192,22 @@ with st.sidebar:
     
     st.info("📖 各模式的詳細說明與核心計算規則，已移至左側選單的「📖 使用說明」頁。")
 
-    st.markdown("### 📋 系統操作流程")
-    st.markdown("""
-    1. 📥 **準備來源檔案**：確認您的 Excel 檔案（By SKUxShop）包含必要欄位。
-    2. 📂 **上傳檔案**：將 Excel 拖曳至右側上傳區域。
-    3. 🎯 **選擇模式**：於主頁面頂端選擇分析模式（包括 Stock Checking 及 Safety Stock x NetStock Review）。
-    4. 🔧 **設定參數**：根據模式需要，調整 MTD 日期、Shop Nature Rate、調貨門檻或 Safety 基準天數等進階選項。
-    5. ⚙️ **執行轉換**：點擊「執行報表轉換與分析」，系統將自動過濾、計算並產生彙總表。
-    6. 💾 **下載成果**：於視覺化看板中即時查閱統計資訊，並一鍵導出美化後的 Excel 報表。
-    """)
-    
-    st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
-    
-    st.markdown("### 🔍 必要欄位檢核標準")
-    st.markdown("""
-    共用及各模式必要欄位會按目前選擇的分析模式檢核。
+    with st.expander("📋 系統操作流程", expanded=False):
+        st.markdown("""
+        1. 🎯 **選擇模式**：於主頁面頂端選擇分析模式。
+        2. 📂 **上傳檔案**：將 Excel 拖曳至主頁面的上傳區域。
+        3. 🔧 **設定參數**：按需要調整 MTD 日期、調貨門檻或 Safety 基準天數。
+        4. ⚙️ **執行轉換**：點擊「執行報表轉換與分析」。
+        5. 💾 **下載成果**：於看板查閱統計資訊，並導出 Excel 報表。
+        """)
 
-    OOS／Safety Stock Review 會使用 `Shop Stock Status` 等模式專用欄位；
-    **Safety Stock x NetStock Review** 專用必要欄位為 `Buyer / Brand / SKU / Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Safety Stock (現時)／Adj. Safety Stock（兩者皆接受，語意相同） / Shop Monthly Sold Qty (P90D)`，不要求 `Shop Stock Status`；另建議包含 `RP Type`（RF＝可補貨／ND＝不可補貨，ND 列不作調貨需求方；缺失時全部列按 RF 處理並退回 Shop Nature 維度）。
-    """, unsafe_allow_html=True)
+    with st.expander("🔍 必要欄位檢核標準", expanded=False):
+        st.markdown("""
+        共用及各模式必要欄位會按目前選擇的分析模式檢核。
+
+        OOS／Safety Stock Review 會使用 `Shop Stock Status` 等模式專用欄位；
+        **Safety Stock x NetStock Review** 不要求 `Shop Stock Status`，專用必要欄位詳見使用說明頁；另建議包含 `RP Type`（RF＝可補貨／ND＝不可補貨，ND 列不作調貨需求方；缺失時全部列按 RF 處理並退回 Shop Nature 維度）。
+        """, unsafe_allow_html=True)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
@@ -227,8 +243,17 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# 3. 模式選擇器
+# 3. 模式選擇器（選項與鍵值維持不變，僅新增步驟條與分類提示；計算邏輯不受影響）
+st.markdown("""
+<div class="steps-bar">
+    <div class="step"><span class="n">1</span><b>選擇模式</b><small>下方向常用模式開始</small></div>
+    <div class="step"><span class="n">2</span><b>上傳檔案</b><small>.xlsx，上限 200MB</small></div>
+    <div class="step"><span class="n">3</span><b>設定參數</b><small>只顯示與模式相關選項</small></div>
+    <div class="step"><span class="n">4</span><b>執行並下載</b><small>看板預覽＋一鍵導出</small></div>
+</div>
+""", unsafe_allow_html=True)
 mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review"]
+st.caption("🔄 調貨與補貨：Stock Checking · Safety Stock x NetStock Review　｜　🔒 安全庫存：Safety Stock Review · Forecast Review　｜　📦 庫存健康：Overstock · OOS · Stock Impact　｜　✂️ 商品與對比：Carry SKU · SKU 精簡 · NDRF 月份對比 · 90 日零銷售")
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0, key="mode_selector")
 
 # 3a. 分類維度選項（Safety Stock x NetStock Review／Stock Checking／Safety Stock Review 共用）
@@ -612,6 +637,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📈 Safety Stock 數據分析摘要 (Safety Stock Analysis Dashboard)")
+            _top_download_button(excel_data, "I14 Safety Stock Review", "dl_top_combined")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
             if _total_row.empty:
@@ -804,7 +830,8 @@ if uploaded_file is not None:
                 width='stretch',
             )
     elif mode == "Safety Stock x NetStock Review":
-        st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。主表另附「建議 Safety 設定值 Turnday」（建議值 ÷ (P90D 月均 ÷ 30)，月均 0 留空），受保底影響的建議在店舖問題 SKU 建議方法加註保底原因。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM、Shop Nature＋OM、銷量（高銷／中銷／低銷／零銷 四帶）或 銷量＋Shop Nature（Nature×銷量帶 12 組）分類；其中 OM／銷量／銷量＋Shop Nature 維度計算與預設相同，僅 Summary／交叉表改按 OM、Nature×OM、銷量帶或 Nature×銷量帶分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。RAW／主表恆附 **銷量帶**（同 SKU 內按 Sold Qty (P90D) 排名分帶）與 **銷量存貨分類**（高銷缺貨／低銷積壓／零銷積壓／正常；店舖周轉日數門檻預設缺貨 7 日、積壓 30 日、保底 2 件，與調貨 14 日線及 Safety 基準天數互相獨立）；「Review 摘要」另附 **⑤ 銷量 × 存貨分類交叉表**（母體為全部店舖×SKU 列）。可勾選 **啟用銷量再平衡**（預設關閉）：高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方（仍須 D001 低於門檻、補到 14 日需求 > 0 且同 SKU 有貨可調），積壓列經既有轉出判定提供來源；跟隨單向／雙向框架，自我調貨／同 Nature／同OM 守衛與池級歸零不放寬。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示，存貨偏低分組另以淺藍底標示庫存佔比欄；以銷量／銷量＋Shop Nature 分類時，零銷組「加總 - Shop Stock Qty (CM) %」大於 0% 另以醒目紅底標示——零銷售而仍有存貨，理論上全屬 Overstock）。")
+        with st.expander("🔀 調貨事件 Review Safety 設定說明（點選展開，內容與現行一致）", expanded=False):
+            st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。主表另附「建議 Safety 設定值 Turnday」（建議值 ÷ (P90D 月均 ÷ 30)，月均 0 留空），受保底影響的建議在店舖問題 SKU 建議方法加註保底原因。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM、Shop Nature＋OM、銷量（高銷／中銷／低銷／零銷 四帶）或 銷量＋Shop Nature（Nature×銷量帶 12 組）分類；其中 OM／銷量／銷量＋Shop Nature 維度計算與預設相同，僅 Summary／交叉表改按 OM、Nature×OM、銷量帶或 Nature×銷量帶分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。RAW／主表恆附 **銷量帶**（同 SKU 內按 Sold Qty (P90D) 排名分帶）與 **銷量存貨分類**（高銷缺貨／低銷積壓／零銷積壓／正常；店舖周轉日數門檻預設缺貨 7 日、積壓 30 日、保底 2 件，與調貨 14 日線及 Safety 基準天數互相獨立）；「Review 摘要」另附 **⑤ 銷量 × 存貨分類交叉表**（母體為全部店舖×SKU 列）。可勾選 **啟用銷量再平衡**（預設關閉）：高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方（仍須 D001 低於門檻、補到 14 日需求 > 0 且同 SKU 有貨可調），積壓列經既有轉出判定提供來源；跟隨單向／雙向框架，自我調貨／同 Nature／同OM 守衛與池級歸零不放寬。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示，存貨偏低分組另以淺藍底標示庫存佔比欄；以銷量／銷量＋Shop Nature 分類時，零銷組「加總 - Shop Stock Qty (CM) %」大於 0% 另以醒目紅底標示——零銷售而仍有存貨，理論上全屬 Overstock）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -1156,6 +1183,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 🔀 Safety Stock x NetStock Review 分析摘要 (Hybrid Dashboard)")
+            _top_download_button(excel_data, "I14 Safety Stock x NetStock Review", "dl_top_hybrid")
 
             _hyb_rows = _hybrid_dashboard_metrics(raw_df, stats)
 
@@ -1543,6 +1571,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📦 存貨分佈分析摘要 (Stock Impact Dashboard)")
+            _top_download_button(excel_data, "I14 Stock Impact Analysis", "dl_top_impact")
             st.caption("🎯 重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積｜Non Tourist/Mix 只需保留 7-14 日 Turnday")
 
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
@@ -1902,6 +1931,7 @@ if uploaded_file is not None:
 
                 st.markdown('<div class="custom-card">', unsafe_allow_html=True)
                 st.markdown("### 📦 存貨分佈分析摘要 (Stock Impact Dashboard - 簡化)")
+                _top_download_button(excel_data, "I14 Stock Impact Analysis (Simplified)", "dl_top_impact_simp")
                 st.caption("🎯 重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積")
 
                 r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
@@ -2517,6 +2547,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📈 異常庫存數據分析摘要 (Analysis Dashboard)")
+            _top_download_button(excel_data, "I14 by SKUxShop_To Buyer", "dl_top_overstock")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
             if _total_row.empty:
@@ -2638,6 +2669,7 @@ if uploaded_file is not None:
             excel_data = st.session_state.oos_excel_data
 
             st.markdown("### 📈 OOS 庫存數據分析摘要 (OOS Analysis Dashboard)")
+            _top_download_button(excel_data, "I14 OOS Review", "dl_top_oos")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
             if _total_row.empty:
@@ -2759,6 +2791,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📈 ND SKU 數據分析摘要 (ND SKU Analysis Dashboard)")
+            _top_download_button(excel_data, "I14 SKU 精簡 Review", "dl_top_nd")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
             if _total_row.empty:
@@ -2917,6 +2950,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📊 NDRF 月份對比分析摘要")
+            _top_download_button(excel_data, "I14 NDRF 月份對比", "dl_top_ndrf")
 
             _total_row = comparison_by_shop[comparison_by_shop["Site Code"] == "總計"]
             tr = _total_row.iloc[0] if not _total_row.empty else None
@@ -3021,6 +3055,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📈 Carry SKU 分析摘要 (Carry SKU Analysis Dashboard)")
+            _top_download_button(excel_data, "I14 Carry SKU Review", "dl_top_carry")
 
             _total_row = dashboard_df[dashboard_df["Site Code"] == "總計"]
             if not _total_row.empty:
@@ -3168,6 +3203,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📉 Past 90 Days 0 Sales 分析摘要")
+            _top_download_button(excel_data, "I14 Past 90 Days 0 Sales", "dl_top_p90d")
 
             _total_row = summary_df[summary_df["Site Code"] == "總計"] if summary_df is not None and not summary_df.empty else None
             if _total_row is not None and not _total_row.empty:
@@ -3256,6 +3292,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 🔄 Stock Checking 調貨分析摘要 (Transfer Analysis Dashboard)")
+            _top_download_button(excel_data, "I14 Stock Checking", "dl_top_stockchk")
             st.caption("SKU 級判定：Tourist 加總 TurnDay < 門檻 且 D001 < 門檻 且 Mix / NT 至少一個 Nature 加總 TurnDay ≥ 門檻（有貨可調）→ 標示需要調貨；調入需求補到 14 日周轉，來源優先 Non Tourist 店舖，再由 Mix 店舖補足。")
 
             total_rows = len(raw_df) if raw_df is not None else 0
@@ -3417,6 +3454,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📈 Forecast 數據分析摘要 (Forecast Dashboard)")
+            _top_download_button(excel_data, "I14 Forecast Review", "dl_top_fc")
 
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:

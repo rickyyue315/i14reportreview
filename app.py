@@ -156,6 +156,72 @@ button[kind="primary"]:hover {
     background: linear-gradient(90deg, transparent, rgba(0,119,163,0.15) 20%, rgba(0,119,163,0.15) 80%, transparent);
     margin: 1.5rem 0;
 }
+
+/* ---- 介面優化：步驟條（首頁流程可視化，純顯示，不影響狀態） ---- */
+.steps-bar {
+    display: flex;
+    gap: 0;
+    background: #ffffff;
+    border: 1px solid #e3e6ec;
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 1.2rem;
+}
+.steps-bar .step {
+    flex: 1;
+    padding: 0.65rem 0.9rem;
+    font-size: 0.82rem;
+    border-right: 1px solid #eef0f4;
+    color: #4a4a5e;
+}
+.steps-bar .step:last-child { border-right: none; }
+.steps-bar .step .n {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #0077a3;
+    color: #fff;
+    text-align: center;
+    font-size: 0.72rem;
+    line-height: 22px;
+    margin-right: 8px;
+    font-weight: 700;
+}
+.steps-bar .step small { display: block; color: #8a8a9a; margin-top: 2px; margin-left: 30px; font-size: 0.72rem; }
+
+/* ---- 介面優化：模式選擇器自動換行，避免 12 個選項擠壓 ---- */
+div[data-testid="stRadio"][key="mode_selector"] [data-baseweb="radio-group"] {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+}
+div[data-testid="stRadio"][key="mode_selector"] label {
+    background: #ffffff;
+    border: 1px solid #e3e6ec;
+    border-radius: 20px;
+    padding: 2px 10px 2px 6px;
+    font-size: 0.85rem;
+}
+
+/* ---- 介面優化：分類維度選項自動換行 ---- */
+div[data-testid="stRadio"][key="hy_dim"] [data-baseweb="radio-group"],
+div[data-testid="stRadio"][key="ss_dim"] [data-baseweb="radio-group"] {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+}
+
+/* ---- 介面優化：頂部下載列（結果頁置頂，免捲動） ---- */
+.result-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid #e3e6ec;
+    border-radius: 10px;
+    padding: 0.6rem 0.9rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
 </style>
 """, unsafe_allow_html=True)
 
