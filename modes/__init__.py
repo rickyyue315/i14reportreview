@@ -84,3 +84,9 @@ MODE_REGISTRY["銷售損失量化 Review"] = {
     "transform": "transform_sales_loss",
     "generate_excel": "generate_excel_sales_loss",
 }
+
+MODE_REGISTRY["積壓資金 Review"] = {
+    "module": "modes.excess_capital",
+    "transform": "transform_excess_capital",
+    "generate_excel": "generate_excel_excess_capital",
+}

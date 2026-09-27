@@ -263,6 +263,20 @@ SKU 級 Forecast 計算（v2 加權混合）：
 3. **By Shop** = 按 Site Code 彙總影響 SKU 數與兩種基準損失總數，按 P90D 損失由大至小排序
 4. **輸入檢核** = 共用必要欄位＋Site Code；損失訊號欄（Is Stock Impacted／OOS Periods Count／各損失欄）至少需具備一個，否則停止
      """),
+
+    ("📦 積壓資金 Review",
+     """
+- 彙總佔用資金最多的滯銷存貨，按 SKU 與店舖排列去庫存優先次序
+- 母體為有超額存貨列（Excess Stock Qty 或 Excess Stock Value 大於 0）
+- 輸出：RAW、By SKU、By Shop 共 3 個工作表
+     """,
+     """
+積壓資金計算：
+1. **積壓判定** = Excess Stock Qty 大於 0，或 Excess Stock Value 大於 0
+2. **By SKU** = 按 Buyer／Brand／SKU 彙總影響店舖數、超額存貨合計、積壓資金合計，按資金由大至小排序
+3. **By Shop** = 按 Site Code 彙總影響 SKU 數與超額存貨總數、資金總值，按資金由大至小排序
+4. **輸入檢核** = 共用必要欄位另加 Site Code；積壓訊號欄（Excess Stock Qty／Excess Stock Value）至少需具備一個，否則停止
+     """),
 ]
 
 for _label, _desc, _rules, *_extra in MODES:

@@ -1,5 +1,15 @@
 # 版本記錄
 
+## v1.50.0 (2026-09-27)
+
+新增第 14 個分析模式**積壓資金 Review**——彙總佔用資金最多的滯銷存貨，排列去庫存優先次序；其餘 13 個模式計算、欄位、欄序零變動：
+
+- **計算** — `modes/excess_capital.py`：積壓判定（Excess Stock Qty 或 Excess Stock Value 大於 0）→ RAW（限定 23 個欄位）→ By SKU（影響店舖數、超額存貨合計、積壓資金合計，按資金排序）→ By Shop（影響 SKU 數、超額存貨總數、資金總值，按資金排序）
+- **輸出** — RAW／By SKU／By Shop 共 3 個工作表，支援略過 RAW 選項
+- **文件** — 使用說明頁、README 同步
+- **測試** — 新增 `tests/test_excess_capital.py` ×6；`scripts/modtools/moved.json` 登記新名稱；`check_modes.py` 0 錯誤 0 警告；共 464 項測試通過，3 項略過
+- Change: `version.py` → 1.50.0
+
 ## v1.49.0 (2026-09-27)
 
 新增第 13 個分析模式**銷售損失量化 Review**——彙總缺貨造成的銷售損失，排列補貨優先次序；其餘 12 個模式計算、欄位、欄序零變動：

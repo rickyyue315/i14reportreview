@@ -341,5 +341,15 @@
  "_sales_loss_raw_columns": "sales_loss",
  "_write_simple_table": "sales_loss",
  "generate_excel_sales_loss": "sales_loss",
- "transform_sales_loss": "sales_loss"
+ "transform_sales_loss": "sales_loss",
+ "_EXCESS_BY_SHOP_COLUMNS": "excess_capital",
+ "_EXCESS_BY_SKU_COLUMNS": "excess_capital",
+ "_EXCESS_SIGNAL_COLUMNS": "excess_capital",
+ "_EXCESS_RAW_OUTPUT_COLUMNS": "excess_capital",
+ "_build_excess_by_shop": "excess_capital",
+ "_build_excess_by_sku": "excess_capital",
+ "_excess_raw_columns": "excess_capital",
+ "_write_excess_table": "excess_capital",
+ "generate_excel_excess_capital": "excess_capital",
+ "transform_excess_capital": "excess_capital"
 }

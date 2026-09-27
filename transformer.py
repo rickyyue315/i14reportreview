@@ -540,3 +540,7 @@ from modes.forecast import *  # noqa: F401,F403
 
 # ─── 銷售損失量化 Review：實作已遷至 modes/sales_loss.py（墊片 re-export）───
 from modes.sales_loss import *  # noqa: F401,F403
+
+
+# ─── 積壓資金 Review：實作已遷至 modes/excess_capital.py（墊片 re-export）───
+from modes.excess_capital import *  # noqa: F401,F403
