@@ -1,13 +1,13 @@
 # I14 報表轉換與分析系統
 
-自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）、**Forecast Review**（SKU 級建議訂貨量）、**銷售損失量化 Review**（缺貨損失彙總）、**積壓資金 Review**（滯銷資金彙總）與 **RP Type 覆核 Review**（補貨設定覆核）、**D001 健康檢查 Review**（倉庫備貨檢查）與 **新品追蹤 Review**（上市新品追蹤）等多種模式。
+自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）、**Forecast Review**（SKU 級建議訂貨量）、**銷售損失量化 Review**（缺貨損失彙總）、**積壓資金 Review**（滯銷資金彙總）與 **RP Type 覆核 Review**（補貨設定覆核）、**D001 健康檢查 Review**（倉庫備貨檢查）、**新品追蹤 Review**（上市新品追蹤）與 **退場清倉 Review**（退場品項清倉）等多種模式。
 
 ## 功能概述
 
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / Stock Checking / Safety Stock x NetStock Review / Forecast Review / 銷售損失量化 Review / 積壓資金 Review / RP Type 覆核 Review / D001 健康檢查 Review / 新品追蹤 Review |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / Stock Checking / Safety Stock x NetStock Review / Forecast Review / 銷售損失量化 Review / 積壓資金 Review / RP Type 覆核 Review / D001 健康檢查 Review / 新品追蹤 Review / 退場清倉 Review |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
@@ -260,6 +260,16 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 4. **輸入檢核** — 共用必要欄位另加 Site Code 與 Launch Date（缺任一即停止）
 
 輸出包含 **3 個工作表**：RAW（含上市日數與起量狀態欄）、By SKU、By Shop。
+
+### 退場清倉 Review
+
+找出已停產或疑似應退場品項的殘留庫存，建議清倉安排：
+
+1. **狀態退場** — Item Status 含退場關鍵字（下市／停產／退場／停止／結束／下架／discont／phase out／obsolete／delist／dead），且店舖仍有庫存 → Warehouse 貨「建議退倉」（退倉量＝店舖庫存），Vendor 貨「另有安排」
+2. **檢視退場** — RP Type 為 ND，且四期銷售皆為 0 且店舖仍有庫存（狀態未標示退場）
+3. **輸入檢核** — 共用必要欄位另加 Site Code（缺少時停止）；Item Status 缺欄時只按第 2 類檢視並列提示；Supply Source 缺欄時全視 Warehouse 貨
+
+輸出包含 **3 個工作表**：RAW（含清倉建議欄）、By SKU、By Shop。
 
 ## Excel 輸出結構
 

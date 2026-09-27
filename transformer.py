@@ -556,3 +556,7 @@ from modes.d001_health import *  # noqa: F401,F403
 
 # ─── 新品追蹤 Review：實作已遷至 modes/new_sku.py（墊片 re-export）───
 from modes.new_sku import *  # noqa: F401,F403
+
+
+# ─── 退場清倉 Review：實作已遷至 modes/phaseout.py（墊片 re-export）───
+from modes.phaseout import *  # noqa: F401,F403

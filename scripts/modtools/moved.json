@@ -407,5 +407,20 @@
  "_build_ns_by_shop": "new_sku",
  "_write_ns_table": "new_sku",
  "generate_excel_new_sku": "new_sku",
- "transform_new_sku": "new_sku"
+ "transform_new_sku": "new_sku",
+ "_PO_REVIEW_COLUMN": "phaseout",
+ "_PO_RETURN": "phaseout",
+ "_PO_VENDOR": "phaseout",
+ "_PO_REVIEW": "phaseout",
+ "_PO_STATUS_KEYWORDS": "phaseout",
+ "_PO_RAW_OUTPUT_COLUMNS": "phaseout",
+ "_PO_BY_SKU_COLUMNS": "phaseout",
+ "_PO_BY_SHOP_COLUMNS": "phaseout",
+ "_po_is_phaseout_status": "phaseout",
+ "_po_raw_columns": "phaseout",
+ "_build_po_by_sku": "phaseout",
+ "_build_po_by_shop": "phaseout",
+ "_write_po_table": "phaseout",
+ "generate_excel_phaseout": "phaseout",
+ "transform_phaseout": "phaseout"
 }

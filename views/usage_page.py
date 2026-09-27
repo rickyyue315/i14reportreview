@@ -321,6 +321,19 @@ D001 健康檢查計算（SKU 級彙總後判定）：
 3. **By SKU** = 按 Buyer／Brand／SKU 彙總鋪貨店舖數、有銷店舖數、總庫存、P90D 總銷量，按上市日期由新至舊排序
 4. **輸入檢核** = 共用必要欄位另加 Site Code 與 Launch Date（缺任一即停止）
      """),
+
+    ("🧹 退場清倉 Review",
+     """
+- 找出已停產或疑似應退場品項的殘留庫存，建議清倉安排
+- 狀態標示退場且有庫存 → Warehouse 貨建議退倉，Vendor 貨另有安排；ND 長期零銷售有庫存 → 檢視退場
+- 輸出：RAW、By SKU、By Shop 共 3 個工作表
+     """,
+     """
+退場清倉計算：
+1. **狀態退場** = Item Status 含退場關鍵字（下市／停產／退場／停止／結束／下架／discont／phase out／obsolete／delist／dead），且店舖仍有庫存 → Warehouse 貨「建議退倉」（退倉量＝店舖庫存），Vendor 貨「另有安排」
+2. **檢視退場** = RP Type 為 ND，且四期銷售皆為 0 且店舖仍有庫存（狀態未標示退場）
+3. **輸入檢核** = 共用必要欄位另加 Site Code（缺少時停止）；Item Status 缺欄時只按第 2 類檢視並列提示；Supply Source 缺欄時全視 Warehouse 貨
+     """),
 ]
 
 for _label, _desc, _rules, *_extra in MODES:

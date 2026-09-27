@@ -1,5 +1,15 @@
 # 版本記錄
 
+## v1.55.0 (2026-09-28)
+
+新增第 18 個分析模式**退場清倉 Review**——找出已停產或疑似應退場品項的殘留庫存，建議清倉安排；其餘 17 個模式計算、欄位、欄序零變動：
+
+- **計算** — `modes/phaseout.py`：狀態退場（Item Status 關鍵字＋有庫存 → Warehouse 貨建議退倉、Vendor 貨另有安排）→ ND 長期零銷售有庫存 → 檢視退場 → By SKU（庫存與退倉量合計）→ By Shop
+- **輸出** — RAW（含清倉建議欄）／By SKU／By Shop 共 3 個工作表，支援略過 RAW 選項
+- **文件** — 使用說明頁、README 同步
+- **測試** — 新增 `tests/test_phaseout.py` ×7；`scripts/modtools/moved.json` 登記新名稱；`check_modes.py` 0 錯誤 0 警告；共 495 項測試通過，3 項略過
+- Change: `version.py` → 1.55.0
+
 ## v1.54.0 (2026-09-27)
 
 新增第 17 個分析模式**新品追蹤 Review**——追蹤上市 90 天內新品的鋪貨與起量情況；其餘 16 個模式計算、欄位、欄序零變動：

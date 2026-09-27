@@ -108,3 +108,9 @@ MODE_REGISTRY["新品追蹤 Review"] = {
     "transform": "transform_new_sku",
     "generate_excel": "generate_excel_new_sku",
 }
+
+MODE_REGISTRY["退場清倉 Review"] = {
+    "module": "modes.phaseout",
+    "transform": "transform_phaseout",
+    "generate_excel": "generate_excel_phaseout",
+}
