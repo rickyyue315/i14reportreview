@@ -197,7 +197,11 @@ def _drop_unnamed_empty_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _downcast_numeric_dtypes(df: pd.DataFrame) -> pd.DataFrame:
-    """P0：數值欄降精度（int64→int32、float64→float32），不改值、不改欄名。"""
+    """P0：整數欄降精度（int64→int8/16/32），不改值、不改欄名。
+
+    刻意「不」降浮點精度：float64→float32 只有約 7 位有效數字，會靜默改值
+    （例 43.85 → 43.849998），RAW 為稽核明細不容失真；整數降精度則為完全無損。
+    """
     for col in df.columns:
         try:
             kind = df[col].dtype.kind
@@ -205,8 +209,6 @@ def _downcast_numeric_dtypes(df: pd.DataFrame) -> pd.DataFrame:
             continue
         if kind == "i":
             df[col] = pd.to_numeric(df[col], downcast="integer")
-        elif kind == "f":
-            df[col] = pd.to_numeric(df[col], downcast="float")
     return df
 
 
@@ -413,7 +415,10 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
         ws.auto_filter.ref = ws.dimensions
         _auto_width(ws)
         return
-    # P0：數值欄預先四捨五入，避免逐格 isinstance＋round；bool 欄除外
+    # P0：數值欄預先四捨五入以減少逐格分支。
+    # 註：必須用 Python 內建 round，不可改用 np.round／Series.round ——
+    # numpy 採「縮放後 rint」法，於 .x5 進位邊界與 Python 的十進位正確捨入結果不同
+    # （例 43.85、403.05），會使 RAW 輸出與拆分前不一致。
     _round_cols = [
         c for c in raw_cols
         if pd.api.types.is_numeric_dtype(raw_df[c])
@@ -423,12 +428,21 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
         raw_df = raw_df.copy()
         for c in _round_cols:
             try:
-                raw_df[c] = np.round(raw_df[c].astype(float), 1)
+                raw_df[c] = pd.Series(
+                    [None if pd.isna(v) else round(float(v), 1) for v in raw_df[c]],
+                    index=raw_df.index, dtype="object",
+                )
             except Exception:
                 pass
-    # P0：直接逐列 append，免除批次暫存串列的二次迴圈與峰值
+    # P0：直接逐列 append，免除批次暫存串列的二次迴圈與峰值；
+    # 仍保留非數值欄的逐格 isinstance 捨入與 pd.isna 判定，確保與原行為一致
     for i, row in enumerate(raw_df.itertuples(index=False, name=None)):
-        ws.append([None if v is None or (isinstance(v, float) and np.isnan(v)) else v for v in row])
+        ws.append([
+            None if pd.isna(v)
+            else (v if isinstance(v, str) or isinstance(v, bool)
+                  else (round(float(v), 1) if isinstance(v, (int, float)) else v))
+            for v in row
+        ])
         if progress_callback and (i % 2000 == 0 or i == total_raw - 1):
             p = progress_start + (progress_end - progress_start) * ((i + 1) / total_raw)
             progress_callback(p, f"寫入 RAW ({i+1}/{total_raw})...")
