@@ -56,6 +56,7 @@ from transformer import (
     _optimize_input_dtypes,
     transform_sales_loss, generate_excel_sales_loss,
     transform_excess_capital, generate_excel_excess_capital,
+    transform_rp_review, generate_excel_rp_review,
 )
 import time
 import traceback
@@ -234,7 +235,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 3. 模式選擇器（維持單列，不分組；下方註解說明各模式用途）
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "銷售損失量化 Review", "積壓資金 Review"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "銷售損失量化 Review", "積壓資金 Review", "RP Type 覆核 Review"]
 MODE_DESCRIPTIONS = {
     "Overstock Review": "篩選庫存過剩品項，計算建議安全庫存與可轉出貨量。",
     "OOS Review": "篩選缺貨與潛在缺貨品項，偵測安全庫存不足。",
@@ -250,6 +251,7 @@ MODE_DESCRIPTIONS = {
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
     "銷售損失量化 Review": "彙總缺貨造成的銷售損失金額，排列補貨優先次序。",
     "積壓資金 Review": "彙總佔用資金最多的滯銷存貨，排列去庫存優先次序。",
+    "RP Type 覆核 Review": "檢查可補貨與不可補貨設定與實際銷量是否相符。",
 }
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0, key="mode_selector")
 st.caption(f"用途：{MODE_DESCRIPTIONS.get(current_mode, '')}")
@@ -322,6 +324,7 @@ MODE_KEYS = {
     "Forecast Review": {"prefix": "fc_", "processed": False, "main_df": None, "coverage_df": None, "buyer_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
     "銷售損失量化 Review": {"prefix": "loss_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": []},
     "積壓資金 Review": {"prefix": "exc_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": []},
+    "RP Type 覆核 Review": {"prefix": "rp_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -2535,6 +2538,19 @@ if uploaded_file is not None:
                     st.session_state.exc_by_shop = by_shop_df
                     st.session_state.exc_excel_data = buf
                     st.session_state.exc_warnings = _warnings
+                elif mode == "RP Type 覆核 Review":
+                    raw_df, by_sku_df, by_shop_df, _warnings = transform_rp_review(
+                        df_input,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                    )
+                    buf = generate_excel_rp_review(raw_df, by_sku_df, by_shop_df, progress_callback=_cb_excel, include_raw=_include_raw)
+                    st.session_state.rp_processed = True
+                    st.session_state.rp_raw_df = raw_df
+                    st.session_state.rp_by_sku = by_sku_df
+                    st.session_state.rp_by_shop = by_shop_df
+                    st.session_state.rp_excel_data = buf
+                    st.session_state.rp_warnings = _warnings
                 elif mode == "Stock Checking":
                     raw_df, summary_df, _stats, _warnings = transform_stock_checking(
                         df_input,
@@ -3822,6 +3838,107 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載積壓資金分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+            )
+
+        if mode == "RP Type 覆核 Review" and st.session_state.rp_processed:
+            raw_df = st.session_state.rp_raw_df
+            by_sku_df = st.session_state.rp_by_sku
+            by_shop_df = st.session_state.rp_by_shop
+            excel_data = st.session_state.rp_excel_data
+
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+            st.markdown("### 🏷️ RP Type 覆核分析摘要")
+
+            total_rows = len(raw_df) if raw_df is not None else 0
+            if raw_df is not None and not raw_df.empty:
+                _rec = raw_df["覆核建議"].fillna("").astype(str)
+                to_rf = int((_rec == "疑似應轉 RF").sum())
+                to_nd = int((_rec == "疑似應轉 ND").sum())
+                nd_oos = int((_rec == "ND 缺貨跟進").sum())
+            else:
+                to_rf = 0
+                to_nd = 0
+                nd_oos = 0
+            if by_sku_df is not None and not by_sku_df.empty:
+                _data = by_sku_df[by_sku_df["Buyer"] != "總計"]
+                total_skus = int(_data["SKU"].dropna().nunique()) if not _data.empty else 0
+            else:
+                total_skus = 0
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ef4444;">
+                    <div class="metric-title">覆核行數</div>
+                    <div class="metric-value" style="color: #ef4444;">{total_rows:,}</div>
+                    <div class="metric-desc">疑似誤設列數（已刪除重複計算前）</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #f59e0b;">
+                    <div class="metric-title">涉及 SKU 數</div>
+                    <div class="metric-value" style="color: #f59e0b;">{total_skus:,}</div>
+                    <div class="metric-desc">已刪除重複</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #3b82f6;">
+                    <div class="metric-title">疑似應轉 RF</div>
+                    <div class="metric-value" style="color: #3b82f6;">{to_rf:,}</div>
+                    <div class="metric-desc">ND 但近期有銷量（列數）</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #10b981;">
+                    <div class="metric-title">疑似應轉 ND</div>
+                    <div class="metric-value" style="color: #10b981;">{to_nd:,}</div>
+                    <div class="metric-desc">RF 但長期零銷售且有庫存（列數）</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            if nd_oos:
+                st.caption(f"另有 {nd_oos:,} 列屬「ND 缺貨跟進」（不可補貨且已缺貨），見 By SKU／By Shop 明細。")
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            tab_sku, tab_shop, tab_raw = st.tabs(["📊 By SKU", "🏪 By Shop", "RAW"])
+            with tab_sku:
+                st.markdown("#### 按 SKU 彙總（按涉及店舖數由大至小排序）")
+                if by_sku_df is not None and not by_sku_df.empty:
+                    st.dataframe(by_sku_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_shop:
+                st.markdown("#### 按店舖彙總（按涉及 SKU 數由大至小排序）")
+                if by_shop_df is not None and not by_shop_df.empty:
+                    st.dataframe(by_shop_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_raw:
+                st.markdown("#### RAW 原始明細（前 50 筆）")
+                if raw_df is not None and not raw_df.empty:
+                    st.dataframe(raw_df.head(50).rename(columns=_display_safety_header), width='stretch')
+                    st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 RP Type 覆核 Review_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載 RP Type 覆核分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

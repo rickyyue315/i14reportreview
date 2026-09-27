@@ -277,6 +277,20 @@ SKU 級 Forecast 計算（v2 加權混合）：
 3. **By Shop** = 按 Site Code 彙總影響 SKU 數與超額存貨總數、資金總值，按資金由大至小排序
 4. **輸入檢核** = 共用必要欄位另加 Site Code；積壓訊號欄（Excess Stock Qty／Excess Stock Value）至少需具備一個，否則停止
      """),
+
+    ("🏷️ RP Type 覆核 Review",
+     """
+- 檢查可補貨與不可補貨設定與實際銷量是否相符
+- 三類疑似誤設：ND 但近期有銷量（疑似應轉 RF）／RF 但長期零銷售且有庫存（疑似應轉 ND）／ND 且已缺貨（跟進供貨安排）
+- 輸出：RAW、By SKU、By Shop 共 3 個工作表
+     """,
+     """
+RP Type 覆核計算：
+1. **疑似應轉 RF** = RP Type 為 ND，且 Sold Qty (P90D)／(M-1)／(CM - MTD) 任一期大於 0（ND 缺貨列優先歸入「ND 缺貨跟進」）
+2. **ND 缺貨跟進** = RP Type 為 ND，且店舖庫存為 0 或 Is OOS (CM) 為真
+3. **疑似應轉 ND** = RP Type 為 RF，且四期銷售皆為 0 且店舖仍有庫存
+4. **輸入檢核** = 共用必要欄位另加 Site Code 與 RP Type（缺少 RP Type 時停止）；非標準 RP Type 值按 ND 處理並列提示
+     """),
 ]
 
 for _label, _desc, _rules, *_extra in MODES:

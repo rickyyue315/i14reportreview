@@ -544,3 +544,7 @@ from modes.sales_loss import *  # noqa: F401,F403
 
 # ─── 積壓資金 Review：實作已遷至 modes/excess_capital.py（墊片 re-export）───
 from modes.excess_capital import *  # noqa: F401,F403
+
+
+# ─── RP Type 覆核 Review：實作已遷至 modes/rp_review.py（墊片 re-export）───
+from modes.rp_review import *  # noqa: F401,F403

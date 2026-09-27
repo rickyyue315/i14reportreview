@@ -90,3 +90,9 @@ MODE_REGISTRY["積壓資金 Review"] = {
     "transform": "transform_excess_capital",
     "generate_excel": "generate_excel_excess_capital",
 }
+
+MODE_REGISTRY["RP Type 覆核 Review"] = {
+    "module": "modes.rp_review",
+    "transform": "transform_rp_review",
+    "generate_excel": "generate_excel_rp_review",
+}

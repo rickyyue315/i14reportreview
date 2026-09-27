@@ -351,5 +351,19 @@
  "_excess_raw_columns": "excess_capital",
  "_write_excess_table": "excess_capital",
  "generate_excel_excess_capital": "excess_capital",
- "transform_excess_capital": "excess_capital"
+ "transform_excess_capital": "excess_capital",
+ "_RP_REVIEW_COLUMN": "rp_review",
+ "_RP_TO_RF": "rp_review",
+ "_RP_TO_ND": "rp_review",
+ "_RP_ND_OOS": "rp_review",
+ "_RP_RAW_OUTPUT_COLUMNS": "rp_review",
+ "_RP_BY_SKU_COLUMNS": "rp_review",
+ "_RP_BY_SHOP_COLUMNS": "rp_review",
+ "_rp_as_true": "rp_review",
+ "_rp_raw_columns": "rp_review",
+ "_build_rp_by_sku": "rp_review",
+ "_build_rp_by_shop": "rp_review",
+ "_write_rp_table": "rp_review",
+ "generate_excel_rp_review": "rp_review",
+ "transform_rp_review": "rp_review"
 }
