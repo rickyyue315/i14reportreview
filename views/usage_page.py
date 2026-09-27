@@ -348,6 +348,20 @@ D001 健康檢查計算（SKU 級彙總後判定）：
 3. **持平** = 其餘（變動不足 20%）；三期皆零銷售的 SKU 不納入
 4. **輸入檢核** = 共用必要欄位另加 Site Code、Sold Qty (M-2)、Sold Qty (M-1)、Sold Qty (CM - MTD)（缺任一即停止）；庫存與 P90D 欄缺欄時相關參考欄留空並列提示
      """),
+
+    ("📊 績效儀表板 Review",
+     """
+- 按 Buyer、Brand、OM 三個維度彙總銷售、缺貨與過剩表現
+- ABC 分級：按銷售累計佔比，80% 內為 A，95% 內為 B，其餘為 C
+- 輸出：By Buyer、By Brand、By OM、RAW 共 4 個工作表
+     """,
+     """
+績效儀表板計算（全量列為母體，不過濾）：
+1. **銷售欄** = Net Sales (CM - MTD)，缺欄時退回 Net Sales (M-1)／(M-2)；三者皆缺時停止
+2. **缺貨率** = 店舖庫存為 0 的列數 ÷ 總列數；**過剩率** = Shop Stock Status 為 Overstock 開頭的列數 ÷ 總列數
+3. **ABC** = 各維度內按銷售合計由大至小累計佔比
+4. **輸入檢核** = 共用必要欄位另加 Site Code（缺少時停止）
+     """),
 ]
 
 for _label, _desc, _rules, *_extra in MODES:

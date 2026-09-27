@@ -120,3 +120,9 @@ MODE_REGISTRY["銷售趨勢 Review"] = {
     "transform": "transform_sales_trend",
     "generate_excel": "generate_excel_sales_trend",
 }
+
+MODE_REGISTRY["績效儀表板 Review"] = {
+    "module": "modes.perf_dashboard",
+    "transform": "transform_perf_dashboard",
+    "generate_excel": "generate_excel_perf_dashboard",
+}

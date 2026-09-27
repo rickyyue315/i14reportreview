@@ -438,5 +438,14 @@
  "_build_tr_by_shop": "sales_trend",
  "_write_tr_table": "sales_trend",
  "generate_excel_sales_trend": "sales_trend",
- "transform_sales_trend": "sales_trend"
+ "transform_sales_trend": "sales_trend",
+ "_PF_SALES_CANDIDATES": "perf_dashboard",
+ "_PF_RAW_OUTPUT_COLUMNS": "perf_dashboard",
+ "_pf_sales_column": "perf_dashboard",
+ "_pf_raw_columns": "perf_dashboard",
+ "_pf_abc": "perf_dashboard",
+ "_build_pf_table": "perf_dashboard",
+ "transform_perf_dashboard": "perf_dashboard",
+ "generate_excel_perf_dashboard": "perf_dashboard",
+ "_write_pf_table": "perf_dashboard"
 }

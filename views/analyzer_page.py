@@ -63,6 +63,7 @@ from transformer import (
     transform_new_sku, generate_excel_new_sku,
     transform_phaseout, generate_excel_phaseout,
     transform_sales_trend, generate_excel_sales_trend,
+    transform_perf_dashboard, generate_excel_perf_dashboard,
     _HYBRID_FULL_SAFETY_SHEET,
 )
 import time
@@ -266,7 +267,7 @@ st.markdown("""
     <div class="step"><span class="n">4</span><b>執行並下載</b><small>看板預覽＋一鍵導出</small></div>
 </div>
 """, unsafe_allow_html=True)
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "銷售損失量化 Review", "積壓資金 Review", "RP Type 覆核 Review", "D001 健康檢查 Review", "新品追蹤 Review", "退場清倉 Review", "銷售趨勢 Review"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "銷售損失量化 Review", "積壓資金 Review", "RP Type 覆核 Review", "D001 健康檢查 Review", "新品追蹤 Review", "退場清倉 Review", "銷售趨勢 Review", "績效儀表板 Review"]
 st.caption("🔄 調貨與補貨：Stock Checking · Safety Stock x NetStock Review　｜　🔒 安全庫存：Safety Stock Review · Forecast Review　｜　📦 庫存健康：Overstock · OOS · Stock Impact　｜　✂️ 商品與對比：Carry SKU · SKU 精簡 · NDRF 月份對比 · 90 日零銷售")
 MODE_DESCRIPTIONS = {
     "Overstock Review": "篩選庫存過剩品項，計算建議安全庫存與可轉出貨量。",
@@ -288,6 +289,7 @@ MODE_DESCRIPTIONS = {
     "新品追蹤 Review": "追蹤上市 90 天內新品的鋪貨與起量情況。",
     "退場清倉 Review": "找出已停產或疑似應退場品項的殘留庫存。",
     "銷售趨勢 Review": "比較近兩個完整月份銷量變動，找出上升與下跌品項。",
+    "績效儀表板 Review": "按採購、品牌與 OM 彙總銷售與庫存表現。",
 }
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0, key="mode_selector")
 st.caption(f"用途：{MODE_DESCRIPTIONS.get(current_mode, '')}")
@@ -365,6 +367,7 @@ MODE_KEYS = {
     "新品追蹤 Review": {"prefix": "ns_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": [], "ref_date": None},
     "退場清倉 Review": {"prefix": "po_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": []},
     "銷售趨勢 Review": {"prefix": "tr_", "processed": False, "raw_df": None, "by_sku": None, "by_shop": None, "excel_data": None, "warnings": []},
+    "績效儀表板 Review": {"prefix": "pf_", "processed": False, "by_buyer": None, "by_brand": None, "by_om": None, "raw_df": None, "excel_data": None, "warnings": [], "sales_col": None},
 }
 
 for cfg in MODE_KEYS.values():
@@ -2448,7 +2451,7 @@ if uploaded_file is not None:
         _is_carry_mode = (mode == "Carry SKU Review")
         # Modes that don't use the Shop Nature Rate sliders (no Safety Qty calculation):
         # Carry SKU Review, SKU 精簡 Review, NDRF 月份對比 (pivot/comparison only).
-        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "新品追蹤 Review") or (mode == "退場清倉 Review") or (mode == "銷售趨勢 Review")
+        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "新品追蹤 Review") or (mode == "退場清倉 Review") or (mode == "銷售趨勢 Review") or (mode == "績效儀表板 Review")
 
         if not _skip_rates_mode:
             _tourist_default = 30 if _is_overstock_mode else 50
@@ -2694,6 +2697,21 @@ if uploaded_file is not None:
                     st.session_state.tr_by_shop = by_shop_df
                     st.session_state.tr_excel_data = buf
                     st.session_state.tr_warnings = _warnings
+                elif mode == "績效儀表板 Review":
+                    by_buyer_df, by_brand_df, by_om_df, raw_df, _sales_col, _warnings = transform_perf_dashboard(
+                        df_input,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                    )
+                    buf = generate_excel_perf_dashboard(by_buyer_df, by_brand_df, by_om_df, raw_df, progress_callback=_cb_excel, include_raw=_include_raw)
+                    st.session_state.pf_processed = True
+                    st.session_state.pf_by_buyer = by_buyer_df
+                    st.session_state.pf_by_brand = by_brand_df
+                    st.session_state.pf_by_om = by_om_df
+                    st.session_state.pf_raw_df = raw_df
+                    st.session_state.pf_excel_data = buf
+                    st.session_state.pf_warnings = _warnings
+                    st.session_state.pf_sales_col = _sales_col
                 elif mode == "Stock Checking":
                     raw_df, summary_df, _stats, _warnings = transform_stock_checking(
                         df_input,
@@ -4482,6 +4500,112 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載銷售趨勢分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+            )
+
+        if mode == "績效儀表板 Review" and st.session_state.pf_processed:
+            by_buyer_df = st.session_state.pf_by_buyer
+            by_brand_df = st.session_state.pf_by_brand
+            by_om_df = st.session_state.pf_by_om
+            raw_df = st.session_state.pf_raw_df
+            excel_data = st.session_state.pf_excel_data
+            _pf_sales_txt = st.session_state.get("pf_sales_col", "")
+
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+            st.markdown("### 📊 績效儀表板")
+            if _pf_sales_txt:
+                st.caption(f"銷售欄：{_pf_sales_txt}；ABC 分級按銷售累計佔比（80% 內為 A，95% 內為 B）。")
+
+            total_rows = len(raw_df) if raw_df is not None else 0
+            if by_buyer_df is not None and not by_buyer_df.empty:
+                _data = by_buyer_df[by_buyer_df["Buyer"] != "總計"]
+                total_buyers = len(_data)
+                total_sales = int(pd.to_numeric(_data["銷售合計"], errors="coerce").fillna(0).sum()) if not _data.empty else 0
+            else:
+                total_buyers = 0
+                total_sales = 0
+            total_skus = int(raw_df["SKU"].dropna().nunique()) if raw_df is not None and not raw_df.empty else 0
+            if raw_df is not None and not raw_df.empty and "Shop Stock Qty (CM)" in raw_df.columns:
+                oos_rows = int((pd.to_numeric(raw_df["Shop Stock Qty (CM)"], errors="coerce").fillna(1) <= 0).sum())
+            else:
+                oos_rows = 0
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #10b981;">
+                    <div class="metric-title">銷售合計</div>
+                    <div class="metric-value" style="color: #10b981;">{total_sales:,}</div>
+                    <div class="metric-desc">金額（{_pf_sales_txt or "銷售欄"}）</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col2:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #3b82f6;">
+                    <div class="metric-title">採購人員數</div>
+                    <div class="metric-value" style="color: #3b82f6;">{total_buyers:,}</div>
+                    <div class="metric-desc">有銷售記錄的 Buyer 數</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #f59e0b;">
+                    <div class="metric-title">SKU 總數</div>
+                    <div class="metric-value" style="color: #f59e0b;">{total_skus:,}</div>
+                    <div class="metric-desc">已刪除重複</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with r1_col4:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #ef4444;">
+                    <div class="metric-title">缺貨列數</div>
+                    <div class="metric-value" style="color: #ef4444;">{oos_rows:,}</div>
+                    <div class="metric-desc">店舖庫存為 0 的列數</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            tab_buyer, tab_brand, tab_om, tab_raw = st.tabs(["👤 By Buyer", "🏷️ By Brand", "🗺️ By OM", "RAW"])
+            with tab_buyer:
+                st.markdown("#### 按採購人員彙總（按銷售由大至小排序）")
+                if by_buyer_df is not None and not by_buyer_df.empty:
+                    st.dataframe(by_buyer_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_brand:
+                st.markdown("#### 按品牌彙總（按銷售由大至小排序）")
+                if by_brand_df is not None and not by_brand_df.empty:
+                    st.dataframe(by_brand_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_om:
+                st.markdown("#### 按 OM 彙總（按銷售由大至小排序）")
+                if by_om_df is not None and not by_om_df.empty:
+                    st.dataframe(by_om_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_raw:
+                st.markdown("#### RAW 原始明細（前 50 筆）")
+                if raw_df is not None and not raw_df.empty:
+                    st.dataframe(raw_df.head(50).rename(columns=_display_safety_header), width='stretch')
+                    st.caption(f"僅顯示前 50 筆，完整 {total_rows:,} 筆資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 績效儀表板 Review_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載績效儀表板報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

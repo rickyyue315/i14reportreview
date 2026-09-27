@@ -1,5 +1,15 @@
 # 版本記錄
 
+## v1.57.0 (2026-09-28)
+
+新增第 20 個分析模式**績效儀表板 Review**——按 Buyer、Brand、OM 彙總銷售、缺貨與過剩表現；其餘 19 個模式計算、欄位、欄序零變動：
+
+- **計算** — `modes/perf_dashboard.py`：全量列為母體 → By Buyer／By Brand／By OM（銷售合計、銷售佔比、ABC、SKU 數、缺貨率、過剩率、庫存合計，按銷售排序）
+- **輸出** — By Buyer／By Brand／By OM／RAW 共 4 個工作表（比率欄百分比顯示），支援略過 RAW 選項
+- **文件** — 使用說明頁、README 同步
+- **測試** — 新增 `tests/test_perf_dashboard.py` ×7；`scripts/modtools/moved.json` 登記新名稱；`check_modes.py` 0 錯誤 0 警告；共 509 項測試通過，3 項略過
+- Change: `version.py` → 1.57.0
+
 ## v1.56.0 (2026-09-28)
 
 新增第 19 個分析模式**銷售趨勢 Review**——比較近兩個完整月份銷量變動，找出上升與下跌品項；其餘 18 個模式計算、欄位、欄序零變動：

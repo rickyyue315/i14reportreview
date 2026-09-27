@@ -564,3 +564,7 @@ from modes.phaseout import *  # noqa: F401,F403
 
 # ─── 銷售趨勢 Review：實作已遷至 modes/sales_trend.py（墊片 re-export）───
 from modes.sales_trend import *  # noqa: F401,F403
+
+
+# ─── 績效儀表板 Review：實作已遷至 modes/perf_dashboard.py（墊片 re-export）───
+from modes.perf_dashboard import *  # noqa: F401,F403
