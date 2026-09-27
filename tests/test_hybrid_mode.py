@@ -572,6 +572,7 @@ def test_generate_excel_sheets_and_headers():
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
         "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
+        "Safety 設定建議 (全列)",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]
     raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
@@ -1001,6 +1002,7 @@ def test_bidir_excel_headers_and_dashboard_rows():
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
         "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
+        "Safety 設定建議 (全列)",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]
     raw_headers = [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
@@ -1304,8 +1306,9 @@ def test_excel_safety_blocks_appended_after_cross():
     wb = load_workbook(buf)
     assert wb.sheetnames == [
         "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)", "店舖問題 SKU", "Review 摘要",
+        "Safety 設定建議 (全列)",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
-    ]  # 9 表契約（v1.35.0 起首位為「說明」導讀表），新統計只在「Review 摘要」內延伸
+    ]  # 10 表契約（首位為「說明」導讀表），新統計只在「Review 摘要」內延伸，另加「Safety 設定建議 (全列)」工作表
     ws = wb["Review 摘要"]
     # ① 交叉表位置完全未變（單向：標題 19 / 表頭 20 / 資料 21–25）
     assert ws.cell(row=19, column=1).value == "Safety Review × Shop Nature 交叉表"
@@ -2411,3 +2414,55 @@ def test_literal_blank_label_om_does_not_fallback():
     _, _, _, _, _, stats, _ = transform_hybrid(_df(rows), dimension="om")
     assert stats["dimension"] == "om"
     assert stats["om_groups"] == ["空白"]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 22. 全列預防性 Safety 設定建議（母體為全部列；減少日後調貨）
+# ──────────────────────────────────────────────────────────────────────────────
+def test_full_safety_covers_all_rows_with_same_basis():
+    raw, _, _, _, _, stats, _ = transform_hybrid(_df(_SCENARIO_A))
+    for col in ["全列 Safety 周轉所需量", "全列 Safety Review",
+                "全列建議 Safety 設定值", "全列 Safety 建議調整量",
+                "全列建議 Safety 設定值 Turnday"]:
+        assert col in raw.columns
+    # 全列所需量與事件版同口徑（預設 Tourist 7 / Mix 9 / Non Tourist 10）
+    assert int(_get(raw, "T01", "全列 Safety 周轉所需量")) == 28
+    assert int(_get(raw, "N01", "全列 Safety 周轉所需量")) == 10
+    # 全列不設調貨事件門檻：T01 現有 30 > 28 → 全列過高（事件版因屬需要調入列而判設定正常）；
+    # N01 現有 30 > 10 → 全列過高
+    assert _get(raw, "T01", "全列 Safety Review") == "Safety 設定過高"
+    assert float(_get(raw, "T01", "全列 Safety 建議調整量")) == -2
+    assert _get(raw, "N01", "全列 Safety Review") == "Safety 設定過高"
+    assert float(_get(raw, "N01", "全列 Safety 建議調整量")) == -20
+    assert stats["full_action_rows"] == stats["full_under_rows"] + stats["full_over_rows"]
+    assert stats["full_normal_rows"] == stats["total_raw_rows"] - stats["full_action_rows"]
+
+
+def test_full_safety_nd_never_increases():
+    rows = [dict(r) for r in _SCENARIO_A]
+    rows[0]["RP Type"] = "ND"
+    rows[0]["Adj. Safety Stock"] = 0
+    raw, _, _, _, _, stats, _ = transform_hybrid(_df(rows))
+    # T01 ND 且現有 0 < 所需 28 → 仍不作上調（不可補貨）
+    assert _get(raw, "T01", "全列 Safety Review") == "設定正常"
+    assert pd.isna(_get(raw, "T01", "全列建議 Safety 設定值"))
+
+
+def test_full_safety_builders_and_excel_sheet():
+    from transformer import (
+        _build_hybrid_full_safety_change_summary,
+        _build_hybrid_full_safety_sku_detail,
+        _build_hybrid_full_safety_detail,
+    )
+    raw, sc, diag, diag_om, ds, stats, _ = transform_hybrid(_df(_SCENARIO_A))
+    change = _build_hybrid_full_safety_change_summary(raw)
+    assert list(change["分類"]) == ["增加", "減少", "不變", "總計"]
+    assert int(change.loc[change["分類"] == "總計", "列數"].iloc[0]) == len(raw)
+    sku_detail = _build_hybrid_full_safety_sku_detail(raw)
+    assert len(sku_detail) == 1 and int(sku_detail.iloc[0]["全列數"]) == len(raw)
+    detail = _build_hybrid_full_safety_detail(raw)
+    assert set(detail["Site Code"]) == set(raw.loc[raw["全列 Safety 建議調整量"].fillna(0) != 0, "Site Code"])
+    buf = generate_excel_hybrid(raw, sc, diag, diag_om, ds, stats)
+    wb = load_workbook(buf, read_only=True)
+    assert "Safety 設定建議 (全列)" in wb.sheetnames
+    assert "全列 Safety Review" in [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]

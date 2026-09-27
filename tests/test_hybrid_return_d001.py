@@ -181,7 +181,7 @@ def test_off_keeps_existing_contract():
     wb = load_workbook(buf, read_only=True)
     assert wb.sheetnames == [
         "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)",
-        "店舖問題 SKU", "Review 摘要", "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
+        "店舖問題 SKU", "Review 摘要", "Safety 設定建議 (全列)", "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]
 
 
@@ -305,6 +305,7 @@ def test_excel_ten_sheets_and_headers():
     assert wb.sheetnames == [
         "說明", "RAW", "Summary", "調貨 Review Safety Stock (不限OM)", "調貨 Review Safety Stock (同OM)",
         "店舖問題 SKU", _HYBRID_RETURN_D001_SHEET, "Review 摘要",
+        "Safety 設定建議 (全列)",
         "簡易調貨明細 (不限OM)", "簡易調貨明細 (同OM)",
     ]
     ws = wb[_HYBRID_RETURN_D001_SHEET]

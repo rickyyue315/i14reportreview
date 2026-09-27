@@ -53,6 +53,14 @@ __all__ = [
     "_HYBRID_SAFETY_DAYS_MIN",
     "_HYBRID_SAFETY_LINE_COLUMN",
     "_HYBRID_SAFETY_MIN_KEEP",
+    "_HYBRID_FULL_SAFETY_LINE_COLUMN",
+    "_HYBRID_FULL_SAFETY_REVIEW_COLUMN",
+    "_HYBRID_FULL_SAFETY_SUGGEST_COLUMN",
+    "_HYBRID_FULL_SAFETY_CHG_COLUMN",
+    "_HYBRID_FULL_SAFETY_TURNDAY_COLUMN",
+    "_HYBRID_FULL_SAFETY_NORMAL",
+    "_HYBRID_FULL_SAFETY_SHEET",
+    "_HYBRID_FULL_SAFETY_DETAIL_COLUMNS",
     "_HYBRID_SALES_BANDS",
     "_HYBRID_SALES_BAND_COLUMN",
     "_HYBRID_SALES_CLASS_COLUMN",
@@ -537,6 +545,49 @@ _HYBRID_SUGGEST_TURNDAY_COLUMN = "建議 Safety 設定值 Turnday"
 
 
 
+# ── 全列預防性 Safety 設定建議（不依賴調貨事件；母體為全部店舖×SKU 列）──
+# 用途：協助用家一次過設定適合的 Safety Stock，減少日後調貨次數。
+# 計算與事件版 Review 同口徑（Safety 周轉所需量＋下調補底 3 件），惟不設調貨事件門檻：
+# 現有 < 所需量 → 不足（ND 列不作上調）；現有 > 生效基準 → 過高；其餘 → 設定正常。
+# 欄名屬新契約，未經明確要求不得改動。
+_HYBRID_FULL_SAFETY_LINE_COLUMN = "全列 Safety 周轉所需量"
+
+
+
+_HYBRID_FULL_SAFETY_REVIEW_COLUMN = "全列 Safety Review"
+
+
+
+_HYBRID_FULL_SAFETY_SUGGEST_COLUMN = "全列建議 Safety 設定值"
+
+
+
+_HYBRID_FULL_SAFETY_CHG_COLUMN = "全列 Safety 建議調整量"
+
+
+
+_HYBRID_FULL_SAFETY_TURNDAY_COLUMN = "全列建議 Safety 設定值 Turnday"
+
+
+
+_HYBRID_FULL_SAFETY_NORMAL = "設定正常"
+
+
+
+_HYBRID_FULL_SAFETY_SHEET = "Safety 設定建議 (全列)"
+
+
+
+_HYBRID_FULL_SAFETY_DETAIL_COLUMNS = [
+    "Brand", "SKU", "SKU Desc", "Buyer", "Site Code", "Shop Name", "OM", "Shop Nature",
+    "RP Type", "Shop Stock Qty (CM)", "Sold Qty (P90D)", "Adj. Safety Stock",
+    _HYBRID_FULL_SAFETY_LINE_COLUMN, _HYBRID_FULL_SAFETY_REVIEW_COLUMN,
+    _HYBRID_FULL_SAFETY_SUGGEST_COLUMN, _HYBRID_FULL_SAFETY_TURNDAY_COLUMN,
+    _HYBRID_FULL_SAFETY_CHG_COLUMN, "事件類型", "Safety Review",
+]
+
+
+
 # 建議退D001（選開；return_to_d001）：接收目標為 D001（Warehouse，可無限接收）。
 # 退貨基準為 Safety Stock (現時)（非調貨段的 14 日線，與池級門檻脫鉤，逐列判定）：
 # 中銷／低銷／零銷列退回超出 Safety 的庫存；高銷列原則上不退，僅當 Safety > 0 且
@@ -826,7 +877,10 @@ _HYBRID_RAW_DISPLAY_GROUPS = [
     ["Tourist 加總 TurnDay", "Mix 加總 TurnDay", "Non Tourist 加總 TurnDay",
      "需要調貨", "調入需求量 (補到14日)"],
     ["事件類型", _HYBRID_SAFETY_DAYS_COLUMN, _HYBRID_SAFETY_LINE_COLUMN,
-     "Safety Review", "建議 Safety 設定值", _HYBRID_SUGGEST_TURNDAY_COLUMN, "Safety 建議調整量"],
+     "Safety Review", "建議 Safety 設定值", _HYBRID_SUGGEST_TURNDAY_COLUMN, "Safety 建議調整量",
+     _HYBRID_FULL_SAFETY_LINE_COLUMN, _HYBRID_FULL_SAFETY_REVIEW_COLUMN,
+     _HYBRID_FULL_SAFETY_SUGGEST_COLUMN, _HYBRID_FULL_SAFETY_TURNDAY_COLUMN,
+     _HYBRID_FULL_SAFETY_CHG_COLUMN],
     ["可轉出貨量 (Non Tourist)", "可轉出貨量 (Mix)", "可轉出貨量 (Tourist)",
      "實際調入量", "調入缺口", "轉出量", _HYBRID_RETURN_D001_COLUMN,
      "調貨來源 (Site Code)", "調貨後庫存", "調貨後 TurnDay"],
