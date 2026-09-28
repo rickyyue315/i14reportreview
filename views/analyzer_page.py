@@ -280,7 +280,7 @@ MODE_DESCRIPTIONS = {
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
     "Stock Impact Analysis (簡化)": "快速檢視各品項三期存貨與銷售趨勢。",
     "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
-    "Overstock (P90D 0 Sales) Review": "按店舖統計 Overstock (P90D 0 Sales) SKU 數（分 MAKE UP／Non-MAKE UP），輸出各店最高庫存 Top 10（只限 Non-MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈。",
+    "Overstock (P90D 0 Sales) Review": "按店舖統計 Overstock (P90D 0 Sales) SKU 數，分類維度可切換 MAKE UP／Item Class／Adj. MCH1；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈。",
     "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
     "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
@@ -359,7 +359,7 @@ MODE_KEYS = {
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "sku_soh_summary": None, "excel_data": None, "warnings": []},
     "Past 90 Days 0 Sales": {"prefix": "p90ds_", "processed": False, "summary_df": None, "raw_df": None, "excel_data": None, "warnings": []},
-    "Overstock (P90D 0 Sales) Review": {"prefix": "op90d_", "processed": False, "raw_df": None, "by_shop": None, "top10": None, "by_nature": None, "by_om": None, "excel_data": None, "warnings": []},
+    "Overstock (P90D 0 Sales) Review": {"prefix": "op90d_", "processed": False, "raw_df": None, "by_shop": None, "top10": None, "by_nature": None, "by_om": None, "excel_data": None, "warnings": [], "include_makeup": False, "breakdown_value": "makeup"},
     "Stock Checking": {"prefix": "stock_chk_", "processed": False, "summary_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
     "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "sc_summary": None, "diagnosis": None, "diagnosis_om": None, "diag_summary": None, "stats": None, "excel_data": None, "params": None, "warnings": []},
     "Forecast Review": {"prefix": "fc_", "processed": False, "main_df": None, "coverage_df": None, "buyer_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
@@ -2482,6 +2482,27 @@ if uploaded_file is not None:
             )
             st.caption(f"參考日期：{ns_ref_date.isoformat()}（上市 90 天內視為新品；無法解析或晚於參考日期的列視為非新品）。")
 
+        if mode == "Overstock (P90D 0 Sales) Review":
+            st.checkbox(
+                "💄 Top 10 店舖回覆包括 MAKE UP SKU",
+                value=False,
+                key="op90d_include_makeup",
+                help="預設只取 Non-MAKE UP 列；勾選後 Top 10 會一併計算 MAKE UP SKU（By Shop、By Nature、By OM 不受影響，維持分類分項統計）。"
+            )
+            _op90d_bd_options = {
+                "📊 以 MAKE UP 分類（預設）": "makeup",
+                "🔤 以 Item Class 分類": "item_class",
+                "🏷️ 以 Adj. MCH1 分類": "mch1",
+            }
+            _op90d_bd_label = st.radio(
+                "🗂️ 分類維度",
+                options=list(_op90d_bd_options),
+                index=0,
+                horizontal=True,
+                key="op90d_breakdown",
+                help="決定 By Shop、By Nature、By OM 的分組欄位；Top 10 店舖回覆不受影響。",
+            )
+
         st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
         SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
@@ -2655,10 +2676,13 @@ if uploaded_file is not None:
                     st.session_state.p90ds_excel_data = buf
                     st.session_state.p90ds_warnings = _warnings
                 elif mode == "Overstock (P90D 0 Sales) Review":
+                    _op90d_breakdown = _op90d_bd_options.get(_op90d_bd_label, "makeup")
                     raw_df, by_shop_df, top10_df, by_nature_df, by_om_df, _warnings = transform_overstock_p90d(
                         df_input,
                         progress_callback=_cb_transform,
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                        include_makeup=bool(st.session_state.get("op90d_include_makeup", False)),
+                        breakdown=_op90d_breakdown,
                     )
                     buf = generate_excel_overstock_p90d(by_shop_df, top10_df, by_nature_df, by_om_df, progress_callback=_cb_excel, include_raw=_include_raw)
                     st.session_state.op90d_processed = True
@@ -2669,6 +2693,7 @@ if uploaded_file is not None:
                     st.session_state.op90d_by_om = by_om_df
                     st.session_state.op90d_excel_data = buf
                     st.session_state.op90d_warnings = _warnings
+                    st.session_state.op90d_breakdown_value = _op90d_breakdown
                 elif mode == "銷售損失量化 Review":
                     raw_df, by_sku_df, by_shop_df, _warnings = transform_sales_loss(
                         df_input,
@@ -3679,27 +3704,32 @@ if uploaded_file is not None:
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             tab_shop, tab_top, tab_nature, tab_om = st.tabs(["🏪 By Shop（店舖統計）", "📝 Top 10 店舖回覆", "🏬 By Nature", "🗺️ By OM"])
+            _op90d_bd_name = {"makeup": "MAKE UP 分類", "item_class": "Item Class", "mch1": "Adj. MCH1"}.get(
+                st.session_state.get("op90d_breakdown_value", "makeup"), "MAKE UP 分類")
             with tab_shop:
-                st.markdown("#### 各店舖 Overstock SKU 統計（分 MAKE UP／Non-MAKE UP）")
+                st.markdown(f"#### 各店舖 Overstock SKU 統計（{_op90d_bd_name}）")
                 if by_shop_df is not None and not by_shop_df.empty:
                     st.dataframe(by_shop_df, width='stretch', hide_index=True)
                 else:
                     st.info("無符合資料")
             with tab_top:
-                st.markdown("#### 各店舖最高庫存 SKU（Top 10 Shop Stock Qty (CM)，只限 Non-MAKE UP，供店舖回覆）")
+                if st.session_state.get("op90d_include_makeup", False):
+                    st.markdown("#### 各店舖最高庫存 SKU（Top 10 Shop Stock Qty (CM)，包括 MAKE UP，供店舖回覆）")
+                else:
+                    st.markdown("#### 各店舖最高庫存 SKU（Top 10 Shop Stock Qty (CM)，只限 Non-MAKE UP，供店舖回覆）")
                 if top10_df is not None and not top10_df.empty:
                     st.dataframe(top10_df.head(100).rename(columns=_display_safety_header), width='stretch', hide_index=True)
                     st.caption(f"僅顯示前 100 筆，完整 {len(top10_df):,} 筆資料將包含在下載的 Excel 報表中。")
                 else:
                     st.info("無符合資料")
             with tab_nature:
-                st.markdown("#### Shop Nature 分佈")
+                st.markdown(f"#### Shop Nature 分佈（{_op90d_bd_name}）")
                 if by_nature_df is not None and not by_nature_df.empty:
                     st.dataframe(by_nature_df, width='stretch', hide_index=True)
                 else:
                     st.info("無符合資料")
             with tab_om:
-                st.markdown("#### OM 分佈")
+                st.markdown(f"#### OM 分佈（{_op90d_bd_name}）")
                 if by_om_df is not None and not by_om_df.empty:
                     st.dataframe(by_om_df, width='stretch', hide_index=True)
                 else:
