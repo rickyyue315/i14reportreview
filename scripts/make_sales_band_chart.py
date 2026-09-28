@@ -3,6 +3,7 @@
 # 有銷列平均排名百分比 >75%＝高銷、≤25%＝低銷、其餘＝中銷；
 # 有銷店舖 <4 間不產生高銷／低銷；並列以平均排名處理（同值同帶）。
 import os
+import textwrap
 
 import matplotlib
 
@@ -165,10 +166,12 @@ T(NX + 0.018, NY - 0.030, "備註", size=13, weight="bold", color=TEAL)
 ny = NY - 0.064
 for note in notes:
     T(NX + 0.018, ny, "•", size=10.5, color=TEAL)
-    ax.text(NX + 0.034, ny, note, fontsize=9.8, color=INK, ha="left", va="top",
-            transform=ax.transAxes, wrap=True, linespacing=1.45)
-    est_lines = max(1, round(len(note) / 18))
-    ny -= 0.024 * est_lines + 0.022
+    wrapped = textwrap.fill(note, width=23, break_long_words=True,
+                            break_on_hyphens=False)
+    n_lines = wrapped.count("\n") + 1
+    ax.text(NX + 0.034, ny, wrapped, fontsize=9.8, color=INK, ha="left", va="top",
+            transform=ax.transAxes, linespacing=1.45)
+    ny -= 0.024 * n_lines + 0.022
 
 T(0.06, 0.028, "銷量帶為 RAW／調貨 Review 主表的常開顯示欄，與調貨 14 日線及 Safety 基準周轉天數互相獨立。",
   size=9.5, color=SUB)
