@@ -290,6 +290,10 @@ def _add_combined_recommendation_columns(
         combined = _turn_values
         combined_pre = _turn_preclip
     else:
+        # 月銷倍率基準：建議值 = max(Y, Z if Z ≤ X else X)，其中
+        # X = Overstock Cap（庫存上限，RAW「Overstock Cap (X)」欄），
+        # Y = OOS Floor（缺貨底線，RAW「OOS Floor (Y)」欄，含最低 3 件保底），
+        # Z = 現有 Safety 設定（來源檔案的 Adj. Safety Stock）。
         combined = np.where(z_values <= x_values, np.maximum(y_values, z_values), np.maximum(y_values, x_values))
         # 同一公式、改用未保底的 y_preclip：代表「沒有最低 3 件保底時」的建議值
         combined_pre = np.where(z_values <= x_values, np.maximum(y_preclip, z_values), np.maximum(y_preclip, x_values))

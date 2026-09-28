@@ -566,7 +566,11 @@ if uploaded_file is not None:
 
         with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
             st.info(
-                "**倍率如何影響建議值**（月銷倍率基準：建議 Safety Stock = max(OOS 底線 Y, 現有 Safety 若 ≤ Overstock 上限 X，否則 X)；周轉天數基準：建議值 = Safety 周轉所需量，計算結果最低 3 件——最低 3 件為保障自動補貨的保底，受保底影響的建議會在「店舖問題 SKU」建議方法加註；建議值周轉日數見 RAW 的「Recommend Safety Stock Turnday」，店舖問題建議方法亦會顯示）\n\n"
+                "**倍率如何影響建議值**（月銷倍率基準：建議 Safety Stock = max(Y, Z 若 Z ≤ X，否則 X)；其中 X＝Overstock Cap（庫存上限）、Y＝OOS Floor（缺貨底線）、Z＝現有 Safety 設定（Safety Stock (現時)）；周轉天數基準：建議值 = Safety 周轉所需量，計算結果最低 3 件——最低 3 件為保障自動補貨的保底，受保底影響的建議會在「店舖問題 SKU」建議方法加註；建議值周轉日數見 RAW 的「Recommend Safety Stock Turnday」，店舖問題建議方法亦會顯示）\n\n"
+                "- **X（Overstock Cap，庫存上限）**：X = floor(P90D 月均銷售 × Rate)，上限不超過現有 Safety 設定；代表按銷量判斷合理的庫存上限\n"
+                "- **Y（OOS Floor，缺貨底線）**：Y = ceil(月銷預估 × Rate)，最低 3 件；代表按銷量判斷不可低於的缺貨保護線\n"
+                "- **Z（現有 Safety 設定）**：即來源檔案的 Adj. Safety Stock（報表顯示為 Safety Stock (現時)）\n"
+                "- 公式解讀：Z 若在上限 X 之內，建議值取 Y 與 Z 較大者（只補不足、不壓上限內設定）；Z 若超出上限 X，建議值取 Y 與 X 較大者（壓回上限、同時守住底線）\n\n"
                 "- **Overstock Rate（庫存上限 X 的倍率）**：X = floor(P90D 月均銷售 × Rate)。Rate 30% ≈ 保留 9 日銷售量（30% × 30 日）；數值越低，建議上限越低，越積極壓縮庫存\n"
                 "- **OOS Rate（缺貨底線 Y 的倍率）**：Y = ceil(月銷預估 × Rate)。Rate 50% ≈ 覆蓋 15 日銷售；數值越高，缺貨保護越強\n\n"
                 "**如何選擇合適數值**\n\n"
@@ -632,27 +636,33 @@ if uploaded_file is not None:
             index=0,
             horizontal=True,
             key="ss_safety_basis",
-            help="月銷倍率：建議值 = max(Y, Z if Z ≤ X else X)（現行行為）。周轉天數：建議值 = Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 基準天數)，與 Safety Stock x NetStock Review 同口徑；兩種基準恆並列計算供對照，計算模式、新品保護與 ND／P90D 0 Sales 退場規則維持不變。"
+            help="月銷倍率：建議值 = max(Y, Z 若 Z ≤ X，否則 X)（現行行為；X＝Overstock Cap 庫存上限、Y＝OOS Floor 缺貨底線、Z＝現有 Safety 設定）。周轉天數：建議值 = Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 基準天數)，與 Safety Stock x NetStock Review 同口徑；兩種基準恆並列計算供對照，計算模式、新品保護與 ND／P90D 0 Sales 退場規則維持不變。"
         )
         _ss_safety_basis = _SS_BASIS_OPTIONS[_ss_basis_label]
+        _ss_days_disabled = (_ss_safety_basis != "turnday")
+        if _ss_days_disabled:
+            st.caption("現時選用月銷倍率基準：以下三項基準天數不影響建議值，僅供 RAW「Safety 周轉所需量」對照欄參考。如需以周轉天數計算建議值，請改選「周轉天數 (按 Nature)」。")
         _ss_sd_cols = st.columns(3)
         with _ss_sd_cols[0]:
             _ss_sd_tourist = st.number_input(
                 "🧳 Tourist 基準 (日)", min_value=_HYBRID_SAFETY_DAYS_MIN, max_value=_HYBRID_SAFETY_DAYS_MAX,
                 value=_HYBRID_SAFETY_DAYS_DEFAULT["Tourist"], step=1, key="ss_sd_tourist",
                 help="Tourist 店舖 Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 此天數)。預設 7 日。",
+                disabled=_ss_days_disabled,
             )
         with _ss_sd_cols[1]:
             _ss_sd_mix = st.number_input(
                 "🔀 Mix 基準 (日)", min_value=_HYBRID_SAFETY_DAYS_MIN, max_value=_HYBRID_SAFETY_DAYS_MAX,
                 value=_HYBRID_SAFETY_DAYS_DEFAULT["Mix"], step=1, key="ss_sd_mix",
                 help="Mix 店舖 Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 此天數)。預設 9 日。",
+                disabled=_ss_days_disabled,
             )
         with _ss_sd_cols[2]:
             _ss_sd_nt = st.number_input(
                 "🏪 Non Tourist 基準 (日)", min_value=_HYBRID_SAFETY_DAYS_MIN, max_value=_HYBRID_SAFETY_DAYS_MAX,
                 value=_HYBRID_SAFETY_DAYS_DEFAULT["Non Tourist"], step=1, key="ss_sd_nt",
                 help="Non Tourist 店舖 Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 此天數)。預設 10 日。",
+                disabled=_ss_days_disabled,
             )
         _ss_safety_days = {
             "Tourist": int(_ss_sd_tourist), "Mix": int(_ss_sd_mix), "Non Tourist": int(_ss_sd_nt),
