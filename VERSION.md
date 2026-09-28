@@ -1,5 +1,17 @@
 # 版本記錄
 
+## v1.59.0 (2026-09-28)
+
+P90D 0 Sales Review(Shop回覆) 分類維度新增「全部（三類合併顯示）」選項——MAKE UP 分類、Item Class、Adj. MCH1 三節並列；其餘維度與模式計算、欄位、欄序零變動：
+
+- **分組** — `modes/overstock_p90d.py`：新增 `_OP90D_BREAKDOWN_ALL`（`all`），加入 `_OP90D_BREAKDOWNS`；`_build_op90d_by_shop()`／`_build_distribution()` 依 `_OP90D_ALL_SECTIONS` 次序（MAKE UP 分類 → Item Class → Adj. MCH1）逐節產生分組欄；合併維度下 Item Class 分項欄名加「Item Class 」前綴（如「Item Class 空白 SKU 數」），避免與 Adj. MCH1 的「空白 SKU 數」欄名相撞；單一維度行為與欄序不變
+- **輸出** — `generate_excel_overstock_p90d()` 新增 `breakdown` 參數；合併維度時 By Shop／By Nature／By OM 採兩行合併表頭（第一行分節標題水平合併並按節配色：MAKE UP 分類粉紅／Item Class 藍綠／Adj. MCH1 綠色，前後欄上下合併兩行；第二行分項表頭；資料由第三行開始）；Top 10 店舖回覆維持單行表頭不受影響
+- **容錯** — 合併維度下 Item Class 欄缺席不抛錯，整欄歸入「空白」組並列 warning 提示（逐分類檢查空白）
+- **介面** — 分類維度選項新增「🧩 全部（三類合併顯示）」；By Shop 等分頁標題顯示「三類合併顯示」並加說明；模式說明同步
+- **文件** — 使用說明頁同步
+- **測試** — 新增 `tests/test_overstock_p90d.py` ×4（分節欄序與計數、空白欄名不相撞、Item Class 缺席容錯、Excel 兩行合併表頭）；共 553 項測試通過
+- Change: `version.py` → 1.59.0
+
 ## v1.58.0 (2026-09-28)
 
 Safety Stock Review 新增 Safety 計算基準可切換選項（預設月銷倍率，舊行為不變）；其餘模式計算、欄位、欄序零變動：
