@@ -167,6 +167,22 @@ MODES = [
      """,
      None),
 
+    ("📦 Overstock (P90D 0 Sales) Review",
+     """
+- 篩選 `Shop Stock Status` 為 Overstock (P90D 0 Sales) 的 SKU×Shop 記錄
+- 按店舖統計 Overstock SKU 總數（已刪除重複），並分 MAKE UP（Adj. MCH1 為 02 - MAKE UP）／Non-MAKE UP 兩類
+- 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列，附空白「店舖回覆」欄供店舖填寫
+- 按 Shop Nature 及 OM 統計分佈（涉及店舖數、SKU 數、行數、MAKE UP／Non-MAKE UP SKU 數、庫存總數）
+- 四個工作表均不含 Value／COGS／GP 欄位
+- 輸出：By Shop、Top 10 店舖回覆、By Nature、By OM
+     """,
+     """
+針對 `Shop Stock Status` 去除前後空格後完全相符者收錄：
+1. 只收錄狀態等於 Overstock (P90D 0 Sales) 的列，其他狀態一律排除
+2. MAKE UP 分類＝Adj. MCH1 去除前後空格後等於 02 - MAKE UP，其餘（含空白）為 Non-MAKE UP
+3. SKU 數一律已刪除重複；庫存總數為 Shop Stock Qty (CM) 加總
+     """),
+
     ("🔄 Stock Checking（調貨檢查）",
      """
 - 觸發條件：該 SKU 的 **Tourist 加總 TurnDay**（各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5，與 Summary 同一準則）< 14 日（UI 可調）**且** D001 Net Stock Qty (CM) < 100 件（UI 可調）**且** Mix / Non Tourist 至少一個 Nature 的加總 TurnDay ≥ 14 日（有貨可調）→ 標示「需要調貨」；加總 TurnDay ≥ 門檻一律無須調貨
