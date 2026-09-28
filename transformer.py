@@ -570,5 +570,5 @@ from modes.sales_trend import *  # noqa: F401,F403
 from modes.perf_dashboard import *  # noqa: F401,F403
 
 
-# ─── Overstock (P90D 0 Sales) Review：實作已遷至 modes/overstock_p90d.py（墊片 re-export）───
+# ─── P90D 0 Sales Review：實作已遷至 modes/overstock_p90d.py（墊片 re-export）───
 from modes.overstock_p90d import *  # noqa: F401,F403

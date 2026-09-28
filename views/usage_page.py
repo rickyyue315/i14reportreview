@@ -167,19 +167,19 @@ MODES = [
      """,
      None),
 
-    ("📦 Overstock (P90D 0 Sales) Review",
+    ("📦 P90D 0 Sales Review",
      """
-- 篩選 `Shop Stock Status` 為 Overstock (P90D 0 Sales) 的 SKU×Shop 記錄
-- 按店舖統計 Overstock SKU 總數（已刪除重複），分類維度可切換：MAKE UP（Adj. MCH1 為 02 - MAKE UP）／Non-MAKE UP、Item Class（A1／A2／A3／B／C／D）、Adj. MCH1（15 個大類）；空白值歸入「空白」組
+- 篩選 `Shop Stock Status` 為 P90D 0 Sales 狀態且 `Shop Stock Qty (LM)` 大於 0 的 SKU×Shop 記錄（LM 為 0 者不計算）
+- 按店舖統計 P90D 0 Sales SKU 總數（已刪除重複），分類維度可切換：MAKE UP（Adj. MCH1 為 02 - MAKE UP）／Non-MAKE UP、Item Class（A1／A2／A3／B／C／D）、Adj. MCH1（15 個大類）；空白值歸入「空白」組
 - 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列（預設只限 Non-MAKE UP；勾選「包括 MAKE UP SKU」後一併計算），附店內庫存排名及空白「店舖回覆」欄供店舖填寫
-- Top 10 欄位不含 Shop Stock Status（全表皆為 Overstock (P90D 0 Sales)），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
+- Top 10 欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
 - 按 Shop Nature 及 OM 統計分佈（涉及店舖數、SKU 數、行數、分類分項 SKU 數、庫存總數，分組欄隨分類維度變動）
 - 四個工作表均不含 Value／COGS／GP 欄位
 - 輸出：By Shop、Top 10 店舖回覆、By Nature、By OM
      """,
      """
 針對 `Shop Stock Status` 去除前後空格後完全相符者收錄：
-1. 只收錄狀態等於 Overstock (P90D 0 Sales) 的列，其他狀態一律排除
+1. 只收錄 P90D 0 Sales 狀態的列（且 Shop Stock Qty (LM) 須大於 0，LM 為 0 者不計算），其他狀態一律排除
 2. MAKE UP 分類＝Adj. MCH1 去除前後空格後等於 02 - MAKE UP，其餘（含空白）為 Non-MAKE UP
 3. SKU 數一律已刪除重複；庫存總數為 Shop Stock Qty (CM) 加總
 4. 以 Item Class 或 Adj. MCH1 分類時，分組欄按固定順序排列（Item Class：A1→D；MCH1：編號排序），空白值歸入「空白」組

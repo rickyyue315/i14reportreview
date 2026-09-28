@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Overstock (P90D 0 Sales) Review：按店舖統計零銷售積壓 SKU，分 MAKE UP／Non-MAKE UP。
+"""P90D 0 Sales Review：按店舖統計零銷售積壓 SKU，分 MAKE UP／Non-MAKE UP。
 
 只引用 modes.common，不引用其他模式模組，避免循環引用。
 
-篩選：``Shop Stock Status`` 去除前後空格後等於 ``Overstock (P90D 0 Sales)`` 的列。
+篩選：``Shop Stock Status`` 去除前後空格後等於 ``Overstock (P90D 0 Sales)``
+（狀態值見 ``_OP90D_STATUS``）且 ``Shop Stock Qty (LM)`` 大於 0 的列；
+LM 為 0（或空白視為 0）者不計算。
 MAKE UP 判定：``Adj. MCH1`` 去除前後空格後等於 ``02 - MAKE UP`` 者為 MAKE UP，
 其餘（含空白）一律為 Non-MAKE UP。
 
 輸出四個工作表（不輸出 RAW，所有欄位均不含 Value／COGS／GP）：
-1. By Shop — 各店舖 Overstock SKU 總數（已刪除重複）及分類分項；
+1. By Shop — 各店舖 P90D 0 Sales SKU 總數（已刪除重複）及分類分項；
    分類維度可切換：MAKE UP 分類、Item Class、Adj. MCH1
 2. Top 10 店舖回覆 — 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列
    （預設只限 Non-MAKE UP；勾選包括 MAKE UP 時則一併計算），附店內庫存排名及空白「店舖回覆」欄
@@ -85,7 +87,7 @@ _OP90D_BY_SHOP_COLUMNS = [
     "Shop Name",
     "OM",
     "Shop Nature",
-    "Overstock SKU 總數",
+    "P90D 0 Sales SKU 總數",
     "MAKE UP SKU 數",
     "Non-MAKE UP SKU 數",
     "Shop Stock Qty (CM) 總數",
@@ -97,7 +99,7 @@ _OP90D_BY_SHOP_BASE = [
     "Shop Name",
     "OM",
     "Shop Nature",
-    "Overstock SKU 總數",
+    "P90D 0 Sales SKU 總數",
 ]
 _OP90D_BY_SHOP_TAIL = ["Shop Stock Qty (CM) 總數"]
 
@@ -130,8 +132,8 @@ _OP90D_TOP10_COLUMNS = [
 _OP90D_BY_NATURE_COLUMNS = [
     "Shop Nature",
     "涉及店舖數",
-    "Overstock SKU 數",
-    "Overstock 行數",
+    "P90D 0 Sales SKU 數",
+    "P90D 0 Sales 行數",
     "MAKE UP SKU 數",
     "Non-MAKE UP SKU 數",
     "Shop Stock Qty (CM) 總數",
@@ -140,8 +142,8 @@ _OP90D_BY_NATURE_COLUMNS = [
 _OP90D_BY_OM_COLUMNS = [
     "OM",
     "涉及店舖數",
-    "Overstock SKU 數",
-    "Overstock 行數",
+    "P90D 0 Sales SKU 數",
+    "P90D 0 Sales 行數",
     "MAKE UP SKU 數",
     "Non-MAKE UP SKU 數",
     "Shop Stock Qty (CM) 總數",
@@ -197,7 +199,7 @@ def _prepare_filtered(df_input: pd.DataFrame, shop_natures: list[str] | None = N
     if missing:
         raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
     avail = set(df_input.columns)
-    for col in ("Site Code", "Shop Stock Qty (CM)", "Adj. MCH1"):
+    for col in ("Site Code", "Shop Stock Qty (CM)", "Shop Stock Qty (LM)", "Adj. MCH1"):
         if _resolve_column_name(col, avail) is None:
             raise ValueError(f"缺少必需欄位: {col}")
 
@@ -207,7 +209,8 @@ def _prepare_filtered(df_input: pd.DataFrame, shop_natures: list[str] | None = N
     df = _compute_raw_extra_columns(df)
     df["SKU"] = df["SKU"].apply(_safe_sku)
     status = df.get("Shop Stock Status", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
-    raw = df[status == _OP90D_STATUS].copy()
+    stock_lm = _safe_numeric(df.get("Shop Stock Qty (LM)", _safe_default_series(0, df.index)))
+    raw = df[(status == _OP90D_STATUS) & (stock_lm > 0)].copy()
     if raw.empty:
         return raw
     raw["MAKE UP 分類"] = _classify_makeup(raw["Adj. MCH1"])
@@ -278,7 +281,7 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
             "Shop Name": name,
             "OM": om,
             "Shop Nature": _representative_nature(group),
-            "Overstock SKU 總數": int(skus.nunique()),
+            "P90D 0 Sales SKU 總數": int(skus.nunique()),
         }
         for g, h in zip(groups, group_headers):
             row[h] = int(group[group["_group"] == g]["SKU"].dropna().astype(str).nunique())
@@ -286,7 +289,7 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
         rows.append(row)
     by_shop = pd.DataFrame(rows, columns=headers)
     by_shop = by_shop.sort_values(
-        ["Overstock SKU 總數", "Shop Stock Qty (CM) 總數", "Site Code"],
+        ["P90D 0 Sales SKU 總數", "Shop Stock Qty (CM) 總數", "Site Code"],
         ascending=[False, False, True],
         kind="stable",
     ).reset_index(drop=True)
@@ -296,7 +299,7 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
             "Shop Name": "",
             "OM": "",
             "Shop Nature": "",
-            "Overstock SKU 總數": int(df["SKU"].dropna().astype(str).nunique()),
+            "P90D 0 Sales SKU 總數": int(df["SKU"].dropna().astype(str).nunique()),
         }
         for g, h in zip(groups, group_headers):
             total_row[h] = int(df[df["_group"] == g]["SKU"].dropna().astype(str).nunique())
@@ -348,7 +351,7 @@ def _build_op90d_top10(raw: pd.DataFrame, top_n: int = 10, include_makeup: bool 
 
 
 def _build_distribution(raw: pd.DataFrame, key: str, breakdown: str = _OP90D_BREAKDOWN_MAKEUP) -> pd.DataFrame:
-    base = [key, "涉及店舖數", "Overstock SKU 數", "Overstock 行數"]
+    base = [key, "涉及店舖數", "P90D 0 Sales SKU 數", "P90D 0 Sales 行數"]
     tail = ["Shop Stock Qty (CM) 總數"]
     if breakdown not in _OP90D_BREAKDOWNS:
         breakdown = _OP90D_BREAKDOWN_MAKEUP
@@ -366,21 +369,21 @@ def _build_distribution(raw: pd.DataFrame, key: str, breakdown: str = _OP90D_BRE
         row = {
             key: grp,
             "涉及店舖數": int(sub["Site Code"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()),
-            "Overstock SKU 數": int(sub["SKU"].dropna().astype(str).nunique()),
-            "Overstock 行數": int(len(sub)),
+            "P90D 0 Sales SKU 數": int(sub["SKU"].dropna().astype(str).nunique()),
+            "P90D 0 Sales 行數": int(len(sub)),
         }
         for g, h in zip(groups, group_headers):
             row[h] = int(sub[sub["_group"] == g]["SKU"].dropna().astype(str).nunique())
         row["Shop Stock Qty (CM) 總數"] = int(float(sub["_stock_cm"].sum()))
         rows.append(row)
     dist = pd.DataFrame(rows, columns=columns)
-    dist = dist.sort_values(["Overstock 行數", key], ascending=[False, True], kind="stable").reset_index(drop=True)
+    dist = dist.sort_values(["P90D 0 Sales 行數", key], ascending=[False, True], kind="stable").reset_index(drop=True)
     if not dist.empty:
         total_row = {
             key: "總計",
             "涉及店舖數": int(df["Site Code"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()),
-            "Overstock SKU 數": int(df["SKU"].dropna().astype(str).nunique()),
-            "Overstock 行數": int(len(df)),
+            "P90D 0 Sales SKU 數": int(df["SKU"].dropna().astype(str).nunique()),
+            "P90D 0 Sales 行數": int(len(df)),
         }
         for g, h in zip(groups, group_headers):
             total_row[h] = int(df[df["_group"] == g]["SKU"].dropna().astype(str).nunique())
@@ -404,7 +407,7 @@ def transform_overstock_p90d(
     include_makeup: bool = False,
     breakdown: str = _OP90D_BREAKDOWN_MAKEUP,
 ):
-    """篩選 Overstock (P90D 0 Sales) 列，輸出店舖統計、Top 10、Nature 及 OM 分佈。
+    """篩選 P90D 0 Sales 列（狀態值見 _OP90D_STATUS，且 Shop Stock Qty (LM) 須大於 0），輸出店舖統計、Top 10、Nature 及 OM 分佈。
 
     Top 10 預設只限 Non-MAKE UP；include_makeup 為 True 時則包括 MAKE UP SKU。
     breakdown 決定 By Shop、By Nature、By OM 的分組欄位：
@@ -434,7 +437,7 @@ def transform_overstock_p90d(
 
     warnings = []
     if raw.empty:
-        warnings.append("沒有符合「Overstock (P90D 0 Sales)」的資料。")
+        warnings.append("沒有符合「P90D 0 Sales（Shop Stock Qty (LM) 大於 0）」的資料。")
     elif breakdown != _OP90D_BREAKDOWN_MAKEUP:
         blank_count = int((_op90d_group_series(raw, breakdown) == "空白").sum())
         if blank_count:

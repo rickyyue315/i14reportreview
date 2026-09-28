@@ -1,4 +1,4 @@
-"""Validation tests for Overstock (P90D 0 Sales) Review.
+"""Validation tests for P90D 0 Sales Review.
 
 覆蓋：狀態篩選、MAKE UP 分類、店舖統計、Top 10、Nature／OM 分佈、
 不輸出 Value／COGS／GP 欄位、Excel 四頁結構。
@@ -62,16 +62,28 @@ def test_filter_only_overstock_p90d_status():
     assert set(raw["SKU"].astype(str)) == {"1", "2"}
 
 
+def test_filter_requires_lm_stock():
+    import numpy as np
+    df = _df([
+        {"SKU": 1, "Shop Stock Qty (LM)": 4.0},  # 符合
+        {"SKU": 2, "Shop Stock Qty (LM)": 0.0},  # LM 為 0 → 排除
+        {"SKU": 3, "Shop Stock Qty (LM)": np.nan},  # LM 空白視為 0 → 排除
+        {"SKU": 4, "Shop Stock Qty (LM)": -1.0},  # LM 負數 → 排除
+    ])
+    raw, _, _, _, _, _ = transform_overstock_p90d(df)
+    assert list(raw["SKU"].astype(str)) == ["1"]
+
+
 def test_empty_result_warning():
     df = _df([{"SKU": 1, "Shop Stock Status": "Normal"}])
     raw, by_shop, top10, by_nature, by_om, warnings = transform_overstock_p90d(df)
     assert raw.empty
     assert by_shop.empty and top10.empty and by_nature.empty and by_om.empty
-    assert any("Overstock (P90D 0 Sales)" in w for w in warnings)
+    assert any("P90D 0 Sales" in w for w in warnings)
 
 
 def test_missing_required_columns_rejected():
-    for col in ("Site Code", "Shop Stock Qty (CM)", "Adj. MCH1"):
+    for col in ("Site Code", "Shop Stock Qty (CM)", "Shop Stock Qty (LM)", "Adj. MCH1"):
         df = _df([{"SKU": 1}]).drop(columns=[col])
         try:
             transform_overstock_p90d(df)
@@ -105,12 +117,12 @@ def test_by_shop_counts_and_totals():
     ])
     _, by_shop, _, _, _, _ = transform_overstock_p90d(df)
     s01 = by_shop[by_shop["Site Code"] == "S01"].iloc[0]
-    assert int(s01["Overstock SKU 總數"]) == 2  # SKU 1、2（已刪除重複）
+    assert int(s01["P90D 0 Sales SKU 總數"]) == 2  # SKU 1、2（已刪除重複）
     assert int(s01["MAKE UP SKU 數"]) == 1
     assert int(s01["Non-MAKE UP SKU 數"]) == 1
     assert int(s01["Shop Stock Qty (CM) 總數"]) == 25  # 未刪除重複加總
     total = by_shop[by_shop["Site Code"] == "總計"].iloc[0]
-    assert int(total["Overstock SKU 總數"]) == 3
+    assert int(total["P90D 0 Sales SKU 總數"]) == 3
     assert int(total["MAKE UP SKU 數"]) == 2
     assert int(total["Non-MAKE UP SKU 數"]) == 1
     sites = list(by_shop["Site Code"])
@@ -136,7 +148,7 @@ def test_top10_columns_supply_lm_no_status_excess():
     _, _, top10, _, _, _ = transform_overstock_p90d(df)
     cols = list(top10.columns)
     assert "Supply Source" in cols
-    assert "Shop Stock Status" not in cols  # 全表皆為 Overstock 狀態，無需顯示
+    assert "Shop Stock Status" not in cols  # 全表皆為 P90D 0 Sales 狀態，無需顯示
     assert "Excess Stock Qty" not in cols
     assert "Shop Stock Qty (LM)" in cols
     assert cols.index("Shop Stock Qty (LM)") < cols.index("Shop Stock Qty (CM)")
@@ -198,13 +210,13 @@ def test_nature_and_om_distribution():
     _, _, _, by_nature, by_om, _ = transform_overstock_p90d(df)
     assert set(by_nature[by_nature["Shop Nature"] != "總計"]["Shop Nature"]) == {"Tourist", "Mix", "Non Tourist"}
     n_total = by_nature[by_nature["Shop Nature"] == "總計"].iloc[0]
-    assert int(n_total["Overstock 行數"]) == 3
+    assert int(n_total["P90D 0 Sales 行數"]) == 3
     assert int(n_total["MAKE UP SKU 數"]) == 1
     assert int(n_total["Non-MAKE UP SKU 數"]) == 2
     assert int(n_total["涉及店舖數"]) == 3
     assert set(by_om[by_om["OM"] != "總計"]["OM"]) == {"OM1", "OM2"}
     o_total = by_om[by_om["OM"] == "總計"].iloc[0]
-    assert int(o_total["Overstock 行數"]) == 3
+    assert int(o_total["P90D 0 Sales 行數"]) == 3
     assert int(o_total["Shop Stock Qty (CM) 總數"]) == 12
     _no_banned(by_nature)
     _no_banned(by_om)
@@ -221,16 +233,16 @@ def test_breakdown_item_class_by_shop():
     ])
     _, by_shop, _, by_nature, by_om, warnings = transform_overstock_p90d(df, breakdown="item_class")
     assert list(by_shop.columns) == [
-        "Site Code", "Shop Name", "OM", "Shop Nature", "Overstock SKU 總數",
+        "Site Code", "Shop Name", "OM", "Shop Nature", "P90D 0 Sales SKU 總數",
         "A1 SKU 數", "B SKU 數", "D SKU 數", "Shop Stock Qty (CM) 總數",
     ]
     s01 = by_shop[by_shop["Site Code"] == "S01"].iloc[0]
-    assert int(s01["Overstock SKU 總數"]) == 3
+    assert int(s01["P90D 0 Sales SKU 總數"]) == 3
     assert int(s01["A1 SKU 數"]) == 1
     assert int(s01["B SKU 數"]) == 2
     assert int(s01["D SKU 數"]) == 0
     total = by_shop[by_shop["Site Code"] == "總計"].iloc[0]
-    assert int(total["Overstock SKU 總數"]) == 4
+    assert int(total["P90D 0 Sales SKU 總數"]) == 4
     assert int(total["D SKU 數"]) == 1
     assert "MAKE UP SKU 數" not in by_shop.columns
     assert list(by_nature.columns)[4:-1] == ["A1 SKU 數", "B SKU 數", "D SKU 數"]
@@ -264,7 +276,7 @@ def test_breakdown_mch1_sorted_columns():
     ]
     total = by_shop[by_shop["Site Code"] == "總計"].iloc[0]
     assert int(total["02 - MAKE UP SKU 數"]) == 1
-    assert int(total["Overstock SKU 總數"]) == 3
+    assert int(total["P90D 0 Sales SKU 總數"]) == 3
     n_total = by_nature[by_nature["Shop Nature"] == "總計"].iloc[0]
     assert int(n_total["01 - SKIN CARE SKU 數"]) == 1
     o_total = by_om[by_om["OM"] == "總計"].iloc[0]
@@ -326,7 +338,7 @@ def test_excel_breakdown_dynamic_headers():
     buf = generate_excel_overstock_p90d(by_shop, top10, by_nature, by_om, None)
     wb = load_workbook(BytesIO(buf.getvalue()), data_only=True)
     assert [c.value for c in wb["By Shop"][1]] == [
-        "Site Code", "Shop Name", "OM", "Shop Nature", "Overstock SKU 總數",
+        "Site Code", "Shop Name", "OM", "Shop Nature", "P90D 0 Sales SKU 總數",
         "A1 SKU 數", "D SKU 數", "Shop Stock Qty (CM) 總數",
     ]
     assert [c.value for c in wb["By Nature"][1]][4:-1] == ["A1 SKU 數", "D SKU 數"]
