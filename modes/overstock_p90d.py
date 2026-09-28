@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""P90D 0 Sales Review：按店舖統計零銷售積壓 SKU，分 MAKE UP／Non-MAKE UP。
+"""P90D 0 Sales Review(Shop回覆)：按店舖統計零銷售積壓 SKU，分 MAKE UP／Non-MAKE UP。
 
 只引用 modes.common，不引用其他模式模組，避免循環引用。
 

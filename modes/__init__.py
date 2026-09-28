@@ -127,7 +127,7 @@ MODE_REGISTRY["績效儀表板 Review"] = {
     "generate_excel": "generate_excel_perf_dashboard",
 }
 
-MODE_REGISTRY["P90D 0 Sales Review"] = {
+MODE_REGISTRY["P90D 0 Sales Review(Shop回覆)"] = {
     "module": "modes.overstock_p90d",
     "transform": "transform_overstock_p90d",
     "generate_excel": "generate_excel_overstock_p90d",

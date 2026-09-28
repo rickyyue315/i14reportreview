@@ -1,4 +1,4 @@
-"""Validation tests for P90D 0 Sales Review.
+"""Validation tests for P90D 0 Sales Review(Shop回覆).
 
 覆蓋：狀態篩選、MAKE UP 分類、店舖統計、Top 10、Nature／OM 分佈、
 不輸出 Value／COGS／GP 欄位、Excel 四頁結構。

@@ -167,7 +167,7 @@ MODES = [
      """,
      None),
 
-    ("📦 P90D 0 Sales Review",
+    ("📦 P90D 0 Sales Review(Shop回覆)",
      """
 - 篩選 `Shop Stock Status` 為 P90D 0 Sales 狀態且 `Shop Stock Qty (LM)` 大於 0 的 SKU×Shop 記錄（LM 為 0 者不計算）
 - 按店舖統計 P90D 0 Sales SKU 總數（已刪除重複），分類維度可切換：MAKE UP（Adj. MCH1 為 02 - MAKE UP）／Non-MAKE UP、Item Class（A1／A2／A3／B／C／D）、Adj. MCH1（15 個大類）；空白值歸入「空白」組

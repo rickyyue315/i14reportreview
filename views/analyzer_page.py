@@ -268,7 +268,7 @@ st.markdown("""
     <div class="step"><span class="n">4</span><b>執行並下載</b><small>看板預覽＋一鍵導出</small></div>
 </div>
 """, unsafe_allow_html=True)
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "銷售損失量化 Review", "積壓資金 Review", "RP Type 覆核 Review", "D001 健康檢查 Review", "新品追蹤 Review", "退場清倉 Review", "銷售趨勢 Review", "績效儀表板 Review"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review(Shop回覆)", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "銷售損失量化 Review", "積壓資金 Review", "RP Type 覆核 Review", "D001 健康檢查 Review", "新品追蹤 Review", "退場清倉 Review", "銷售趨勢 Review", "績效儀表板 Review"]
 st.caption("🔄 調貨與補貨：Stock Checking · Safety Stock x NetStock Review　｜　🔒 安全庫存：Safety Stock Review · Forecast Review　｜　📦 庫存健康：Overstock · OOS · Stock Impact · 90 日零銷售 · P90D 0 Sales　｜　✂️ 商品與對比：Carry SKU · SKU 精簡 · NDRF 月份對比")
 MODE_DESCRIPTIONS = {
     "Overstock Review": "篩選庫存過剩品項，計算建議安全庫存與可轉出貨量。",
@@ -280,7 +280,7 @@ MODE_DESCRIPTIONS = {
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
     "Stock Impact Analysis (簡化)": "快速檢視各品項三期存貨與銷售趨勢。",
     "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
-    "P90D 0 Sales Review": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 須大於 0），分類維度可切換 MAKE UP／Item Class／Adj. MCH1；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈。",
+    "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 須大於 0），分類維度可切換 MAKE UP／Item Class／Adj. MCH1；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈。",
     "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
     "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
@@ -359,7 +359,7 @@ MODE_KEYS = {
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "sku_soh_summary": None, "excel_data": None, "warnings": []},
     "Past 90 Days 0 Sales": {"prefix": "p90ds_", "processed": False, "summary_df": None, "raw_df": None, "excel_data": None, "warnings": []},
-    "P90D 0 Sales Review": {"prefix": "op90d_", "processed": False, "raw_df": None, "by_shop": None, "top10": None, "by_nature": None, "by_om": None, "excel_data": None, "warnings": [], "include_makeup": False, "breakdown_value": "makeup"},
+    "P90D 0 Sales Review(Shop回覆)": {"prefix": "op90d_", "processed": False, "raw_df": None, "by_shop": None, "top10": None, "by_nature": None, "by_om": None, "excel_data": None, "warnings": [], "include_makeup": False, "breakdown_value": "makeup"},
     "Stock Checking": {"prefix": "stock_chk_", "processed": False, "summary_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
     "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "sc_summary": None, "diagnosis": None, "diagnosis_om": None, "diag_summary": None, "stats": None, "excel_data": None, "params": None, "warnings": []},
     "Forecast Review": {"prefix": "fc_", "processed": False, "main_df": None, "coverage_df": None, "buyer_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
@@ -2482,7 +2482,7 @@ if uploaded_file is not None:
             )
             st.caption(f"參考日期：{ns_ref_date.isoformat()}（上市 90 天內視為新品；無法解析或晚於參考日期的列視為非新品）。")
 
-        if mode == "P90D 0 Sales Review":
+        if mode == "P90D 0 Sales Review(Shop回覆)":
             st.checkbox(
                 "💄 Top 10 店舖回覆包括 MAKE UP SKU",
                 value=False,
@@ -2522,7 +2522,7 @@ if uploaded_file is not None:
         _is_carry_mode = (mode == "Carry SKU Review")
         # Modes that don't use the Shop Nature Rate sliders (no Safety Qty calculation):
         # Carry SKU Review, SKU 精簡 Review, NDRF 月份對比 (pivot/comparison only).
-        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "新品追蹤 Review") or (mode == "退場清倉 Review") or (mode == "銷售趨勢 Review") or (mode == "績效儀表板 Review") or (mode == "P90D 0 Sales Review")
+        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "新品追蹤 Review") or (mode == "退場清倉 Review") or (mode == "銷售趨勢 Review") or (mode == "績效儀表板 Review") or (mode == "P90D 0 Sales Review(Shop回覆)")
 
         if not _skip_rates_mode:
             _tourist_default = 30 if _is_overstock_mode else 50
@@ -2675,7 +2675,7 @@ if uploaded_file is not None:
                     st.session_state.p90ds_raw_df = raw_df
                     st.session_state.p90ds_excel_data = buf
                     st.session_state.p90ds_warnings = _warnings
-                elif mode == "P90D 0 Sales Review":
+                elif mode == "P90D 0 Sales Review(Shop回覆)":
                     _op90d_breakdown = _op90d_bd_options.get(_op90d_bd_label, "makeup")
                     raw_df, by_shop_df, top10_df, by_nature_df, by_om_df, _warnings = transform_overstock_p90d(
                         df_input,
@@ -3616,7 +3616,7 @@ if uploaded_file is not None:
                 width='stretch',
             )
 
-        if mode == "P90D 0 Sales Review" and st.session_state.op90d_processed:
+        if mode == "P90D 0 Sales Review(Shop回覆)" and st.session_state.op90d_processed:
             raw_df = st.session_state.op90d_raw_df
             by_shop_df = st.session_state.op90d_by_shop
             top10_df = st.session_state.op90d_top10
@@ -3626,7 +3626,7 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 📦 P90D 0 Sales 分析摘要")
-            _top_download_button(excel_data, "I14 P90D 0 Sales Review", "dl_top_op90d")
+            _top_download_button(excel_data, "I14 P90D 0 Sales Review(Shop回覆)", "dl_top_op90d")
 
             total_rows = len(raw_df) if raw_df is not None else 0
             if raw_df is not None and not raw_df.empty:
@@ -3738,7 +3738,7 @@ if uploaded_file is not None:
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
-            download_name = f"I14 P90D 0 Sales Review_{hk_time}.xlsx"
+            download_name = f"I14 P90D 0 Sales Review(Shop回覆)_{hk_time}.xlsx"
 
             st.download_button(
                 label="📥 下載 P90D 0 Sales 分析報表 (.xlsx)",
