@@ -732,7 +732,7 @@ def test_shop_issue_advice_turnday_and_floor_note_ssr():
     s01 = issues[issues["Site Code"] == "S01"].iloc[0]
     assert "增加 3 件" in str(s01["建議方法"])
     assert "建議周轉約 15 日" in str(s01["建議方法"])
-    assert "為保障自動補貨，最低建議設定為 3 件（OOS 底線最低 3 件）" in str(s01["建議方法"])
+    assert "為保障自動補貨，最低建議設定為 3 件（最低 3 件保底）" in str(s01["建議方法"])
     s02 = issues[issues["Site Code"] == "S02"].iloc[0]
     assert "增加 1 件" in str(s02["建議方法"])
     assert "建議周轉約 9 日" in str(s02["建議方法"])

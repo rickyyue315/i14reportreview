@@ -90,6 +90,7 @@ _COMBINED_SHOP_ISSUE_NUM_COLUMNS = [
     "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)", "Turnday (P90D Qty)",
     "Adj. Safety Stock", "Recommend Safety Stock", "Safety Qty Change",
     "Overstock Cap (X)", "OOS Floor (Y)",
+    "Safety 基準天數", "Safety 周轉所需量",
     "Recommendation of new Safety Qty / ND",
     "銷量帶", "銷量存貨分類",
 ]
@@ -240,8 +241,8 @@ def _d001_gap_advice(d001_qty: float, gap_n: int, is_warehouse: bool) -> str:
 
 
 # 建議方法加註：建議值受保底 3 件影響時，說明保底原因（保障自動補貨之最低設定）。
-# SSR 的 3 件來自 OOS 底線 clip(min=3)；Hybrid 的 3 件來自 SAP MOQ 下調補底。
-_SAFETY_FLOOR3_SSR_NOTE = "；為保障自動補貨，最低建議設定為 3 件（OOS 底線最低 3 件）"
+# SSR 的 3 件來自基準底線 clip(min=3)（月銷倍率 OOS 底線或周轉天數所需量）；Hybrid 的 3 件來自 SAP MOQ 下調補底。
+_SAFETY_FLOOR3_SSR_NOTE = "；為保障自動補貨，最低建議設定為 3 件（最低 3 件保底）"
 
 
 
@@ -380,7 +381,7 @@ def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
       `New SKU (3 Month)` 屬資訊標記，不收錄。
     - Overstock／OOS 只作問題說明上下文，不單獨成列。
     - 建議方法以「增加／減少 X 件」標明調整方向，並附「建議周轉約 X 日」（`Recommend Safety Stock Turnday`；月均 0 略去）；
-      `_safety_floor3` 為 True（建議值受 OOS 底線最低 3 件保底影響）時加註保底原因。
+      `_safety_floor3` 為 True（建議值受最低 3 件保底影響）時加註保底原因。
     """
     cols = _COMBINED_SHOP_ISSUE_COLUMNS
     if raw is None or raw.empty:

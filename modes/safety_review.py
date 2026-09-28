@@ -42,6 +42,7 @@ from modes.common import (
 
 from modes.framework import (
     _HYBRID_DIMENSION_LABELS,
+    _HYBRID_SAFETY_DAYS_DEFAULT,
     _HYBRID_SALES_OOS_DAYS_DEFAULT,
     _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT,
     _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT,
@@ -50,6 +51,8 @@ from modes.framework import (
     _hybrid_dimension_groups,
     _hybrid_group_key_series,
     _hybrid_om_groups_from_values,
+    _hybrid_safety_days,
+    _hybrid_safety_days_label,
     _hybrid_sales_params,
 )
 
@@ -63,6 +66,12 @@ __all__ = [
     "_CHANGE_CAT_DESC",
     "_ND_REC_DESC",
     "_ND_REC_DISPLAY",
+    "_SSR_SAFETY_BASIS_RATE",
+    "_SSR_SAFETY_BASIS_TURNDAY",
+    "_SSR_SAFETY_BASIS_LABELS",
+    "_SSR_SAFETY_DAYS_COLUMN",
+    "_SSR_SAFETY_LINE_COLUMN",
+    "_normalize_ssr_safety_basis",
     "_add_combined_recommendation_columns",
     "_annotate_nd_recommendation",
     "_build_combined_by_shop_summary",
@@ -104,6 +113,8 @@ COMBINED_RAW_COLS = [
     "Projected Monthly Sold Qty",
     "Overstock Cap (X)",
     "OOS Floor (Y)",
+    "Safety 基準天數",
+    "Safety 周轉所需量",
     "D001 Net Stock Qty (CM)",
     "Shop Stock Qty (CM)",
     "Sold Qty (P90D)",
@@ -115,6 +126,33 @@ COMBINED_RAW_COLS = [
     "Sold Qty (CM - MTD)",
     "Supply Source",
 ]
+
+
+# Safety 計算基準（可切換選項；預設 "rate" 維持現行 X/Y 行為）：
+# - "rate"：月銷倍率（Overstock Cap X／OOS Floor Y；建議值 = max(Y, Z if Z ≤ X else X)）
+# - "turnday"：周轉天數（Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 基準天數)，
+#   與 Safety Stock x NetStock Review 同口徑；建議值直接取周轉所需量含最低 3 件保底，
+#   不設 Overstock 上限）。
+_SSR_SAFETY_BASIS_RATE = "rate"
+_SSR_SAFETY_BASIS_TURNDAY = "turnday"
+_SSR_SAFETY_BASIS_LABELS = {
+    _SSR_SAFETY_BASIS_RATE: "月銷倍率 (X/Y)",
+    _SSR_SAFETY_BASIS_TURNDAY: "周轉天數 (按 Nature)",
+}
+
+# 周轉天數基準欄（與 Safety Stock x NetStock Review 同名同義，供對照與稽核）：
+# - Safety 基準天數：該列實際採用的基準天數（按 Shop Nature；預設與 Hybrid 相同）
+# - Safety 周轉所需量：ceil(Sold Qty (P90D) ÷ 90 × 基準天數) 並含最低 3 件保底
+_SSR_SAFETY_DAYS_COLUMN = "Safety 基準天數"
+_SSR_SAFETY_LINE_COLUMN = "Safety 周轉所需量"
+
+
+def _normalize_ssr_safety_basis(safety_basis) -> str:
+    """Safety 計算基準正規化：未知值退回 "rate"（維持現行行為，不拋錯）。"""
+    raw = str(safety_basis or "").strip().lower()
+    if raw in (_SSR_SAFETY_BASIS_TURNDAY, "turnover", "days", "周轉天數"):
+        return _SSR_SAFETY_BASIS_TURNDAY
+    return _SSR_SAFETY_BASIS_RATE
 
 
 
@@ -162,9 +200,13 @@ def _annotate_nd_recommendation(nd_rec, df):
 
 def _add_combined_recommendation_columns(
     df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode="increase_only",
-    ref_date=None,
+    ref_date=None, safety_basis="rate", safety_days=None,
 ):
     df = df.copy()
+    safety_basis = _normalize_ssr_safety_basis(safety_basis)
+    _ssr_days, _ = _hybrid_safety_days(safety_days)
+    rates_overstock = rates_overstock or {"default": 0.50, "tourist": 0.30, "mix": 0.40}
+    rates_oos = rates_oos or {"default": 0.50, "tourist": 0.50, "mix": 0.50}
 
     status_col = df["Shop Stock Status"].fillna("")
     adj_ss = _safe_numeric(df.get("Adj. Safety Stock", _safe_default_series(0, df.index)))
@@ -226,13 +268,31 @@ def _add_combined_recommendation_columns(
     # Z = current Adj. Safety Stock
     z_values = adj_ss.values.astype(int)
 
-    # Combined = max(Y, Z if Z <= X else X)
-    combined = np.where(z_values <= x_values, np.maximum(y_values, z_values), np.maximum(y_values, x_values))
-    # 同一公式、改用未保底的 y_preclip：代表「沒有最低 3 件保底時」的建議值
-    combined_pre = np.where(z_values <= x_values, np.maximum(y_preclip, z_values), np.maximum(y_preclip, x_values))
+    # ── 周轉天數基準（與 Safety Stock x NetStock Review 同口徑；兩種基準恆並列計算供對照）──
+    # Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 基準天數)，含最低 3 件保底
+    # （沿用現行 OOS 底線保底；負數 P90D 按 0 計算；其他 Nature 值歸 Non Tourist 天數）。
+    _days_arr = np.where(
+        shop_nature.values == "tourist", _ssr_days.get("Tourist", 7),
+        np.where(shop_nature.values == "mix", _ssr_days.get("Mix", 9),
+                 _ssr_days.get("Non Tourist", 10)),
+    ).astype(float)
+    _sold_p90d = _safe_numeric(df.get("Sold Qty (P90D)", _safe_default_series(0, df.index))).values
+    _sold_p90d = np.maximum(_sold_p90d, 0.0)
+    _turn_preclip = np.ceil(_sold_p90d / 90.0 * _days_arr)
+    _turn_values = _turn_preclip.clip(min=3).astype(int)
 
     df["Overstock Cap (X)"] = x_values
     df["OOS Floor (Y)"] = y_values
+    df[_SSR_SAFETY_DAYS_COLUMN] = _days_arr.astype(int)
+    df[_SSR_SAFETY_LINE_COLUMN] = _turn_values
+
+    if safety_basis == _SSR_SAFETY_BASIS_TURNDAY:
+        combined = _turn_values
+        combined_pre = _turn_preclip
+    else:
+        combined = np.where(z_values <= x_values, np.maximum(y_values, z_values), np.maximum(y_values, x_values))
+        # 同一公式、改用未保底的 y_preclip：代表「沒有最低 3 件保底時」的建議值
+        combined_pre = np.where(z_values <= x_values, np.maximum(y_preclip, z_values), np.maximum(y_preclip, x_values))
 
     delta = combined - z_values
     if safety_mode == "increase_only":
@@ -255,7 +315,7 @@ def _add_combined_recommendation_columns(
 
     # 新品保護：Launch Date 距參考日期 90 天內（≈3 個月）視為 New SKU。新品未出單是上架
     # 時間問題而非滯銷證據，排除「P90D 0 Sales → Safety=0/ND」override，改走正常
-    # X/Y 計算；Launch Date 缺欄位、缺值或無法解析時一律視為非新品（維持原行為）。
+    # 基準計算（月銷倍率 X/Y 或周轉天數）；Launch Date 缺欄位、缺值或無法解析時一律視為非新品（維持原行為）。
     # 參考日期預設為今天，建議傳入 MTD 截止日期（與報表資料基準一致）。
     _ref = _normalize_ref_date(ref_date)
     if "Launch Date" in df.columns:
@@ -285,8 +345,8 @@ def _add_combined_recommendation_columns(
     df["Recommend Safety Stock"] = recommend_safety
     df["Safety Qty Change"] = delta
 
-    # 保底影響偵測（供店舖問題 SKU 建議方法加註）：最終建議值停在 3 件，且未套 OOS 底線
-    # 最低 3 件保底時的本來建議值 < 3 → 建議值是因保底而停在 3（保障自動補貨）。
+    # 保底影響偵測（供店舖問題 SKU 建議方法加註）：最終建議值停在 3 件，且未套最低
+    # 3 件保底時的本來建議值 < 3 → 建議值是因保底而停在 3（保障自動補貨）。
     # 「只可增加」模式的最終值 = max(現有設定, 未保底建議值)，故 recommend_pre 亦取兩者較大。
     recommend_pre = (
         combined_pre if safety_mode != "increase_only" else np.maximum(z_values, combined_pre)
@@ -559,12 +619,17 @@ def transform_combined(
     sales_oos_days=None,
     sales_overstock_days=None,
     sales_overstock_min_units=None,
+    safety_basis: str = "rate",
+    safety_days: dict | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str], list[str]]:
     missing = validate_input(df_input)
     if missing:
         raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
 
     warnings = []
+    safety_basis = _normalize_ssr_safety_basis(safety_basis)
+    _ssr_days, _ssr_day_warnings = _hybrid_safety_days(safety_days)
+    warnings.extend(_ssr_day_warnings)
 
     # Safety 來源欄相容檢查：顯示名一律視為來源名（Safety Stock (現時) = 來源檔案的 Adj. Safety Stock）
     _adj_avail = set(df_input.columns) | {_resolve_column_name(_ADJ_SAFETY_SOURCE_COL, set(df_input.columns))}
@@ -589,7 +654,7 @@ def transform_combined(
 
     raw = _add_combined_recommendation_columns(
         df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode=safety_mode,
-        ref_date=ref_date,
+        ref_date=ref_date, safety_basis=safety_basis, safety_days=_ssr_days,
     )
 
     # 銷量帶／銷量存貨分類（常開顯示欄；只作分類顯示，不影響 Safety 建議計算）
@@ -944,15 +1009,28 @@ def _write_combined_guide_sheet(ws, stats, dimension):
     oos_n = int(round(float(_oos.get("default", 0.50)) * 100))
     mode_txt = ("可加可減（允許減少並套用退場建議）" if st_.get("safety_mode") == "allow_both"
                 else "只可增加（Safety 只增不減，ND／P90D 0 Sales 退場建議不套用）")
+    _basis = _normalize_ssr_safety_basis(st_.get("safety_basis", "rate"))
+    _sd = st_.get("safety_days") or dict(_HYBRID_SAFETY_DAYS_DEFAULT)
+    _sd_label = _hybrid_safety_days_label({
+        "Tourist": int(_sd.get("Tourist", 7)),
+        "Mix": int(_sd.get("Mix", 9)),
+        "Non Tourist": int(_sd.get("Non Tourist", 10)),
+    })
+    basis_txt = ("周轉天數 (按 Nature) — 建議值取 Safety 周轉所需量（含最低 3 件保底）"
+                 if _basis == _SSR_SAFETY_BASIS_TURNDAY
+                 else "月銷倍率 (X/Y) — 建議值 = max(Y, Z if Z ≤ X else X)")
 
     params = [
         ("分類維度",
          f"{_HYBRID_DIMENSION_LABELS[dim]}（只影響 SUMMARY 區塊 ③ 的分組，不影響 Safety 建議計算）"),
         ("Safety Qty 計算模式", mode_txt),
+        ("Safety 計算基準", f"{basis_txt}；基準天數：{_sd_label}"),
         ("Overstock Rate",
          f"Tourist {os_t}%／Mix {os_m}%／Non Tourist {os_n}%（庫存上限 X = floor(月均銷售 × Rate)，上限不超過現有 Safety）"),
         ("OOS Rate",
          f"Tourist {oos_t}%／Mix {oos_m}%／Non Tourist {oos_n}%（缺貨底線 Y = ceil(月銷預估 × Rate)，最低 3 件）"),
+        ("Safety 基準天數",
+         f"{_sd_label}（Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 基準天數)，最低 3 件；與調貨段無關）"),
         ("MTD 日期",
          f'MTD {st_.get("mtd_days", "—")} 日（當月共 {st_.get("month_total_days", "—")} 日；'
          "月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均，月初以 P90D 為主）"),
@@ -970,7 +1048,10 @@ def _write_combined_guide_sheet(ws, stats, dimension):
         "（Safety Stock (現時)，即來源檔案的 Adj. Safety Stock）。",
         "OOS Floor (Y) = ceil(月銷預估 × OOS Rate)，最低 3 件；月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均"
         "（月初以 P90D 為主，月尾收斂至 MTD；P90D 缺值時退回純 MTD 線性外推）。",
-        "建議 Safety Stock = max(Y, Z if Z ≤ X else X)（Z = 現有 Safety 設定）；"
+        "Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × Safety 基準天數)，最低 3 件"
+        "（與 Safety Stock x NetStock Review 同口徑；負數 P90D 按 0 計算）。",
+        "建議 Safety Stock（月銷倍率基準）= max(Y, Z if Z ≤ X else X)；"
+        "建議 Safety Stock（周轉天數基準）= Safety 周轉所需量（Z = 現有 Safety 設定）；"
         "Safety Qty Change = 建議值 − Z（正=增加、負=減少、零=不變）。",
         "Recommend Safety Stock Turnday = 建議值 ÷ (P90D 月均 ÷ 30)（月均 0 留空；"
         "與來源「Turnday (P90D Qty)」同一準則）。",
@@ -978,13 +1059,13 @@ def _write_combined_guide_sheet(ws, stats, dimension):
         "「可加可減」模式套用退場建議：ND 列 → 0；P90D 0 Sales 舊品 → ND"
         "（並依 Adj. MCH1／Adj. SST 加註 ND 類別）。",
         "New SKU 保護：Launch Date 距參考日期 90 天內的列排除「P90D 0 Sales → Safety=0/ND」override，"
-        "改走正常 X／Y 計算並標記 New SKU (3 Month)。",
+        "改走正常基準計算並標記 New SKU (3 Month)。",
         "銷量帶（常開顯示欄）：同 SKU 內按 Sold Qty (P90D) 的店舖平均排名分帶——排名 > 75%＝高銷、"
         "≤ 25%＝低銷、其餘＝中銷、P90D ≤ 0＝零銷；並列同值同帶；有銷售店舖少於 4 間時不設高銷／低銷。",
         "銷量存貨分類（常開顯示欄）：高銷且店舖周轉日數 < 缺貨線 → 高銷缺貨；低銷且周轉 ≥ 積壓線且"
         "庫存 ≥ 保底件數 → 低銷積壓；零銷且庫存 ≥ 保底件數 → 零銷積壓；其餘 → 正常（門檻見上方 ①）；"
         "兩欄與 Safety 建議計算互相獨立。",
-        "建議值受「OOS 底線最低 3 件」保底影響時（最終建議值 = 3 件且未套保底前 < 3），"
+        "建議值受最低 3 件保底影響時（最終建議值 = 3 件且未套保底前 < 3），"
         "店舖問題 SKU 的建議方法加註保底原因；建議方法亦附「建議周轉約 X 日」。",
     ]
 

@@ -126,21 +126,22 @@ Forecast Review 額外必要欄位（缺少時停止並提示）：`Site Code／
 
 ### Safety Stock Review
 
-全面審查各 SKU×Shop 的安全庫存設定，結合 Overstock Cap 與 OOS Floor 計算平衡建議值：
+全面審查各 SKU×Shop 的安全庫存設定，支援兩種計算基準（可切換，預設月銷倍率）：月銷倍率（Overstock Cap／OOS Floor）或周轉天數（Safety 周轉所需量，與 Safety Stock x NetStock Review 同口徑）：
 
 1. **Overstock Cap (X)** — 基於月均銷售與 Overstock Rate 計算庫存上限，上限不超過現有 Safety 設定（Safety Stock (現時)，即來源檔案的 Adj. Safety Stock）
 2. **OOS Floor (Y)** — 基於月銷預估與 OOS Rate 計算缺貨底線，最低 3；月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均（加權混合：月初以穩定的 P90D 為主，避免頭幾日線性外推失真，月尾收斂至 MTD；P90D 缺值時退回純 MTD 線性外推）
-3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Safety 設定（Safety Stock (現時)，即來源檔案的 Adj. Safety Stock）
-4. **Recommend Safety Stock Turnday** — 建議值的周轉日數 = 建議值 ÷ (P90D 月均 ÷ 30)，與來源「Turnday (P90D Qty)」同一準則；P90D 月均 = 0 時留空。店舖問題 SKU 的建議方法以「增加／減少 X 件」標明調整方向，並會顯示「建議周轉約 X 日」；當最終建議值 = 3 件且未套 OOS 底線最低 3 件保底前 < 3（建議值由保底決定）時，建議方法加註「為保障自動補貨，最低建議設定為 3 件（OOS 底線最低 3 件）」
+3. **Safety 周轉所需量** = ceil(Sold Qty (P90D) ÷ 90 × Safety 基準天數)，最低 3（基準天數預設 Tourist 7／Mix 9／Non Tourist 10 日，可調 7–10；負數 P90D 按 0 計算）
+3a. **建議 Safety Stock**（月銷倍率基準）= max(Y, Z if Z ≤ X else X)；**建議 Safety Stock**（周轉天數基準）= Safety 周轉所需量；其中 Z = 現有 Safety 設定（Safety Stock (現時)，即來源檔案的 Adj. Safety Stock）
+4. **Recommend Safety Stock Turnday** — 建議值的周轉日數 = 建議值 ÷ (P90D 月均 ÷ 30)，與來源「Turnday (P90D Qty)」同一準則；P90D 月均 = 0 時留空。店舖問題 SKU 的建議方法以「增加／減少 X 件」標明調整方向，並會顯示「建議周轉約 X 日」；當最終建議值 = 3 件且未套最低 3 件保底前 < 3（建議值由保底決定）時，建議方法加註「為保障自動補貨，最低建議設定為 3 件（最低 3 件保底）」
 5. **Safety Qty Change** = 建議值 − Z（正數=增加、負數=減少、零=不變）
-6. **New SKU 保護** — Launch Date 距今 90 天內的列排除「P90D 0 Sales → Safety=0/ND」override，改走正常 X/Y 計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)（Launch Date 缺失或無法解析時視為非新品）
+6. **New SKU 保護** — Launch Date 距今 90 天內的列排除「P90D 0 Sales → Safety=0/ND」override，改走正常基準計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)（Launch Date 缺失或無法解析時視為非新品）
 7. **計算模式** — 「只可增加」：全表只有增加或保持原有 Safety，ND / P90D 0 Sales 的歸零+ND 退場建議不套用（ND 欄僅保留 New SKU 標記）；「可加可減」：允許減少並套用退場建議（ND 列 → 0；P90D 0 Sales 舊品 → ND 建議，並依 Adj. MCH1 / Adj. SST 加註：02 - MAKE UP → ND(02 - MAKE UP)、03 - Private Label 系 → ND(Private Label)、兩者皆是 → ND(Private Label - MAKE UP)）
 
 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因。
-輸出包含 **說明（首頁導讀：Review 邏輯＋本次執行參數＋工作表導讀，開啟 Excel 時預設顯示本頁）**、RAW、Shop Stock Status、By Shop、店舖問題 SKU（每間店舖需行動列：Safety 需增加／減少、ND 退場，問題＋建議方法（調整量以「增加／減少 X 件」標明方向；附建議值周轉日數，受 OOS 底線最低 3 件保底影響時加註保底原因）；表末另附「銷量帶」「銷量存貨分類」兩欄）、SUMMARY、Safety Stock 數據分析摘要共 **7 個工作表**。
+輸出包含 **說明（首頁導讀：Review 邏輯＋本次執行參數＋工作表導讀，開啟 Excel 時預設顯示本頁）**、RAW、Shop Stock Status、By Shop、店舖問題 SKU（每間店舖需行動列：Safety 需增加／減少、ND 退場，問題＋建議方法（調整量以「增加／減少 X 件」標明方向；附建議值周轉日數，受最低 3 件保底影響時加註保底原因）；表末另附「銷量帶」「銷量存貨分類」兩欄）、SUMMARY、Safety Stock 數據分析摘要共 **7 個工作表**。
 SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）與 Recommendation of new Safety Qty / ND 分類（空白維持 / New SKU / 0 已是 ND / ND 系列加註）的行數、SKU 數與調整量合計；另附 **③ Safety Qty Change 分類 × 分類維度交叉表**（見下）。
 
-可選擇 **分類維度**（七選一，選項與 Safety Stock x NetStock Review 相同：Shop Nature／RP Type／Shop Nature＋RP Type／OM／Shop Nature＋OM／銷量／銷量＋Shop Nature；預設 Shop Nature）——本模式所有維度**只改分組顯示**（SUMMARY 區塊 ③），倍率、MTD 月銷預估、退場建議等 Safety 計算一律不變。RAW 恆附「銷量帶」與「銷量存貨分類」顯示欄（門檻缺貨線 7 日／積壓線 30 日／保底 2 件，UI 可調，準則與 Safety Stock x NetStock Review 相同；銷量帶按本次上傳資料內同 SKU 排名計算，篩選範圍不同時分帶結果會不同）。來源缺「Sold Qty (P90D)」時不輸出銷量兩欄並列 warning；缺「Shop Stock Qty (CM)」時只輸出銷量帶並列 warning；缺「Shop Monthly Sold Qty (P90D)」時店舖周轉日數以 Sold Qty (P90D) ÷ 90 × 30.5 換算並列 warning；OM 兩個維度缺「OM」欄或全欄空白時退回 Shop Nature。結果頁「🧮 分類交叉表」tab 即時顯示區塊 ③ 與銷量 × 存貨分類分佈（後者母體為全部店舖×SKU 列）。
+可選擇 **分類維度**（七選一，選項與 Safety Stock x NetStock Review 相同：Shop Nature／RP Type／Shop Nature＋RP Type／OM／Shop Nature＋OM／銷量／銷量＋Shop Nature；預設 Shop Nature）——本模式所有維度**只改分組顯示**（SUMMARY 區塊 ③），計算基準、倍率、MTD 月銷預估、退場建議等 Safety 計算一律不變。RAW 恆附「銷量帶」與「銷量存貨分類」顯示欄（門檻缺貨線 7 日／積壓線 30 日／保底 2 件，UI 可調，準則與 Safety Stock x NetStock Review 相同；銷量帶按本次上傳資料內同 SKU 排名計算，篩選範圍不同時分帶結果會不同）。來源缺「Sold Qty (P90D)」時不輸出銷量兩欄並列 warning；缺「Shop Stock Qty (CM)」時只輸出銷量帶並列 warning；缺「Shop Monthly Sold Qty (P90D)」時店舖周轉日數以 Sold Qty (P90D) ÷ 90 × 30.5 換算並列 warning；OM 兩個維度缺「OM」欄或全欄空白時退回 Shop Nature。結果頁「🧮 分類交叉表」tab 即時顯示區塊 ③ 與銷量 × 存貨分類分佈（後者母體為全部店舖×SKU 列）。
 
 ### Stock Checking（調貨檢查）
 

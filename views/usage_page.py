@@ -100,25 +100,27 @@ MODES = [
     ("🔒 Safety Stock Review",
      """
 - 全面審查各 SKU×Shop 的安全庫存設定是否合理
+- 支援兩種 Safety 計算基準（可切換，預設月銷倍率）：月銷倍率（Overstock Cap／OOS Floor）或周轉天數（Safety 周轉所需量，與 Safety Stock x NetStock Review 同口徑，預設 Tourist 7／Mix 9／Non Tourist 10 日）
 - 結合 Overstock Cap（庫存上限）與 OOS Floor（缺貨底線），雙向平衡調整 Safety Stock
 - 支援逐 Site 檢視、Overstock / OOS Rate 自訂、Safety 只增或加減模式
 - 可選擇 **分類維度**（七選一，預設「以 Shop Nature 分類」，選項與 Safety Stock x NetStock Review 相同）：決定 SUMMARY「③ Safety Qty Change 分類 × 分類維度交叉表」的分組；所有維度均只改分組顯示，Safety 建議計算不變
 - RAW／店舖問題 SKU 恆附 **銷量帶** 與 **銷量存貨分類** 顯示欄（缺貨線 7 日／積壓線 30 日／保底 2 件，UI 可調）；結果頁「🧮 分類交叉表」tab 另顯示銷量 × 存貨分類分佈
 - 輸出：說明（首頁導讀：Review 邏輯＋本次執行參數＋工作表導讀；開啟 Excel 時預設顯示本頁）、RAW、Shop Stock Status、By Shop、店舖問題 SKU、SUMMARY（① Safety Qty Change 分類 / ② ND 建議分類統計 / ③ 分類 × 分類維度交叉表）、Safety Stock 數據分析摘要共 7 個工作表
-- 新增「🏪 店舖問題 SKU」：每間店舖需行動列（Safety 需增加／減少、ND 退場；New SKU 標記不收錄），按店舖分組、店內按嚴重度排序，逐列顯示問題說明與建議方法（調整量以「增加／減少 X 件」標明方向；另附行動指引與建議值周轉日數，建議值受 OOS 底線最低 3 件保底影響時加註保底原因）
+- 新增「🏪 店舖問題 SKU」：每間店舖需行動列（Safety 需增加／減少、ND 退場；New SKU 標記不收錄），按店舖分組、店內按嚴重度排序，逐列顯示問題說明與建議方法（調整量以「增加／減少 X 件」標明方向；另附行動指引與建議值周轉日數，建議值受最低 3 件保底影響時加註保底原因）
      """,
      """
-全面審查 Safety Stock 設定，計算平衡建議值：
+全面審查 Safety Stock 設定，計算平衡建議值（計算基準可切換，預設月銷倍率；兩種基準恆並列計算供對照）：
 1. **Overstock Cap (X)** = floor(月均銷售 × Overstock Rate)，上限不超過現有 Safety 設定（Safety Stock (現時)，即來源檔案的 Adj. Safety Stock）
 2. **OOS Floor (Y)** = ceil(月銷預估 × OOS Rate)，最低 3；月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均（加權混合，月初以 P90D 為主避免頭幾日外推失真，月尾收斂至 MTD；P90D 欄位缺失時退回純 MTD 線性外推）
-3. **建議 Safety Stock** = max(Y, Z if Z ≤ X else X)，其中 Z = 現有 Safety 設定（Safety Stock (現時)，即來源檔案的 Adj. Safety Stock）
-4. **Recommend Safety Stock Turnday** = 建議值 ÷ (P90D 月均 ÷ 30)，與來源「Turnday (P90D Qty)」同一準則（P90D 日均），可直接對比現時與建議的周轉日數；P90D 月均 = 0 時留空（無周轉意義），建議值 = 0 顯示 0（零覆蓋）；店舖問題 SKU 的建議方法以「增加／減少 X 件」標明調整方向，並顯示「建議周轉約 X 日」；建議值受 OOS 底線最低 3 件保底影響（最終建議值 = 3 且未套保底前 < 3）時，建議方法加註「為保障自動補貨，最低建議設定為 3 件（OOS 底線最低 3 件）」
-5. **Safety Qty Change** = 建議 Safety Stock − Z（正數=增加、負數=減少、零=不變），並輸出「Safety Qty Change 分類」欄（增加 / 減少 / 不變；「只可增加」模式下不會出現「減少」）
-6. **New SKU 保護** — Launch Date 距 MTD 截止日期 90 天內（≈3 個月）的列排除「P90D 0 Sales → Safety=0/ND」override（新品未出單屬上架時間問題），改走正常 X/Y 計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)；Launch Date 缺失或無法解析時視為非新品
-7. **計算模式** — 「只可增加」：全表只有增加或保持原有 Safety，ND / P90D 0 Sales 的歸零+ND 退場建議不套用（ND 欄僅保留 New SKU 標記）；「可加可減」：允許減少並套用退場建議（ND 列 → 0；P90D 0 Sales 舊品 → ND 建議，並依 Adj. MCH1 / Adj. SST 加註：02 - MAKE UP → ND(02 - MAKE UP)、03 - Private Label 系 → ND(Private Label)、兩者皆是 → ND(Private Label - MAKE UP)）
-8. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
-9. **SUMMARY 工作表** — 統計 Safety Qty Change 分類（增加 / 減少 / 不變）與 Recommendation of new Safety Qty / ND 分類（空白維持 / New SKU / 0 已是 ND / ND 系列加註）各行數與 SKU 數；總計列 SKU 數為全表不重複 SKU（同一 SKU 可跨分類）；另附 **③ Safety Qty Change 分類 × 分類維度交叉表**（各分組列數／SKU 數／Safety Qty Change 合計，含總計列；非標準 Shop Nature 值如 Other 不佔分組欄、只計入合計）
-10. **分類維度與銷量分類** — 分類維度七選一，只改 SUMMARY 區塊 ③ 的分組欄位（分組鍵與 Safety Stock x NetStock Review 同一準則；來源缺「OM」欄或全欄空白時 OM 兩個維度退回 Shop Nature；RAW 缺「銷量帶」欄時銷量兩個維度退回 Shop Nature 鍵）。RAW 恆附「銷量帶」與「銷量存貨分類」：銷量帶＝同 SKU 內按 Sold Qty (P90D) 排名分帶（前 25%＝高銷、最低 25%＝低銷、其餘＝中銷、P90D≤0＝零銷；有銷店舖少於 4 間時不區分高低）；銷量存貨分類＝高銷且店舖周轉日數（Shop Stock Qty (CM) ÷ 月銷 × 30.5，月銷缺欄時以 Sold Qty (P90D) ÷ 90 × 30.5 換算）低於缺貨線（預設 7 日）→「高銷缺貨」；低銷且周轉日數達積壓線（預設 30 日）且庫存達保底件數（預設 2 件）→「低銷積壓」；零銷且庫存達保底件數→「零銷積壓」；其餘→「正常」。來源缺「Sold Qty (P90D)」時不輸出銷量兩欄並列 warning；缺「Shop Stock Qty (CM)」時只輸出銷量帶並列 warning
+3. **Safety 周轉所需量** = ceil(Sold Qty (P90D) ÷ 90 × Safety 基準天數)，最低 3（與 Safety Stock x NetStock Review 同口徑；基準天數預設 Tourist 7／Mix 9／Non Tourist 10 日，可調 7–10；負數 P90D 按 0 計算）
+4. **建議 Safety Stock**（月銷倍率基準）= max(Y, Z if Z ≤ X else X)；**建議 Safety Stock**（周轉天數基準）= Safety 周轉所需量；其中 Z = 現有 Safety 設定（Safety Stock (現時)，即來源檔案的 Adj. Safety Stock）
+5. **Recommend Safety Stock Turnday** = 建議值 ÷ (P90D 月均 ÷ 30)，與來源「Turnday (P90D Qty)」同一準則（P90D 日均），可直接對比現時與建議的周轉日數；P90D 月均 = 0 時留空（無周轉意義），建議值 = 0 顯示 0（零覆蓋）；店舖問題 SKU 的建議方法以「增加／減少 X 件」標明調整方向，並顯示「建議周轉約 X 日」；建議值受最低 3 件保底影響（最終建議值 = 3 且未套保底前 < 3）時，建議方法加註「為保障自動補貨，最低建議設定為 3 件（最低 3 件保底）」
+6. **Safety Qty Change** = 建議 Safety Stock − Z（正數=增加、負數=減少、零=不變），並輸出「Safety Qty Change 分類」欄（增加 / 減少 / 不變；「只可增加」模式下不會出現「減少」）
+7. **New SKU 保護** — Launch Date 距 MTD 截止日期 90 天內（≈3 個月）的列排除「P90D 0 Sales → Safety=0/ND」override（新品未出單屬上架時間問題），改走正常基準計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)；Launch Date 缺失或無法解析時視為非新品
+8. **計算模式** — 「只可增加」：全表只有增加或保持原有 Safety，ND / P90D 0 Sales 的歸零+ND 退場建議不套用（ND 欄僅保留 New SKU 標記）；「可加可減」：允許減少並套用退場建議（ND 列 → 0；P90D 0 Sales 舊品 → ND 建議，並依 Adj. MCH1 / Adj. SST 加註：02 - MAKE UP → ND(02 - MAKE UP)、03 - Private Label 系 → ND(Private Label)、兩者皆是 → ND(Private Label - MAKE UP)）
+9. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
+10. **SUMMARY 工作表** — 統計 Safety Qty Change 分類（增加 / 減少 / 不變）與 Recommendation of new Safety Qty / ND 分類（空白維持 / New SKU / 0 已是 ND / ND 系列加註）各行數與 SKU 數；總計列 SKU 數為全表不重複 SKU（同一 SKU 可跨分類）；另附 **③ Safety Qty Change 分類 × 分類維度交叉表**（各分組列數／SKU 數／Safety Qty Change 合計，含總計列；非標準 Shop Nature 值如 Other 不佔分組欄、只計入合計）
+11. **分類維度與銷量分類** — 分類維度七選一，只改 SUMMARY 區塊 ③ 的分組欄位（分組鍵與 Safety Stock x NetStock Review 同一準則；來源缺「OM」欄或全欄空白時 OM 兩個維度退回 Shop Nature；RAW 缺「銷量帶」欄時銷量兩個維度退回 Shop Nature 鍵）。RAW 恆附「銷量帶」與「銷量存貨分類」：銷量帶＝同 SKU 內按 Sold Qty (P90D) 排名分帶（前 25%＝高銷、最低 25%＝低銷、其餘＝中銷、P90D≤0＝零銷；有銷店舖少於 4 間時不區分高低）；銷量存貨分類＝高銷且店舖周轉日數（Shop Stock Qty (CM) ÷ 月銷 × 30.5，月銷缺欄時以 Sold Qty (P90D) ÷ 90 × 30.5 換算）低於缺貨線（預設 7 日）→「高銷缺貨」；低銷且周轉日數達積壓線（預設 30 日）且庫存達保底件數（預設 2 件）→「低銷積壓」；零銷且庫存達保底件數→「零銷積壓」；其餘→「正常」。來源缺「Sold Qty (P90D)」時不輸出銷量兩欄並列 warning；缺「Shop Stock Qty (CM)」時只輸出銷量帶並列 warning
      """),
 
     ("📦 Stock Impact Analysis",

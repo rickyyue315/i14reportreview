@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.58.0 (2026-09-28)
+
+Safety Stock Review 新增 Safety 計算基準可切換選項（預設月銷倍率，舊行為不變）；其餘模式計算、欄位、欄序零變動：
+
+- **計算** — `modes/safety_review.py`：`_add_combined_recommendation_columns()`／`transform_combined()` 新增 `safety_basis`（`rate`／`turnday`，未知值退回 `rate`）與 `safety_days` 參數；周轉天數基準與 Safety Stock x NetStock Review 同口徑（Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 基準天數)，含最低 3 件保底，負數 P90D 按 0 計算）；兩種基準恆並列計算供對照，建議值按所選基準取值；計算模式、新品保護、ND／P90D 0 Sales 退場規則兩種基準共用
+- **參數** — Safety 基準天數預設 Tourist 7／Mix 9／Non Tourist 10 日，可調 7–10（經 `_hybrid_safety_days()` 驗證，超出範圍箝制並列 warning）
+- **輸出** — RAW 新增「Safety 基準天數」「Safety 周轉所需量」欄（店舖問題 SKU 同步）；說明工作表新增計算基準與基準天數參數及邏輯；店舖問題保底加註改為中性文字「最低 3 件保底」（兩種基準共用）
+- **文件** — 使用說明頁、README 同步
+- **測試** — 新增 `tests/test_safety_turnday.py` ×14；`tests/test_transformer.py` 保底加註斷言同步；共 528 項測試通過
+- Change: `version.py` → 1.58.0
+
 ## v1.57.1 (2026-09-28)
 
 修正來源檔 `Launch Date` 為 YYYYMMDD 數字（讀入後為浮點數，如 `20260925.0`）時無法解析，導致新品判定失效；其餘計算、欄位、欄序零變動：

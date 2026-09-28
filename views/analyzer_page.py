@@ -566,7 +566,7 @@ if uploaded_file is not None:
 
         with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
             st.info(
-                "**倍率如何影響建議值**（建議 Safety Stock = max(OOS 底線 Y, 現有 Safety 若 ≤ Overstock 上限 X，否則 X)，計算結果最低 3 件——最低 3 件為保障自動補貨的保底，受保底影響的建議會在「店舖問題 SKU」建議方法加註；建議值周轉日數見 RAW 的「Recommend Safety Stock Turnday」，店舖問題建議方法亦會顯示）\n\n"
+                "**倍率如何影響建議值**（月銷倍率基準：建議 Safety Stock = max(OOS 底線 Y, 現有 Safety 若 ≤ Overstock 上限 X，否則 X)；周轉天數基準：建議值 = Safety 周轉所需量，計算結果最低 3 件——最低 3 件為保障自動補貨的保底，受保底影響的建議會在「店舖問題 SKU」建議方法加註；建議值周轉日數見 RAW 的「Recommend Safety Stock Turnday」，店舖問題建議方法亦會顯示）\n\n"
                 "- **Overstock Rate（庫存上限 X 的倍率）**：X = floor(P90D 月均銷售 × Rate)。Rate 30% ≈ 保留 9 日銷售量（30% × 30 日）；數值越低，建議上限越低，越積極壓縮庫存\n"
                 "- **OOS Rate（缺貨底線 Y 的倍率）**：Y = ceil(月銷預估 × Rate)。Rate 50% ≈ 覆蓋 15 日銷售；數值越高，缺貨保護越強\n\n"
                 "**如何選擇合適數值**\n\n"
@@ -625,6 +625,39 @@ if uploaded_file is not None:
         )
         safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
 
+        _SS_BASIS_OPTIONS = {"月銷倍率 (X/Y)": "rate", "周轉天數 (按 Nature)": "turnday"}
+        _ss_basis_label = st.radio(
+            "📐 Safety 計算基準",
+            options=list(_SS_BASIS_OPTIONS),
+            index=0,
+            horizontal=True,
+            key="ss_safety_basis",
+            help="月銷倍率：建議值 = max(Y, Z if Z ≤ X else X)（現行行為）。周轉天數：建議值 = Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 基準天數)，與 Safety Stock x NetStock Review 同口徑；兩種基準恆並列計算供對照，計算模式、新品保護與 ND／P90D 0 Sales 退場規則維持不變。"
+        )
+        _ss_safety_basis = _SS_BASIS_OPTIONS[_ss_basis_label]
+        _ss_sd_cols = st.columns(3)
+        with _ss_sd_cols[0]:
+            _ss_sd_tourist = st.number_input(
+                "🧳 Tourist 基準 (日)", min_value=_HYBRID_SAFETY_DAYS_MIN, max_value=_HYBRID_SAFETY_DAYS_MAX,
+                value=_HYBRID_SAFETY_DAYS_DEFAULT["Tourist"], step=1, key="ss_sd_tourist",
+                help="Tourist 店舖 Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 此天數)。預設 7 日。",
+            )
+        with _ss_sd_cols[1]:
+            _ss_sd_mix = st.number_input(
+                "🔀 Mix 基準 (日)", min_value=_HYBRID_SAFETY_DAYS_MIN, max_value=_HYBRID_SAFETY_DAYS_MAX,
+                value=_HYBRID_SAFETY_DAYS_DEFAULT["Mix"], step=1, key="ss_sd_mix",
+                help="Mix 店舖 Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 此天數)。預設 9 日。",
+            )
+        with _ss_sd_cols[2]:
+            _ss_sd_nt = st.number_input(
+                "🏪 Non Tourist 基準 (日)", min_value=_HYBRID_SAFETY_DAYS_MIN, max_value=_HYBRID_SAFETY_DAYS_MAX,
+                value=_HYBRID_SAFETY_DAYS_DEFAULT["Non Tourist"], step=1, key="ss_sd_nt",
+                help="Non Tourist 店舖 Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 此天數)。預設 10 日。",
+            )
+        _ss_safety_days = {
+            "Tourist": int(_ss_sd_tourist), "Mix": int(_ss_sd_mix), "Non Tourist": int(_ss_sd_nt),
+        }
+
         _ss_dim_label = st.radio(
             "🗂️ 分類維度",
             options=list(_DIMENSION_OPTIONS),
@@ -632,7 +665,7 @@ if uploaded_file is not None:
             horizontal=True,
             key="ss_dim",
             help="決定 SUMMARY「③ Safety Qty Change 分類 × 分類維度交叉表」的分組欄位。" + _DIMENSION_HELP_COMMON +
-                 "\n本模式所有維度均只改分組顯示，Safety 建議計算（倍率、MTD 月銷預估、退場建議）不隨維度改變。"
+                 "\n本模式所有維度均只改分組顯示，Safety 建議計算（計算基準、倍率、MTD 月銷預估、退場建議）不隨維度改變。"
                  "RAW／店舖問題 SKU 另恆附「銷量帶」與「銷量存貨分類」顯示欄（見下方門檻）。"
         )
         _ss_dimension = _DIMENSION_OPTIONS[_ss_dim_label]
@@ -669,12 +702,16 @@ if uploaded_file is not None:
                     sales_oos_days=_ss_sales_oos,
                     sales_overstock_days=_ss_sales_over,
                     sales_overstock_min_units=_ss_sales_minu,
+                    safety_basis=_ss_safety_basis,
+                    safety_days=_ss_safety_days,
                 )
                 buf = generate_excel_combined(
                     summary_df, raw_df, categories, progress_callback=_cb_excel,
                     dimension=_ss_dimension,
                     stats={
                         "safety_mode": safety_mode_value,
+                        "safety_basis": _ss_safety_basis,
+                        "safety_days": _ss_safety_days,
                         "rates_overstock": rates_overstock,
                         "rates_oos": rates_oos,
                         "mtd_date": str(mtd_date),
