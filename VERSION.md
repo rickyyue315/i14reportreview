@@ -1,5 +1,14 @@
 # 版本記錄
 
+## v1.57.1 (2026-09-28)
+
+修正來源檔 `Launch Date` 為 YYYYMMDD 數字（讀入後為浮點數，如 `20260925.0`）時無法解析，導致新品判定失效；其餘計算、欄位、欄序零變動：
+
+- **修正** — `modes/common.py` `_parse_launch_dates()`：首輪解析維持原行為，未解析者先去除浮點數尾綴再以 `%Y%m%d` 等固定格式重試；來源檔 Launch Date 現可正確辨識
+- **影響** — 新品追蹤 Review（原本 0 列）恢復輸出正確新品列數；Safety Stock Review 新品保護、Stock Impact Analysis「Is New SKU (3mo)」、Forecast Review 開賣日折算、Safety Stock x NetStock Review 零銷轉 ND 新品排除同步恢復
+- **測試** — `tests/test_new_sku.py` 新增 ×2（YYYYMMDD 數字辨識、共用解析器常見格式）；共 511 項測試通過，3 項略過
+- Change: `version.py` → 1.57.1
+
 ## v1.57.0 (2026-09-28)
 
 新增第 20 個分析模式**績效儀表板 Review**——按 Buyer、Brand、OM 彙總銷售、缺貨與過剩表現；其餘 19 個模式計算、欄位、欄序零變動：

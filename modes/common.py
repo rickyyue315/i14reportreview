@@ -280,14 +280,21 @@ def _normalize_ref_date(ref_date) -> datetime.date:
 
 
 def _parse_launch_dates(launch_raw: pd.Series) -> pd.Series:
-    """Launch Date 原始字串 → datetime（自動推斷 + 常見格式重試，無法解析為 NaT）。"""
-    launch_dt = pd.to_datetime(launch_raw, errors="coerce")
+    """Launch Date 原始字串 → datetime（自動推斷 + 常見格式重試，無法解析為 NaT）。
+
+    來源檔 Launch Date 常為 YYYYMMDD 數字（讀入後為 float，如 20260925.0）；
+    第一輪解析維持原行為，未解析者再去除 float 尾綴以固定格式重試。
+    """
+    launch_txt = launch_raw.fillna("").astype(str).str.strip()
+    launch_dt = pd.to_datetime(launch_txt, errors="coerce")
     if launch_dt.isna().any():
         still_na = launch_dt.isna()
+        # 數字型 YYYYMMDD：去除 float 尾綴（'20260925.0' → '20260925'）後重試
+        retry_txt = launch_txt.str.replace(r"^(\d{8})\.0+$", r"\1", regex=True)
         for fmt in ("%Y/%m/%d", "%d/%m/%Y", "%Y%m%d"):
             if not still_na.any():
                 break
-            retry = pd.to_datetime(launch_raw[still_na], errors="coerce", format=fmt)
+            retry = pd.to_datetime(retry_txt[still_na], errors="coerce", format=fmt)
             launch_dt[still_na] = retry
             still_na = launch_dt.isna()
     return launch_dt

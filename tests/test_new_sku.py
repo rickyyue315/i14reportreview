@@ -104,3 +104,32 @@ def test_empty_result_warning():
     raw, _, _, warnings = transform_new_sku(df, ref_date=REF)
     assert raw.empty
     assert any("沒有符合" in w for w in warnings)
+
+
+def test_numeric_yyyymmdd_launch_date_recognized():
+    """來源檔 Launch Date 為 YYYYMMDD 數字（讀入後 float，如 20260925.0）時仍可辨識為新品。"""
+    df = _df([
+        {"SKU": 1, "Launch Date": 20260901.0, "Sold Qty (P90D)": 6.0},  # 25 天 → 新品已起量
+        {"SKU": 2, "Launch Date": 20260601.0},  # 超過 90 天 → 排除
+    ])
+    raw, by_sku, _, warnings = transform_new_sku(df, ref_date=REF)
+    assert set(raw["SKU"].astype(str)) == {"1"}
+    assert int(raw["上市日數"].iloc[0]) == 25
+    assert raw["起量狀態"].iloc[0] == "已起量"
+    assert not any("無法解析" in w for w in warnings)
+    assert len(by_sku[by_sku["Buyer"] != "總計"]) == 1
+
+
+def test_parse_launch_dates_common_formats():
+    """數字 YYYYMMDD（含 float 尾綴）與橫線／斜線格式皆可解析，無法解析者為 NaT。"""
+    from transformer import _parse_launch_dates
+    got = _parse_launch_dates(pd.Series([
+        "20260925.0", "20260923", "2026/09/25", "25/09/2026", "2026-09-25", "", "bad",
+    ]))
+    assert got.iloc[0] == pd.Timestamp("2026-09-25")
+    assert got.iloc[1] == pd.Timestamp("2026-09-23")
+    assert got.iloc[2] == pd.Timestamp("2026-09-25")
+    assert got.iloc[3] == pd.Timestamp("2026-09-25")
+    assert got.iloc[4] == pd.Timestamp("2026-09-25")
+    assert pd.isna(got.iloc[5])
+    assert pd.isna(got.iloc[6])
