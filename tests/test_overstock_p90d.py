@@ -139,6 +139,25 @@ def test_top10_multi_shop():
     assert set(top10["Site Code"]) == {"S01", "S02"}
 
 
+def test_top10_excludes_makeup():
+    rows = [{"SKU": i, "Shop Stock Qty (CM)": float(100 + i),
+             "Adj. MCH1": "02 - MAKE UP"} for i in range(1, 6)]
+    rows += [{"SKU": i, "Shop Stock Qty (CM)": float(i),
+              "Adj. MCH1": "01 - SKIN CARE"} for i in range(6, 12)]
+    df = _df(rows)
+    _, _, top10, _, _, _ = transform_overstock_p90d(df)
+    assert len(top10) == 6  # 只取 Non-MAKE UP（庫存較低的 6 列）
+    assert (top10["MAKE UP 分類"] == "Non-MAKE UP").all()
+    assert list(top10["Shop Stock Qty (CM)"]) == [11.0, 10.0, 9.0, 8.0, 7.0, 6.0]
+    assert list(top10["店內排名"]) == [1, 2, 3, 4, 5, 6]
+
+
+def test_top10_all_makeup_returns_empty():
+    df = _df([{"SKU": 1, "Adj. MCH1": "02 - MAKE UP"}])
+    _, _, top10, _, _, _ = transform_overstock_p90d(df)
+    assert top10.empty
+
+
 # ── 5. Nature／OM 分佈 ───────────────────────────────────────────────────
 def test_nature_and_om_distribution():
     df = _df([

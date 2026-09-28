@@ -171,7 +171,7 @@ MODES = [
      """
 - 篩選 `Shop Stock Status` 為 Overstock (P90D 0 Sales) 的 SKU×Shop 記錄
 - 按店舖統計 Overstock SKU 總數（已刪除重複），並分 MAKE UP（Adj. MCH1 為 02 - MAKE UP）／Non-MAKE UP 兩類
-- 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列，附空白「店舖回覆」欄供店舖填寫
+- 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列（只限 Non-MAKE UP，MAKE UP SKU 不列入），附空白「店舖回覆」欄供店舖填寫
 - 按 Shop Nature 及 OM 統計分佈（涉及店舖數、SKU 數、行數、MAKE UP／Non-MAKE UP SKU 數、庫存總數）
 - 四個工作表均不含 Value／COGS／GP 欄位
 - 輸出：By Shop、Top 10 店舖回覆、By Nature、By OM

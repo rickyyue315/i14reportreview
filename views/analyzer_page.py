@@ -280,7 +280,7 @@ MODE_DESCRIPTIONS = {
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
     "Stock Impact Analysis (簡化)": "快速檢視各品項三期存貨與銷售趨勢。",
     "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
-    "Overstock (P90D 0 Sales) Review": "按店舖統計 Overstock (P90D 0 Sales) SKU 數（分 MAKE UP／Non-MAKE UP），輸出各店最高庫存 Top 10 供店舖回覆，以及 Shop Nature 與 OM 分佈。",
+    "Overstock (P90D 0 Sales) Review": "按店舖統計 Overstock (P90D 0 Sales) SKU 數（分 MAKE UP／Non-MAKE UP），輸出各店最高庫存 Top 10（只限 Non-MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈。",
     "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
     "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
@@ -3686,7 +3686,7 @@ if uploaded_file is not None:
                 else:
                     st.info("無符合資料")
             with tab_top:
-                st.markdown("#### 各店舖最高庫存 SKU（Top 10 Shop Stock Qty (CM)，供店舖回覆）")
+                st.markdown("#### 各店舖最高庫存 SKU（Top 10 Shop Stock Qty (CM)，只限 Non-MAKE UP，供店舖回覆）")
                 if top10_df is not None and not top10_df.empty:
                     st.dataframe(top10_df.head(100).rename(columns=_display_safety_header), width='stretch', hide_index=True)
                     st.caption(f"僅顯示前 100 筆，完整 {len(top10_df):,} 筆資料將包含在下載的 Excel 報表中。")

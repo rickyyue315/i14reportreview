@@ -9,7 +9,7 @@ MAKE UP 判定：``Adj. MCH1`` 去除前後空格後等於 ``02 - MAKE UP`` 者�
 
 輸出四個工作表（不輸出 RAW，所有欄位均不含 Value／COGS／GP）：
 1. By Shop — 各店舖 Overstock SKU 總數（已刪除重複）及 MAKE UP／Non-MAKE UP 分項
-2. Top 10 店舖回覆 — 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列，附空白「店舖回覆」欄
+2. Top 10 店舖回覆 — 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列（只限 Non-MAKE UP），附空白「店舖回覆」欄
 3. By Nature — 按 Shop Nature 分佈
 4. By OM — 按 OM 分佈
 """
@@ -231,9 +231,13 @@ def _build_op90d_by_shop(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _build_op90d_top10(raw: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
+    """各店舖按 Shop Stock Qty (CM) 取前 N 列（只限 Non-MAKE UP），供店舖回覆。"""
     if raw is None or raw.empty:
         return pd.DataFrame(columns=_OP90D_TOP10_COLUMNS)
     df = raw.copy()
+    df = df[pd.to_numeric(df.get("_is_makeup", 0), errors="coerce").fillna(0).astype(int) == 0]
+    if df.empty:
+        return pd.DataFrame(columns=_OP90D_TOP10_COLUMNS)
     site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
     df["Site Code"] = site_code
