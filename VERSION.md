@@ -1,5 +1,15 @@
 # 版本記錄
 
+## v1.62.0 (2026-09-29)
+
+P90D 0 Sales Review(Shop回覆) 分類維度新增兩個交叉維度——**MAKE UP × Item Class** 與 **MAKE UP × Adj. MCH1**：以 MAKE UP／Non-MAKE UP 為主分類逐列，欄為次分類分項 SKU 數與小計（樞紐式長表，取代先前已移除的三行階層合併設計）；三個單一維度與其餘模式零變動：
+
+- **分組** — `modes/overstock_p90d.py`：新增 `_OP90D_BREAKDOWN_MAKEUP_ITEM`（`makeup_item`）與 `_OP90D_BREAKDOWN_MAKEUP_MCH1`（`makeup_mch1`）及 `_op90d_cross_sub()`；新增 `_build_op90d_by_shop_cross()`／`_build_distribution_cross()`：By Shop 為每個店舖一欄「MAKE UP 分類」標示主分類（店舖無該主分類資料者不列該列），次分類欄沿用既有分項順序（Item Class 按 A1→D、MCH1 按編號排序，空白組置末），每列附「小計 SKU 數」（該列主分類小計）與庫存總數，另保留店舖層級「P90D 0 Sales SKU 總數」；排序按店舖 SKU 總數由大至小，店內 MAKE UP 在前；By Nature／By OM 同為主分類逐列長表；總計按主分類各一列（Site Code／分組欄為「總計」，粗體）
+- **容錯** — `makeup_item` 缺 Item Class 欄時抛錯（與 `item_class` 同）；次分類空白值歸入「空白」組並列 warning
+- **介面** — 分類維度選項新增「🧩 MAKE UP × Item Class」「🧩 MAKE UP × Adj. MCH1」；分頁標題、模式說明與使用說明頁同步
+- **測試** — 新增 `tests/test_overstock_p90d.py` ×6（長表欄序與主分類逐列、缺主分類不列空列、小計與總計、MCH1 交叉、Item Class 缺欄抛錯、空白組警告、Excel 單行表頭無合併）；共 555 項測試通過
+- Change: `version.py` → 1.62.0
+
 ## v1.61.0 (2026-09-28)
 
 P90D 0 Sales Review(Shop回覆) 取消「三類合併」分類維度，分類維度恢復只限 MAKE UP 分類／Item Class／Adj. MCH1 三個單一維度；三個單一維度與其餘模式零變動（行為與 v1.58.0 相同）：

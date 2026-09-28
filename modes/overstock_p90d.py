@@ -11,7 +11,8 @@ MAKE UP 判定：``Adj. MCH1`` 去除前後空格後等於 ``02 - MAKE UP`` 者�
 
 輸出四個工作表（不輸出 RAW，所有欄位均不含 Value／COGS／GP）：
 1. By Shop — 各店舖 P90D 0 Sales SKU 總數（已刪除重複）及分類分項；
-   分類維度可切換：MAKE UP 分類、Item Class、Adj. MCH1
+   分類維度可切換：MAKE UP 分類、Item Class、Adj. MCH1、交叉維度（MAKE UP × Item Class、
+   MAKE UP × Adj. MCH1：每個店舖／分組按 MAKE UP／Non-MAKE UP 逐列，欄為次分類分項與小計）
 2. Top 10 店舖回覆 — 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列
    （預設只限 Non-MAKE UP；勾選包括 MAKE UP 時則一併計算），附店內庫存排名及空白「店舖回覆」欄
 3. By Nature — 按 Shop Nature 分佈（分組欄隨分類維度變動）
@@ -54,6 +55,9 @@ __all__ = [
     "_OP90D_BREAKDOWN_MCH1",
     "_OP90D_BREAKDOWNS",
     "_OP90D_BREAKDOWN_LABELS",
+    "_OP90D_BREAKDOWN_MAKEUP_ITEM",
+    "_OP90D_BREAKDOWN_MAKEUP_MCH1",
+    "_OP90D_ALL_PRIMARIES",
     "_OP90D_BY_SHOP_COLUMNS",
     "_OP90D_TOP10_COLUMNS",
     "_OP90D_BY_NATURE_COLUMNS",
@@ -70,14 +74,25 @@ _OP90D_NON_MAKEUP_LABEL = "Non-MAKE UP"
 _OP90D_BREAKDOWN_MAKEUP = "makeup"
 _OP90D_BREAKDOWN_ITEM_CLASS = "item_class"
 _OP90D_BREAKDOWN_MCH1 = "mch1"
+# 交叉維度：以 MAKE UP／Non-MAKE UP 為主分類逐列交叉單一次分類（Item Class 或 Adj. MCH1）
+_OP90D_BREAKDOWN_MAKEUP_ITEM = "makeup_item"
+_OP90D_BREAKDOWN_MAKEUP_MCH1 = "makeup_mch1"
 
-_OP90D_BREAKDOWNS = (_OP90D_BREAKDOWN_MAKEUP, _OP90D_BREAKDOWN_ITEM_CLASS, _OP90D_BREAKDOWN_MCH1)
+_OP90D_BREAKDOWNS = (
+    _OP90D_BREAKDOWN_MAKEUP, _OP90D_BREAKDOWN_ITEM_CLASS, _OP90D_BREAKDOWN_MCH1,
+    _OP90D_BREAKDOWN_MAKEUP_ITEM, _OP90D_BREAKDOWN_MAKEUP_MCH1,
+)
 
 _OP90D_BREAKDOWN_LABELS = {
     _OP90D_BREAKDOWN_MAKEUP: "MAKE UP 分類",
     _OP90D_BREAKDOWN_ITEM_CLASS: "Item Class",
     _OP90D_BREAKDOWN_MCH1: "Adj. MCH1",
+    _OP90D_BREAKDOWN_MAKEUP_ITEM: "MAKE UP × Item Class",
+    _OP90D_BREAKDOWN_MAKEUP_MCH1: "MAKE UP × Adj. MCH1",
 }
+
+# 交叉維度逐列使用的主分類次序（MAKE UP 在前）
+_OP90D_ALL_PRIMARIES = (_OP90D_MAKEUP_LABEL, _OP90D_NON_MAKEUP_LABEL)
 
 # Item Class 固定顯示順序（空白組置於最後）
 _OP90D_ITEM_CLASS_ORDER = ["A1", "A2", "A3", "B", "C", "D"]
@@ -256,11 +271,18 @@ def _op90d_group_header(breakdown: str, group: str) -> str:
     return f"{group} SKU 數"
 
 
+def _op90d_cross_sub(breakdown: str) -> str:
+    """交叉維度對應的次分類（makeup_item → item_class；makeup_mch1 → mch1）。"""
+    return _OP90D_BREAKDOWN_ITEM_CLASS if breakdown == _OP90D_BREAKDOWN_MAKEUP_ITEM else _OP90D_BREAKDOWN_MCH1
+
+
 def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MAKEUP) -> pd.DataFrame:
     if breakdown not in _OP90D_BREAKDOWNS:
         breakdown = _OP90D_BREAKDOWN_MAKEUP
     if raw is None or raw.empty:
         return pd.DataFrame(columns=_OP90D_BY_SHOP_BASE + _OP90D_BY_SHOP_TAIL)
+    if breakdown in (_OP90D_BREAKDOWN_MAKEUP_ITEM, _OP90D_BREAKDOWN_MAKEUP_MCH1):
+        return _build_op90d_by_shop_cross(raw, _op90d_cross_sub(breakdown))
     df = raw.copy()
     site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
@@ -305,6 +327,75 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
             total_row[h] = int(df[df["_group"] == g]["SKU"].dropna().astype(str).nunique())
         total_row["Shop Stock Qty (CM) 總數"] = int(float(df["_stock_cm"].sum()))
         by_shop = pd.concat([by_shop, pd.DataFrame([total_row])], ignore_index=True)
+    return by_shop[headers]
+
+
+_OP90D_CROSS_PRIMARY_COL = "MAKE UP 分類"
+_OP90D_CROSS_SUBTOTAL_COL = "小計 SKU 數"
+
+
+def _build_op90d_by_shop_cross(raw: pd.DataFrame, sub: str) -> pd.DataFrame:
+    """交叉維度的 By Shop（樞紐式長表）：每個店舖按 MAKE UP／Non-MAKE UP 逐列，
+    欄為次分類分項 SKU 數與小計（店舖無該主分類資料時不列該列）。"""
+    df = raw.copy()
+    site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
+    df["Site Code"] = site_code
+    df["Shop Name"] = [_extract_shop_name(item_shop.iloc[i], site_code.iloc[i]) for i in range(len(df))]
+    df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+    df["_pri"] = _op90d_group_series(df, _OP90D_BREAKDOWN_MAKEUP)
+    df["_sec"] = _op90d_group_series(df, sub)
+    sec_groups = _op90d_ordered_groups(df["_sec"], sub)
+    sec_headers = [_op90d_group_header(sub, g) for g in sec_groups]
+    base = ["Site Code", "Shop Name", "OM", "Shop Nature", _OP90D_CROSS_PRIMARY_COL, "P90D 0 Sales SKU 總數"]
+    headers = base + sec_headers + [_OP90D_CROSS_SUBTOTAL_COL] + _OP90D_BY_SHOP_TAIL
+
+    rows = []
+    for (site, name, om), group in df.groupby(["Site Code", "Shop Name", "OM"], dropna=False, observed=True):
+        shop_total = int(group["SKU"].dropna().astype(str).nunique())
+        for pri_ord, pri in enumerate(_OP90D_ALL_PRIMARIES):
+            psub = group[group["_pri"] == pri]
+            if psub.empty:
+                continue
+            row = {
+                "Site Code": site,
+                "Shop Name": name,
+                "OM": om,
+                "Shop Nature": _representative_nature(group),
+                _OP90D_CROSS_PRIMARY_COL: pri,
+                "P90D 0 Sales SKU 總數": shop_total,
+            }
+            for g, h in zip(sec_groups, sec_headers):
+                row[h] = int(psub[psub["_sec"] == g]["SKU"].dropna().astype(str).nunique())
+            row[_OP90D_CROSS_SUBTOTAL_COL] = int(psub["SKU"].dropna().astype(str).nunique())
+            row["Shop Stock Qty (CM) 總數"] = int(float(psub["_stock_cm"].sum()))
+            row["_shop_total"] = shop_total
+            row["_pri_ord"] = pri_ord
+            rows.append(row)
+    by_shop = pd.DataFrame(rows, columns=headers + ["_shop_total", "_pri_ord"])
+    by_shop = by_shop.sort_values(
+        ["_shop_total", "Site Code", "_pri_ord"], ascending=[False, True, True], kind="stable",
+    ).reset_index(drop=True).drop(columns=["_shop_total", "_pri_ord"])
+    if not by_shop.empty:
+        shop_total_all = int(df["SKU"].dropna().astype(str).nunique())
+        for pri in _OP90D_ALL_PRIMARIES:
+            psub = df[df["_pri"] == pri]
+            if psub.empty:
+                continue
+            total_row = {
+                "Site Code": "總計",
+                "Shop Name": "",
+                "OM": "",
+                "Shop Nature": "",
+                _OP90D_CROSS_PRIMARY_COL: pri,
+                "P90D 0 Sales SKU 總數": shop_total_all,
+            }
+            for g, h in zip(sec_groups, sec_headers):
+                total_row[h] = int(psub[psub["_sec"] == g]["SKU"].dropna().astype(str).nunique())
+            total_row[_OP90D_CROSS_SUBTOTAL_COL] = int(psub["SKU"].dropna().astype(str).nunique())
+            total_row["Shop Stock Qty (CM) 總數"] = int(float(psub["_stock_cm"].sum()))
+            by_shop = pd.concat([by_shop, pd.DataFrame([total_row])], ignore_index=True)
     return by_shop[headers]
 
 
@@ -357,6 +448,8 @@ def _build_distribution(raw: pd.DataFrame, key: str, breakdown: str = _OP90D_BRE
         breakdown = _OP90D_BREAKDOWN_MAKEUP
     if raw is None or raw.empty:
         return pd.DataFrame(columns=base + tail)
+    if breakdown in (_OP90D_BREAKDOWN_MAKEUP_ITEM, _OP90D_BREAKDOWN_MAKEUP_MCH1):
+        return _build_distribution_cross(raw, key, _op90d_cross_sub(breakdown))
     df = raw.copy()
     df["SKU"] = df["SKU"].apply(_safe_sku)
     df["_dist"] = df.get(key, _safe_default_series("", df.index)).map(_display_group)
@@ -392,6 +485,62 @@ def _build_distribution(raw: pd.DataFrame, key: str, breakdown: str = _OP90D_BRE
     return dist[columns]
 
 
+def _build_distribution_cross(raw: pd.DataFrame, key: str, sub: str) -> pd.DataFrame:
+    """交叉維度的分佈表（樞紐式長表）：每個分組按 MAKE UP／Non-MAKE UP 逐列，
+    欄為次分類分項 SKU 數與小計（分組無該主分類資料時不列該列）。"""
+    tail = ["Shop Stock Qty (CM) 總數"]
+    df = raw.copy()
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+    df["_dist"] = df.get(key, _safe_default_series("", df.index)).map(_display_group)
+    df["_pri"] = _op90d_group_series(df, _OP90D_BREAKDOWN_MAKEUP)
+    df["_sec"] = _op90d_group_series(df, sub)
+    sec_groups = _op90d_ordered_groups(df["_sec"], sub)
+    sec_headers = [_op90d_group_header(sub, g) for g in sec_groups]
+    base = [key, _OP90D_CROSS_PRIMARY_COL, "涉及店舖數", "P90D 0 Sales 行數"]
+    columns = base + sec_headers + [_OP90D_CROSS_SUBTOTAL_COL] + tail
+
+    rows = []
+    for grp, sub_df in df.groupby("_dist", dropna=False, observed=True):
+        for pri_ord, pri in enumerate(_OP90D_ALL_PRIMARIES):
+            psub = sub_df[sub_df["_pri"] == pri]
+            if psub.empty:
+                continue
+            row = {
+                key: grp,
+                _OP90D_CROSS_PRIMARY_COL: pri,
+                "涉及店舖數": int(psub["Site Code"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()),
+                "P90D 0 Sales 行數": int(len(psub)),
+            }
+            for g, h in zip(sec_groups, sec_headers):
+                row[h] = int(psub[psub["_sec"] == g]["SKU"].dropna().astype(str).nunique())
+            row[_OP90D_CROSS_SUBTOTAL_COL] = int(psub["SKU"].dropna().astype(str).nunique())
+            row["Shop Stock Qty (CM) 總數"] = int(float(psub["_stock_cm"].sum()))
+            row["_key_rows"] = int(len(sub_df))
+            row["_pri_ord"] = pri_ord
+            rows.append(row)
+    dist = pd.DataFrame(rows, columns=columns + ["_key_rows", "_pri_ord"])
+    dist = dist.sort_values(
+        ["_key_rows", key, "_pri_ord"], ascending=[False, True, True], kind="stable",
+    ).reset_index(drop=True).drop(columns=["_key_rows", "_pri_ord"])
+    if not dist.empty:
+        for pri in _OP90D_ALL_PRIMARIES:
+            psub = df[df["_pri"] == pri]
+            if psub.empty:
+                continue
+            total_row = {
+                key: "總計",
+                _OP90D_CROSS_PRIMARY_COL: pri,
+                "涉及店舖數": int(psub["Site Code"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()),
+                "P90D 0 Sales 行數": int(len(psub)),
+            }
+            for g, h in zip(sec_groups, sec_headers):
+                total_row[h] = int(psub[psub["_sec"] == g]["SKU"].dropna().astype(str).nunique())
+            total_row[_OP90D_CROSS_SUBTOTAL_COL] = int(psub["SKU"].dropna().astype(str).nunique())
+            total_row["Shop Stock Qty (CM) 總數"] = int(float(psub["_stock_cm"].sum()))
+            dist = pd.concat([dist, pd.DataFrame([total_row])], ignore_index=True)
+    return dist[columns]
+
+
 def _build_op90d_by_nature(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MAKEUP) -> pd.DataFrame:
     return _build_distribution(raw, "Shop Nature", breakdown)
 
@@ -411,14 +560,16 @@ def transform_overstock_p90d(
 
     Top 10 預設只限 Non-MAKE UP；include_makeup 為 True 時則包括 MAKE UP SKU。
     breakdown 決定 By Shop、By Nature、By OM 的分組欄位：
-    makeup（MAKE UP 分類）、item_class（Item Class）、mch1（Adj. MCH1）。
+    makeup（MAKE UP 分類）、item_class（Item Class）、mch1（Adj. MCH1）、
+    makeup_item／makeup_mch1（交叉維度：以 MAKE UP／Non-MAKE UP 為主分類逐列，
+    欄為次分類分項 SKU 數與小計）。
     """
     if breakdown not in _OP90D_BREAKDOWNS:
         breakdown = _OP90D_BREAKDOWN_MAKEUP
     if progress_callback:
         progress_callback(0.0, "驗證輸入資料...")
     raw = _prepare_filtered(df_input, shop_natures=shop_natures, progress_callback=progress_callback)
-    if breakdown == _OP90D_BREAKDOWN_ITEM_CLASS and not raw.empty:
+    if breakdown in (_OP90D_BREAKDOWN_ITEM_CLASS, _OP90D_BREAKDOWN_MAKEUP_ITEM) and not raw.empty:
         if _resolve_column_name("Item Class", set(raw.columns)) is None:
             raise ValueError("缺少必需欄位: Item Class（以 Item Class 分類時必須提供）")
 
@@ -438,6 +589,12 @@ def transform_overstock_p90d(
     warnings = []
     if raw.empty:
         warnings.append("沒有符合「P90D 0 Sales（Shop Stock Qty (LM) 大於 0）」的資料。")
+    elif breakdown in (_OP90D_BREAKDOWN_MAKEUP_ITEM, _OP90D_BREAKDOWN_MAKEUP_MCH1):
+        sub = _op90d_cross_sub(breakdown)
+        blank_count = int((_op90d_group_series(raw, sub) == "空白").sum())
+        if blank_count:
+            label = _OP90D_BREAKDOWN_LABELS[sub]
+            warnings.append(f"「{label}」有 {blank_count} 列為空白，已歸入「空白」組。")
     elif breakdown != _OP90D_BREAKDOWN_MAKEUP:
         blank_count = int((_op90d_group_series(raw, breakdown) == "空白").sum())
         if blank_count:

@@ -301,6 +301,118 @@ def test_breakdown_item_class_missing_column_raises():
         raise AssertionError("缺少 Item Class 時應拋出 ValueError")
 
 
+# ── 5d. 分類維度：MAKE UP × 次分類（交叉維度） ──────────────────────────────
+def test_breakdown_makeup_item_by_shop():
+    df = _df([
+        {"SKU": 1, "Site Code": "S01", "Item Class": "A1", "Adj. MCH1": "02 - MAKE UP", "Shop Stock Qty (CM)": 10.0},
+        {"SKU": 2, "Site Code": "S01", "Item Class": "D", "Adj. MCH1": "01 - SKIN CARE", "Shop Stock Qty (CM)": 5.0},
+        {"SKU": 3, "Site Code": "S02", "Item_Shop": "P-S02-KL", "Item Class": "B",
+         "Adj. MCH1": "03 - FRAGRANCE", "Shop Stock Qty (CM)": 7.0},
+    ])
+    _, by_shop, _, by_nature, by_om, warnings = transform_overstock_p90d(df, breakdown="makeup_item")
+    assert list(by_shop.columns) == [
+        "Site Code", "Shop Name", "OM", "Shop Nature", "MAKE UP 分類", "P90D 0 Sales SKU 總數",
+        "A1 SKU 數", "B SKU 數", "D SKU 數",
+        "小計 SKU 數", "Shop Stock Qty (CM) 總數",
+    ]
+    # 每個店舖按 MAKE UP 在前、Non-MAKE UP 在後逐列
+    s01 = by_shop[by_shop["Site Code"] == "S01"]
+    assert list(s01["MAKE UP 分類"]) == ["MAKE UP", "Non-MAKE UP"]
+    mk = s01.iloc[0]
+    assert int(mk["A1 SKU 數"]) == 1
+    assert int(mk["D SKU 數"]) == 0
+    assert int(mk["小計 SKU 數"]) == 1
+    nm = s01.iloc[1]
+    assert int(nm["D SKU 數"]) == 1
+    assert int(nm["小計 SKU 數"]) == 1
+    # 店舖總數為店舖層級，兩列相同
+    assert list(s01["P90D 0 Sales SKU 總數"]) == [2, 2]
+    # S02 無 MAKE UP 資料 → 不列空列
+    s02 = by_shop[by_shop["Site Code"] == "S02"]
+    assert list(s02["MAKE UP 分類"]) == ["Non-MAKE UP"]
+    assert int(s02.iloc[0]["B SKU 數"]) == 1
+    # 總計按主分類兩列
+    totals = by_shop[by_shop["Site Code"] == "總計"]
+    assert list(totals["MAKE UP 分類"]) == ["MAKE UP", "Non-MAKE UP"]
+    assert int(totals.iloc[0]["A1 SKU 數"]) == 1
+    assert int(totals.iloc[1]["小計 SKU 數"]) == 2
+    assert not warnings
+    # 分佈表同為長表：主分類逐列
+    assert list(by_nature.columns)[4:-2] == ["A1 SKU 數", "B SKU 數", "D SKU 數"]
+    assert set(by_nature["MAKE UP 分類"]) == {"MAKE UP", "Non-MAKE UP"}
+    assert list(by_om.columns)[4:-2] == ["A1 SKU 數", "B SKU 數", "D SKU 數"]
+    _no_banned(by_shop)
+    _no_banned(by_nature)
+    _no_banned(by_om)
+
+
+def test_breakdown_makeup_mch1_by_shop():
+    df = _df([
+        {"SKU": 1, "Adj. MCH1": "02 - MAKE UP", "Shop Stock Qty (CM)": 10.0},
+        {"SKU": 2, "Adj. MCH1": "03 - FRAGRANCE", "Shop Stock Qty (CM)": 5.0},
+    ])
+    _, by_shop, _, _, _, _ = transform_overstock_p90d(df, breakdown="makeup_mch1")
+    assert list(by_shop.columns)[6:-2] == ["02 - MAKE UP SKU 數", "03 - FRAGRANCE SKU 數"]
+    mk = by_shop[by_shop["MAKE UP 分類"] == "MAKE UP"].iloc[0]
+    assert int(mk["02 - MAKE UP SKU 數"]) == 1
+    assert int(mk["03 - FRAGRANCE SKU 數"]) == 0
+    assert int(mk["小計 SKU 數"]) == 1
+    nm = by_shop[by_shop["MAKE UP 分類"] == "Non-MAKE UP"].iloc[0]
+    assert int(nm["03 - FRAGRANCE SKU 數"]) == 1
+    assert int(nm["小計 SKU 數"]) == 1
+    _no_banned(by_shop)
+
+
+def test_breakdown_makeup_item_missing_item_class_raises():
+    df = _df([{"SKU": 1}]).drop(columns=["Item Class"])
+    try:
+        transform_overstock_p90d(df, breakdown="makeup_item")
+    except ValueError as e:
+        assert "Item Class" in str(e)
+    else:
+        raise AssertionError("缺少 Item Class 時應拋出 ValueError")
+
+
+def test_breakdown_makeup_mch1_blank_group_and_warning():
+    df = _df([
+        {"SKU": 1, "Adj. MCH1": None},
+        {"SKU": 2, "Adj. MCH1": "01 - SKIN CARE"},
+    ])
+    _, by_shop, _, _, _, warnings = transform_overstock_p90d(df, breakdown="makeup_mch1")
+    assert "空白 SKU 數" in by_shop.columns
+    nm_total = by_shop[(by_shop["Site Code"] == "總計") & (by_shop["MAKE UP 分類"] == "Non-MAKE UP")].iloc[0]
+    assert int(nm_total["空白 SKU 數"]) == 1
+    assert int(nm_total["小計 SKU 數"]) == 2
+    assert any("Adj. MCH1" in w for w in warnings)
+
+
+def test_breakdown_makeup_item_single_primary_only_one_row():
+    # 全部資料皆為 MAKE UP：每店一列＋總計一列，不產生全零的 Non-MAKE UP 列
+    df = _df([{"SKU": 1, "Adj. MCH1": "02 - MAKE UP", "Item Class": "A1"}])
+    _, by_shop, _, _, _, _ = transform_overstock_p90d(df, breakdown="makeup_item")
+    assert list(by_shop["Site Code"]) == ["S01", "總計"]
+    assert list(by_shop["MAKE UP 分類"]) == ["MAKE UP", "MAKE UP"]
+    assert int(by_shop.iloc[0]["A1 SKU 數"]) == 1
+
+
+def test_breakdown_makeup_item_excel_single_row_header():
+    df = _df([
+        {"SKU": 1, "Site Code": "S01", "Item Class": "A1", "Adj. MCH1": "02 - MAKE UP", "Shop Stock Qty (CM)": 10.0},
+        {"SKU": 2, "Site Code": "S01", "Item Class": "D", "Adj. MCH1": "01 - SKIN CARE", "Shop Stock Qty (CM)": 5.0},
+    ])
+    _, by_shop, top10, by_nature, by_om, _ = transform_overstock_p90d(df, breakdown="makeup_item")
+    buf = generate_excel_overstock_p90d(by_shop, top10, by_nature, by_om, None)
+    wb = load_workbook(BytesIO(buf.getvalue()), data_only=True)
+    ws = wb["By Shop"]
+    # 單行表頭（樞紐長表），資料由第 2 行開始，無合併儲存格
+    assert [c.value for c in ws[1]][:6] == [
+        "Site Code", "Shop Name", "OM", "Shop Nature", "MAKE UP 分類", "P90D 0 Sales SKU 總數",
+    ]
+    assert "小計 SKU 數" in [c.value for c in ws[1]]
+    assert ws.cell(row=2, column=1).value == "S01"
+    assert len(list(ws.merged_cells.ranges)) == 0
+
+
 # ── 6. Excel 結構 ────────────────────────────────────────────────────────
 def test_excel_four_sheets_no_banned_headers():
     df = _df([
