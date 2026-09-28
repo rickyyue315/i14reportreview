@@ -280,7 +280,7 @@ MODE_DESCRIPTIONS = {
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
     "Stock Impact Analysis (簡化)": "快速檢視各品項三期存貨與銷售趨勢。",
     "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
-    "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 須大於 0），分類維度可切換 MAKE UP／Item Class／Adj. MCH1／三類合併（MAKE UP 為主分類）；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈。",
+    "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 須大於 0），分類維度可切換 MAKE UP／Item Class／Adj. MCH1；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈。",
     "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
     "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
@@ -2493,7 +2493,6 @@ if uploaded_file is not None:
                 "📊 以 MAKE UP 分類（預設）": "makeup",
                 "🔤 以 Item Class 分類": "item_class",
                 "🏷️ 以 Adj. MCH1 分類": "mch1",
-                "🧩 三類合併（MAKE UP 為主分類）": "all",
             }
             _op90d_bd_label = st.radio(
                 "🗂️ 分類維度",
@@ -2501,7 +2500,7 @@ if uploaded_file is not None:
                 index=0,
                 horizontal=True,
                 key="op90d_breakdown",
-                help="決定 By Shop、By Nature、By OM 的分組欄位；選擇「三類合併」時，以 MAKE UP／Non-MAKE UP 為主分類，其下再分 Item Class 與 Adj. MCH1，Excel 表頭以三行階層合併儲存格標示並按層配色；Top 10 店舖回覆不受影響。",
+                help="決定 By Shop、By Nature、By OM 的分組欄位；Top 10 店舖回覆不受影響。",
             )
 
         st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -2685,7 +2684,7 @@ if uploaded_file is not None:
                         include_makeup=bool(st.session_state.get("op90d_include_makeup", False)),
                         breakdown=_op90d_breakdown,
                     )
-                    buf = generate_excel_overstock_p90d(by_shop_df, top10_df, by_nature_df, by_om_df, progress_callback=_cb_excel, include_raw=_include_raw, breakdown=_op90d_breakdown)
+                    buf = generate_excel_overstock_p90d(by_shop_df, top10_df, by_nature_df, by_om_df, progress_callback=_cb_excel, include_raw=_include_raw)
                     st.session_state.op90d_processed = True
                     st.session_state.op90d_raw_df = raw_df
                     st.session_state.op90d_by_shop = by_shop_df
@@ -3705,12 +3704,10 @@ if uploaded_file is not None:
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             tab_shop, tab_top, tab_nature, tab_om = st.tabs(["🏪 By Shop（店舖統計）", "📝 Top 10 店舖回覆", "🏬 By Nature", "🗺️ By OM"])
-            _op90d_bd_name = {"makeup": "MAKE UP 分類", "item_class": "Item Class", "mch1": "Adj. MCH1", "all": "三類合併（MAKE UP 為主）"}.get(
+            _op90d_bd_name = {"makeup": "MAKE UP 分類", "item_class": "Item Class", "mch1": "Adj. MCH1"}.get(
                 st.session_state.get("op90d_breakdown_value", "makeup"), "MAKE UP 分類")
             with tab_shop:
                 st.markdown(f"#### 各店舖 P90D 0 Sales SKU 統計（{_op90d_bd_name}）")
-                if st.session_state.get("op90d_breakdown_value", "makeup") == "all":
-                    st.caption("以 MAKE UP／Non-MAKE UP 為主分類，各主分類先列小計，再分 Item Class 與 Adj. MCH1 分項（欄名以「｜」標示所屬主分類）；下載的 Excel 以三行階層合併表頭標示並按層配色。")
                 if by_shop_df is not None and not by_shop_df.empty:
                     st.dataframe(by_shop_df, width='stretch', hide_index=True)
                 else:

@@ -1,5 +1,14 @@
 # 版本記錄
 
+## v1.61.0 (2026-09-28)
+
+P90D 0 Sales Review(Shop回覆) 取消「三類合併」分類維度，分類維度恢復只限 MAKE UP 分類／Item Class／Adj. MCH1 三個單一維度；三個單一維度與其餘模式零變動（行為與 v1.58.0 相同）：
+
+- **移除** — `modes/overstock_p90d.py`：刪除 `_OP90D_BREAKDOWN_ALL` 及合併維度相關代碼（`_build_op90d_by_shop_all()`／`_build_distribution_all()`／`_op90d_header_layout()`／`_op90d_all_block_spec()` 等）；`generate_excel_overstock_p90d()` 移除 `breakdown` 參數，Excel 四表恢復單行表頭
+- **介面** — 分類維度選項刪去「🧩 三類合併（MAKE UP 為主分類）」，恢復三項；模式說明與使用說明頁同步
+- **測試** — 刪去 5c 節合併維度測試 ×5；共 549 項測試通過
+- Change: `version.py` → 1.61.0
+
 ## v1.60.0 (2026-09-28)
 
 P90D 0 Sales Review(Shop回覆)「三類合併」維度改為階層式——以 MAKE UP／Non-MAKE UP 為主分類，其下再分 Item Class 與 Adj. MCH1（取代 v1.59.0 的三節平鋪顯示）；單一維度與其餘模式零變動：
