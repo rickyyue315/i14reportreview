@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.60.0 (2026-09-28)
+
+P90D 0 Sales Review(Shop回覆)「三類合併」維度改為階層式——以 MAKE UP／Non-MAKE UP 為主分類，其下再分 Item Class 與 Adj. MCH1（取代 v1.59.0 的三節平鋪顯示）；單一維度與其餘模式零變動：
+
+- **分組** — `modes/overstock_p90d.py`：`_build_op90d_by_shop()`／`_build_distribution()` 的合併路徑拆為專屬函數 `_build_op90d_by_shop_all()`／`_build_distribution_all()`；每個主分類（MAKE UP／Non-MAKE UP）先列小計欄，再列「主分類｜Item Class 分項」與「主分類｜Adj. MCH1 分項」欄（如「MAKE UP｜Item Class A1 SKU 數」「Non-MAKE UP｜01 - SKIN CARE SKU 數」），主分類小計＝其下分項之和；兩個主分類共用同一套分項欄（無資料者顯示 0）；Item Class 分項保留「Item Class」前綴避免與 Adj. MCH1 的「空白」欄相撞
+- **輸出** — Excel 表頭由兩行改為三行階層（第 1 行主分類橫跨整塊：MAKE UP 粉紅／Non-MAKE UP 紫色；第 2 行次分類：Item Class 藍綠／Adj. MCH1 綠色，主分類小計欄垂直合併第 2–3 行；第 3 行分項表頭；前後基礎欄貫穿三行；資料由第 4 行開始）；表頭版面由 `_op90d_header_layout()` 統一計算，合併範圍按連續段切分保證不重疊（Excel 拒收重疊合併）
+- **容錯** — 合併維度下 Item Class 欄缺席不抛錯（整欄歸入「空白」組並列 warning），與 v1.59.0 相同
+- **介面** — 分類維度選項改名「🧩 三類合併（MAKE UP 為主分類）」；分頁標題與說明同步；使用說明頁同步
+- **測試** — 5c 節測試改寫為階層版（欄序與計數、小計加總一致性、空白欄名不相撞、Item Class 缺席容錯、Excel 三行階層表頭與合併不重疊）；共 554 項測試通過
+- Change: `version.py` → 1.60.0
+
 ## v1.59.0 (2026-09-28)
 
 P90D 0 Sales Review(Shop回覆) 分類維度新增「全部（三類合併顯示）」選項——MAKE UP 分類、Item Class、Adj. MCH1 三節並列；其餘維度與模式計算、欄位、欄序零變動：

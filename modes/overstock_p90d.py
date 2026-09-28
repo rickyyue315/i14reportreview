@@ -11,8 +11,8 @@ MAKE UP 判定：``Adj. MCH1`` 去除前後空格後等於 ``02 - MAKE UP`` 者�
 
 輸出四個工作表（不輸出 RAW，所有欄位均不含 Value／COGS／GP）：
 1. By Shop — 各店舖 P90D 0 Sales SKU 總數（已刪除重複）及分類分項；
-   分類維度可切換：MAKE UP 分類、Item Class、Adj. MCH1、全部（三類合併顯示：
-   三節並列，Excel 表頭以合併儲存格分節標示並按節配色；Item Class 分項欄名加前綴）
+   分類維度可切換：MAKE UP 分類、Item Class、Adj. MCH1、三類合併（MAKE UP 為主分類：
+   每個主分類下先列小計，再分 Item Class 與 Adj. MCH1 分項；Excel 表頭三行階層並按層配色）
 2. Top 10 店舖回覆 — 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列
    （預設只限 Non-MAKE UP；勾選包括 MAKE UP 時則一併計算），附店內庫存排名及空白「店舖回覆」欄
 3. By Nature — 按 Shop Nature 分佈（分組欄隨分類維度變動）
@@ -54,7 +54,8 @@ __all__ = [
     "_OP90D_BREAKDOWN_ITEM_CLASS",
     "_OP90D_BREAKDOWN_MCH1",
     "_OP90D_BREAKDOWN_ALL",
-    "_OP90D_ALL_SECTIONS",
+    "_OP90D_ALL_PRIMARIES",
+    "_OP90D_ALL_SUBS",
     "_OP90D_BREAKDOWNS",
     "_OP90D_BREAKDOWN_LABELS",
     "_OP90D_BY_SHOP_COLUMNS",
@@ -73,7 +74,7 @@ _OP90D_NON_MAKEUP_LABEL = "Non-MAKE UP"
 _OP90D_BREAKDOWN_MAKEUP = "makeup"
 _OP90D_BREAKDOWN_ITEM_CLASS = "item_class"
 _OP90D_BREAKDOWN_MCH1 = "mch1"
-# 合併維度：三個分類以分節並列顯示（Excel 表頭以合併儲存格分節標示）
+# 合併維度：以 MAKE UP／Non-MAKE UP 為主分類，其下再分 Item Class 與 Adj. MCH1（階層式）
 _OP90D_BREAKDOWN_ALL = "all"
 
 _OP90D_BREAKDOWNS = (_OP90D_BREAKDOWN_MAKEUP, _OP90D_BREAKDOWN_ITEM_CLASS, _OP90D_BREAKDOWN_MCH1, _OP90D_BREAKDOWN_ALL)
@@ -82,11 +83,12 @@ _OP90D_BREAKDOWN_LABELS = {
     _OP90D_BREAKDOWN_MAKEUP: "MAKE UP 分類",
     _OP90D_BREAKDOWN_ITEM_CLASS: "Item Class",
     _OP90D_BREAKDOWN_MCH1: "Adj. MCH1",
-    _OP90D_BREAKDOWN_ALL: "全部（三類合併顯示）",
+    _OP90D_BREAKDOWN_ALL: "三類合併（MAKE UP 為主分類）",
 }
 
-# 合併維度的分節次序（By Shop／By Nature／By OM 的分組欄排列）
-_OP90D_ALL_SECTIONS = (_OP90D_BREAKDOWN_MAKEUP, _OP90D_BREAKDOWN_ITEM_CLASS, _OP90D_BREAKDOWN_MCH1)
+# 合併維度：主分類次序及其下的次分類
+_OP90D_ALL_PRIMARIES = (_OP90D_MAKEUP_LABEL, _OP90D_NON_MAKEUP_LABEL)
+_OP90D_ALL_SUBS = (_OP90D_BREAKDOWN_ITEM_CLASS, _OP90D_BREAKDOWN_MCH1)
 
 # Item Class 固定顯示順序（空白組置於最後）
 _OP90D_ITEM_CLASS_ORDER = ["A1", "A2", "A3", "B", "C", "D"]
@@ -165,38 +167,56 @@ _OP90D_TEXT_COLUMNS = frozenset({
     "Supply Source", "店舖回覆",
 })
 
-# 合併維度分節標題列的底色（白字粗體），三節各一色以便對讀
-_OP90D_SECTION_FILLS = {
-    "MAKE UP 分類": "C2255C",
+# 階層合併表頭的底色（白字粗體）：主分類兩色，次分類（Item Class／Adj. MCH1）兩色
+_OP90D_HIER_FILLS = {
+    "MAKE UP": "C2255C",
+    "Non-MAKE UP": "7030A0",
     "Item Class": "0E7490",
     "Adj. MCH1": "15803D",
 }
 
 
-def _op90d_sheet_sections(columns, breakdown: str):
-    """合併維度（all）的表頭分節：回傳（節標題, [欄名]）清單；其他維度回傳 None（單行表頭）。
+def _op90d_header_layout(columns, breakdown: str):
+    """合併維度（all）的階層表頭版面；其他維度回傳 None（單行表頭）。
 
-    分項欄名可唯一辨識所屬分節：MAKE UP 兩欄固定；Item Class 分項帶「Item Class 」前綴；
-    其餘「… SKU 數」欄為 Adj. MCH1 分項（前後基礎欄排除，避免「P90D 0 Sales SKU 數」誤判）。
+    回傳 (n_rows, row_spans, col_header_row)：
+    - n_rows：表頭行數（3：主分類 → 次分類 → 分項）
+    - row_spans：{行號: [(起始欄, 跨欄數, 標題, 底色), ...]}（水平合併的階層標題）
+    - col_header_row：{欄號: (行號, 底色)}　欄自有表頭所在行（垂直合併至表頭末行）
+    欄位辨識：小計欄「{主分類} SKU 數」；分項欄以「{主分類}｜」前綴，Item Class 分項另帶「Item Class 」。
     """
     if breakdown != _OP90D_BREAKDOWN_ALL:
         return None
     cols = list(columns)
-    base_cols = {"涉及店舖數", "P90D 0 Sales SKU 數", "P90D 0 Sales 行數", "P90D 0 Sales SKU 總數"}
-    makeup = [c for c in cols if c in ("MAKE UP SKU 數", "Non-MAKE UP SKU 數")]
-    item = [c for c in cols if c.startswith("Item Class ") and c.endswith(" SKU 數")]
-    mch1 = [
-        c for c in cols
-        if c.endswith(" SKU 數") and c not in base_cols and c not in makeup and c not in item
-    ]
-    sections = []
-    if makeup:
-        sections.append((_OP90D_BREAKDOWN_LABELS[_OP90D_BREAKDOWN_MAKEUP], makeup))
-    if item:
-        sections.append((_OP90D_BREAKDOWN_LABELS[_OP90D_BREAKDOWN_ITEM_CLASS], item))
-    if mch1:
-        sections.append((_OP90D_BREAKDOWN_LABELS[_OP90D_BREAKDOWN_MCH1], mch1))
-    return sections or None
+    blocks = []
+    for pri in _OP90D_ALL_PRIMARIES:
+        subtotal = _op90d_hier_subtotal_header(pri)
+        block_cols = [c for c in cols if c == subtotal or c.startswith(pri + "｜")]
+        if not block_cols:
+            continue
+        item_cols = [c for c in block_cols if "｜Item Class " in c]
+        mch1_cols = [c for c in block_cols if c != subtotal and c not in item_cols]
+        blocks.append((pri, subtotal, block_cols, item_cols, mch1_cols))
+    if not blocks:
+        return None
+
+    n_rows = 3
+    row_spans = {1: [], 2: []}
+    col_header_row = {}
+    in_block = {c for _p, _s, bc, _i, _m in blocks for c in bc}
+    for idx, h in enumerate(cols, 1):
+        if h not in in_block:
+            col_header_row[idx] = (1, None)  # 前後基礎欄：垂直合併全部表頭行
+    for pri, subtotal, block_cols, item_cols, mch1_cols in blocks:
+        fill = _OP90D_HIER_FILLS[pri]
+        start = cols.index(block_cols[0]) + 1
+        row_spans[1].append((start, len(block_cols), pri, fill))
+        col_header_row[cols.index(subtotal) + 1] = (2, fill)  # 小計欄：垂直合併第 2–3 行
+        for sub_cols, sub_label in ((item_cols, "Item Class"), (mch1_cols, "Adj. MCH1")):
+            if sub_cols:
+                sub_start = cols.index(sub_cols[0]) + 1
+                row_spans[2].append((sub_start, len(sub_cols), sub_label, _OP90D_HIER_FILLS[sub_label]))
+    return n_rows, row_spans, col_header_row
 
 
 def _is_banned_column(name: object) -> bool:
@@ -292,23 +312,49 @@ def _op90d_ordered_groups(groups: pd.Series, breakdown: str) -> list[str]:
     return [_OP90D_MAKEUP_LABEL, _OP90D_NON_MAKEUP_LABEL]
 
 
-def _op90d_group_header(breakdown: str, group: str, merged: bool = False) -> str:
-    """分組欄表頭；合併維度下 Item Class 分項加前綴，避免與 Adj. MCH1 的「空白 SKU 數」等欄名相撞。"""
+def _op90d_group_header(breakdown: str, group: str) -> str:
+    """單一維度的分組欄表頭。"""
     if breakdown == _OP90D_BREAKDOWN_MAKEUP:
         return "MAKE UP SKU 數" if group == _OP90D_MAKEUP_LABEL else "Non-MAKE UP SKU 數"
-    if merged and breakdown == _OP90D_BREAKDOWN_ITEM_CLASS:
-        return f"Item Class {group} SKU 數"
     return f"{group} SKU 數"
+
+
+def _op90d_hier_subtotal_header(primary: str) -> str:
+    """階層合併：主分類小計欄名。"""
+    return f"{primary} SKU 數"
+
+
+def _op90d_hier_leaf_header(primary: str, sub: str, group: str) -> str:
+    """階層合併分項欄名：主分類｜分項；Item Class 分項帶次分類前綴，避免與 Adj. MCH1 的「空白」欄相撞。"""
+    if sub == _OP90D_BREAKDOWN_ITEM_CLASS:
+        return f"{primary}｜Item Class {group} SKU 數"
+    return f"{primary}｜{group} SKU 數"
+
+
+def _op90d_all_block_spec(df: pd.DataFrame) -> list:
+    """階層合併的欄位規格：[(主分類, 小計欄名, [(次分類, groups, 分項欄名清單)]), ...]。
+
+    分組次序以全量資料計算，兩個主分類共用同一套分項欄（無資料者顯示 0）。
+    """
+    for sub in _OP90D_ALL_SUBS:
+        df[f"_group_{sub}"] = _op90d_group_series(df, sub)
+    spec = []
+    for pri in _OP90D_ALL_PRIMARIES:
+        sub_info = []
+        for sub in _OP90D_ALL_SUBS:
+            groups = _op90d_ordered_groups(df[f"_group_{sub}"], sub)
+            sub_info.append((sub, groups, [_op90d_hier_leaf_header(pri, sub, g) for g in groups]))
+        spec.append((pri, _op90d_hier_subtotal_header(pri), sub_info))
+    return spec
 
 
 def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MAKEUP) -> pd.DataFrame:
     if breakdown not in _OP90D_BREAKDOWNS:
         breakdown = _OP90D_BREAKDOWN_MAKEUP
-    # 合併維度：三個分類依 _OP90D_ALL_SECTIONS 次序分節並列
-    sections = _OP90D_ALL_SECTIONS if breakdown == _OP90D_BREAKDOWN_ALL else (breakdown,)
-    merged = breakdown == _OP90D_BREAKDOWN_ALL
     if raw is None or raw.empty:
         return pd.DataFrame(columns=_OP90D_BY_SHOP_BASE + _OP90D_BY_SHOP_TAIL)
+    if breakdown == _OP90D_BREAKDOWN_ALL:
+        return _build_op90d_by_shop_all(raw)
     df = raw.copy()
     site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
@@ -316,12 +362,10 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
     df["Shop Name"] = [_extract_shop_name(item_shop.iloc[i], site_code.iloc[i]) for i in range(len(df))]
     df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     df["SKU"] = df["SKU"].apply(_safe_sku)
-    group_info = []
-    for sub in sections:
-        df[f"_group_{sub}"] = _op90d_group_series(df, sub)
-        groups = _op90d_ordered_groups(df[f"_group_{sub}"], sub)
-        group_info.append((sub, groups, [_op90d_group_header(sub, g, merged=merged) for g in groups]))
-    headers = _OP90D_BY_SHOP_BASE + [h for _, _, hs in group_info for h in hs] + _OP90D_BY_SHOP_TAIL
+    df["_group"] = _op90d_group_series(df, breakdown)
+    groups = _op90d_ordered_groups(df["_group"], breakdown)
+    group_headers = [_op90d_group_header(breakdown, g) for g in groups]
+    headers = _OP90D_BY_SHOP_BASE + group_headers + _OP90D_BY_SHOP_TAIL
 
     rows = []
     for (site, name, om), group in df.groupby(["Site Code", "Shop Name", "OM"], dropna=False, observed=True):
@@ -333,9 +377,8 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
             "Shop Nature": _representative_nature(group),
             "P90D 0 Sales SKU 總數": int(skus.nunique()),
         }
-        for sub, groups, group_headers in group_info:
-            for g, h in zip(groups, group_headers):
-                row[h] = int(group[group[f"_group_{sub}"] == g]["SKU"].dropna().astype(str).nunique())
+        for g, h in zip(groups, group_headers):
+            row[h] = int(group[group["_group"] == g]["SKU"].dropna().astype(str).nunique())
         row["Shop Stock Qty (CM) 總數"] = int(float(group["_stock_cm"].sum()))
         rows.append(row)
     by_shop = pd.DataFrame(rows, columns=headers)
@@ -352,9 +395,66 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
             "Shop Nature": "",
             "P90D 0 Sales SKU 總數": int(df["SKU"].dropna().astype(str).nunique()),
         }
-        for sub, groups, group_headers in group_info:
-            for g, h in zip(groups, group_headers):
-                total_row[h] = int(df[df[f"_group_{sub}"] == g]["SKU"].dropna().astype(str).nunique())
+        for g, h in zip(groups, group_headers):
+            total_row[h] = int(df[df["_group"] == g]["SKU"].dropna().astype(str).nunique())
+        total_row["Shop Stock Qty (CM) 總數"] = int(float(df["_stock_cm"].sum()))
+        by_shop = pd.concat([by_shop, pd.DataFrame([total_row])], ignore_index=True)
+    return by_shop[headers]
+
+
+def _build_op90d_by_shop_all(raw: pd.DataFrame) -> pd.DataFrame:
+    """三類合併（MAKE UP 為主分類）：每個主分類下先列小計，再分 Item Class 與 Adj. MCH1 分項。"""
+    df = raw.copy()
+    site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
+    df["Site Code"] = site_code
+    df["Shop Name"] = [_extract_shop_name(item_shop.iloc[i], site_code.iloc[i]) for i in range(len(df))]
+    df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+    df["_pri"] = _op90d_group_series(df, _OP90D_BREAKDOWN_MAKEUP)
+    spec = _op90d_all_block_spec(df)
+    block_cols = []
+    for _pri, subtotal, sub_info in spec:
+        block_cols.append(subtotal)
+        block_cols.extend(leaf for _, _, leaves in sub_info for leaf in leaves)
+    headers = _OP90D_BY_SHOP_BASE + block_cols + _OP90D_BY_SHOP_TAIL
+
+    def _counts(source: pd.DataFrame, row: dict):
+        for pri, subtotal, sub_info in spec:
+            psub = source[source["_pri"] == pri]
+            row[subtotal] = int(psub["SKU"].dropna().astype(str).nunique())
+            for sub, groups, leaves in sub_info:
+                for g, leaf in zip(groups, leaves):
+                    row[leaf] = int(psub[psub[f"_group_{sub}"] == g]["SKU"].dropna().astype(str).nunique())
+
+    rows = []
+    for (site, name, om), group in df.groupby(["Site Code", "Shop Name", "OM"], dropna=False, observed=True):
+        skus = group["SKU"].dropna().astype(str)
+        row = {
+            "Site Code": site,
+            "Shop Name": name,
+            "OM": om,
+            "Shop Nature": _representative_nature(group),
+            "P90D 0 Sales SKU 總數": int(skus.nunique()),
+        }
+        _counts(group, row)
+        row["Shop Stock Qty (CM) 總數"] = int(float(group["_stock_cm"].sum()))
+        rows.append(row)
+    by_shop = pd.DataFrame(rows, columns=headers)
+    by_shop = by_shop.sort_values(
+        ["P90D 0 Sales SKU 總數", "Shop Stock Qty (CM) 總數", "Site Code"],
+        ascending=[False, False, True],
+        kind="stable",
+    ).reset_index(drop=True)
+    if not by_shop.empty:
+        total_row = {
+            "Site Code": "總計",
+            "Shop Name": "",
+            "OM": "",
+            "Shop Nature": "",
+            "P90D 0 Sales SKU 總數": int(df["SKU"].dropna().astype(str).nunique()),
+        }
+        _counts(df, total_row)
         total_row["Shop Stock Qty (CM) 總數"] = int(float(df["_stock_cm"].sum()))
         by_shop = pd.concat([by_shop, pd.DataFrame([total_row])], ignore_index=True)
     return by_shop[headers]
@@ -407,19 +507,17 @@ def _build_distribution(raw: pd.DataFrame, key: str, breakdown: str = _OP90D_BRE
     tail = ["Shop Stock Qty (CM) 總數"]
     if breakdown not in _OP90D_BREAKDOWNS:
         breakdown = _OP90D_BREAKDOWN_MAKEUP
-    sections = _OP90D_ALL_SECTIONS if breakdown == _OP90D_BREAKDOWN_ALL else (breakdown,)
-    merged = breakdown == _OP90D_BREAKDOWN_ALL
     if raw is None or raw.empty:
         return pd.DataFrame(columns=base + tail)
+    if breakdown == _OP90D_BREAKDOWN_ALL:
+        return _build_distribution_all(raw, key)
     df = raw.copy()
     df["SKU"] = df["SKU"].apply(_safe_sku)
     df["_dist"] = df.get(key, _safe_default_series("", df.index)).map(_display_group)
-    group_info = []
-    for sub in sections:
-        df[f"_group_{sub}"] = _op90d_group_series(df, sub)
-        groups = _op90d_ordered_groups(df[f"_group_{sub}"], sub)
-        group_info.append((sub, groups, [_op90d_group_header(sub, g, merged=merged) for g in groups]))
-    columns = base + [h for _, _, hs in group_info for h in hs] + tail
+    df["_group"] = _op90d_group_series(df, breakdown)
+    groups = _op90d_ordered_groups(df["_group"], breakdown)
+    group_headers = [_op90d_group_header(breakdown, g) for g in groups]
+    columns = base + group_headers + tail
     rows = []
     for grp, sub in df.groupby("_dist", dropna=False, observed=True):
         row = {
@@ -428,9 +526,8 @@ def _build_distribution(raw: pd.DataFrame, key: str, breakdown: str = _OP90D_BRE
             "P90D 0 Sales SKU 數": int(sub["SKU"].dropna().astype(str).nunique()),
             "P90D 0 Sales 行數": int(len(sub)),
         }
-        for sb, groups, group_headers in group_info:
-            for g, h in zip(groups, group_headers):
-                row[h] = int(sub[sub[f"_group_{sb}"] == g]["SKU"].dropna().astype(str).nunique())
+        for g, h in zip(groups, group_headers):
+            row[h] = int(sub[sub["_group"] == g]["SKU"].dropna().astype(str).nunique())
         row["Shop Stock Qty (CM) 總數"] = int(float(sub["_stock_cm"].sum()))
         rows.append(row)
     dist = pd.DataFrame(rows, columns=columns)
@@ -442,9 +539,57 @@ def _build_distribution(raw: pd.DataFrame, key: str, breakdown: str = _OP90D_BRE
             "P90D 0 Sales SKU 數": int(df["SKU"].dropna().astype(str).nunique()),
             "P90D 0 Sales 行數": int(len(df)),
         }
-        for sb, groups, group_headers in group_info:
-            for g, h in zip(groups, group_headers):
-                total_row[h] = int(df[df[f"_group_{sb}"] == g]["SKU"].dropna().astype(str).nunique())
+        for g, h in zip(groups, group_headers):
+            total_row[h] = int(df[df["_group"] == g]["SKU"].dropna().astype(str).nunique())
+        total_row["Shop Stock Qty (CM) 總數"] = int(float(df["_stock_cm"].sum()))
+        dist = pd.concat([dist, pd.DataFrame([total_row])], ignore_index=True)
+    return dist[columns]
+
+
+def _build_distribution_all(raw: pd.DataFrame, key: str) -> pd.DataFrame:
+    """三類合併（MAKE UP 為主分類）的分佈表：每個主分類下分 Item Class 與 Adj. MCH1 分項。"""
+    base = [key, "涉及店舖數", "P90D 0 Sales SKU 數", "P90D 0 Sales 行數"]
+    tail = ["Shop Stock Qty (CM) 總數"]
+    df = raw.copy()
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+    df["_dist"] = df.get(key, _safe_default_series("", df.index)).map(_display_group)
+    df["_pri"] = _op90d_group_series(df, _OP90D_BREAKDOWN_MAKEUP)
+    spec = _op90d_all_block_spec(df)
+    block_cols = []
+    for _pri, subtotal, sub_info in spec:
+        block_cols.append(subtotal)
+        block_cols.extend(leaf for _, _, leaves in sub_info for leaf in leaves)
+    columns = base + block_cols + tail
+
+    def _counts(source: pd.DataFrame, row: dict):
+        for pri, subtotal, sub_info in spec:
+            psub = source[source["_pri"] == pri]
+            row[subtotal] = int(psub["SKU"].dropna().astype(str).nunique())
+            for sub, groups, leaves in sub_info:
+                for g, leaf in zip(groups, leaves):
+                    row[leaf] = int(psub[psub[f"_group_{sub}"] == g]["SKU"].dropna().astype(str).nunique())
+
+    rows = []
+    for grp, sub in df.groupby("_dist", dropna=False, observed=True):
+        row = {
+            key: grp,
+            "涉及店舖數": int(sub["Site Code"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()),
+            "P90D 0 Sales SKU 數": int(sub["SKU"].dropna().astype(str).nunique()),
+            "P90D 0 Sales 行數": int(len(sub)),
+        }
+        _counts(sub, row)
+        row["Shop Stock Qty (CM) 總數"] = int(float(sub["_stock_cm"].sum()))
+        rows.append(row)
+    dist = pd.DataFrame(rows, columns=columns)
+    dist = dist.sort_values(["P90D 0 Sales 行數", key], ascending=[False, True], kind="stable").reset_index(drop=True)
+    if not dist.empty:
+        total_row = {
+            key: "總計",
+            "涉及店舖數": int(df["Site Code"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()),
+            "P90D 0 Sales SKU 數": int(df["SKU"].dropna().astype(str).nunique()),
+            "P90D 0 Sales 行數": int(len(df)),
+        }
+        _counts(df, total_row)
         total_row["Shop Stock Qty (CM) 總數"] = int(float(df["_stock_cm"].sum()))
         dist = pd.concat([dist, pd.DataFrame([total_row])], ignore_index=True)
     return dist[columns]
@@ -470,7 +615,7 @@ def transform_overstock_p90d(
     Top 10 預設只限 Non-MAKE UP；include_makeup 為 True 時則包括 MAKE UP SKU。
     breakdown 決定 By Shop、By Nature、By OM 的分組欄位：
     makeup（MAKE UP 分類）、item_class（Item Class）、mch1（Adj. MCH1）、
-    all（三類合併顯示：MAKE UP 分類、Item Class、Adj. MCH1 分節並列）。
+    all（三類合併、MAKE UP 為主分類：每個主分類下分 Item Class 與 Adj. MCH1）。
     """
     if breakdown not in _OP90D_BREAKDOWNS:
         breakdown = _OP90D_BREAKDOWN_MAKEUP
@@ -517,11 +662,12 @@ def transform_overstock_p90d(
 
 def _write_op90d_table(ws, headers, data: pd.DataFrame, progress_callback=None,
                        progress_start=0.0, progress_end=0.1, sheet_name="",
-                       auto_filter: bool = False, sections=None):
-    """寫出統計表；sections 為（節標題, [欄名]）清單時採兩行表頭：
+                       auto_filter: bool = False, header_layout=None):
+    """寫出統計表；header_layout 為 _op90d_header_layout() 回傳值時採多行階層表頭：
 
-    第一行為分節標題（水平合佔各節欄位，按節配色）與前後欄（上下合併兩行），
-    第二行為分項表頭，資料由第三行開始。
+    - row_spans 各行的階層標題水平合併並按層配色；
+    - col_header_row 指定各欄自有表頭所在行，並垂直合併至表頭末行（前後基礎欄貫穿全部表頭行）；
+    - 資料由表頭末行的下一行開始。
     """
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
@@ -539,47 +685,33 @@ def _write_op90d_table(ws, headers, data: pd.DataFrame, progress_callback=None,
         cell.alignment = header_alignment
         cell.border = thin_border
 
-    # 分節欄位置（1 起始）；按連續段切分合併範圍，保證互不重疊；分節缺欄（空表）時退回單行表頭
-    section_spans = []
-    if sections:
-        pos = {h: i + 1 for i, h in enumerate(headers)}
-        for title, cols in sections:
-            idxs = sorted(pos[c] for c in cols if c in pos)
-            run_start = prev = None
-            for i in idxs:
-                if run_start is None:
-                    run_start = prev = i
-                elif i == prev + 1:
-                    prev = i
-                else:
-                    section_spans.append((title, run_start, prev - run_start + 1))
-                    run_start = prev = i
-            if run_start is not None:
-                section_spans.append((title, run_start, prev - run_start + 1))
-    covered = {i for _t, start, span in section_spans for i in range(start, start + span)}
+    def _col_fill(hex_code):
+        if not hex_code:
+            return header_fill
+        return PatternFill(start_color=hex_code, end_color=hex_code, fill_type="solid")
 
-    if section_spans:
+    if header_layout:
+        n_rows, row_spans, col_header_row = header_layout
         for col_idx, h in enumerate(display_headers, 1):
-            if col_idx in covered:
-                cell = ws.cell(row=2, column=col_idx, value=h)
-                _style_header(cell, header_fill)
-            else:
-                cell = ws.cell(row=1, column=col_idx, value=h)
-                _style_header(cell, header_fill)
-                ws.merge_cells(start_row=1, start_column=col_idx, end_row=2, end_column=col_idx)
-        for title, start, span in section_spans:
-            fill = PatternFill(
-                start_color=_OP90D_SECTION_FILLS.get(title, "4472C4"),
-                end_color=_OP90D_SECTION_FILLS.get(title, "4472C4"),
-                fill_type="solid",
-            )
-            if span > 1:
-                ws.merge_cells(start_row=1, start_column=start, end_row=1, end_column=start + span - 1)
-            cell = ws.cell(row=1, column=start, value=title)
+            # 未指定的欄（分項欄）自有表頭置於表頭末行，不垂直合併
+            r0, fill_hex = col_header_row.get(col_idx, (n_rows, None))
+            fill = _col_fill(fill_hex)
+            cell = ws.cell(row=r0, column=col_idx, value=h)
             _style_header(cell, fill)
-            for c in range(start + 1, start + span):
-                _style_header(ws.cell(row=1, column=c), fill)
-        first_data_row = 3
+            if n_rows - r0 >= 1:
+                for rr in range(r0 + 1, n_rows + 1):
+                    _style_header(ws.cell(row=rr, column=col_idx), fill)
+                ws.merge_cells(start_row=r0, start_column=col_idx, end_row=n_rows, end_column=col_idx)
+        for r, spans in row_spans.items():
+            for start, span, title, fill_hex in spans:
+                fill = _col_fill(fill_hex)
+                if span > 1:
+                    ws.merge_cells(start_row=r, start_column=start, end_row=r, end_column=start + span - 1)
+                cell = ws.cell(row=r, column=start, value=title)
+                _style_header(cell, fill)
+                for c in range(start + 1, start + span):
+                    _style_header(ws.cell(row=r, column=c), fill)
+        first_data_row = n_rows + 1
     else:
         for col_idx, h in enumerate(display_headers, 1):
             cell = ws.cell(row=1, column=col_idx, value=h)
@@ -623,7 +755,8 @@ def generate_excel_overstock_p90d(
 ) -> BytesIO:
     """產生四個工作表的 Excel（無 RAW；include_raw 僅為介面相容而保留，不影響輸出）。
 
-    breakdown 為 all（三類合併顯示）時，By Shop／By Nature／By OM 採兩行合併表頭分節。
+    breakdown 為 all（三類合併、MAKE UP 為主分類）時，By Shop／By Nature／By OM 採三行階層表頭
+    （主分類 MAKE UP／Non-MAKE UP → 次分類 Item Class／Adj. MCH1 → 分項）。
     """
     for name, frame in (("By Shop", by_shop), ("Top 10", top10), ("By Nature", by_nature), ("By OM", by_om)):
         if frame is not None and not frame.empty:
@@ -640,7 +773,7 @@ def generate_excel_overstock_p90d(
     _write_op90d_table(ws_shop,
                        list(by_shop.columns) if by_shop is not None else _OP90D_BY_SHOP_COLUMNS,
                        by_shop, progress_callback, 0.0, 0.25, "By Shop",
-                       sections=_op90d_sheet_sections(by_shop.columns if by_shop is not None else [], breakdown))
+                       header_layout=_op90d_header_layout(by_shop.columns if by_shop is not None else [], breakdown))
 
     if progress_callback:
         progress_callback(0.3, "建立 Top 10 店舖回覆...")
@@ -655,7 +788,7 @@ def generate_excel_overstock_p90d(
     _write_op90d_table(ws_nature,
                        list(by_nature.columns) if by_nature is not None else _OP90D_BY_NATURE_COLUMNS,
                        by_nature, progress_callback, 0.65, 0.78, "By Nature",
-                       sections=_op90d_sheet_sections(by_nature.columns if by_nature is not None else [], breakdown))
+                       header_layout=_op90d_header_layout(by_nature.columns if by_nature is not None else [], breakdown))
 
     if progress_callback:
         progress_callback(0.8, "建立 By OM...")
@@ -663,7 +796,7 @@ def generate_excel_overstock_p90d(
     _write_op90d_table(ws_om,
                        list(by_om.columns) if by_om is not None else _OP90D_BY_OM_COLUMNS,
                        by_om, progress_callback, 0.8, 0.9, "By OM",
-                       sections=_op90d_sheet_sections(by_om.columns if by_om is not None else [], breakdown))
+                       header_layout=_op90d_header_layout(by_om.columns if by_om is not None else [], breakdown))
 
     if progress_callback:
         progress_callback(0.95, "正在儲存 Excel 檔案...")

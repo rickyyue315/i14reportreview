@@ -301,8 +301,18 @@ def test_breakdown_item_class_missing_column_raises():
         raise AssertionError("缺少 Item Class 時應拋出 ValueError")
 
 
-# ── 5c. 分類維度：全部（三類合併顯示） ──────────────────────────────────────
-def test_breakdown_all_by_shop_sections():
+# ── 5c. 分類維度：三類合併（MAKE UP 為主分類） ──────────────────────────────
+_ALL_HIER_COLS = [
+    "MAKE UP SKU 數",
+    "MAKE UP｜Item Class A1 SKU 數", "MAKE UP｜Item Class B SKU 數", "MAKE UP｜Item Class D SKU 數",
+    "MAKE UP｜01 - SKIN CARE SKU 數", "MAKE UP｜02 - MAKE UP SKU 數", "MAKE UP｜03 - FRAGRANCE SKU 數",
+    "Non-MAKE UP SKU 數",
+    "Non-MAKE UP｜Item Class A1 SKU 數", "Non-MAKE UP｜Item Class B SKU 數", "Non-MAKE UP｜Item Class D SKU 數",
+    "Non-MAKE UP｜01 - SKIN CARE SKU 數", "Non-MAKE UP｜02 - MAKE UP SKU 數", "Non-MAKE UP｜03 - FRAGRANCE SKU 數",
+]
+
+
+def test_breakdown_all_by_shop_hierarchy():
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Item Class": "A1", "Adj. MCH1": "02 - MAKE UP", "Shop Stock Qty (CM)": 10.0},
         {"SKU": 2, "Site Code": "S01", "Item Class": "D", "Adj. MCH1": "01 - SKIN CARE", "Shop Stock Qty (CM)": 5.0},
@@ -312,30 +322,27 @@ def test_breakdown_all_by_shop_sections():
     _, by_shop, _, by_nature, by_om, warnings = transform_overstock_p90d(df, breakdown="all")
     assert list(by_shop.columns) == [
         "Site Code", "Shop Name", "OM", "Shop Nature", "P90D 0 Sales SKU 總數",
-        "MAKE UP SKU 數", "Non-MAKE UP SKU 數",
-        "Item Class A1 SKU 數", "Item Class B SKU 數", "Item Class D SKU 數",
-        "01 - SKIN CARE SKU 數", "02 - MAKE UP SKU 數", "03 - FRAGRANCE SKU 數",
-        "Shop Stock Qty (CM) 總數",
-    ]
+    ] + _ALL_HIER_COLS + ["Shop Stock Qty (CM) 總數"]
     s01 = by_shop[by_shop["Site Code"] == "S01"].iloc[0]
     assert int(s01["P90D 0 Sales SKU 總數"]) == 2
     assert int(s01["MAKE UP SKU 數"]) == 1
+    assert int(s01["MAKE UP｜Item Class A1 SKU 數"]) == 1
+    assert int(s01["MAKE UP｜Item Class D SKU 數"]) == 0
+    assert int(s01["MAKE UP｜02 - MAKE UP SKU 數"]) == 1
     assert int(s01["Non-MAKE UP SKU 數"]) == 1
-    assert int(s01["Item Class A1 SKU 數"]) == 1
-    assert int(s01["Item Class B SKU 數"]) == 0
-    assert int(s01["Item Class D SKU 數"]) == 1
-    assert int(s01["02 - MAKE UP SKU 數"]) == 1
-    assert int(s01["03 - FRAGRANCE SKU 數"]) == 0
+    assert int(s01["Non-MAKE UP｜Item Class D SKU 數"]) == 1
+    assert int(s01["Non-MAKE UP｜01 - SKIN CARE SKU 數"]) == 1
     total = by_shop[by_shop["Site Code"] == "總計"].iloc[0]
     assert int(total["P90D 0 Sales SKU 總數"]) == 3
-    assert int(total["Item Class B SKU 數"]) == 1
+    assert int(total["MAKE UP SKU 數"]) == 1
+    assert int(total["Non-MAKE UP SKU 數"]) == 2
+    assert int(total["Non-MAKE UP｜Item Class B SKU 數"]) == 1
+    # 主分類小計 ＝ 其下 Item Class 分項之和
+    assert int(total["Non-MAKE UP SKU 數"]) == sum(
+        int(total[c]) for c in total.index if c.startswith("Non-MAKE UP｜Item Class"))
     assert not warnings
-    assert list(by_nature.columns)[4:-1] == [
-        "MAKE UP SKU 數", "Non-MAKE UP SKU 數",
-        "Item Class A1 SKU 數", "Item Class B SKU 數", "Item Class D SKU 數",
-        "01 - SKIN CARE SKU 數", "02 - MAKE UP SKU 數", "03 - FRAGRANCE SKU 數",
-    ]
-    assert list(by_om.columns)[4:-1] == list(by_nature.columns)[4:-1]
+    assert list(by_nature.columns)[4:-1] == _ALL_HIER_COLS
+    assert list(by_om.columns)[4:-1] == _ALL_HIER_COLS
     _no_banned(by_shop)
     _no_banned(by_nature)
     _no_banned(by_om)
@@ -348,12 +355,15 @@ def test_breakdown_all_blank_groups_no_name_collision():
     ])
     _, by_shop, _, _, _, warnings = transform_overstock_p90d(df, breakdown="all")
     cols = list(by_shop.columns)
-    # Item Class 與 Adj. MCH1 的「空白」欄名不相撞
-    assert "Item Class 空白 SKU 數" in cols
-    assert "空白 SKU 數" in cols
+    # 兩個主分類下，Item Class 與 Adj. MCH1 的「空白」欄名互不相撞
+    assert "MAKE UP｜Item Class 空白 SKU 數" in cols
+    assert "MAKE UP｜空白 SKU 數" in cols
+    assert "Non-MAKE UP｜Item Class 空白 SKU 數" in cols
+    assert "Non-MAKE UP｜空白 SKU 數" in cols
     total = by_shop[by_shop["Site Code"] == "總計"].iloc[0]
-    assert int(total["Item Class 空白 SKU 數"]) == 1
-    assert int(total["空白 SKU 數"]) == 1
+    assert int(total["Non-MAKE UP｜Item Class 空白 SKU 數"]) == 1
+    assert int(total["Non-MAKE UP｜空白 SKU 數"]) == 1
+    assert int(total["MAKE UP SKU 數"]) == 0
     assert any("Item Class" in w for w in warnings)
     assert any("Adj. MCH1" in w for w in warnings)
     _no_banned(by_shop)
@@ -362,13 +372,14 @@ def test_breakdown_all_blank_groups_no_name_collision():
 def test_breakdown_all_missing_item_class_column_graceful():
     df = _df([{"SKU": 1}]).drop(columns=["Item Class"])
     _, by_shop, _, _, _, warnings = transform_overstock_p90d(df, breakdown="all")
-    assert "Item Class 空白 SKU 數" in by_shop.columns  # 不抛錯，整欄歸入「空白」組
+    # 不抛錯，整欄歸入「空白」組
+    assert "MAKE UP｜Item Class 空白 SKU 數" in by_shop.columns
     total = by_shop[by_shop["Site Code"] == "總計"].iloc[0]
-    assert int(total["Item Class 空白 SKU 數"]) == 1
+    assert int(total["Non-MAKE UP｜Item Class 空白 SKU 數"]) == 1
     assert any("Item Class" in w for w in warnings)
 
 
-def test_breakdown_all_excel_two_row_header():
+def test_breakdown_all_excel_three_row_header():
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Item Class": "A1", "Adj. MCH1": "02 - MAKE UP", "Shop Stock Qty (CM)": 10.0},
         {"SKU": 2, "Site Code": "S01", "Item Class": "D", "Adj. MCH1": "01 - SKIN CARE", "Shop Stock Qty (CM)": 5.0},
@@ -379,23 +390,30 @@ def test_breakdown_all_excel_two_row_header():
     buf = generate_excel_overstock_p90d(by_shop, top10, by_nature, by_om, None, breakdown="all")
     wb = load_workbook(BytesIO(buf.getvalue()), data_only=True)
     ws = wb["By Shop"]
-    # 第一行：節標題與前後欄（上下合併）；第二行：分項表頭
+    # 第 1 行：主分類；第 2 行：次分類與主分類小計；第 3 行：分項表頭；基礎欄貫穿三行
     row1 = [c.value for c in ws[1]]
     row2 = [c.value for c in ws[2]]
-    assert row1[0] == "Site Code"  # 前欄第一行顯示、上下合併
-    assert "MAKE UP 分類" in row1 and "Item Class" in row1 and "Adj. MCH1" in row1
-    assert row2[5:8] == ["MAKE UP SKU 數", "Non-MAKE UP SKU 數", "Item Class A1 SKU 數"]
+    row3 = [c.value for c in ws[3]]
+    assert row1[0] == "Site Code" and row1[5] == "MAKE UP" and row1[12] == "Non-MAKE UP"
+    assert row2[5] == "MAKE UP SKU 數" and row2[12] == "Non-MAKE UP SKU 數"  # 小計垂直合併 2–3 行
+    assert row2[6] == "Item Class" and row2[9] == "Adj. MCH1"
+    assert row2[13] == "Item Class" and row2[16] == "Adj. MCH1"
+    assert row3[6] == "MAKE UP｜Item Class A1 SKU 數"
+    assert row3[9] == "MAKE UP｜01 - SKIN CARE SKU 數"
     merged = {str(r) for r in ws.merged_cells.ranges}
-    assert {"A1:A2", "B1:B2", "C1:C2", "D1:D2", "E1:E2", "N1:N2"} <= merged  # 前後欄上下合併
-    assert "F1:G1" in merged and "H1:J1" in merged and "K1:M1" in merged  # 三節水平合併
-    assert ws.cell(row=3, column=1).value == "S01"  # 資料由第三行開始
+    assert {"A1:A3", "B1:B3", "C1:C3", "D1:D3", "E1:E3", "T1:T3"} <= merged  # 基礎欄貫穿
+    assert "F1:L1" in merged and "M1:S1" in merged  # 主分類橫跨
+    assert "F2:F3" in merged and "M2:M3" in merged  # 小計垂直合併
+    assert "G2:I2" in merged and "J2:L2" in merged  # MAKE UP 下次分類
+    assert "N2:P2" in merged and "Q2:S2" in merged  # Non-MAKE UP 下次分類
+    assert ws.cell(row=4, column=1).value == "S01"  # 資料由第四行開始
     # Top 10 店舖回覆不受合併維度影響，維持單行表頭
     top_row1 = [c.value for c in wb["Top 10 店舖回覆"][1]]
     assert top_row1[0] == "Site Code" and "店舖回覆" in top_row1
 
 
 def test_breakdown_all_excel_merges_no_overlap():
-    """分佈表基礎欄（P90D 0 Sales SKU 數）不得誤併入分節；所有合併範圍不得相交（Excel 拒收重疊合併）。"""
+    """分佈表基礎欄（P90D 0 Sales SKU 數）不得誤併入次分類；所有合併範圍不得相交（Excel 拒收重疊合併）。"""
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Shop Nature": "Tourist", "OM": "OM1",
          "Item Class": "A1", "Adj. MCH1": "02 - MAKE UP", "Shop Stock Qty (CM)": 10.0},
@@ -415,11 +433,11 @@ def test_breakdown_all_excel_merges_no_overlap():
                     coord = c.coordinate
                     assert coord not in cells, f"{name} 合併範圍重疊：{r}"
                     cells.add(coord)
-        # 分佈表的「P90D 0 Sales SKU 數」屬基礎欄：上下合併而非併入分節
+        # 分佈表的「P90D 0 Sales SKU 數」屬基礎欄：貫穿三行表頭而非併入次分類
         if name != "By Shop":
-            assert "C1:C2" in ranges
+            assert "C1:C3" in ranges
             assert ws["C1"].value == "P90D 0 Sales SKU 數"
-            assert ws["C2"].value is None
+            assert ws["C2"].value is None and ws["C3"].value is None
 
 
 # ── 6. Excel 結構 ────────────────────────────────────────────────────────
