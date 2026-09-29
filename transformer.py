@@ -538,37 +538,5 @@ from modes.hybrid import *  # noqa: F401,F403
 from modes.forecast import *  # noqa: F401,F403
 
 
-# ─── 銷售損失量化 Review：實作已遷至 modes/sales_loss.py（墊片 re-export）───
-from modes.sales_loss import *  # noqa: F401,F403
-
-
-# ─── 積壓資金 Review：實作已遷至 modes/excess_capital.py（墊片 re-export）───
-from modes.excess_capital import *  # noqa: F401,F403
-
-
-# ─── RP Type 覆核 Review：實作已遷至 modes/rp_review.py（墊片 re-export）───
-from modes.rp_review import *  # noqa: F401,F403
-
-
-# ─── D001 健康檢查 Review：實作已遷至 modes/d001_health.py（墊片 re-export）───
-from modes.d001_health import *  # noqa: F401,F403
-
-
-# ─── 新品追蹤 Review：實作已遷至 modes/new_sku.py（墊片 re-export）───
-from modes.new_sku import *  # noqa: F401,F403
-
-
-# ─── 退場清倉 Review：實作已遷至 modes/phaseout.py（墊片 re-export）───
-from modes.phaseout import *  # noqa: F401,F403
-
-
-# ─── 銷售趨勢 Review：實作已遷至 modes/sales_trend.py（墊片 re-export）───
-from modes.sales_trend import *  # noqa: F401,F403
-
-
-# ─── 績效儀表板 Review：實作已遷至 modes/perf_dashboard.py（墊片 re-export）───
-from modes.perf_dashboard import *  # noqa: F401,F403
-
-
 # ─── P90D 0 Sales Review(Shop回覆)：實作已遷至 modes/overstock_p90d.py（墊片 re-export）───
 from modes.overstock_p90d import *  # noqa: F401,F403

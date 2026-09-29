@@ -79,54 +79,6 @@ MODE_REGISTRY["Stock Impact Analysis (簡化)"] = {
     "generate_excel": "generate_excel_stock_impact_simplified",
 }
 
-MODE_REGISTRY["銷售損失量化 Review"] = {
-    "module": "modes.sales_loss",
-    "transform": "transform_sales_loss",
-    "generate_excel": "generate_excel_sales_loss",
-}
-
-MODE_REGISTRY["積壓資金 Review"] = {
-    "module": "modes.excess_capital",
-    "transform": "transform_excess_capital",
-    "generate_excel": "generate_excel_excess_capital",
-}
-
-MODE_REGISTRY["RP Type 覆核 Review"] = {
-    "module": "modes.rp_review",
-    "transform": "transform_rp_review",
-    "generate_excel": "generate_excel_rp_review",
-}
-
-MODE_REGISTRY["D001 健康檢查 Review"] = {
-    "module": "modes.d001_health",
-    "transform": "transform_d001_health",
-    "generate_excel": "generate_excel_d001_health",
-}
-
-MODE_REGISTRY["新品追蹤 Review"] = {
-    "module": "modes.new_sku",
-    "transform": "transform_new_sku",
-    "generate_excel": "generate_excel_new_sku",
-}
-
-MODE_REGISTRY["退場清倉 Review"] = {
-    "module": "modes.phaseout",
-    "transform": "transform_phaseout",
-    "generate_excel": "generate_excel_phaseout",
-}
-
-MODE_REGISTRY["銷售趨勢 Review"] = {
-    "module": "modes.sales_trend",
-    "transform": "transform_sales_trend",
-    "generate_excel": "generate_excel_sales_trend",
-}
-
-MODE_REGISTRY["績效儀表板 Review"] = {
-    "module": "modes.perf_dashboard",
-    "transform": "transform_perf_dashboard",
-    "generate_excel": "generate_excel_perf_dashboard",
-}
-
 MODE_REGISTRY["P90D 0 Sales Review(Shop回覆)"] = {
     "module": "modes.overstock_p90d",
     "transform": "transform_overstock_p90d",

@@ -1,13 +1,13 @@
 # I14 報表轉換與分析系統
 
-自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）、**Forecast Review**（SKU 級建議訂貨量）、**銷售損失量化 Review**（缺貨損失彙總）、**積壓資金 Review**（滯銷資金彙總）與 **RP Type 覆核 Review**（補貨設定覆核）、**D001 健康檢查 Review**（倉庫備貨檢查）、**新品追蹤 Review**（上市新品追蹤）、**退場清倉 Review**（退場品項清倉）、**銷售趨勢 Review**（銷量變動趨勢）與 **績效儀表板 Review**（績效彙總）等多種模式。
+自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）與 **Forecast Review**（SKU 級建議訂貨量）等多種模式。
 
 ## 功能概述
 
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / Stock Checking / Safety Stock x NetStock Review / Forecast Review / 銷售損失量化 Review / 積壓資金 Review / RP Type 覆核 Review / D001 健康檢查 Review / 新品追蹤 Review / 退場清倉 Review / 銷售趨勢 Review / 績效儀表板 Review |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / Stock Checking / Safety Stock x NetStock Review / Forecast Review |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
@@ -206,93 +206,6 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 8. **輸入檢核** — 共用必要欄位另加本模式嚴格欄（Site Code／三期銷售／P90D／店舖庫存 CM，缺任一即停止）；`Shop Stock Qty (M-2)`／`(M-1)`、D001 PO／Shop PO／在途欄為選填（缺欄計 0、略過該期還原或以 `Shop Stock Qty (LM)` 代理 M-1，並列 warning）；負銷售按 0、負數或非數值庫存按 0（列 warning，不拒絕）
 
 輸出包含 **6 個工作表**：說明（首頁導讀＋本次參數照錄，含 v2 權重與趨勢上限；開啟 Excel 時預設顯示本頁）、Forecast 主表（SKU 級，含 MTD 調整月化與趨勢增速欄；建議訂量欄醒目底色；按 Buyer／Brand／SKU 排序）、店舖覆蓋、按 Buyer 彙總（建議訂量合計分 D001 PO／Shop PO 兩欄）、RAW（重排欄序，不顯示 Item_Shop 與 Value 金額欄；含還原值欄與逐列訊號欄）與 Forecast 摘要（指標卡 8 項＋按 Buyer 表）。
-
-### 銷售損失量化 Review
-
-彙總缺貨造成的銷售損失，按 SKU 與店舖排列補貨優先次序：
-
-1. **受影響判定** — Is Stock Impacted 為真，或 Total Sales Loss (M-2)／(P90D) 大於 0（文字 TRUE／Y／YES／1／是亦視為真）
-2. **By SKU** — 按 Buyer／Brand／SKU 彙總影響店舖數、OOS 期數合計、兩種基準損失合計，按 P90D 損失由大至小排序
-3. **By Shop** — 按 Site Code 彙總影響 SKU 數與兩種基準損失總數，按 P90D 損失由大至小排序
-4. **輸入檢核** — 共用必要欄位另加 Site Code；損失訊號欄（Is Stock Impacted／OOS Periods Count／各損失欄）至少需具備一個，否則停止
-
-輸出包含 **3 個工作表**：RAW（限定 25 個欄位）、By SKU、By Shop。
-
-### 積壓資金 Review
-
-彙總佔用資金最多的滯銷存貨，按 SKU 與店舖排列去庫存優先次序：
-
-1. **積壓判定** — Excess Stock Qty 大於 0，或 Excess Stock Value 大於 0
-2. **By SKU** — 按 Buyer／Brand／SKU 彙總影響店舖數、超額存貨合計、積壓資金合計，按資金由大至小排序
-3. **By Shop** — 按 Site Code 彙總影響 SKU 數與超額存貨總數、資金總值，按資金由大至小排序
-4. **輸入檢核** — 共用必要欄位另加 Site Code；積壓訊號欄（Excess Stock Qty／Excess Stock Value）至少需具備一個，否則停止
-
-輸出包含 **3 個工作表**：RAW（限定 23 個欄位）、By SKU、By Shop。
-
-### RP Type 覆核 Review
-
-檢查可補貨與不可補貨設定與實際銷量是否相符：
-
-1. **疑似應轉 RF** — RP Type 為 ND，且 Sold Qty (P90D)／(M-1)／(CM - MTD) 任一期大於 0（ND 缺貨列優先歸入跟進類）
-2. **ND 缺貨跟進** — RP Type 為 ND，且店舖庫存為 0 或 Is OOS (CM) 為真
-3. **疑似應轉 ND** — RP Type 為 RF，且四期銷售皆為 0 且店舖仍有庫存
-4. **輸入檢核** — 共用必要欄位另加 Site Code 與 RP Type（缺少 RP Type 時停止）；非標準 RP Type 值按 ND 處理並列提示
-
-輸出包含 **3 個工作表**：RAW（含覆核建議欄）、By SKU、By Shop。
-
-### D001 健康檢查 Review
-
-檢查倉庫備貨與店舖需求是否脫節（SKU 級彙總後判定，Vendor 貨不經倉庫，不納入檢查）：
-
-1. **D001 缺貨需補** — D001 淨庫存 ≤ 0，且店舖總月銷 ＞ 0
-2. **倉庫積壓** — D001 淨庫存 ＞ 0，且店舖總月銷 ＝ 0
-3. **覆蓋偏低** — 店舖總月銷 ＞ 0，且（D001 淨庫存＋在途在訂合計）＜ 店舖總月銷（在途在訂＝D001 在訂＋店舖在訂＋待收貨）
-4. **輸入檢核** — 共用必要欄位另加 Site Code、D001 Net Stock Qty (CM)、Shop Stock Qty (CM)、Sold Qty (P90D)（缺任一即停止）
-
-輸出包含 **3 個工作表**：D001 檢查（SKU 級主表）、By Buyer、RAW（需跟進 SKU 的店舖列）。
-
-### 新品追蹤 Review
-
-追蹤上市 90 天內新品的鋪貨與起量情況：
-
-1. **新品判定** — Launch Date 可解析，且參考日期 − Launch Date 為 0 至 90 天（未來日期與無法解析視為非新品；參考日期於參數區設定，預設昨日）
-2. **起量狀態** — Sold Qty (M-2)／(M-1)／(CM - MTD)／(P90D) 任一期大於 0 → 已起量，否則未起量
-3. **By SKU** — 按 Buyer／Brand／SKU 彙總鋪貨店舖數、有銷店舖數、總庫存、P90D 總銷量，按上市日期由新至舊排序
-4. **輸入檢核** — 共用必要欄位另加 Site Code 與 Launch Date（缺任一即停止）
-
-輸出包含 **3 個工作表**：RAW（含上市日數與起量狀態欄）、By SKU、By Shop。
-
-### 退場清倉 Review
-
-找出已停產或疑似應退場品項的殘留庫存，建議清倉安排：
-
-1. **狀態退場** — Item Status 含退場關鍵字（下市／停產／退場／停止／結束／下架／discont／phase out／obsolete／delist／dead），且店舖仍有庫存 → Warehouse 貨「建議退倉」（退倉量＝店舖庫存），Vendor 貨「另有安排」
-2. **檢視退場** — RP Type 為 ND，且四期銷售皆為 0 且店舖仍有庫存（狀態未標示退場）
-3. **輸入檢核** — 共用必要欄位另加 Site Code（缺少時停止）；Item Status 缺欄時只按第 2 類檢視並列提示；Supply Source 缺欄時全視 Warehouse 貨
-
-輸出包含 **3 個工作表**：RAW（含清倉建議欄）、By SKU、By Shop。
-
-### 銷售趨勢 Review
-
-比較近兩個完整月份（M-2 → M-1）銷量變動，找出上升與下跌品項：
-
-1. **上升** — M-2 為 0 且 M-1 大於 0，或 M-1 較 M-2 增長 20% 以上
-2. **下跌** — M-1 較 M-2 下跌 20% 以上
-3. **持平** — 其餘（變動不足 20%）；三期皆零銷售的 SKU 不納入
-4. **輸入檢核** — 共用必要欄位另加 Site Code、Sold Qty (M-2)、Sold Qty (M-1)、Sold Qty (CM - MTD)（缺任一即停止）；CM-MTD 為未完整月份，只作參考顯示
-
-輸出包含 **3 個工作表**：RAW（含趨勢分類欄）、By SKU（含變動率與覆蓋日數）、By Shop。
-
-### 績效儀表板 Review
-
-按 Buyer、Brand、OM 三個維度彙總銷售、缺貨與過剩表現：
-
-1. **銷售欄** — Net Sales (CM - MTD)，缺欄時退回 Net Sales (M-1)／(M-2)；三者皆缺時停止
-2. **缺貨率** — 店舖庫存為 0 的列數 ÷ 總列數；**過剩率** — Shop Stock Status 為 Overstock 開頭的列數 ÷ 總列數
-3. **ABC 分級** — 各維度內按銷售合計由大至小累計佔比，80% 內為 A，95% 內為 B，其餘為 C（銷售最高者恆為 A）
-4. **輸入檢核** — 共用必要欄位另加 Site Code（缺少時停止）；全量列為母體，不過濾
-
-輸出包含 **4 個工作表**：By Buyer、By Brand、By OM、RAW（比率欄以百分比顯示）。
 
 ## Excel 輸出結構
 
