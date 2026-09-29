@@ -177,7 +177,7 @@ MODES = [
 - 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序，方便識別最多店舖積壓的 SKU
 - 按 Buyer 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序，方便識別最多店舖積壓的採購負責人
 - 六個工作表均不含 Value／COGS／GP 欄位
-- 輸出：By Shop、店舖90日Top 10無賣SKU回覆、By SKU、By Buyer、By Nature、By OM
+- 輸出：By Shop、店舖90日零銷售Top 10 SKU回覆、By SKU、By Buyer、By Nature、By OM
      """,
      """
 針對 `Shop Stock Status` 去除前後空格後完全相符者收錄：

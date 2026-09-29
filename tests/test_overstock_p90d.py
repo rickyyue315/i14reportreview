@@ -459,7 +459,7 @@ def test_excel_four_sheets_no_banned_headers():
     _, by_shop, top10, by_nature, by_om, _ = transform_overstock_p90d(df)
     buf = generate_excel_overstock_p90d(by_shop, top10, by_nature, by_om, None)
     wb = load_workbook(BytesIO(buf.getvalue()), data_only=True)
-    assert wb.sheetnames == ["By Shop", "店舖90日Top 10無賣SKU回覆", "By Nature", "By OM"]
+    assert wb.sheetnames == ["By Shop", "店舖90日零銷售Top 10 SKU回覆", "By Nature", "By OM"]
     import re
     for ws in wb.worksheets:
         for cell in ws[1]:
@@ -475,7 +475,7 @@ def test_excel_empty_result_still_four_sheets():
     _, by_shop, top10, by_nature, by_om, _ = transform_overstock_p90d(df)
     buf = generate_excel_overstock_p90d(by_shop, top10, by_nature, by_om, None)
     wb = load_workbook(BytesIO(buf.getvalue()), data_only=True)
-    assert wb.sheetnames == ["By Shop", "店舖90日Top 10無賣SKU回覆", "By Nature", "By OM"]
+    assert wb.sheetnames == ["By Shop", "店舖90日零銷售Top 10 SKU回覆", "By Nature", "By OM"]
 
 
 def test_excel_breakdown_dynamic_headers():
@@ -563,7 +563,7 @@ def test_excel_with_by_buyer_six_sheets():
         by_shop, top10, by_nature, by_om, None, by_sku=by_sku, by_buyer=by_buyer,
     )
     wb = load_workbook(BytesIO(buf.getvalue()), data_only=True)
-    assert wb.sheetnames == ["By Shop", "店舖90日Top 10無賣SKU回覆", "By Nature", "By OM", "By SKU", "By Buyer"]
+    assert wb.sheetnames == ["By Shop", "店舖90日零銷售Top 10 SKU回覆", "By Nature", "By OM", "By SKU", "By Buyer"]
     assert [c.value for c in wb["By Buyer"][1]] == list(_OP90D_BY_BUYER_COLUMNS)
     import re
     for cell in wb["By Buyer"][1]:

@@ -13,7 +13,7 @@ MAKE UP 判定：``Adj. MCH1`` 去除前後空格後等於 ``02 - MAKE UP`` 者�
 1. By Shop — 各店舖 P90D 0 Sales SKU 總數（已刪除重複）、庫存總數及各分類 SKU 數與庫存總數；
    分類維度可切換：MAKE UP 分類、Item Class、Adj. MCH1、交叉維度（MAKE UP × Item Class、
    MAKE UP × Adj. MCH1：每個店舖／分組按 MAKE UP／Non-MAKE UP 逐列，欄為次分類分項與小計）
-2. 店舖90日Top 10無賣SKU回覆 — 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列
+2. 店舖90日零銷售Top 10 SKU回覆 — 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列
    （預設只限 Non-MAKE UP；勾選包括 MAKE UP 時則一併計算），附店內庫存排名及空白「店舖回覆」欄
 3. By Nature — 按 Shop Nature 分佈（分組欄隨分類維度變動）
 4. By OM — 按 OM 分佈（分組欄隨分類維度變動）
@@ -842,7 +842,7 @@ def generate_excel_overstock_p90d(
     ``by_sku``／``by_buyer`` 為 None 時略過對應工作表（保持舊有呼叫相容）；
     傳入統計表時分別另加「By SKU」及「By Buyer」工作表。
     """
-    for name, frame in (("By Shop", by_shop), ("店舖90日Top 10無賣SKU回覆", top10), ("By Nature", by_nature), ("By OM", by_om),
+    for name, frame in (("By Shop", by_shop), ("店舖90日零銷售Top 10 SKU回覆", top10), ("By Nature", by_nature), ("By OM", by_om),
                           ("By SKU", by_sku), ("By Buyer", by_buyer)):
         if frame is not None and not frame.empty:
             banned = [c for c in frame.columns if _is_banned_column(c)]
@@ -860,11 +860,11 @@ def generate_excel_overstock_p90d(
                        by_shop, progress_callback, 0.0, 0.22, "By Shop")
 
     if progress_callback:
-        progress_callback(0.28, "建立店舖90日Top 10無賣SKU回覆...")
-    ws_top = wb.create_sheet(title="店舖90日Top 10無賣SKU回覆")
+        progress_callback(0.28, "建立店舖90日零銷售Top 10 SKU回覆...")
+    ws_top = wb.create_sheet(title="店舖90日零銷售Top 10 SKU回覆")
     _write_op90d_table(ws_top,
                        list(top10.columns) if top10 is not None else _OP90D_TOP10_COLUMNS,
-                       top10, progress_callback, 0.28, 0.55, "店舖90日Top 10無賣SKU回覆", auto_filter=True)
+                       top10, progress_callback, 0.28, 0.55, "店舖90日零銷售Top 10 SKU回覆", auto_filter=True)
 
     if progress_callback:
         progress_callback(0.6, "建立 By Nature...")

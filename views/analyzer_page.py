@@ -2489,7 +2489,7 @@ if uploaded_file is not None:
 
         if mode == "P90D 0 Sales Review(Shop回覆)":
             st.checkbox(
-                "💄 店舖90日Top 10無賣SKU回覆包括 MAKE UP SKU",
+                "💄 店舖90日零銷售Top 10 SKU回覆包括 MAKE UP SKU",
                 value=False,
                 key="op90d_include_makeup",
                 help="預設只取 Non-MAKE UP 列；勾選後 Top 10 會一併計算 MAKE UP SKU（By Shop、By Nature、By OM 不受影響，維持分類分項統計）。"
@@ -2507,7 +2507,7 @@ if uploaded_file is not None:
                 index=0,
                 horizontal=True,
                 key="op90d_breakdown",
-                help="決定 By Shop、By Nature、By OM 的分組欄位；選擇交叉維度（MAKE UP × …）時，每個店舖／分組按 MAKE UP／Non-MAKE UP 逐列，欄為次分類分項 SKU 數與小計；店舖90日Top 10無賣SKU回覆不受影響。",
+                help="決定 By Shop、By Nature、By OM 的分組欄位；選擇交叉維度（MAKE UP × …）時，每個店舖／分組按 MAKE UP／Non-MAKE UP 逐列，欄為次分類分項 SKU 數與小計；店舖90日零銷售Top 10 SKU回覆不受影響。",
             )
 
         st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -3726,7 +3726,7 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_shop, tab_top, tab_sku, tab_buyer, tab_nature, tab_om = st.tabs(["🏪 By Shop（店舖統計）", "📝 店舖90日Top 10無賣SKU回覆", "🔢 By SKU（出現店舖數）", "👤 By Buyer（出現店舖數）", "🏬 By Nature", "🗺️ By OM"])
+            tab_shop, tab_top, tab_sku, tab_buyer, tab_nature, tab_om = st.tabs(["🏪 By Shop（店舖統計）", "📝 店舖90日零銷售Top 10 SKU回覆", "🔢 By SKU（出現店舖數）", "👤 By Buyer（出現店舖數）", "🏬 By Nature", "🗺️ By OM"])
             _op90d_bd_name = {"makeup": "MAKE UP 分類", "item_class": "Item Class", "mch1": "Adj. MCH1",
                               "makeup_item": "MAKE UP × Item Class", "makeup_mch1": "MAKE UP × Adj. MCH1"}.get(
                 st.session_state.get("op90d_breakdown_value", "makeup"), "MAKE UP 分類")
