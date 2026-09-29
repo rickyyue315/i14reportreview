@@ -174,8 +174,9 @@ MODES = [
 - 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列（預設只限 Non-MAKE UP；勾選「包括 MAKE UP SKU」後一併計算），附店內庫存排名及空白「店舖回覆」欄供店舖填寫
 - Top 10 欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
 - 按 Shop Nature 及 OM 統計分佈（涉及店舖數、SKU 數、行數、分類分項 SKU 數、庫存總數，分組欄隨分類維度變動）
-- 四個工作表均不含 Value／COGS／GP 欄位
-- 輸出：By Shop、Top 10 店舖回覆、By Nature、By OM
+- 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序，方便識別最多店舖積壓的 SKU
+- 五個工作表均不含 Value／COGS／GP 欄位
+- 輸出：By Shop、Top 10 店舖回覆、By SKU、By Nature、By OM
      """,
      """
 針對 `Shop Stock Status` 去除前後空格後完全相符者收錄：

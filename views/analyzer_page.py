@@ -65,6 +65,7 @@ from transformer import (
     transform_sales_trend, generate_excel_sales_trend,
     transform_perf_dashboard, generate_excel_perf_dashboard,
     transform_overstock_p90d, generate_excel_overstock_p90d,
+    _build_op90d_by_sku,
     _HYBRID_FULL_SAFETY_SHEET,
 )
 import time
@@ -280,7 +281,7 @@ MODE_DESCRIPTIONS = {
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
     "Stock Impact Analysis (簡化)": "快速檢視各品項三期存貨與銷售趨勢。",
     "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
-    "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 須大於 0），分類維度可切換 MAKE UP／Item Class／Adj. MCH1，或交叉維度 MAKE UP × Item Class／MAKE UP × Adj. MCH1（按主分類逐列交叉次分類）；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈。",
+    "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 須大於 0），分類維度可切換 MAKE UP／Item Class／Adj. MCH1，或交叉維度 MAKE UP × Item Class／MAKE UP × Adj. MCH1（按主分類逐列交叉次分類）；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈，另按 SKU 統計出現店舖數。",
     "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
     "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
@@ -359,7 +360,7 @@ MODE_KEYS = {
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "sku_soh_summary": None, "excel_data": None, "warnings": []},
     "Past 90 Days 0 Sales": {"prefix": "p90ds_", "processed": False, "summary_df": None, "raw_df": None, "excel_data": None, "warnings": []},
-    "P90D 0 Sales Review(Shop回覆)": {"prefix": "op90d_", "processed": False, "raw_df": None, "by_shop": None, "top10": None, "by_nature": None, "by_om": None, "excel_data": None, "warnings": [], "include_makeup": False, "breakdown_value": "makeup"},
+    "P90D 0 Sales Review(Shop回覆)": {"prefix": "op90d_", "processed": False, "raw_df": None, "by_shop": None, "top10": None, "by_nature": None, "by_om": None, "by_sku": None, "excel_data": None, "warnings": [], "include_makeup": False, "breakdown_value": "makeup"},
     "Stock Checking": {"prefix": "stock_chk_", "processed": False, "summary_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
     "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "sc_summary": None, "diagnosis": None, "diagnosis_om": None, "diag_summary": None, "stats": None, "excel_data": None, "params": None, "warnings": []},
     "Forecast Review": {"prefix": "fc_", "processed": False, "main_df": None, "coverage_df": None, "buyer_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
@@ -2686,13 +2687,15 @@ if uploaded_file is not None:
                         include_makeup=bool(st.session_state.get("op90d_include_makeup", False)),
                         breakdown=_op90d_breakdown,
                     )
-                    buf = generate_excel_overstock_p90d(by_shop_df, top10_df, by_nature_df, by_om_df, progress_callback=_cb_excel, include_raw=_include_raw)
+                    by_sku_df = _build_op90d_by_sku(raw_df)
+                    buf = generate_excel_overstock_p90d(by_shop_df, top10_df, by_nature_df, by_om_df, progress_callback=_cb_excel, include_raw=_include_raw, by_sku=by_sku_df)
                     st.session_state.op90d_processed = True
                     st.session_state.op90d_raw_df = raw_df
                     st.session_state.op90d_by_shop = by_shop_df
                     st.session_state.op90d_top10 = top10_df
                     st.session_state.op90d_by_nature = by_nature_df
                     st.session_state.op90d_by_om = by_om_df
+                    st.session_state.op90d_by_sku = by_sku_df
                     st.session_state.op90d_excel_data = buf
                     st.session_state.op90d_warnings = _warnings
                     st.session_state.op90d_breakdown_value = _op90d_breakdown
@@ -3624,6 +3627,12 @@ if uploaded_file is not None:
             top10_df = st.session_state.op90d_top10
             by_nature_df = st.session_state.op90d_by_nature
             by_om_df = st.session_state.op90d_by_om
+            by_sku_df = st.session_state.get("op90d_by_sku")
+            if by_sku_df is None and raw_df is not None and not raw_df.empty:
+                try:
+                    by_sku_df = _build_op90d_by_sku(raw_df)
+                except Exception:
+                    by_sku_df = None
             excel_data = st.session_state.op90d_excel_data
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
@@ -3705,7 +3714,7 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_shop, tab_top, tab_nature, tab_om = st.tabs(["🏪 By Shop（店舖統計）", "📝 Top 10 店舖回覆", "🏬 By Nature", "🗺️ By OM"])
+            tab_shop, tab_top, tab_sku, tab_nature, tab_om = st.tabs(["🏪 By Shop（店舖統計）", "📝 Top 10 店舖回覆", "🔢 By SKU（出現店舖數）", "🏬 By Nature", "🗺️ By OM"])
             _op90d_bd_name = {"makeup": "MAKE UP 分類", "item_class": "Item Class", "mch1": "Adj. MCH1",
                               "makeup_item": "MAKE UP × Item Class", "makeup_mch1": "MAKE UP × Adj. MCH1"}.get(
                 st.session_state.get("op90d_breakdown_value", "makeup"), "MAKE UP 分類")
@@ -3735,6 +3744,13 @@ if uploaded_file is not None:
                 st.markdown(f"#### OM 分佈（{_op90d_bd_name}）")
                 if by_om_df is not None and not by_om_df.empty:
                     st.dataframe(by_om_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_sku:
+                st.markdown("#### 各 SKU 出現 P90D 0 Sales 的店舖數（按出現店舖數由大至小排序）")
+                if by_sku_df is not None and not by_sku_df.empty:
+                    st.dataframe(by_sku_df.head(200), width='stretch', hide_index=True)
+                    st.caption(f"僅顯示前 200 筆，完整 {len(by_sku_df):,} 筆資料將包含在下載的 Excel 報表中。")
                 else:
                     st.info("無符合資料")
 
