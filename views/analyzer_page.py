@@ -429,10 +429,14 @@ if uploaded_file is not None:
             _raw = uploaded_file.read()
             _t_read0 = time.time()
             df_input = None
-            # P0：優先向量化讀取（pandas＋openpyxl），較逐列 iter_rows 快數倍
+            # P0：優先 Rust 向量化解析（calamine，較 openpyxl 快 6 至 10 倍）；
+            # 未安裝或解析失敗時退回 pandas＋openpyxl，最後才用逐列 iter_rows 相容特殊格式
             try:
                 _prog.progress(0.3, text="讀取檔案中... 30% | 向量化解析中...")
-                df_input = pd.read_excel(BytesIO(_raw), engine="openpyxl")
+                try:
+                    df_input = pd.read_excel(BytesIO(_raw), engine="calamine")
+                except Exception:
+                    df_input = pd.read_excel(BytesIO(_raw), engine="openpyxl")
             except Exception:
                 df_input = None
             if df_input is None:
