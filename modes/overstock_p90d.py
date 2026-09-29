@@ -196,10 +196,11 @@ _OP90D_BY_BUYER_COLUMNS = [
 ]
 
 # 以文字形式輸出的識別欄：Excel 內不套用千分位數值格式
+# Launch Date 亦列入——來源常為 YYYYMMDD 數字（如 20260501），套用千分位會誤顯示為 20,260,501
 _OP90D_TEXT_COLUMNS = frozenset({
     "Site Code", "Shop Name", "OM", "Shop Nature", "Buyer", "Brand", "SKU",
     "SKU Desc", "Adj. MCH1", "MAKE UP 分類", "RP Type", "Item Status",
-    "Supply Source", "店舖回覆", "Item Class",
+    "Supply Source", "店舖回覆", "Item Class", "Launch Date",
 })
 
 

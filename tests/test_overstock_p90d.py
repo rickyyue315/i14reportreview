@@ -551,6 +551,22 @@ def test_by_buyer_empty():
     assert list(by_buyer.columns) == list(_OP90D_BY_BUYER_COLUMNS)
 
 
+def test_by_sku_launch_date_no_thousand_separator():
+    # 來源 Launch Date 常為 YYYYMMDD 數字；Excel 不得套用千分位（否則 20260501 顯示為 20,260,501）
+    df = _df([
+        {"SKU": 1, "Launch Date": 20260501.0},
+    ])
+    raw, by_shop, top10, by_nature, by_om, _ = transform_overstock_p90d(df)
+    by_sku = _build_op90d_by_sku(raw)
+    buf = generate_excel_overstock_p90d(by_shop, top10, by_nature, by_om, None, by_sku=by_sku)
+    wb = load_workbook(BytesIO(buf.getvalue()), data_only=True)
+    hdr = [c.value for c in wb["By SKU"][1]]
+    col = hdr.index("Launch Date") + 1
+    assert wb["By SKU"].cell(row=2, column=col).value == 20260501.0
+    for row in range(2, wb["By SKU"].max_row + 1):
+        assert wb["By SKU"].cell(row=row, column=col).number_format != "#,##0"
+
+
 def test_excel_with_by_buyer_six_sheets():
     df = _df([
         {"SKU": 1, "Buyer": "B1", "Adj. MCH1": "02 - MAKE UP"},
