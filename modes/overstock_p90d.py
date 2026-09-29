@@ -139,6 +139,7 @@ _OP90D_TOP10_COLUMNS = [
     "Adj. MCH1",
     "MAKE UP 分類",
     "RP Type",
+    "Adj. Safety Stock",
     "Item Status",
     "Supply Source",
     "Shop Stock Qty (LM)",
@@ -148,7 +149,6 @@ _OP90D_TOP10_COLUMNS = [
     "Sold Qty (M-1)",
     "Sold Qty (CM - MTD)",
     "Shop On Order PO Qty (CM)",
-    "Adj. Safety Stock",
     "店舖回覆",
 ]
 

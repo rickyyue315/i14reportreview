@@ -169,6 +169,14 @@ def test_top10_columns_supply_lm_no_status_excess():
     assert list(top10["Supply Source"]) == ["Warehouse"]
 
 
+def test_top10_safety_after_rp_type():
+    df = _df([{"SKU": 1}])
+    _, _, top10, _, _, _ = transform_overstock_p90d(df)
+    cols = list(top10.columns)
+    assert "Adj. Safety Stock" in cols and "RP Type" in cols
+    assert cols.index("Adj. Safety Stock") == cols.index("RP Type") + 1
+
+
 def test_top10_multi_shop():
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Shop Stock Qty (CM)": 9.0},
