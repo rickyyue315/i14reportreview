@@ -1,5 +1,26 @@
 # 版本記錄
 
+## v1.65.0 (2026-09-29)
+
+Safety Stock 月度變化分析加入 RP Type 轉變統計（重點為 RF→ND 與 ND→RF）；其餘模式零變動：
+
+- **統計** — 新增 `_build_safm_rp_summary()`：RP轉變 × 月份配對的事件數／SKU數＋總計列；`stats` 新增 `rp_rf_to_nd／rp_nd_to_rf` 事件數與 SKU 數
+- **輸出** — Excel 新增「RP Type 變化」工作表（8→9 表）；月度摘要指標卡新增 RF→ND／ND→RF 第三排，每月合計表移至第 16 列
+- **介面** — SKU月度變化分頁新增 RP轉變篩選；新增「🔀 RP Type 變化」分頁；使用說明頁、README 同步
+- **測試** — `tests/test_safety_monthly.py` 新增轉變統計與空表測試；全量通過
+- Change: `version.py` → 1.65.0
+
+## v1.64.0 (2026-09-29)
+
+Safety Stock 月度變化分析三個樞紐改為三段式（每月合計 → 月環比% → 月環比絕對值），四項指標改用全稱；其餘模式零變動：
+
+- **版面** — `modes/safety_monthly.py` `_build_safm_metric_pivot()`：每個指標連續三列（項目＝「{指標} 每月合計」「{指標} 月環比%」「{指標} 月環比」），欄為維度欄＋項目＋各 YEAR-MONTH＋全部合計（環比兩列的全部合計留空）；月環比% 為顯示字串（上月為 0 或首月留空，零變動顯示 0.0%）
+- **指標全稱** — Sold Qty（Sold Qty (CM - MTD) 月化合計）／Net Sales（Net Sales (CM - MTD) 月化合計）／Net Stock Qty（店舖存貨 Shop Stock Qty (CM) 合計）／Safety Stock Qty（Adj. Safety Stock 合計）；SKU 數欄移除
+- **樣式** — 新增 `_write_safm_pivot_sheet()`：項目欄按指標配色分段（Sold 藍／Net 綠／Stock 橙／Safety 紫），總計列加粗灰底，凍結至 C2 欄
+- **介面** — 三個樞紐分頁新增指標篩選；使用說明頁、README 同步
+- **測試** — `tests/test_safety_monthly.py` 改寫樞紐測試並新增零基數留空測試；全量通過
+- Change: `version.py` → 1.64.0
+
 ## v1.63.0 (2026-09-29)
 
 新增第 15 個分析模式**Safety Stock 月度變化分析**——追蹤店舖每月 Safety Stock 原始值變化對生意的影響；其餘 14 個模式計算、欄位、欄序零變動：

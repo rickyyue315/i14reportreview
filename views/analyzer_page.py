@@ -61,7 +61,7 @@ from transformer import (
     _build_op90d_by_sku, _build_op90d_by_buyer,
     _HYBRID_FULL_SAFETY_SHEET,
     transform_safety_monthly, generate_excel_safety_monthly,
-    safety_monthly_dashboard_metrics,
+    safety_monthly_dashboard_metrics, _SAFM_PIVOT_METRICS,
 )
 import time
 import traceback
@@ -4211,46 +4211,85 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_change, tab_mch1, tab_sst, tab_cross, tab_shop, tab_raw = st.tabs([
-                "📋 SKU月度變化", "By Adj. MCH1", "By Adj. SST", "By MCH1×SST", "By Shop", "📄 RAW 明細",
+            tab_change, tab_mch1, tab_sst, tab_cross, tab_shop, tab_rp, tab_raw = st.tabs([
+                "📋 SKU月度變化", "By Adj. MCH1", "By Adj. SST", "By MCH1×SST", "By Shop", "🔀 RP Type 變化", "📄 RAW 明細",
             ])
             with tab_change:
                 st.markdown("#### 每組相鄰月份環比事件（Safety 只看原始值增減；Sold／Net 以月化基準）")
                 if change_df is not None and not change_df.empty:
-                    _safm_filter = st.selectbox(
-                        "Safety 變化篩選",
-                        options=["全部", "增加", "減少", "不變"],
-                        index=0, key="safm_change_filter",
-                        help="只影響下方預覽，不影響 Excel 導出。",
-                    )
-                    _disp = change_df if _safm_filter == "全部" else change_df[change_df["Safety變化分類"] == _safm_filter]
+                    _fcol1, _fcol2 = st.columns(2)
+                    with _fcol1:
+                        _safm_filter = st.selectbox(
+                            "Safety 變化篩選",
+                            options=["全部", "增加", "減少", "不變"],
+                            index=0, key="safm_change_filter",
+                            help="只影響下方預覽，不影響 Excel 導出。",
+                        )
+                    with _fcol2:
+                        _safm_rp_filter = st.selectbox(
+                            "RP轉變篩選",
+                            options=["全部", "RF→RF", "ND→ND", "RF→ND", "ND→RF"],
+                            index=0, key="safm_rp_filter",
+                            help="只影響下方預覽，不影響 Excel 導出；重點觀察 RF→ND 與 ND→RF。",
+                        )
+                    _disp = change_df
+                    if _safm_filter != "全部":
+                        _disp = _disp[_disp["Safety變化分類"] == _safm_filter]
+                    if _safm_rp_filter != "全部":
+                        _disp = _disp[_disp["RP轉變"] == _safm_rp_filter]
                     st.dataframe(_disp.head(200).rename(columns=_display_safety_header), width='stretch', hide_index=True)
                     st.caption(f"共 {len(_disp):,} 列環比事件（按 Brand／SKU／Site Code／本月排序；僅顯示前 200 筆）。")
                 else:
                     st.info("無符合資料")
             with tab_mch1:
-                st.markdown("#### By Adj. MCH1 每月合計（Net／Sold 以月化基準）")
+                st.markdown("#### By Adj. MCH1 三段式樞紐（每月合計 → 月環比% → 月環比）")
+                _safm_m = st.selectbox("指標篩選", options=["全部"] + list(_SAFM_PIVOT_METRICS), index=0, key="safm_mch1_metric")
                 if mch1_df is not None and not mch1_df.empty:
-                    st.dataframe(mch1_df.rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                    _mch1_disp = mch1_df if _safm_m == "全部" else mch1_df[mch1_df["項目"].str.startswith(_safm_m)]
+                    st.dataframe(_mch1_disp.rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                    st.caption("Net Sales 以月化基準加總（2 位小數）；Net Stock Qty 為店舖存貨 Shop Stock Qty (CM) 合計；月環比% 上月為 0 或首月留空。")
                 else:
                     st.info("無符合資料")
             with tab_sst:
-                st.markdown("#### By Adj. SST 每月合計（Net／Sold 以月化基準）")
+                st.markdown("#### By Adj. SST 三段式樞紐（每月合計 → 月環比% → 月環比）")
+                _safm_s = st.selectbox("指標篩選", options=["全部"] + list(_SAFM_PIVOT_METRICS), index=0, key="safm_sst_metric")
                 if sst_df is not None and not sst_df.empty:
-                    st.dataframe(sst_df.rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                    _sst_disp = sst_df if _safm_s == "全部" else sst_df[sst_df["項目"].str.startswith(_safm_s)]
+                    st.dataframe(_sst_disp.rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                    st.caption("Net Sales 以月化基準加總（2 位小數）；Net Stock Qty 為店舖存貨 Shop Stock Qty (CM) 合計；月環比% 上月為 0 或首月留空。")
                 else:
                     st.info("無符合資料")
             with tab_cross:
-                st.markdown("#### By MCH1×SST 每月合計")
+                st.markdown("#### By MCH1×SST 三段式樞紐")
+                _safm_c = st.selectbox("指標篩選", options=["全部"] + list(_SAFM_PIVOT_METRICS), index=0, key="safm_cross_metric")
                 if cross_df is not None and not cross_df.empty:
-                    st.dataframe(cross_df.head(200).rename(columns=_display_safety_header), width='stretch', hide_index=True)
-                    st.caption(f"共 {len(cross_df):,} 列組合；僅顯示前 200 筆。")
+                    _cross_disp = cross_df if _safm_c == "全部" else cross_df[cross_df["項目"].str.startswith(_safm_c)]
+                    st.dataframe(_cross_disp.head(200).rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                    st.caption(f"共 {len(_cross_disp):,} 列；僅顯示前 200 筆。")
                 else:
                     st.info("無符合資料")
             with tab_shop:
                 st.markdown("#### By Shop 每月合計＋環比變化")
                 if shop_df is not None and not shop_df.empty:
                     st.dataframe(shop_df.rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_rp:
+                st.markdown("#### RP Type 轉變 × 月份配對（事件數／SKU數）")
+                _rp_summary = (stats or {}).get("rp_summary")
+                if _rp_summary is None:
+                    try:
+                        from transformer import _build_safm_rp_summary
+                        _rp_summary = _build_safm_rp_summary(change_df)
+                    except (ImportError, AttributeError):
+                        _rp_summary = None
+                if _rp_summary is not None and not _rp_summary.empty:
+                    st.dataframe(_rp_summary, width='stretch', hide_index=True)
+                    st.caption(
+                        f"重點觀察 RF→ND（{int(stats.get('rp_rf_to_nd', 0)):,} 事件／{int(stats.get('rp_rf_to_nd_skus', 0)):,} SKU）"
+                        f"與 ND→RF（{int(stats.get('rp_nd_to_rf', 0)):,} 事件／{int(stats.get('rp_nd_to_rf_skus', 0)):,} SKU）；"
+                        "總計列 SKU 數為不重複 SKU；轉變明細見「📋 SKU月度變化」分頁（RP轉變篩選）。"
+                    )
                 else:
                     st.info("無符合資料")
             with tab_raw:

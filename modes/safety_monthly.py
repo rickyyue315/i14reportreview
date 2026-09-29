@@ -67,7 +67,25 @@ __all__ = [
     "_SAFM_SOLD_ADJ_COLUMN",
     "_SAFM_NET_ADJ_COLUMN",
     "_SAFM_REQUIRED",
+    "_SAFM_PIVOT_METRICS",
+    "_SAFM_RP_ORDER",
+    "_build_safm_rp_summary",
 ]
+
+# 樞紐四項指標（顯示全稱，不用簡稱）：
+# Sold Qty＝Sold Qty (CM - MTD) 月化合計；Net Sales＝Net Sales (CM - MTD) 月化合計；
+# Net Stock Qty＝店舖存貨 Shop Stock Qty (CM) 合計（時點快照）；Safety Stock Qty＝Adj. Safety Stock 合計。
+_SAFM_PIVOT_METRICS = ("Sold Qty", "Net Sales", "Net Stock Qty", "Safety Stock Qty")
+
+# RP Type 轉變固定顯示順序（RF→ND 與 ND→RF 為重點觀察對象，置於後方兩列）
+_SAFM_RP_ORDER = ("RF→RF", "ND→ND", "RF→ND", "ND→RF")
+
+_SAFM_METRIC_COLORS = {
+    "Sold Qty": "4472C4",
+    "Net Sales": "70AD47",
+    "Net Stock Qty": "ED7D31",
+    "Safety Stock Qty": "A855F7",
+}
 
 # 新契約欄名（未經明確要求不得改動）
 _SAFM_YM_COLUMN = "YEAR-MONTH"
@@ -452,6 +470,16 @@ def transform_safety_monthly(
 
     safety_delta_total = int(change_df["Safety變化量"].sum()) if not change_df.empty else 0
     rp_counts = change_df["RP轉變"].value_counts().to_dict() if not change_df.empty else {}
+    if not change_df.empty:
+        _rf_to_nd = change_df["RP轉變"] == "RF→ND"
+        _nd_to_rf = change_df["RP轉變"] == "ND→RF"
+        rp_rf_to_nd = int(_rf_to_nd.sum())
+        rp_nd_to_rf = int(_nd_to_rf.sum())
+        rp_rf_to_nd_skus = int(change_df.loc[_rf_to_nd, "SKU"].nunique())
+        rp_nd_to_rf_skus = int(change_df.loc[_nd_to_rf, "SKU"].nunique())
+    else:
+        rp_rf_to_nd = rp_nd_to_rf = rp_rf_to_nd_skus = rp_nd_to_rf_skus = 0
+    rp_summary = _build_safm_rp_summary(change_df)
     stats = {
         "ym_list": ym_labels,
         "ym_count": len(ym_labels),
@@ -468,6 +496,11 @@ def transform_safety_monthly(
         "safety_same": int((change_df["Safety變化分類"] == "不變").sum()) if not change_df.empty else 0,
         "safety_delta_total": safety_delta_total,
         "rp_counts": {str(k): int(v) for k, v in rp_counts.items()},
+        "rp_rf_to_nd": rp_rf_to_nd,
+        "rp_nd_to_rf": rp_nd_to_rf,
+        "rp_rf_to_nd_skus": rp_rf_to_nd_skus,
+        "rp_nd_to_rf_skus": rp_nd_to_rf_skus,
+        "rp_summary": rp_summary,
     }
     if change_df.empty:
         warnings.append("所有組合皆只有單一月份資料，無相鄰月份環比事件可輸出。")
@@ -483,73 +516,115 @@ def _blank_dim(value: str) -> str:
     return text if text else "空白"
 
 
+def _safm_metric_value(g: pd.DataFrame, metric: str):
+    """維度單月合計（月化基準）：Net Sales 取 2 位小數，其餘取整。"""
+    if metric == "Net Sales":
+        return round(float(g["net_adj"].sum()), 2) if not g.empty else 0.0
+    if metric == "Sold Qty":
+        return int(g["sold_adj"].sum()) if not g.empty else 0
+    if metric == "Net Stock Qty":
+        return int(g["stock"].sum()) if not g.empty else 0
+    return int(g["safety"].sum()) if not g.empty else 0
+
+
+def _safm_mom_pct(curr: float, prev: float):
+    """月環比%（字串）：上月為 0 時回傳 None（留空）；零變動顯示 0.0%。"""
+    try:
+        if float(prev) == 0:
+            return None
+        delta = (float(curr) - float(prev)) / abs(float(prev))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    if delta == 0:
+        return "0.0%"
+    return f"{delta:+.1%}"
+
+
+def _safm_dim_cells(dim_val: str, dim_cols: list[str]) -> dict:
+    if dim_val == "總計":
+        return {c: ("總計" if i == 0 else "") for i, c in enumerate(dim_cols)}
+    if len(dim_cols) == 2:
+        parts = str(dim_val).split("｜", 1)
+        return {
+            "Adj. MCH1": _blank_dim(parts[0] if len(parts) > 0 else ""),
+            "Adj. SST": _blank_dim(parts[1] if len(parts) > 1 else ""),
+        }
+    return {dim_cols[0]: _blank_dim(dim_val)}
+
+
 def _build_safm_metric_pivot(
     monthly: pd.DataFrame, group_keys, header, ym_keys: list[int]
 ) -> pd.DataFrame:
-    """維度每月合計樞紐（月化基準）：每列一維度值，各 YM 五項合計＋全部合計。"""
+    """維度樞紐（三段式：每月合計 → 月環比% → 月環比絕對值，四項指標齊列）。
+
+    每個指標連續三列（項目＝「{指標} 每月合計」「{指標} 月環比%」「{指標} 月環比」），
+    欄為維度欄＋項目＋各 YEAR-MONTH＋全部合計（環比兩列的全部合計留空）。
+    月環比% 為顯示字串（上月為 0 或首月留空）；其餘為數值。
+    """
     if monthly is None or monthly.empty:
         return pd.DataFrame()
     df = monthly.copy()
     if isinstance(group_keys, list):
-        df["_dim1"] = df[group_keys[0]].fillna("").astype(str).str.strip()
-        df["_dim2"] = df[group_keys[1]].fillna("").astype(str).str.strip()
-        df["_dim"] = df["_dim1"] + "｜" + df["_dim2"]
+        df["_d1"] = df[group_keys[0]].fillna("").astype(str).str.strip()
+        df["_d2"] = df[group_keys[1]].fillna("").astype(str).str.strip()
+        df["_dim"] = df["_d1"] + "｜" + df["_d2"]
         dim_cols = ["Adj. MCH1", "Adj. SST"]
-        df["Adj. MCH1"] = df["_dim1"].apply(_blank_dim)
-        df["Adj. SST"] = df["_dim2"].apply(_blank_dim)
     else:
         df["_dim"] = df[group_keys].fillna("").astype(str).str.strip().apply(_blank_dim)
         dim_cols = [header]
-        df[header] = df["_dim"]
     ym_labels = [_ym_label(k // 100, k % 100) for k in ym_keys]
+    dim_vals = sorted(df["_dim"].unique().tolist())
+
+    base: dict[tuple[str, int, str], float] = {}
+    for dim_val in dim_vals:
+        for key in ym_keys:
+            gg = df[(df["_dim"] == dim_val) & (df["_ym"] == key)]
+            for metric in _SAFM_PIVOT_METRICS:
+                base[(dim_val, key, metric)] = _safm_metric_value(gg, metric)
+
+    def _total(dim_val: str | None, key: int, metric: str):
+        vals = [base[(d, key, metric)] for d in (dim_vals if dim_val is None else [dim_val])]
+        return round(float(sum(vals)), 2) if metric == "Net Sales" else int(sum(vals))
+
     rows = []
-    for dim_val, g in df.groupby("_dim", sort=True):
-        row: dict = {}
-        if isinstance(group_keys, list):
-            parts = str(dim_val).split("｜", 1)
-            row["Adj. MCH1"] = _blank_dim(parts[0] if len(parts) > 0 else "")
-            row["Adj. SST"] = _blank_dim(parts[1] if len(parts) > 1 else "")
-        else:
-            row[header] = _blank_dim(dim_val)
-        total_net = 0.0
-        total_sold = 0
-        for key, label in zip(ym_keys, ym_labels):
-            gg = g[g["_ym"] == key]
-            net_sum = round(float(gg["net_adj"].sum()), 2) if not gg.empty else 0.0
-            sold_sum = int(gg["sold_adj"].sum()) if not gg.empty else 0
-            stock_sum = int(gg["stock"].sum()) if not gg.empty else 0
-            safety_sum = int(gg["safety"].sum()) if not gg.empty else 0
-            sku_n = int(gg["_sku"].nunique()) if not gg.empty else 0
-            row[f"Net月化合計({label})"] = net_sum
-            row[f"Sold月化合計({label})"] = sold_sum
-            row[f"Stock合計({label})"] = stock_sum
-            row[f"Safety合計({label})"] = safety_sum
-            row[f"SKU數({label})"] = sku_n
-            total_net += net_sum
-            total_sold += sold_sum
-        row["Net月化合計(全部)"] = round(total_net, 2)
-        row["Sold月化合計(全部)"] = total_sold
-        rows.append(row)
-    out = pd.DataFrame(rows)
-    if out.empty:
-        return out
-    if isinstance(group_keys, list):
-        out = out.sort_values(["Adj. MCH1", "Adj. SST"], kind="stable").reset_index(drop=True)
-        total_row = {"Adj. MCH1": "總計", "Adj. SST": ""}
-    else:
-        out = out.sort_values(header, kind="stable").reset_index(drop=True)
-        total_row = {header: "總計"}
-    for c in out.columns:
-        if c in dim_cols:
-            continue
-        try:
-            total_row[c] = out[c].sum()
-        except TypeError:
-            total_row[c] = None
-    if "Net月化合計(全部)" in total_row:
-        total_row["Net月化合計(全部)"] = round(float(total_row["Net月化合計(全部)"]), 2)
-    out = pd.concat([out, pd.DataFrame([total_row])], ignore_index=True)
-    return out
+    for metric in _SAFM_PIVOT_METRICS:
+        for block in ("每月合計", "月環比%", "月環比"):
+            for dim_val in dim_vals + ["總計"]:
+                row = _safm_dim_cells(dim_val, dim_cols)
+                row["項目"] = f"{metric} {block}"
+                period_total = 0.0 if metric == "Net Sales" else 0
+                for i, (key, label) in enumerate(zip(ym_keys, ym_labels)):
+                    curr = _total(None if dim_val == "總計" else dim_val, key, metric)
+                    if block == "每月合計":
+                        row[label] = curr
+                        period_total += curr
+                    elif block == "月環比%":
+                        if i == 0:
+                            row[label] = None
+                        else:
+                            prev_key = ym_keys[i - 1]
+                            prev = _total(None if dim_val == "總計" else dim_val, prev_key, metric)
+                            row[label] = _safm_mom_pct(curr, prev)
+                    else:
+                        if i == 0:
+                            row[label] = None
+                        else:
+                            prev_key = ym_keys[i - 1]
+                            prev = _total(None if dim_val == "總計" else dim_val, prev_key, metric)
+                            row[label] = (
+                                round(curr - prev, 2)
+                                if metric == "Net Sales" else int(curr - prev)
+                            )
+                if block == "每月合計":
+                    row["全部合計"] = (
+                        round(period_total, 2)
+                        if metric == "Net Sales" else int(period_total)
+                    )
+                else:
+                    row["全部合計"] = None
+                rows.append(row)
+    cols = dim_cols + ["項目"] + ym_labels + ["全部合計"]
+    return pd.DataFrame(rows, columns=cols)
 
 
 def _build_safm_shop_pivot(monthly: pd.DataFrame, ym_keys: list[int]) -> pd.DataFrame:
@@ -595,6 +670,46 @@ def _build_safm_shop_pivot(monthly: pd.DataFrame, ym_keys: list[int]) -> pd.Data
     return pd.DataFrame(rows, columns=_SAFM_SHOP_COLUMNS)
 
 
+def _build_safm_rp_summary(change_df: pd.DataFrame) -> pd.DataFrame:
+    """RP Type 轉變 × 月份配對統計（事件數／SKU數，含總計列）。
+
+    列為四類轉變（RF→RF、ND→ND、RF→ND、ND→RF，未知值附加於後），
+    欄為各「上月→本月」配對的事件數／SKU數＋總計；總計列 SKU 數為不重複 SKU。
+    """
+    if change_df is None or change_df.empty:
+        return pd.DataFrame(columns=["RP轉變"])
+    df = change_df.copy()
+    df["_pair"] = df["上月"].fillna("").astype(str) + "→" + df["本月"].fillna("").astype(str)
+    pairs = sorted(df["_pair"].unique().tolist())
+    present = df["RP轉變"].fillna("").astype(str).tolist()
+    order = [t for t in _SAFM_RP_ORDER if t in set(present)]
+    order += sorted(set(present) - set(order) - {""})
+    rows = []
+    for trans in order:
+        g = df[df["RP轉變"] == trans]
+        row = {"RP轉變": trans}
+        for p in pairs:
+            gg = g[g["_pair"] == p]
+            row[f"{p} 事件數"] = int(len(gg))
+            row[f"{p} SKU數"] = int(gg["SKU"].nunique()) if not gg.empty else 0
+        row["總計 事件數"] = int(len(g))
+        row["總計 SKU數"] = int(g["SKU"].nunique())
+        rows.append(row)
+    total = {"RP轉變": "總計"}
+    for p in pairs:
+        gg = df[df["_pair"] == p]
+        total[f"{p} 事件數"] = int(len(gg))
+        total[f"{p} SKU數"] = int(gg["SKU"].nunique()) if not gg.empty else 0
+    total["總計 事件數"] = int(len(df))
+    total["總計 SKU數"] = int(df["SKU"].nunique())
+    rows.append(total)
+    cols = ["RP轉變"]
+    for p in pairs:
+        cols += [f"{p} 事件數", f"{p} SKU數"]
+    cols += ["總計 事件數", "總計 SKU數"]
+    return pd.DataFrame(rows, columns=cols)
+
+
 def safety_monthly_dashboard_metrics(change_df: pd.DataFrame, stats: dict | None = None):
     """月度摘要指標卡（與 Streamlit 看板及 Excel 摘要同一準則）。"""
     stats = stats or {}
@@ -611,7 +726,78 @@ def safety_monthly_dashboard_metrics(change_df: pd.DataFrame, stats: dict | None
         ("涉及店舖數", int(stats.get("total_shops", 0)), "不重複店舖數", "06B6D4"),
         ("覆蓋月份數", int(stats.get("ym_count", 0)), "YEAR-MONTH 不重複數", "EC4899"),
     ]
-    return row1, row2
+    row3 = [
+        ("RF→ND 事件", int(stats.get("rp_rf_to_nd", 0)), "可補貨轉不可補貨事件數", "EF4444"),
+        ("ND→RF 事件", int(stats.get("rp_nd_to_rf", 0)), "不可補貨轉可補貨事件數", "10B981"),
+        ("RF→ND SKU數", int(stats.get("rp_rf_to_nd_skus", 0)), "曾由 RF 轉 ND 的 SKU（已刪除重複）", "F59E0B"),
+        ("ND→RF SKU數", int(stats.get("rp_nd_to_rf_skus", 0)), "曾由 ND 轉 RF 的 SKU（已刪除重複）", "06B6D4"),
+    ]
+    return row1, row2, row3
+
+
+def _write_safm_pivot_sheet(ws, df: pd.DataFrame, progress_callback=None,
+                            progress_start=0.0, progress_end=0.1):
+    """三段式樞紐工作表：項目欄按指標配色分段，總計列加粗灰底。"""
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    total_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    total_font = Font(bold=True, size=11)
+    center = Alignment(horizontal="center", vertical="center")
+    center_wrap = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    if df is None or df.empty:
+        ws.cell(row=1, column=1, value="無符合資料").font = Font(size=12)
+        return
+    headers = list(df.columns)
+    item_idx = headers.index("項目") if "項目" in headers else -1
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center_wrap
+        cell.border = thin_border
+    total = len(df)
+    for row_idx, row_data in enumerate(df.itertuples(index=False, name=None), 2):
+        row_dict = dict(zip(headers, row_data))
+        item_text = str(row_dict.get("項目", ""))
+        metric = item_text.split(" ")[0] if " " in item_text else ""
+        is_total = any(str(row_dict.get(c, "")) == "總計" for c in headers[:2])
+        is_money = item_text.startswith("Net Sales")
+        is_pct_block = item_text.endswith("月環比%")
+        for col_idx, (h, v) in enumerate(zip(headers, row_data), 1):
+            if pd.isna(v):
+                v = None
+            cell = ws.cell(row=row_idx, column=col_idx, value=v)
+            cell.border = thin_border
+            if col_idx - 1 == item_idx and metric in _SAFM_METRIC_COLORS:
+                cell.fill = PatternFill(
+                    start_color=_SAFM_METRIC_COLORS[metric],
+                    end_color=_SAFM_METRIC_COLORS[metric], fill_type="solid",
+                )
+                cell.font = Font(bold=True, color="FFFFFF", size=11)
+                cell.alignment = center
+            elif is_total:
+                cell.font = total_font
+                cell.fill = total_fill
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    cell.number_format = "#,##0.00" if is_money else "#,##0"
+                    cell.alignment = center
+                else:
+                    cell.alignment = center_wrap
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                cell.number_format = "#,##0.00" if is_money else "#,##0"
+                cell.alignment = center
+            else:
+                cell.alignment = center_wrap
+        if progress_callback and (row_idx % 500 == 0 or row_idx == total + 1):
+            p = progress_start + (progress_end - progress_start) * (row_idx / max(total + 1, 1))
+            progress_callback(p, f"寫入工作表 ({row_idx-1}/{total})...")
+    ws.auto_filter.ref = ws.dimensions
+    ws.freeze_panes = "C2"
+    _auto_width(ws)
 
 
 def _write_safm_table_sheet(ws, df: pd.DataFrame, progress_callback=None,
@@ -678,22 +864,26 @@ def _write_safety_monthly_guide_sheet(ws, stats):
         "最新月份月化：Sold月化＝Sold Qty (CM - MTD) × 係數；Net月化＝Net Sales (CM - MTD) × 係數；舊月份月化值等於原始值。",
         "Safety變化量＝本月 Adj. Safety Stock − 上月；正數為增加、負數為減少、零為不變（只看原始值，不作建議值計算）。",
         "RP轉變記錄上月→本月（如 RF→ND）；Sold／Net 變化量以月化基準計算，變化率＝變化量 ÷ 上月絕對值（上月為 0 時留空）。",
-        "樞紐合計：Net／Sold 以月化值加總；Stock／Safety 以原始值加總；SKU 數為不重複 SKU。",
+        "樞紐四項指標：Sold Qty＝Sold Qty (CM - MTD) 月化合計；Net Sales＝Net Sales (CM - MTD) 月化合計；"
+        "Net Stock Qty＝店舖存貨 Shop Stock Qty (CM) 合計（時點快照）；Safety Stock Qty＝Adj. Safety Stock 合計。",
+        "樞紐三段式：每月合計 → 月環比%（上月為 0 或首月留空）→ 月環比絕對值；項目欄按指標配色分段。",
     ]
     sheet_rows = [
         ("說明（本頁）", "月化邏輯、本次參數與導讀", "先核對覆蓋月份與月化係數是否符合預期"),
-        ("SKU月度變化", "每組相鄰月份環比事件（上月／本月值＋變化量＋變化率）", "篩選 Safety 增加／減少，查看同期 Sold 與 Net 變化"),
-        ("By Adj. MCH1", "各 MCH1 每月合計（月化基準）", "比較不同品類每月生意變化"),
-        ("By Adj. SST", "各 SST 每月合計（月化基準）", "比較不同供應類型每月生意變化"),
-        ("By MCH1×SST", "MCH1 與 SST 組合每月合計", "細分品類 × 供應類型"),
+        ("SKU月度變化", "每組相鄰月份環比事件（上月／本月值＋變化量＋變化率）", "篩選 Safety 增加／減少，查看同期 Sold Qty 與 Net Sales 變化"),
+        ("By Adj. MCH1", "各 MCH1 三段式樞紐（四項指標 × 每月合計／月環比%／月環比）", "先看每月合計，再看月環比% 找變動最大的品類"),
+        ("By Adj. SST", "各 SST 三段式樞紐", "比較不同供應類型每月生意變化"),
+        ("By MCH1×SST", "MCH1 與 SST 組合三段式樞紐", "細分品類 × 供應類型"),
         ("By Shop", "每間店舖每月合計＋環比變化", "多店舖檔案時比較各店走勢"),
-        ("月度摘要", "指標卡＋每月合計", "管理層概覽"),
+        ("RP Type 變化", "RP轉變 × 月份配對 事件數／SKU數", "重點看 RF→ND 與 ND→RF 兩列：哪些月份最多轉換"),
+        ("月度摘要", "指標卡（含 RF→ND／ND→RF 一排）＋每月合計", "管理層概覽"),
         ("RAW", "原始明細＋YEAR-MONTH 與月化估算欄", "核對逐列數值"),
     ]
     tips = [
         "最新月份為非足月時，Sold 與 Net 的環比已按月化基準計算；原始 MTD 值仍保留於主表以供核對。",
         "數據截止日與最新月份不一致時，最新月份不作月化（係數為 1），並列出警告。",
         "上月缺資料的組合不計變化，屬新增組合；變化率分母為 0 時留空。",
+        "RF→ND 的 SKU 轉為不可補貨後，留意其後月份 Sold Qty 與 Net Sales 是否受影響；ND→RF 則留意補貨是否恢復。",
     ]
     _write_guide_sheet(
         ws, title="Safety Stock 月度變化分析 說明與導讀",
@@ -713,7 +903,7 @@ def generate_excel_safety_monthly(
     progress_callback=None,
     include_raw: bool = True,
 ) -> BytesIO:
-    """Safety Stock 月度變化分析輸出八個工作表（說明預設開啟）。"""
+    """Safety Stock 月度變化分析輸出九個工作表（說明預設開啟）。"""
     wb = Workbook()
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
@@ -732,31 +922,39 @@ def generate_excel_safety_monthly(
     if progress_callback:
         progress_callback(0.4, "建立維度樞紐...")
     ws_mch1 = wb.create_sheet(title="By Adj. MCH1")
-    _write_safm_table_sheet(ws_mch1, mch1_pivot, progress_callback, 0.4, 0.5)
+    _write_safm_pivot_sheet(ws_mch1, mch1_pivot, progress_callback, 0.4, 0.48)
     ws_sst = wb.create_sheet(title="By Adj. SST")
-    _write_safm_table_sheet(ws_sst, sst_pivot, progress_callback, 0.5, 0.6)
+    _write_safm_pivot_sheet(ws_sst, sst_pivot, progress_callback, 0.48, 0.56)
     ws_cross = wb.create_sheet(title="By MCH1×SST")
-    _write_safm_table_sheet(ws_cross, mch1_sst_pivot, progress_callback, 0.6, 0.7)
+    _write_safm_pivot_sheet(ws_cross, mch1_sst_pivot, progress_callback, 0.56, 0.64)
     ws_shop = wb.create_sheet(title="By Shop")
-    _write_safm_table_sheet(ws_shop, shop_pivot, progress_callback, 0.7, 0.78)
+    _write_safm_table_sheet(ws_shop, shop_pivot, progress_callback, 0.64, 0.7)
 
     if progress_callback:
-        progress_callback(0.8, "建立月度摘要...")
+        progress_callback(0.7, "建立 RP Type 變化...")
+    ws_rp = wb.create_sheet(title="RP Type 變化")
+    _rp_summary = (stats or {}).get("rp_summary")
+    if _rp_summary is None:
+        _rp_summary = _build_safm_rp_summary(change_df)
+    _write_safm_table_sheet(ws_rp, _rp_summary, progress_callback, 0.7, 0.76)
+
+    if progress_callback:
+        progress_callback(0.78, "建立月度摘要...")
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
     )
     desc_font = Font(size=9, color="6B7280", italic=True)
     ws_dash = wb.create_sheet(title="月度摘要")
-    row1, row2 = safety_monthly_dashboard_metrics(change_df, stats)
+    row1, row2, row3 = safety_monthly_dashboard_metrics(change_df, stats)
     _write_metric_cards(
         ws_dash, "Safety Stock 月度變化摘要 (Monthly Safety Review Dashboard)",
         row1, row2, thin_border, desc_font, progress_callback,
-        progress_pct=0.85,
+        progress_pct=0.82, row3_metrics=row3,
     )
     ym_list = (stats or {}).get("ym_list") or []
     if ym_list and shop_pivot is not None and not shop_pivot.empty:
-        start_row = 12
+        start_row = 16
         ws_dash.cell(row=start_row, column=1, value="每月合計（全店舖月化基準）").font = Font(bold=True, size=12, color="1E40AF")
         headers = ["YEAR-MONTH", "SKU數", "Safety合計", "Sold月化合計", "Net月化合計", "Stock合計"]
         for col_idx, h in enumerate(headers, 1):
