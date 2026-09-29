@@ -4292,6 +4292,40 @@ if uploaded_file is not None:
                     )
                 else:
                     st.info("無符合資料")
+                st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+                _rp_end_info = (stats or {}).get("rp_end_info") or {}
+                _rp_first = _rp_end_info.get("first", "")
+                _rp_last = _rp_end_info.get("last", "")
+                st.markdown(f"#### 首尾月份對比（{_rp_first}→{_rp_last}，有轉變列置前）")
+                _rp_endpoints = (stats or {}).get("rp_endpoints")
+                if _rp_endpoints is not None and not _rp_endpoints.empty:
+                    _echo, _ecol = st.columns(2)
+                    with _echo:
+                        _end_changed = st.selectbox(
+                            "是否轉變篩選", options=["全部", "是", "否"], index=0,
+                            key="safm_end_changed",
+                            help="只影響下方預覽，不影響 Excel 導出。",
+                        )
+                    with _ecol:
+                        _end_trans = st.selectbox(
+                            "首尾轉變篩選",
+                            options=["全部", "RF→RF", "ND→ND", "RF→ND", "ND→RF"],
+                            index=0, key="safm_end_trans",
+                            help="只影響下方預覽，不影響 Excel 導出。",
+                        )
+                    _edisp = _rp_endpoints
+                    if _end_changed != "全部":
+                        _edisp = _edisp[_edisp["是否轉變"] == _end_changed]
+                    if _end_trans != "全部":
+                        _edisp = _edisp[_edisp["首尾轉變"] == _end_trans]
+                    st.dataframe(_edisp.head(200).rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                    st.caption(
+                        f"共 {len(_edisp):,} 組（{_rp_first}與{_rp_last}皆有資料；僅顯示前 200 筆）；"
+                        f"另有 {int(_rp_end_info.get('excluded', 0)):,} 組缺首尾月份資料未納入；"
+                        f"首尾 RF→ND {int(_rp_end_info.get('rf_to_nd', 0)):,} 組、ND→RF {int(_rp_end_info.get('nd_to_rf', 0)):,} 組。"
+                    )
+                else:
+                    st.info("無符合資料")
             with tab_raw:
                 st.markdown("#### RAW 原始明細（含 YEAR-MONTH 與月化估算欄）")
                 if raw_df is not None and not raw_df.empty:

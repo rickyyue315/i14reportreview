@@ -251,3 +251,32 @@ def test_rp_summary_empty_change():
     from transformer import _build_safm_rp_summary
     rp = _build_safm_rp_summary(pd.DataFrame())
     assert list(rp.columns) == ["RP轉變"] and rp.empty
+
+
+# ── 6. 首尾月份對比 ──────────────────────────────────────────────────
+def test_rp_endpoints_first_vs_last():
+    from transformer import _build_safm_rp_endpoints
+    change, _m, _s, _c, _sh, _r, stats, _ = _run([
+        {"SKU": 1, "Month": 5, "RP Type": "RF", "Brand": "B"},
+        {"SKU": 1, "Month": 6, "RP Type": "RF", "Brand": "B"},
+        {"SKU": 1, "Month": 9, "RP Type": "ND", "Brand": "B"},
+        {"SKU": 2, "Month": 5, "RP Type": "ND"},
+        {"SKU": 2, "Month": 9, "RP Type": "RF"},
+        {"SKU": 3, "Month": 5, "RP Type": "RF"},
+        {"SKU": 3, "Month": 9, "RP Type": "RF"},
+        {"SKU": 4, "Month": 9, "RP Type": "RF"},  # 缺最早月份，不納入
+    ])
+    info = stats["rp_end_info"]
+    assert (info["first"], info["last"]) == ("2026-05", "2026-09")
+    assert info["comparable"] == 3 and info["excluded"] == 1
+    assert info["rf_to_nd"] == 1 and info["nd_to_rf"] == 1
+    detail = stats["rp_endpoints"]
+    assert list(detail["首尾轉變"]) == ["RF→ND", "ND→RF", "RF→RF"]
+    assert list(detail["是否轉變"]) == ["是", "是", "否"]
+    assert set(detail["SKU"].astype(str)) == {"1", "2", "3"}
+
+
+def test_rp_endpoints_empty():
+    from transformer import _build_safm_rp_endpoints
+    detail, info = _build_safm_rp_endpoints(pd.DataFrame(), [])
+    assert detail.empty and info["comparable"] == 0

@@ -69,7 +69,9 @@ __all__ = [
     "_SAFM_REQUIRED",
     "_SAFM_PIVOT_METRICS",
     "_SAFM_RP_ORDER",
+    "_SAFM_RP_ENDPOINT_COLUMNS",
     "_build_safm_rp_summary",
+    "_build_safm_rp_endpoints",
 ]
 
 # 樞紐四項指標（顯示全稱，不用簡稱）：
@@ -480,6 +482,7 @@ def transform_safety_monthly(
     else:
         rp_rf_to_nd = rp_nd_to_rf = rp_rf_to_nd_skus = rp_nd_to_rf_skus = 0
     rp_summary = _build_safm_rp_summary(change_df)
+    rp_endpoints, rp_end_info = _build_safm_rp_endpoints(monthly, ym_keys)
     stats = {
         "ym_list": ym_labels,
         "ym_count": len(ym_labels),
@@ -501,6 +504,8 @@ def transform_safety_monthly(
         "rp_rf_to_nd_skus": rp_rf_to_nd_skus,
         "rp_nd_to_rf_skus": rp_nd_to_rf_skus,
         "rp_summary": rp_summary,
+        "rp_endpoints": rp_endpoints,
+        "rp_end_info": rp_end_info,
     }
     if change_df.empty:
         warnings.append("所有組合皆只有單一月份資料，無相鄰月份環比事件可輸出。")
@@ -710,6 +715,79 @@ def _build_safm_rp_summary(change_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
+_SAFM_RP_ENDPOINT_COLUMNS = [
+    "Site Code", "Shop Name", "SKU", "SKU Desc", "Brand", "Buyer",
+    "Adj. MCH1", "Adj. SST",
+    "最早月份", "最早 RP Type", "最新月份", "最新 RP Type",
+    "首尾轉變", "是否轉變",
+]
+
+
+def _build_safm_rp_endpoints(monthly: pd.DataFrame, ym_keys: list[int]
+                             ) -> tuple[pd.DataFrame, dict]:
+    """首尾月份 RP 對比明細：每組取最早與最新月份各一列比較。
+
+    只收錄最早與最新月份皆有資料的組合；缺任一者不納入並計入 excluded。
+    回傳 (明細表, {"first": 首月標籤, "last": 尾月標籤, "comparable": 可比組數,
+    "excluded": 未納入組數, "rf_to_nd": 首尾 RF→ND 組數, "nd_to_rf": 首尾 ND→RF 組數})。
+    """
+    empty_info = {"first": "", "last": "", "comparable": 0, "excluded": 0,
+                  "rf_to_nd": 0, "nd_to_rf": 0}
+    if monthly is None or monthly.empty or not ym_keys or len(ym_keys) < 2:
+        return pd.DataFrame(columns=_SAFM_RP_ENDPOINT_COLUMNS), empty_info
+    first_key, last_key = int(ym_keys[0]), int(ym_keys[-1])
+    first_label = _ym_label(first_key // 100, first_key % 100)
+    last_label = _ym_label(last_key // 100, last_key % 100)
+    first_m = monthly[monthly["_ym"] == first_key].set_index(["_site", "_sku"])
+    last_m = monthly[monthly["_ym"] == last_key].set_index(["_site", "_sku"])
+    common = first_m.index.intersection(last_m.index)
+    excluded = int(monthly[["_site", "_sku"]].drop_duplicates().shape[0] - len(common))
+
+    def _pick(latest_val, earliest_val) -> str:
+        latest_text = "" if pd.isna(latest_val) else str(latest_val).strip()
+        if latest_text:
+            return latest_text
+        return "" if pd.isna(earliest_val) else str(earliest_val).strip()
+
+    rows = []
+    for site, sku in common.tolist():
+        prev = first_m.loc[(site, sku)]
+        curr = last_m.loc[(site, sku)]
+        if isinstance(prev, pd.DataFrame):
+            prev = prev.iloc[0]
+        if isinstance(curr, pd.DataFrame):
+            curr = curr.iloc[0]
+        rp_prev, rp_curr = str(prev["rp"]), str(curr["rp"])
+        trans = f"{rp_prev}→{rp_curr}"
+        rows.append({
+            "Site Code": site, "Shop Name": _pick(curr["shop"], prev["shop"]),
+            "SKU": sku, "SKU Desc": _pick(curr["desc"], prev["desc"]),
+            "Brand": _pick(curr["brand"], prev["brand"]),
+            "Buyer": _pick(curr["buyer"], prev["buyer"]),
+            "Adj. MCH1": _pick(curr["mch1"], prev["mch1"]),
+            "Adj. SST": _pick(curr["sst"], prev["sst"]),
+            "最早月份": first_label, "最早 RP Type": rp_prev,
+            "最新月份": last_label, "最新 RP Type": rp_curr,
+            "首尾轉變": trans, "是否轉變": "是" if rp_prev != rp_curr else "否",
+        })
+    detail = pd.DataFrame(rows, columns=_SAFM_RP_ENDPOINT_COLUMNS)
+    if not detail.empty:
+        _order = {t: i for i, t in enumerate(_SAFM_RP_ORDER)}
+        detail["_changed"] = (detail["是否轉變"] == "是").astype(int)
+        detail["_tord"] = detail["首尾轉變"].map(_order).fillna(99).astype(int)
+        detail = detail.sort_values(
+            ["_changed", "_tord", "Brand", "SKU", "Site Code"],
+            ascending=[False, True, True, True, True], kind="stable",
+        ).drop(columns=["_changed", "_tord"]).reset_index(drop=True)
+    info = {
+        "first": first_label, "last": last_label,
+        "comparable": int(len(detail)), "excluded": excluded,
+        "rf_to_nd": int((detail["首尾轉變"] == "RF→ND").sum()) if not detail.empty else 0,
+        "nd_to_rf": int((detail["首尾轉變"] == "ND→RF").sum()) if not detail.empty else 0,
+    }
+    return detail, info
+
+
 def safety_monthly_dashboard_metrics(change_df: pd.DataFrame, stats: dict | None = None):
     """月度摘要指標卡（與 Streamlit 看板及 Excel 摘要同一準則）。"""
     stats = stats or {}
@@ -800,8 +878,10 @@ def _write_safm_pivot_sheet(ws, df: pd.DataFrame, progress_callback=None,
     _auto_width(ws)
 
 
-def _write_safm_table_sheet(ws, df: pd.DataFrame, progress_callback=None,
-                            progress_start=0.0, progress_end=0.1):
+def _write_safm_block(ws, df: pd.DataFrame, start_row: int = 1,
+                      progress_callback=None, progress_start=0.0, progress_end=0.1,
+                      total_hint: int | None = None) -> int:
+    """於工作表寫入一個表格區塊（表頭＋資料列），回傳下一個可用列號，不設篩選與凍結。"""
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
@@ -809,18 +889,19 @@ def _write_safm_table_sheet(ws, df: pd.DataFrame, progress_callback=None,
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     if df is None or df.empty:
-        ws.cell(row=1, column=1, value="無符合資料").font = Font(size=12)
-        return
+        ws.cell(row=start_row, column=1, value="無符合資料").font = Font(size=12)
+        return start_row + 2
     headers = list(df.columns)
     display = [_display_safety_header(h) for h in headers]
     for col_idx, h in enumerate(display, 1):
-        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell = ws.cell(row=start_row, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = thin_border
     total = len(df)
-    for row_idx, row_data in enumerate(df.itertuples(index=False, name=None), 2):
+    for offset, row_data in enumerate(df.itertuples(index=False, name=None), 1):
+        row_idx = start_row + offset
         for col_idx, (h, v) in enumerate(zip(headers, row_data), 1):
             if pd.isna(v):
                 v = None
@@ -839,11 +920,55 @@ def _write_safm_table_sheet(ws, df: pd.DataFrame, progress_callback=None,
                 cell.alignment = Alignment(horizontal="center", vertical="center")
             else:
                 cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        if progress_callback and (row_idx % 2000 == 0 or row_idx == total + 1):
-            p = progress_start + (progress_end - progress_start) * (row_idx / max(total + 1, 1))
-            progress_callback(p, f"寫入工作表 ({row_idx-1}/{total})...")
+        if progress_callback and (offset % 2000 == 0 or offset == total):
+            denom = max(total_hint or total, 1)
+            p = progress_start + (progress_end - progress_start) * (offset / denom)
+            progress_callback(p, f"寫入工作表 ({offset}/{total})...")
+    return start_row + total + 1
+
+
+def _write_safm_table_sheet(ws, df: pd.DataFrame, progress_callback=None,
+                            progress_start=0.0, progress_end=0.1):
+    """單表工作表（表頭＋資料＋自動篩選＋凍結首列）。"""
+    _write_safm_block(ws, df, start_row=1, progress_callback=progress_callback,
+                      progress_start=progress_start, progress_end=progress_end)
     ws.auto_filter.ref = ws.dimensions
     ws.freeze_panes = "A2"
+    _auto_width(ws)
+
+
+def _write_safm_rp_sheet(ws, summary_df: pd.DataFrame, detail_df: pd.DataFrame,
+                         end_title: str, progress_callback=None,
+                         progress_start=0.0, progress_end=0.1):
+    """RP Type 變化工作表：上半為轉變 × 月份配對統計，下半為首尾月份對比明細。"""
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    next_row = _write_safm_block(ws, summary_df, start_row=1,
+                                 progress_callback=progress_callback,
+                                 progress_start=progress_start,
+                                 progress_end=(progress_start + progress_end) / 2)
+    next_row += 1
+    detail_cols = len(detail_df.columns) if detail_df is not None and not detail_df.empty else 1
+    ws.merge_cells(start_row=next_row, start_column=1,
+                   end_row=next_row, end_column=max(detail_cols, 1))
+    title_cell = ws.cell(row=next_row, column=1, value=end_title)
+    title_cell.font = Font(bold=True, size=12, color="FFFFFF")
+    title_cell.fill = PatternFill(start_color="0077A3", end_color="0077A3", fill_type="solid")
+    title_cell.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[next_row].height = 20
+    detail_header_row = next_row + 1
+    _write_safm_block(ws, detail_df, start_row=detail_header_row,
+                      progress_callback=progress_callback,
+                      progress_start=(progress_start + progress_end) / 2,
+                      progress_end=progress_end)
+    if detail_df is not None and not detail_df.empty:
+        ws.auto_filter.ref = f"A{detail_header_row}:{ws.cell(row=ws.max_row, column=len(detail_df.columns)).coordinate}"
+        ws.freeze_panes = f"A{detail_header_row + 1}"
+    else:
+        ws.auto_filter.ref = ws.dimensions
+        ws.freeze_panes = "A2"
     _auto_width(ws)
 
 
@@ -875,7 +1000,7 @@ def _write_safety_monthly_guide_sheet(ws, stats):
         ("By Adj. SST", "各 SST 三段式樞紐", "比較不同供應類型每月生意變化"),
         ("By MCH1×SST", "MCH1 與 SST 組合三段式樞紐", "細分品類 × 供應類型"),
         ("By Shop", "每間店舖每月合計＋環比變化", "多店舖檔案時比較各店走勢"),
-        ("RP Type 變化", "RP轉變 × 月份配對 事件數／SKU數", "重點看 RF→ND 與 ND→RF 兩列：哪些月份最多轉換"),
+        ("RP Type 變化", "RP轉變 × 月份配對統計＋首尾月份對比明細", "重點看 RF→ND 與 ND→RF 兩列：哪些月份最多轉換；下半首尾對比看整個期間的最終轉變"),
         ("月度摘要", "指標卡（含 RF→ND／ND→RF 一排）＋每月合計", "管理層概覽"),
         ("RAW", "原始明細＋YEAR-MONTH 與月化估算欄", "核對逐列數值"),
     ]
@@ -936,7 +1061,18 @@ def generate_excel_safety_monthly(
     _rp_summary = (stats or {}).get("rp_summary")
     if _rp_summary is None:
         _rp_summary = _build_safm_rp_summary(change_df)
-    _write_safm_table_sheet(ws_rp, _rp_summary, progress_callback, 0.7, 0.76)
+    _rp_endpoints = (stats or {}).get("rp_endpoints")
+    _rp_end_info = (stats or {}).get("rp_end_info") or {}
+    if _rp_end_info.get("first") and _rp_end_info.get("last"):
+        _end_title = (
+            f'首尾月份對比（{_rp_end_info["first"]}→{_rp_end_info["last"]}，'
+            f'共 {_rp_end_info.get("comparable", 0):,} 組可比，'
+            f'{_rp_end_info.get("excluded", 0):,} 組缺首尾月份資料未納入；有轉變列置前）'
+        )
+    else:
+        _end_title = "首尾月份對比"
+    _write_safm_rp_sheet(ws_rp, _rp_summary, _rp_endpoints, _end_title,
+                         progress_callback, 0.7, 0.76)
 
     if progress_callback:
         progress_callback(0.78, "建立月度摘要...")
