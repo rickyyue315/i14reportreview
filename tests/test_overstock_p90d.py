@@ -116,15 +116,26 @@ def test_by_shop_counts_and_totals():
          "OM": "OM2", "Shop Nature": "Tourist", "Adj. MCH1": "02 - MAKE UP", "Shop Stock Qty (CM)": 7.0},
     ])
     _, by_shop, _, _, _, _ = transform_overstock_p90d(df)
+    assert list(by_shop.columns) == [
+        "Site Code", "Shop Name", "OM", "Shop Nature", "P90D 0 Sales SKU 總數",
+        "Shop Stock Qty (CM) 總數",
+        "MAKE UP SKU 數", "MAKE UP Shop Stock Qty (CM) 總數",
+        "Non-MAKE UP SKU 數", "Non-MAKE UP Shop Stock Qty (CM) 總數",
+    ]
     s01 = by_shop[by_shop["Site Code"] == "S01"].iloc[0]
     assert int(s01["P90D 0 Sales SKU 總數"]) == 2  # SKU 1、2（已刪除重複）
     assert int(s01["MAKE UP SKU 數"]) == 1
     assert int(s01["Non-MAKE UP SKU 數"]) == 1
     assert int(s01["Shop Stock Qty (CM) 總數"]) == 25  # 未刪除重複加總
+    assert int(s01["MAKE UP Shop Stock Qty (CM) 總數"]) == 20  # SKU 1 兩列
+    assert int(s01["Non-MAKE UP Shop Stock Qty (CM) 總數"]) == 5
     total = by_shop[by_shop["Site Code"] == "總計"].iloc[0]
     assert int(total["P90D 0 Sales SKU 總數"]) == 3
     assert int(total["MAKE UP SKU 數"]) == 2
     assert int(total["Non-MAKE UP SKU 數"]) == 1
+    assert int(total["Shop Stock Qty (CM) 總數"]) == 32
+    assert int(total["MAKE UP Shop Stock Qty (CM) 總數"]) == 27
+    assert int(total["Non-MAKE UP Shop Stock Qty (CM) 總數"]) == 5
     sites = list(by_shop["Site Code"])
     assert sites[-1] == "總計"
     _no_banned(by_shop)
@@ -234,16 +245,24 @@ def test_breakdown_item_class_by_shop():
     _, by_shop, _, by_nature, by_om, warnings = transform_overstock_p90d(df, breakdown="item_class")
     assert list(by_shop.columns) == [
         "Site Code", "Shop Name", "OM", "Shop Nature", "P90D 0 Sales SKU 總數",
-        "A1 SKU 數", "B SKU 數", "D SKU 數", "Shop Stock Qty (CM) 總數",
+        "Shop Stock Qty (CM) 總數",
+        "A1 SKU 數", "A1 Shop Stock Qty (CM) 總數",
+        "B SKU 數", "B Shop Stock Qty (CM) 總數",
+        "D SKU 數", "D Shop Stock Qty (CM) 總數",
     ]
     s01 = by_shop[by_shop["Site Code"] == "S01"].iloc[0]
     assert int(s01["P90D 0 Sales SKU 總數"]) == 3
     assert int(s01["A1 SKU 數"]) == 1
     assert int(s01["B SKU 數"]) == 2
     assert int(s01["D SKU 數"]) == 0
+    assert int(s01["A1 Shop Stock Qty (CM) 總數"]) == 10
+    assert int(s01["B Shop Stock Qty (CM) 總數"]) == 9
+    assert int(s01["D Shop Stock Qty (CM) 總數"]) == 0
+    assert int(s01["Shop Stock Qty (CM) 總數"]) == 19
     total = by_shop[by_shop["Site Code"] == "總計"].iloc[0]
     assert int(total["P90D 0 Sales SKU 總數"]) == 4
     assert int(total["D SKU 數"]) == 1
+    assert int(total["D Shop Stock Qty (CM) 總數"]) == 7
     assert "MAKE UP SKU 數" not in by_shop.columns
     assert list(by_nature.columns)[4:-1] == ["A1 SKU 數", "B SKU 數", "D SKU 數"]
     assert list(by_om.columns)[4:-1] == ["A1 SKU 數", "B SKU 數", "D SKU 數"]
@@ -259,7 +278,10 @@ def test_breakdown_item_class_blank_group_and_warning():
         {"SKU": 2, "Item Class": None},
     ])
     _, by_shop, _, _, _, warnings = transform_overstock_p90d(df, breakdown="item_class")
-    assert list(by_shop.columns)[5:-1] == ["C SKU 數", "空白 SKU 數"]
+    assert list(by_shop.columns)[6:] == [
+        "C SKU 數", "C Shop Stock Qty (CM) 總數",
+        "空白 SKU 數", "空白 Shop Stock Qty (CM) 總數",
+    ]
     assert int(by_shop[by_shop["Site Code"] == "總計"]["空白 SKU 數"].iloc[0]) == 1
     assert any("空白" in w for w in warnings)
 
@@ -271,11 +293,15 @@ def test_breakdown_mch1_sorted_columns():
         {"SKU": 3, "Adj. MCH1": "02 - MAKE UP"},
     ])
     _, by_shop, _, by_nature, by_om, _ = transform_overstock_p90d(df, breakdown="mch1")
-    assert list(by_shop.columns)[5:-1] == [
-        "01 - SKIN CARE SKU 數", "02 - MAKE UP SKU 數", "03 - FRAGRANCE SKU 數",
+    assert list(by_shop.columns)[6:] == [
+        "01 - SKIN CARE SKU 數", "01 - SKIN CARE Shop Stock Qty (CM) 總數",
+        "02 - MAKE UP SKU 數", "02 - MAKE UP Shop Stock Qty (CM) 總數",
+        "03 - FRAGRANCE SKU 數", "03 - FRAGRANCE Shop Stock Qty (CM) 總數",
     ]
     total = by_shop[by_shop["Site Code"] == "總計"].iloc[0]
     assert int(total["02 - MAKE UP SKU 數"]) == 1
+    assert int(total["02 - MAKE UP Shop Stock Qty (CM) 總數"]) == 5
+    assert int(total["Shop Stock Qty (CM) 總數"]) == 15
     assert int(total["P90D 0 Sales SKU 總數"]) == 3
     n_total = by_nature[by_nature["Shop Nature"] == "總計"].iloc[0]
     assert int(n_total["01 - SKIN CARE SKU 數"]) == 1
@@ -451,6 +477,8 @@ def test_excel_breakdown_dynamic_headers():
     wb = load_workbook(BytesIO(buf.getvalue()), data_only=True)
     assert [c.value for c in wb["By Shop"][1]] == [
         "Site Code", "Shop Name", "OM", "Shop Nature", "P90D 0 Sales SKU 總數",
-        "A1 SKU 數", "D SKU 數", "Shop Stock Qty (CM) 總數",
+        "Shop Stock Qty (CM) 總數",
+        "A1 SKU 數", "A1 Shop Stock Qty (CM) 總數",
+        "D SKU 數", "D Shop Stock Qty (CM) 總數",
     ]
     assert [c.value for c in wb["By Nature"][1]][4:-1] == ["A1 SKU 數", "D SKU 數"]

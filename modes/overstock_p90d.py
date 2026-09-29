@@ -10,7 +10,7 @@ MAKE UP 判定：``Adj. MCH1`` 去除前後空格後等於 ``02 - MAKE UP`` 者�
 其餘（含空白）一律為 Non-MAKE UP。
 
 輸出五個工作表（不輸出 RAW，所有欄位均不含 Value／COGS／GP）：
-1. By Shop — 各店舖 P90D 0 Sales SKU 總數（已刪除重複）及分類分項；
+1. By Shop — 各店舖 P90D 0 Sales SKU 總數（已刪除重複）、庫存總數及各分類 SKU 數與庫存總數；
    分類維度可切換：MAKE UP 分類、Item Class、Adj. MCH1、交叉維度（MAKE UP × Item Class、
    MAKE UP × Adj. MCH1：每個店舖／分組按 MAKE UP／Non-MAKE UP 逐列，欄為次分類分項與小計）
 2. Top 10 店舖回覆 — 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列
@@ -106,9 +106,11 @@ _OP90D_BY_SHOP_COLUMNS = [
     "OM",
     "Shop Nature",
     "P90D 0 Sales SKU 總數",
-    "MAKE UP SKU 數",
-    "Non-MAKE UP SKU 數",
     "Shop Stock Qty (CM) 總數",
+    "MAKE UP SKU 數",
+    "MAKE UP Shop Stock Qty (CM) 總數",
+    "Non-MAKE UP SKU 數",
+    "Non-MAKE UP Shop Stock Qty (CM) 總數",
 ]
 
 # By Shop 固定首尾欄（中間為隨分類維度變動的分組欄）
@@ -175,6 +177,8 @@ _OP90D_BY_SKU_COLUMNS = [
     "MAKE UP 分類",
     "Adj. MCH1",
     "Item Class",
+    "Item Status",
+    "Launch Date",
     "出現店舖數",
     "P90D 0 Sales 行數",
     "Shop Stock Qty (CM) 總數",
@@ -287,6 +291,11 @@ def _op90d_group_header(breakdown: str, group: str) -> str:
     return f"{group} SKU 數"
 
 
+def _op90d_group_stock_header(group: str) -> str:
+    """By Shop 各分類庫存欄：各分類 SKU 數欄之後，附同分類庫存總數欄。"""
+    return f"{group} Shop Stock Qty (CM) 總數"
+
+
 def _op90d_cross_sub(breakdown: str) -> str:
     """交叉維度對應的次分類（makeup_item → item_class；makeup_mch1 → mch1）。"""
     return _OP90D_BREAKDOWN_ITEM_CLASS if breakdown == _OP90D_BREAKDOWN_MAKEUP_ITEM else _OP90D_BREAKDOWN_MCH1
@@ -309,7 +318,9 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
     df["_group"] = _op90d_group_series(df, breakdown)
     groups = _op90d_ordered_groups(df["_group"], breakdown)
     group_headers = [_op90d_group_header(breakdown, g) for g in groups]
-    headers = _OP90D_BY_SHOP_BASE + group_headers + _OP90D_BY_SHOP_TAIL
+    group_stock_headers = [_op90d_group_stock_header(g) for g in groups]
+    pair_headers = [h for pair in zip(group_headers, group_stock_headers) for h in pair]
+    headers = _OP90D_BY_SHOP_BASE + _OP90D_BY_SHOP_TAIL + pair_headers
 
     rows = []
     for (site, name, om), group in df.groupby(["Site Code", "Shop Name", "OM"], dropna=False, observed=True):
@@ -321,8 +332,10 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
             "Shop Nature": _representative_nature(group),
             "P90D 0 Sales SKU 總數": int(skus.nunique()),
         }
-        for g, h in zip(groups, group_headers):
-            row[h] = int(group[group["_group"] == g]["SKU"].dropna().astype(str).nunique())
+        for g, h, sh in zip(groups, group_headers, group_stock_headers):
+            gslice = group[group["_group"] == g]
+            row[h] = int(gslice["SKU"].dropna().astype(str).nunique())
+            row[sh] = int(float(gslice["_stock_cm"].sum()))
         row["Shop Stock Qty (CM) 總數"] = int(float(group["_stock_cm"].sum()))
         rows.append(row)
     by_shop = pd.DataFrame(rows, columns=headers)
@@ -339,8 +352,10 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
             "Shop Nature": "",
             "P90D 0 Sales SKU 總數": int(df["SKU"].dropna().astype(str).nunique()),
         }
-        for g, h in zip(groups, group_headers):
-            total_row[h] = int(df[df["_group"] == g]["SKU"].dropna().astype(str).nunique())
+        for g, h, sh in zip(groups, group_headers, group_stock_headers):
+            gslice = df[df["_group"] == g]
+            total_row[h] = int(gslice["SKU"].dropna().astype(str).nunique())
+            total_row[sh] = int(float(gslice["_stock_cm"].sum()))
         total_row["Shop Stock Qty (CM) 總數"] = int(float(df["_stock_cm"].sum()))
         by_shop = pd.concat([by_shop, pd.DataFrame([total_row])], ignore_index=True)
     return by_shop[headers]
@@ -574,12 +589,25 @@ def _op90d_representative(values: pd.Series) -> str:
     return str(vals.value_counts().index[0])
 
 
+def _op90d_representative_value(values: pd.Series):
+    """同一 SKU 多列屬性不一致時，取出現次數最多者的原始值（保留日期／數值類型，空白不計入）。"""
+    vals = values[~values.isna()]
+    if vals.empty:
+        return ""
+    stripped = vals.astype(str).str.strip()
+    vals = vals[stripped != ""]
+    if vals.empty:
+        return ""
+    return vals.value_counts().index[0]
+
+
 def _build_op90d_by_sku(raw: pd.DataFrame) -> pd.DataFrame:
     """按 SKU 統計出現 P90D 0 Sales 的店舖數（Site Code 已刪除重複，空白不計）。
 
     每個 SKU 一列，按出現店舖數由大至小排序，店舖數相同時按庫存總數排序。
-    屬性欄（SKU Desc／Brand／Buyer／MAKE UP 分類／Adj. MCH1／Item Class）
-    取該 SKU 出現次數最多者為代表值；來源缺欄時顯示為空白。
+    屬性欄（SKU Desc／Brand／Buyer／MAKE UP 分類／Adj. MCH1／Item Class／Item Status）
+    取該 SKU 出現次數最多者為代表值；Launch Date 取出現次數最多者的原始值
+    （保留日期類型）；來源缺欄時顯示為空白。
     """
     if raw is None or raw.empty:
         return pd.DataFrame(columns=_OP90D_BY_SKU_COLUMNS)
@@ -608,6 +636,8 @@ def _build_op90d_by_sku(raw: pd.DataFrame) -> pd.DataFrame:
             ),
             "Adj. MCH1": _op90d_representative(group.get("Adj. MCH1", _safe_default_series("", group.index))),
             "Item Class": _op90d_representative(group.get("Item Class", _safe_default_series("", group.index))),
+            "Item Status": _op90d_representative(group.get("Item Status", _safe_default_series("", group.index))),
+            "Launch Date": _op90d_representative_value(group.get("Launch Date", _safe_default_series("", group.index))),
             "出現店舖數": site_n,
             "P90D 0 Sales 行數": int(len(group)),
             "Shop Stock Qty (CM) 總數": int(float(group["_stock_cm"].sum())),
@@ -628,6 +658,8 @@ def _build_op90d_by_sku(raw: pd.DataFrame) -> pd.DataFrame:
         "MAKE UP 分類": "",
         "Adj. MCH1": "",
         "Item Class": "",
+        "Item Status": "",
+        "Launch Date": "",
         "出現店舖數": int(df["Site Code"].replace("", pd.NA).dropna().astype(str).str.strip().replace("", pd.NA).dropna().nunique()),
         "P90D 0 Sales 行數": int(len(df)),
         "Shop Stock Qty (CM) 總數": int(float(df["_stock_cm"].sum())),

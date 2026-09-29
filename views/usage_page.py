@@ -170,7 +170,7 @@ MODES = [
     ("📦 P90D 0 Sales Review(Shop回覆)",
      """
 - 篩選 `Shop Stock Status` 為 P90D 0 Sales 狀態且 `Shop Stock Qty (LM)` 大於 0 的 SKU×Shop 記錄（LM 為 0 者不計算）
-- 按店舖統計 P90D 0 Sales SKU 總數（已刪除重複），分類維度可切換：MAKE UP（Adj. MCH1 為 02 - MAKE UP）／Non-MAKE UP、Item Class（A1／A2／A3／B／C／D）、Adj. MCH1（15 個大類），或交叉維度：MAKE UP × Item Class、MAKE UP × Adj. MCH1（每個店舖／分組按 MAKE UP／Non-MAKE UP 逐列，欄為次分類分項 SKU 數及「小計 SKU 數」，無該主分類資料者不列該列）；空白值歸入「空白」組
+- 按店舖統計 P90D 0 Sales SKU 總數（已刪除重複）及庫存總數，各分類同時顯示 SKU 數與庫存總數，分類維度可切換：MAKE UP（Adj. MCH1 為 02 - MAKE UP）／Non-MAKE UP、Item Class（A1／A2／A3／B／C／D）、Adj. MCH1（15 個大類），或交叉維度：MAKE UP × Item Class、MAKE UP × Adj. MCH1（每個店舖／分組按 MAKE UP／Non-MAKE UP 逐列，欄為次分類分項 SKU 數及「小計 SKU 數」，無該主分類資料者不列該列）；空白值歸入「空白」組
 - 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列（預設只限 Non-MAKE UP；勾選「包括 MAKE UP SKU」後一併計算），附店內庫存排名及空白「店舖回覆」欄供店舖填寫
 - Top 10 欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
 - 按 Shop Nature 及 OM 統計分佈（涉及店舖數、SKU 數、行數、分類分項 SKU 數、庫存總數，分組欄隨分類維度變動）
