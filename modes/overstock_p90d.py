@@ -9,15 +9,16 @@ LM 為 0（或空白視為 0）者不計算。
 MAKE UP 判定：``Adj. MCH1`` 去除前後空格後等於 ``02 - MAKE UP`` 者為 MAKE UP，
 其餘（含空白）一律為 Non-MAKE UP。
 
-輸出五個工作表（不輸出 RAW，所有欄位均不含 Value／COGS／GP）：
+輸出六個工作表（不輸出 RAW，所有欄位均不含 Value／COGS／GP）：
 1. By Shop — 各店舖 P90D 0 Sales SKU 總數（已刪除重複）、庫存總數及各分類 SKU 數與庫存總數；
    分類維度可切換：MAKE UP 分類、Item Class、Adj. MCH1、交叉維度（MAKE UP × Item Class、
    MAKE UP × Adj. MCH1：每個店舖／分組按 MAKE UP／Non-MAKE UP 逐列，欄為次分類分項與小計）
-2. Top 10 店舖回覆 — 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列
+2. 店舖90日Top 10無賣SKU回覆 — 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列
    （預設只限 Non-MAKE UP；勾選包括 MAKE UP 時則一併計算），附店內庫存排名及空白「店舖回覆」欄
 3. By Nature — 按 Shop Nature 分佈（分組欄隨分類維度變動）
 4. By OM — 按 OM 分佈（分組欄隨分類維度變動）
 5. By SKU — 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序
+6. By Buyer — 按 Buyer 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序
 """
 
 import gc
@@ -50,6 +51,7 @@ __all__ = [
     "_build_op90d_by_nature",
     "_build_op90d_by_om",
     "_build_op90d_by_sku",
+    "_build_op90d_by_buyer",
     "_OP90D_STATUS",
     "_OP90D_MAKEUP_MCH1",
     "_OP90D_BREAKDOWN_MAKEUP",
@@ -65,6 +67,7 @@ __all__ = [
     "_OP90D_BY_NATURE_COLUMNS",
     "_OP90D_BY_OM_COLUMNS",
     "_OP90D_BY_SKU_COLUMNS",
+    "_OP90D_BY_BUYER_COLUMNS",
 ]
 
 _OP90D_STATUS = "Overstock (P90D 0 Sales)"
@@ -180,6 +183,14 @@ _OP90D_BY_SKU_COLUMNS = [
     "Item Status",
     "Launch Date",
     "出現店舖數",
+    "P90D 0 Sales 行數",
+    "Shop Stock Qty (CM) 總數",
+]
+
+_OP90D_BY_BUYER_COLUMNS = [
+    "Buyer",
+    "出現店舖數",
+    "P90D 0 Sales SKU 數",
     "P90D 0 Sales 行數",
     "Shop Stock Qty (CM) 總數",
 ]
@@ -668,6 +679,54 @@ def _build_op90d_by_sku(raw: pd.DataFrame) -> pd.DataFrame:
     return by_sku[_OP90D_BY_SKU_COLUMNS]
 
 
+def _build_op90d_by_buyer(raw: pd.DataFrame) -> pd.DataFrame:
+    """按 Buyer 統計出現 P90D 0 Sales 的店舖數（Site Code 已刪除重複，空白不計）。
+
+    每個 Buyer 一列，按出現店舖數由大至小排序，店舖數相同時按庫存總數排序。
+    Buyer 空白列歸入「空白」組；SKU 數一律已刪除重複。
+    """
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=_OP90D_BY_BUYER_COLUMNS)
+    df = raw.copy()
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+    buyer = df.get("Buyer", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    df["_buyer"] = buyer.map(_display_group)
+    site = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    df["Site Code"] = site
+    if "_stock_cm" not in df.columns:
+        df["_stock_cm"] = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
+
+    def _site_nunique(series: pd.Series) -> int:
+        return int(series.replace("", pd.NA).dropna().astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+
+    rows = []
+    for b, group in df.groupby("_buyer", dropna=False, observed=True):
+        rows.append({
+            "Buyer": b,
+            "出現店舖數": _site_nunique(group["Site Code"]),
+            "P90D 0 Sales SKU 數": int(group["SKU"].dropna().astype(str).nunique()),
+            "P90D 0 Sales 行數": int(len(group)),
+            "Shop Stock Qty (CM) 總數": int(float(group["_stock_cm"].sum())),
+        })
+    by_buyer = pd.DataFrame(rows, columns=_OP90D_BY_BUYER_COLUMNS)
+    if by_buyer.empty:
+        return by_buyer
+    by_buyer = by_buyer.sort_values(
+        ["出現店舖數", "Shop Stock Qty (CM) 總數", "Buyer"],
+        ascending=[False, False, True],
+        kind="stable",
+    ).reset_index(drop=True)
+    total_row = {
+        "Buyer": "總計",
+        "出現店舖數": _site_nunique(df["Site Code"]),
+        "P90D 0 Sales SKU 數": int(df["SKU"].dropna().astype(str).nunique()),
+        "P90D 0 Sales 行數": int(len(df)),
+        "Shop Stock Qty (CM) 總數": int(float(df["_stock_cm"].sum())),
+    }
+    by_buyer = pd.concat([by_buyer, pd.DataFrame([total_row])], ignore_index=True)
+    return by_buyer[_OP90D_BY_BUYER_COLUMNS]
+
+
 def transform_overstock_p90d(
     df_input: pd.DataFrame,
     progress_callback=None,
@@ -776,14 +835,15 @@ def generate_excel_overstock_p90d(
     progress_callback=None,
     include_raw: bool = True,
     by_sku: pd.DataFrame | None = None,
+    by_buyer: pd.DataFrame | None = None,
 ) -> BytesIO:
-    """產生五個工作表的 Excel（無 RAW；include_raw 僅為介面相容而保留，不影響輸出）。
+    """產生六個工作表的 Excel（無 RAW；include_raw 僅為介面相容而保留，不影響輸出）。
 
-    ``by_sku`` 為 None 時只輸出原有四個工作表（保持舊有呼叫相容）；
-    傳入 By SKU 統計表時另加「By SKU」工作表。
+    ``by_sku``／``by_buyer`` 為 None 時略過對應工作表（保持舊有呼叫相容）；
+    傳入統計表時分別另加「By SKU」及「By Buyer」工作表。
     """
-    for name, frame in (("By Shop", by_shop), ("Top 10", top10), ("By Nature", by_nature), ("By OM", by_om),
-                          ("By SKU", by_sku)):
+    for name, frame in (("By Shop", by_shop), ("店舖90日Top 10無賣SKU回覆", top10), ("By Nature", by_nature), ("By OM", by_om),
+                          ("By SKU", by_sku), ("By Buyer", by_buyer)):
         if frame is not None and not frame.empty:
             banned = [c for c in frame.columns if _is_banned_column(c)]
             if banned:
@@ -800,11 +860,11 @@ def generate_excel_overstock_p90d(
                        by_shop, progress_callback, 0.0, 0.22, "By Shop")
 
     if progress_callback:
-        progress_callback(0.28, "建立 Top 10 店舖回覆...")
-    ws_top = wb.create_sheet(title="Top 10 店舖回覆")
+        progress_callback(0.28, "建立店舖90日Top 10無賣SKU回覆...")
+    ws_top = wb.create_sheet(title="店舖90日Top 10無賣SKU回覆")
     _write_op90d_table(ws_top,
                        list(top10.columns) if top10 is not None else _OP90D_TOP10_COLUMNS,
-                       top10, progress_callback, 0.28, 0.55, "Top 10 店舖回覆", auto_filter=True)
+                       top10, progress_callback, 0.28, 0.55, "店舖90日Top 10無賣SKU回覆", auto_filter=True)
 
     if progress_callback:
         progress_callback(0.6, "建立 By Nature...")
@@ -822,11 +882,19 @@ def generate_excel_overstock_p90d(
 
     if by_sku is not None:
         if progress_callback:
-            progress_callback(0.86, "建立 By SKU...")
+            progress_callback(0.84, "建立 By SKU...")
         ws_sku = wb.create_sheet(title="By SKU")
         _write_op90d_table(ws_sku,
                            list(by_sku.columns) if by_sku is not None else _OP90D_BY_SKU_COLUMNS,
-                           by_sku, progress_callback, 0.86, 0.94, "By SKU", auto_filter=True)
+                           by_sku, progress_callback, 0.84, 0.89, "By SKU", auto_filter=True)
+
+    if by_buyer is not None:
+        if progress_callback:
+            progress_callback(0.89, "建立 By Buyer...")
+        ws_buyer = wb.create_sheet(title="By Buyer")
+        _write_op90d_table(ws_buyer,
+                           list(by_buyer.columns) if by_buyer is not None else _OP90D_BY_BUYER_COLUMNS,
+                           by_buyer, progress_callback, 0.89, 0.94, "By Buyer")
 
     if progress_callback:
         progress_callback(0.95, "正在儲存 Excel 檔案...")

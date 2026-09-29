@@ -1,7 +1,7 @@
 """Validation tests for P90D 0 Sales Review(Shop回覆).
 
 覆蓋：狀態篩選、MAKE UP 分類、店舖統計、Top 10、Nature／OM 分佈、
-不輸出 Value／COGS／GP 欄位、Excel 四頁結構。
+By SKU、By Buyer、不輸出 Value／COGS／GP 欄位、Excel 多頁結構。
 """
 import warnings
 warnings.filterwarnings("ignore")
@@ -11,6 +11,9 @@ from openpyxl import load_workbook
 from transformer import (
     transform_overstock_p90d,
     generate_excel_overstock_p90d,
+    _build_op90d_by_sku,
+    _build_op90d_by_buyer,
+    _OP90D_BY_BUYER_COLUMNS,
 )
 
 BASE = {
@@ -448,7 +451,7 @@ def test_excel_four_sheets_no_banned_headers():
     _, by_shop, top10, by_nature, by_om, _ = transform_overstock_p90d(df)
     buf = generate_excel_overstock_p90d(by_shop, top10, by_nature, by_om, None)
     wb = load_workbook(BytesIO(buf.getvalue()), data_only=True)
-    assert wb.sheetnames == ["By Shop", "Top 10 店舖回覆", "By Nature", "By OM"]
+    assert wb.sheetnames == ["By Shop", "店舖90日Top 10無賣SKU回覆", "By Nature", "By OM"]
     import re
     for ws in wb.worksheets:
         for cell in ws[1]:
@@ -464,7 +467,7 @@ def test_excel_empty_result_still_four_sheets():
     _, by_shop, top10, by_nature, by_om, _ = transform_overstock_p90d(df)
     buf = generate_excel_overstock_p90d(by_shop, top10, by_nature, by_om, None)
     wb = load_workbook(BytesIO(buf.getvalue()), data_only=True)
-    assert wb.sheetnames == ["By Shop", "Top 10 店舖回覆", "By Nature", "By OM"]
+    assert wb.sheetnames == ["By Shop", "店舖90日Top 10無賣SKU回覆", "By Nature", "By OM"]
 
 
 def test_excel_breakdown_dynamic_headers():
@@ -482,3 +485,82 @@ def test_excel_breakdown_dynamic_headers():
         "D SKU 數", "D Shop Stock Qty (CM) 總數",
     ]
     assert [c.value for c in wb["By Nature"][1]][4:-1] == ["A1 SKU 數", "D SKU 數"]
+
+
+# ── 7. By Buyer ──────────────────────────────────────────────────────────
+def test_by_buyer_counts_sort_and_totals():
+    df = _df([
+        {"SKU": 1, "Buyer": "B1", "Site Code": "S01", "Shop Stock Qty (CM)": 10.0},
+        {"SKU": 2, "Buyer": "B1", "Site Code": "S02", "Item_Shop": "P-S02-KL",
+         "Shop Stock Qty (CM)": 5.0},
+        {"SKU": 2, "Buyer": "B1", "Site Code": "S02", "Item_Shop": "P-S02-KL",
+         "Shop Stock Qty (CM)": 5.0},  # 同 SKU 同店重複列
+        {"SKU": 3, "Buyer": "B2", "Site Code": "S01", "Shop Stock Qty (CM)": 7.0},
+        {"SKU": 4, "Buyer": "B2", "Site Code": "S01", "Shop Stock Qty (CM)": 3.0},
+        {"SKU": 5, "Buyer": "B3", "Site Code": "S03", "Item_Shop": "P-S03-NT",
+         "Shop Stock Qty (CM)": 100.0},
+    ])
+    raw, _, _, _, _, _ = transform_overstock_p90d(df)
+    by_buyer = _build_op90d_by_buyer(raw)
+    assert list(by_buyer.columns) == list(_OP90D_BY_BUYER_COLUMNS)
+    # B1（2 店）居首；B2 與 B3 同為 1 店，按庫存總數排序（B3 在前）
+    assert list(by_buyer["Buyer"]) == ["B1", "B3", "B2", "總計"]
+    b1 = by_buyer[by_buyer["Buyer"] == "B1"].iloc[0]
+    assert int(b1["出現店舖數"]) == 2
+    assert int(b1["P90D 0 Sales SKU 數"]) == 2  # SKU 1、2（已刪除重複）
+    assert int(b1["P90D 0 Sales 行數"]) == 3
+    assert int(b1["Shop Stock Qty (CM) 總數"]) == 20  # 未刪除重複加總
+    b3 = by_buyer[by_buyer["Buyer"] == "B3"].iloc[0]
+    assert int(b3["出現店舖數"]) == 1
+    assert int(b3["Shop Stock Qty (CM) 總數"]) == 100
+    total = by_buyer[by_buyer["Buyer"] == "總計"].iloc[0]
+    assert int(total["出現店舖數"]) == 3
+    assert int(total["P90D 0 Sales SKU 數"]) == 5
+    assert int(total["P90D 0 Sales 行數"]) == 6
+    assert int(total["Shop Stock Qty (CM) 總數"]) == 130
+    _no_banned(by_buyer)
+
+
+def test_by_buyer_blank_group():
+    df = _df([
+        {"SKU": 1, "Buyer": "   "},
+        {"SKU": 2, "Buyer": "B1"},
+    ])
+    raw, _, _, _, _, _ = transform_overstock_p90d(df)
+    by_buyer = _build_op90d_by_buyer(raw)
+    assert "空白" in list(by_buyer["Buyer"])
+    blank = by_buyer[by_buyer["Buyer"] == "空白"].iloc[0]
+    assert int(blank["P90D 0 Sales SKU 數"]) == 1
+    assert int(by_buyer[by_buyer["Buyer"] == "總計"]["P90D 0 Sales 行數"].iloc[0]) == 2
+    _no_banned(by_buyer)
+
+
+def test_by_buyer_empty():
+    df = _df([{"SKU": 1, "Shop Stock Status": "Normal"}])
+    raw, _, _, _, _, _ = transform_overstock_p90d(df)
+    by_buyer = _build_op90d_by_buyer(raw)
+    assert by_buyer.empty
+    assert list(by_buyer.columns) == list(_OP90D_BY_BUYER_COLUMNS)
+
+
+def test_excel_with_by_buyer_six_sheets():
+    df = _df([
+        {"SKU": 1, "Buyer": "B1", "Adj. MCH1": "02 - MAKE UP"},
+        {"SKU": 2, "Buyer": "B2", "Site Code": "S02", "Item_Shop": "P-S02-KL"},
+    ])
+    raw, by_shop, top10, by_nature, by_om, _ = transform_overstock_p90d(df)
+    by_sku = _build_op90d_by_sku(raw)
+    by_buyer = _build_op90d_by_buyer(raw)
+    buf = generate_excel_overstock_p90d(
+        by_shop, top10, by_nature, by_om, None, by_sku=by_sku, by_buyer=by_buyer,
+    )
+    wb = load_workbook(BytesIO(buf.getvalue()), data_only=True)
+    assert wb.sheetnames == ["By Shop", "店舖90日Top 10無賣SKU回覆", "By Nature", "By OM", "By SKU", "By Buyer"]
+    assert [c.value for c in wb["By Buyer"][1]] == list(_OP90D_BY_BUYER_COLUMNS)
+    import re
+    for cell in wb["By Buyer"][1]:
+        if cell.value:
+            lowered = str(cell.value).lower()
+            assert "value" not in lowered, cell.value
+            assert "cogs" not in lowered, cell.value
+            assert re.search(r"\bgp\b", lowered) is None, cell.value
