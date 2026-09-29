@@ -132,3 +132,9 @@ MODE_REGISTRY["P90D 0 Sales Review(Shop回覆)"] = {
     "transform": "transform_overstock_p90d",
     "generate_excel": "generate_excel_overstock_p90d",
 }
+
+MODE_REGISTRY["P90D 0 Sales Review(個別店舖)"] = {
+    "module": "modes.overstock_p90d",
+    "transform": "transform_overstock_p90d_shop",
+    "generate_excel": "generate_excel_overstock_p90d_shop",
+}

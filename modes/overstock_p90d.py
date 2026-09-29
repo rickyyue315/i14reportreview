@@ -19,6 +19,10 @@ MAKE UP 判定：``Adj. MCH1`` 去除前後空格後等於 ``02 - MAKE UP`` 者�
 4. By OM — 按 OM 分佈（分組欄隨分類維度變動）
 5. By SKU — 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序
 6. By Buyer — 按 Buyer 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序
+
+個別店舖版（P90D 0 Sales Review(個別店舖)）：篩選準則相同，分類固定以 MAKE UP 分類；
+Top 10 工作表為「店舖90日零銷售Top 10 ALL SKU」，包括全部 SKU 且不設「店舖回覆」欄，
+供個別店舖查閱自身全部零銷售 SKU 情況。
 """
 
 import gc
@@ -46,8 +50,11 @@ from modes.common import (
 __all__ = [
     "transform_overstock_p90d",
     "generate_excel_overstock_p90d",
+    "transform_overstock_p90d_shop",
+    "generate_excel_overstock_p90d_shop",
     "_build_op90d_by_shop",
     "_build_op90d_top10",
+    "_build_op90d_top10_all",
     "_build_op90d_by_nature",
     "_build_op90d_by_om",
     "_build_op90d_by_sku",
@@ -64,6 +71,8 @@ __all__ = [
     "_OP90D_ALL_PRIMARIES",
     "_OP90D_BY_SHOP_COLUMNS",
     "_OP90D_TOP10_COLUMNS",
+    "_OP90D_TOP10_ALL_SHEET",
+    "_OP90D_TOP10_ALL_COLUMNS",
     "_OP90D_BY_NATURE_COLUMNS",
     "_OP90D_BY_OM_COLUMNS",
     "_OP90D_BY_SKU_COLUMNS",
@@ -151,6 +160,10 @@ _OP90D_TOP10_COLUMNS = [
     "Shop On Order PO Qty (CM)",
     "店舖回覆",
 ]
+
+# 個別店舖版 Top 10：包含 MAKE UP 與 Non-MAKE UP 全部 SKU，不設「店舖回覆」欄
+_OP90D_TOP10_ALL_SHEET = "店舖90日零銷售Top 10 ALL SKU"
+_OP90D_TOP10_ALL_COLUMNS = [c for c in _OP90D_TOP10_COLUMNS if c != "店舖回覆"]
 
 _OP90D_BY_NATURE_COLUMNS = [
     "Shop Nature",
@@ -484,6 +497,19 @@ def _build_op90d_top10(raw: pd.DataFrame, top_n: int = 10, include_makeup: bool 
     return top10[cols]
 
 
+def _build_op90d_top10_all(raw: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
+    """個別店舖版 Top 10：各店舖按 Shop Stock Qty (CM) 取前 N 列，包含全部 SKU。
+
+    與店舖回覆版的差異：固定包括 MAKE UP SKU，且不輸出「店舖回覆」欄，
+    供店舖查閱自身全部零銷售 SKU 情況，無須回覆。
+    """
+    top10 = _build_op90d_top10(raw, top_n=top_n, include_makeup=True)
+    if top10.empty:
+        return pd.DataFrame(columns=_OP90D_TOP10_ALL_COLUMNS)
+    cols = [c for c in _OP90D_TOP10_ALL_COLUMNS if c in top10.columns]
+    return top10[cols]
+
+
 def _build_distribution(raw: pd.DataFrame, key: str, breakdown: str = _OP90D_BREAKDOWN_MAKEUP) -> pd.DataFrame:
     base = [key, "涉及店舖數", "P90D 0 Sales SKU 數", "P90D 0 Sales 行數"]
     tail = ["Shop Stock Qty (CM) 總數"]
@@ -785,6 +811,42 @@ def transform_overstock_p90d(
     return raw, by_shop, top10, by_nature, by_om, warnings
 
 
+def transform_overstock_p90d_shop(
+    df_input: pd.DataFrame,
+    progress_callback=None,
+    shop_natures: list[str] | None = None,
+):
+    """個別店舖版：篩選準則與店舖回覆版相同，分類固定以 MAKE UP 分類統計。
+
+    Top 10 固定包括 MAKE UP 與 Non-MAKE UP 全部 SKU，不輸出「店舖回覆」欄，
+    供店舖查閱自身全部零銷售 SKU 情況，無須回覆。
+    """
+    if progress_callback:
+        progress_callback(0.0, "驗證輸入資料...")
+    raw = _prepare_filtered(df_input, shop_natures=shop_natures, progress_callback=progress_callback)
+
+    if progress_callback:
+        progress_callback(0.35, "建立店舖統計...")
+    by_shop = _build_op90d_by_shop(raw, _OP90D_BREAKDOWN_MAKEUP)
+
+    if progress_callback:
+        progress_callback(0.5, "擷取各店最高庫存 SKU...")
+    top10 = _build_op90d_top10_all(raw)
+
+    if progress_callback:
+        progress_callback(0.65, "建立 Nature 及 OM 分佈...")
+    by_nature = _build_op90d_by_nature(raw, _OP90D_BREAKDOWN_MAKEUP)
+    by_om = _build_op90d_by_om(raw, _OP90D_BREAKDOWN_MAKEUP)
+
+    warnings = []
+    if raw.empty:
+        warnings.append("沒有符合「P90D 0 Sales（Shop Stock Qty (LM) 大於 0）」的資料。")
+
+    if progress_callback:
+        progress_callback(0.7, "完成資料轉換...")
+    return raw, by_shop, top10, by_nature, by_om, warnings
+
+
 def _write_op90d_table(ws, headers, data: pd.DataFrame, progress_callback=None,
                        progress_start=0.0, progress_end=0.1, sheet_name="",
                        auto_filter: bool = False):
@@ -837,13 +899,21 @@ def generate_excel_overstock_p90d(
     include_raw: bool = True,
     by_sku: pd.DataFrame | None = None,
     by_buyer: pd.DataFrame | None = None,
+    top_sheet_title: str | None = None,
 ) -> BytesIO:
     """產生六個工作表的 Excel（無 RAW；include_raw 僅為介面相容而保留，不影響輸出）。
 
     ``by_sku``／``by_buyer`` 為 None 時略過對應工作表（保持舊有呼叫相容）；
     傳入統計表時分別另加「By SKU」及「By Buyer」工作表。
+    ``top_sheet_title`` 指定 Top 10 工作表名稱，預設為店舖回覆版名稱；
+    個別店舖版傳入 ``_OP90D_TOP10_ALL_SHEET``。
     """
-    for name, frame in (("By Shop", by_shop), ("店舖90日零銷售Top 10 SKU回覆", top10), ("By Nature", by_nature), ("By OM", by_om),
+    top_title = top_sheet_title or "店舖90日零銷售Top 10 SKU回覆"
+    top_default_cols = (
+        _OP90D_TOP10_ALL_COLUMNS if top_title == _OP90D_TOP10_ALL_SHEET
+        else _OP90D_TOP10_COLUMNS
+    )
+    for name, frame in (("By Shop", by_shop), (top_title, top10), ("By Nature", by_nature), ("By OM", by_om),
                           ("By SKU", by_sku), ("By Buyer", by_buyer)):
         if frame is not None and not frame.empty:
             banned = [c for c in frame.columns if _is_banned_column(c)]
@@ -861,11 +931,11 @@ def generate_excel_overstock_p90d(
                        by_shop, progress_callback, 0.0, 0.22, "By Shop")
 
     if progress_callback:
-        progress_callback(0.28, "建立店舖90日零銷售Top 10 SKU回覆...")
-    ws_top = wb.create_sheet(title="店舖90日零銷售Top 10 SKU回覆")
+        progress_callback(0.28, f"建立{top_title}...")
+    ws_top = wb.create_sheet(title=top_title)
     _write_op90d_table(ws_top,
-                       list(top10.columns) if top10 is not None else _OP90D_TOP10_COLUMNS,
-                       top10, progress_callback, 0.28, 0.55, "店舖90日零銷售Top 10 SKU回覆", auto_filter=True)
+                       list(top10.columns) if top10 is not None else top_default_cols,
+                       top10, progress_callback, 0.28, 0.55, top_title, auto_filter=True)
 
     if progress_callback:
         progress_callback(0.6, "建立 By Nature...")
@@ -908,3 +978,27 @@ def generate_excel_overstock_p90d(
     if progress_callback:
         progress_callback(1.0, "完成!")
     return buf
+
+
+def generate_excel_overstock_p90d_shop(
+    by_shop: pd.DataFrame,
+    top10: pd.DataFrame,
+    by_nature: pd.DataFrame,
+    by_om: pd.DataFrame,
+    progress_callback=None,
+    include_raw: bool = True,
+    by_sku: pd.DataFrame | None = None,
+    by_buyer: pd.DataFrame | None = None,
+) -> BytesIO:
+    """個別店舖版 Excel：Top 10 工作表為「店舖90日零銷售Top 10 ALL SKU」。
+
+    其餘五個工作表與店舖回覆版相同（無 RAW；include_raw 僅為介面相容而保留）。
+    """
+    return generate_excel_overstock_p90d(
+        by_shop, top10, by_nature, by_om,
+        progress_callback=progress_callback,
+        include_raw=include_raw,
+        by_sku=by_sku,
+        by_buyer=by_buyer,
+        top_sheet_title=_OP90D_TOP10_ALL_SHEET,
+    )

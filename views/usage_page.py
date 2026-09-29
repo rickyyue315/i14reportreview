@@ -187,6 +187,25 @@ MODES = [
 4. 以 Item Class 或 Adj. MCH1 分類時，分組欄按固定順序排列（Item Class：A1→D；MCH1：編號排序），空白值歸入「空白」組
      """),
 
+    ("📦 P90D 0 Sales Review(個別店舖)",
+     """
+- 供個別店舖查閱自身 P90D 0 Sales 情況，篩選準則與店舖回覆版相同（`Shop Stock Status` 為 P90D 0 Sales 狀態且 `Shop Stock Qty (LM)` 大於 0）
+- 分類固定以 MAKE UP 分類統計（MAKE UP／Non-MAKE UP 同時顯示 SKU 數與庫存總數），適合個別店舖原始資料
+- 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列，包括 MAKE UP 與 Non-MAKE UP 全部 SKU，不設「店舖回覆」欄，供店舖查閱自身其他零銷售 SKU 情況
+- Top 10 欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
+- 按 Shop Nature 及 OM 統計分佈（涉及店舖數、SKU 數、行數、分類分項 SKU 數、庫存總數）
+- 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序
+- 按 Buyer 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序
+- 六個工作表均不含 Value／COGS／GP 欄位
+- 輸出：By Shop、店舖90日零銷售Top 10 ALL SKU、By SKU、By Buyer、By Nature、By OM
+     """,
+     """
+篩選與店舖回覆版相同：
+1. 只收錄 P90D 0 Sales 狀態的列（且 Shop Stock Qty (LM) 須大於 0，LM 為 0 者不計算），其他狀態一律排除
+2. MAKE UP 分類＝Adj. MCH1 去除前後空格後等於 02 - MAKE UP，其餘（含空白）為 Non-MAKE UP
+3. SKU 數一律已刪除重複；庫存總數為 Shop Stock Qty (CM) 加總
+     """),
+
     ("🔄 Stock Checking（調貨檢查）",
      """
 - 觸發條件：該 SKU 的 **Tourist 加總 TurnDay**（各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5，與 Summary 同一準則）< 14 日（UI 可調）**且** D001 Net Stock Qty (CM) < 100 件（UI 可調）**且** Mix / Non Tourist 至少一個 Nature 的加總 TurnDay ≥ 14 日（有貨可調）→ 標示「需要調貨」；加總 TurnDay ≥ 門檻一律無須調貨
