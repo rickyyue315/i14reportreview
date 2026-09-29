@@ -540,3 +540,7 @@ from modes.forecast import *  # noqa: F401,F403
 
 # ─── P90D 0 Sales Review(Shop回覆)：實作已遷至 modes/overstock_p90d.py（墊片 re-export）───
 from modes.overstock_p90d import *  # noqa: F401,F403
+
+
+# ─── Safety Stock 月度變化分析：實作已遷至 modes/safety_monthly.py（墊片 re-export）───
+from modes.safety_monthly import *  # noqa: F401,F403

@@ -1,5 +1,17 @@
 # 版本記錄
 
+## v1.63.0 (2026-09-29)
+
+新增第 15 個分析模式**Safety Stock 月度變化分析**——追蹤店舖每月 Safety Stock 原始值變化對生意的影響；其餘 14 個模式計算、欄位、欄序零變動：
+
+- **輸入** — `MONTH／YEAR` 為恒為必要欄位（位於來源檔案尾部，大小寫皆接受，缺任一即停止）；另需 `Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM)`；`Adj. MCH1／Adj. SST` 為選填（缺欄時對應樞紐以「空白」列示）
+- **計算** — `modes/safety_monthly.py`：主鍵 `Site Code × SKU × YEAR-MONTH`（兼容多店舖）→ 相鄰月份環比事件（上月缺資料者不計變化）→ Safety 只看原始值增減（增加／減少／不變）→ RP 轉變（RF→RF／ND→ND／RF→ND／ND→RF）→ 最新月份按數據截止日月化（係數＝當月總日數 ÷ 截止日日號，Sold 與 Net 兩欄同時月化；舊月份係數為 1）→ Sold／Net 變化以月化基準計算
+- **輸出** — 說明／SKU月度變化／By Adj. MCH1／By Adj. SST／By MCH1×SST／By Shop／月度摘要／RAW 共 8 個工作表，支援略過 RAW 選項
+- **文件** — 使用說明頁、README 同步
+- **測試** — 新增 `tests/test_safety_monthly.py` ×11；共 520 項測試通過，3 項略過
+- Validation: 實檔 `By SKUxShop_HA19_May-Sep2026.xlsx`（20,468 列，HA19 單店舖 5 個月）——環比事件 15,404 列／Safety 增加 221／減少 1,238／不變 13,945／淨變化 −5,526 件；Excel 正常產生
+- Change: `version.py` → 1.63.0
+
 ## v1.62.0 (2026-09-29)
 
 P90D 0 Sales Review(Shop回覆) 分類維度新增兩個交叉維度——**MAKE UP × Item Class** 與 **MAKE UP × Adj. MCH1**：以 MAKE UP／Non-MAKE UP 為主分類逐列，欄為次分類分項 SKU 數與小計（樞紐式長表，取代先前已移除的三行階層合併設計）；三個單一維度與其餘模式零變動：

@@ -292,6 +292,24 @@ SKU 級 Forecast 計算（v2 加權混合）：
 9. **輸出 6 工作表** = 說明（首頁導讀：本次參數＋核心邏輯＋工作表導讀＋實用提示；開啟 Excel 時預設顯示本頁）/ Forecast 主表（SKU 級：識別／三期銷售＋月化／爆升分類／三情境＋MTD 調整月化＋趨勢增速＋採用月預估／位置分項與合計／目標覆蓋量／缺口／上限空間／建議訂量（醒目底色）／建議訂貨對象（D001 PO／Shop PO）／SKU 狀態／風險店數；按 Buyer／Brand／SKU 排序）/ 店舖覆蓋 / 按 Buyer 彙總（建議訂量合計分 D001 PO／Shop PO 兩欄）/ RAW（重排欄序，不顯示 Item_Shop 與 Value 金額欄；含還原值欄、逐列訊號欄與 FC 缺貨還原列旗）/ Forecast 摘要（指標卡 8 項＋按 Buyer 表）
      """),
 
+    ("📅 Safety Stock 月度變化分析",
+     """
+- 追蹤店舖每月 Safety Stock 原始值變化對生意的影響；主鍵為 Site Code × SKU × YEAR-MONTH，兼容多店舖檔案
+- 此模式必須包含 MONTH 與 YEAR 欄位（位於來源檔案尾部），用以分類每個月的變化；缺少任一即停止
+- 分析欄固定五項：Adj. Safety Stock（只看原始值增減）／RP Type 轉變／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM)
+- 相鄰月份環比；最新月份按數據截止日月化（Sold 與 Net 同時月化，係數＝當月總日數 ÷ 截止日日號）
+- 維度：Adj. MCH1、Adj. SST、MCH1×SST、Site Code
+- 輸出：說明、SKU月度變化、By Adj. MCH1、By Adj. SST、By MCH1×SST、By Shop、月度摘要、RAW 共 8 個工作表
+     """,
+     """
+Safety Stock 月度變化計算：
+1. **YEAR-MONTH** = YEAR × 100 ＋ MONTH 排序；MONTH 須為 1–12 整數，無效列略過並列警告；至少需 2 個月份
+2. **月化** = 最新月份 Sold月化＝Sold Qty (CM - MTD) × 係數、Net月化＝Net Sales (CM - MTD) × 係數；舊月份係數為 1；Stock 與 Safety 為快照不月化
+3. **Safety變化量** = 本月 Adj. Safety Stock − 上月；正數為增加、負數為減少、零為不變（只看原始值，不作建議值計算）
+4. **RP轉變** = 上月→本月（如 RF→ND）；Sold／Net 變化量以月化基準計算，變化率＝變化量 ÷ 上月絕對值（上月為 0 留空）
+5. **樞紐** = Net／Sold 以月化值加總；Stock／Safety 以原始值加總；SKU 數為不重複 SKU
+     """),
+
 ]
 
 for _label, _desc, _rules, *_extra in MODES:
@@ -324,6 +342,7 @@ st.markdown("""
         <li>✅ <b>NDRF 月份對比</b> <span style="color:#0077a3;font-size:0.8em">(Month／RP Type／Shop Stock Qty (CM)／Adj. SST／Site Code)</span></li>
         <li>✅ <b>Past 90 Days 0 Sales</b> <span style="color:#0077a3;font-size:0.8em">(Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Shop Stock Qty (LM)／Shop Stock Qty (CM)／Site Code)</span></li>
         <li>✅ <b>Forecast Review</b> <span style="color:#0077a3;font-size:0.8em">(Site Code／Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Sold Qty (P90D)／Shop Stock Qty (CM))</span></li>
+        <li>✅ <b>Safety Stock 月度變化分析</b> <span style="color:#0077a3;font-size:0.8em">(MONTH／YEAR（尾部欄位，恒為必要）／Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM))</span></li>
     </ul>
     <p>OOS Review 額外建議欄位（非必要，缺少時將顯示提示）：</p>
     <ul>

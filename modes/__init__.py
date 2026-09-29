@@ -90,3 +90,9 @@ MODE_REGISTRY["P90D 0 Sales Review(個別店舖)"] = {
     "transform": "transform_overstock_p90d_shop",
     "generate_excel": "generate_excel_overstock_p90d_shop",
 }
+
+MODE_REGISTRY["Safety Stock 月度變化分析"] = {
+    "module": "modes.safety_monthly",
+    "transform": "transform_safety_monthly",
+    "generate_excel": "generate_excel_safety_monthly",
+}

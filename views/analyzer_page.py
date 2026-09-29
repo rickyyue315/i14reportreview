@@ -60,6 +60,8 @@ from transformer import (
     transform_overstock_p90d_shop, generate_excel_overstock_p90d_shop,
     _build_op90d_by_sku, _build_op90d_by_buyer,
     _HYBRID_FULL_SAFETY_SHEET,
+    transform_safety_monthly, generate_excel_safety_monthly,
+    safety_monthly_dashboard_metrics,
 )
 import time
 import traceback
@@ -262,8 +264,8 @@ st.markdown("""
     <div class="step"><span class="n">4</span><b>執行並下載</b><small>看板預覽＋一鍵導出</small></div>
 </div>
 """, unsafe_allow_html=True)
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review(Shop回覆)", "P90D 0 Sales Review(個別店舖)", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review"]
-st.caption("🔄 調貨與補貨：Stock Checking · Safety Stock x NetStock Review　｜　🔒 安全庫存：Safety Stock Review · Forecast Review　｜　📦 庫存健康：Overstock · OOS · Stock Impact · 90 日零銷售 · P90D 0 Sales　｜　✂️ 商品與對比：Carry SKU · SKU 精簡 · NDRF 月份對比")
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review(Shop回覆)", "P90D 0 Sales Review(個別店舖)", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "Safety Stock 月度變化分析"]
+st.caption("🔄 調貨與補貨：Stock Checking · Safety Stock x NetStock Review　｜　🔒 安全庫存：Safety Stock Review · Forecast Review · Safety Stock 月度變化分析　｜　📦 庫存健康：Overstock · OOS · Stock Impact · 90 日零銷售 · P90D 0 Sales　｜　✂️ 商品與對比：Carry SKU · SKU 精簡 · NDRF 月份對比")
 MODE_DESCRIPTIONS = {
     "Overstock Review": "篩選庫存過剩品項，計算建議安全庫存與可轉出貨量。",
     "OOS Review": "篩選缺貨與潛在缺貨品項，偵測安全庫存不足。",
@@ -279,6 +281,7 @@ MODE_DESCRIPTIONS = {
     "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
     "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
+    "Safety Stock 月度變化分析": "追蹤店舖每月 Safety Stock 原始值變化對生意的影響（須含 MONTH／YEAR）。",
 }
 current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0, key="mode_selector")
 st.caption(f"用途：{MODE_DESCRIPTIONS.get(current_mode, '')}")
@@ -351,6 +354,7 @@ MODE_KEYS = {
     "Stock Checking": {"prefix": "stock_chk_", "processed": False, "summary_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
     "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "sc_summary": None, "diagnosis": None, "diagnosis_om": None, "diag_summary": None, "stats": None, "excel_data": None, "params": None, "warnings": []},
     "Forecast Review": {"prefix": "fc_", "processed": False, "main_df": None, "coverage_df": None, "buyer_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
+    "Safety Stock 月度變化分析": {"prefix": "safm_", "processed": False, "change_df": None, "mch1_df": None, "sst_df": None, "cross_df": None, "shop_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -2297,6 +2301,35 @@ if uploaded_file is not None:
             if month_a_selected == month_b_selected:
                 st.warning("⚠️ 月份 A 與月份 B 相同，對比將無差異。請選擇不同月份。")
 
+        if mode == "Safety Stock 月度變化分析":
+            st.warning("⚠️ 此模式必須包含 MONTH 與 YEAR 欄位（位於來源檔案尾部），用以分類每個月的變化；缺少任一欄即停止。")
+            _safm_cols = [str(c) for c in df_input.columns]
+            _safm_has_my = any(c.strip().lower() == "month" for c in _safm_cols if isinstance(c, str)) and any(c.strip().lower() == "year" for c in _safm_cols if isinstance(c, str))
+            if not _safm_has_my:
+                st.error("❌ 來源檔案缺少 MONTH／YEAR 欄位，此模式無法執行。請確認檔案尾部包含 MONTH 與 YEAR 後再上載。")
+                st.stop()
+            _safm_ym_preview = []
+            try:
+                _m_num = pd.to_numeric(df_input[[c for c in df_input.columns if isinstance(c, str) and c.strip().lower() == "month"][0]], errors="coerce")
+                _y_num = pd.to_numeric(df_input[[c for c in df_input.columns if isinstance(c, str) and c.strip().lower() == "year"][0]], errors="coerce")
+                _valid = _m_num.notna() & _y_num.notna()
+                _safm_ym_preview = sorted(((_y_num[_valid].round().astype(int).astype(str) + "-" + _m_num[_valid].round().astype(int).astype(str).str.zfill(2)).unique().tolist()))
+            except (IndexError, KeyError, ValueError):
+                _safm_ym_preview = []
+            if _safm_ym_preview:
+                st.caption(f"偵測到月份：{'、'.join(_safm_ym_preview)}（至少需 2 個月份方可作相鄰月份環比）")
+            safm_ref_date = st.date_input(
+                "📅 數據截止日（最新月份月化基準；預設昨日）",
+                value=datetime.now().date() - timedelta(days=1),
+                key="safm_ref_date",
+                help="除上載當月外，其餘月份的 CM - MTD 已是足月實績；上載當月只截至此日期前一日。月化係數＝當月總日數 ÷ 截止日日號，僅套用於最新月份的 Sold Qty 與 Net Sales（兩欄同時月化）；截止日與最新月份不一致時不作月化。",
+            )
+            try:
+                _safm_mt = calendar.monthrange(safm_ref_date.year, safm_ref_date.month)[1]
+                st.caption(f"數據截止日：{safm_ref_date.isoformat()}（當月共 {_safm_mt} 日；最新月份按此月化，舊月份係數為 1）")
+            except (TypeError, ValueError):
+                pass
+
         if mode == "Stock Checking":
             sc_top = st.columns(2)
             with sc_top[0]:
@@ -2499,7 +2532,7 @@ if uploaded_file is not None:
         _is_carry_mode = (mode == "Carry SKU Review")
         # Modes that don't use the Shop Nature Rate sliders (no Safety Qty calculation):
         # Carry SKU Review, SKU 精簡 Review, NDRF 月份對比 (pivot/comparison only).
-        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "P90D 0 Sales Review(Shop回覆)") or (mode == "P90D 0 Sales Review(個別店舖)")
+        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "P90D 0 Sales Review(Shop回覆)") or (mode == "P90D 0 Sales Review(個別店舖)") or (mode == "Safety Stock 月度變化分析")
 
         if not _skip_rates_mode:
             _tourist_default = 30 if _is_overstock_mode else 50
@@ -2743,6 +2776,28 @@ if uploaded_file is not None:
                     st.session_state.fc_stats = _fc_stats
                     st.session_state.fc_excel_data = buf
                     st.session_state.fc_warnings = _warnings
+                elif mode == "Safety Stock 月度變化分析":
+                    _safm_change, _safm_mch1, _safm_sst, _safm_cross, _safm_shop, _safm_raw, _safm_stats, _warnings = transform_safety_monthly(
+                        df_input,
+                        ref_date=safm_ref_date,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                    )
+                    buf = generate_excel_safety_monthly(
+                        _safm_change, _safm_mch1, _safm_sst, _safm_cross, _safm_shop, _safm_raw, _safm_stats,
+                        progress_callback=_cb_excel,
+                        include_raw=_include_raw,
+                    )
+                    st.session_state.safm_processed = True
+                    st.session_state.safm_change_df = _safm_change
+                    st.session_state.safm_mch1_df = _safm_mch1
+                    st.session_state.safm_sst_df = _safm_sst
+                    st.session_state.safm_cross_df = _safm_cross
+                    st.session_state.safm_shop_df = _safm_shop
+                    st.session_state.safm_raw_df = _safm_raw
+                    st.session_state.safm_stats = _safm_stats
+                    st.session_state.safm_excel_data = buf
+                    st.session_state.safm_warnings = _warnings
             except Exception as e:
                 _prog2.empty()
                 _tb = traceback.format_exc()
@@ -4115,6 +4170,105 @@ if uploaded_file is not None:
 
             st.download_button(
                 label="📥 下載 Forecast 分析報表 (.xlsx)",
+                data=excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+            )
+
+        if mode == "Safety Stock 月度變化分析" and st.session_state.safm_processed:
+            change_df = st.session_state.safm_change_df
+            mch1_df = st.session_state.safm_mch1_df
+            sst_df = st.session_state.safm_sst_df
+            cross_df = st.session_state.safm_cross_df
+            shop_df = st.session_state.safm_shop_df
+            raw_df = st.session_state.safm_raw_df
+            stats = st.session_state.safm_stats or {}
+            excel_data = st.session_state.safm_excel_data
+
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+            st.markdown("### 📅 Safety Stock 月度變化分析摘要 (Monthly Safety Review Dashboard)")
+            _top_download_button(excel_data, "I14 Safety Stock 月度變化分析", "dl_top_safm")
+
+            _safm_rows = safety_monthly_dashboard_metrics(change_df, stats)
+            for _row_m in _safm_rows:
+                _cols = st.columns(4)
+                for _c, (_name, _val, _desc, _color) in zip(_cols, _row_m):
+                    with _c:
+                        st.markdown(f"""
+                        <div class="metric-card" style="border-left-color: #{_color};">
+                            <div class="metric-title">{_name}</div>
+                            <div class="metric-value" style="color: #{_color};">{_val:,}</div>
+                            <div class="metric-desc">{_desc}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+            _ym_txt = "、".join(stats.get("ym_list", []))
+            _factor_txt = stats.get("annual_factor", 1.0)
+            st.caption(f"覆蓋月份：{_ym_txt}；最新月份 {stats.get('latest_ym', '')} 月化係數 {_factor_txt}（Sold 與 Net 同時月化；數據截止日 {stats.get('ref_date', '')}）。Safety 只看原始值增減；Sold／Net 變化以月化基準計算。")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            tab_change, tab_mch1, tab_sst, tab_cross, tab_shop, tab_raw = st.tabs([
+                "📋 SKU月度變化", "By Adj. MCH1", "By Adj. SST", "By MCH1×SST", "By Shop", "📄 RAW 明細",
+            ])
+            with tab_change:
+                st.markdown("#### 每組相鄰月份環比事件（Safety 只看原始值增減；Sold／Net 以月化基準）")
+                if change_df is not None and not change_df.empty:
+                    _safm_filter = st.selectbox(
+                        "Safety 變化篩選",
+                        options=["全部", "增加", "減少", "不變"],
+                        index=0, key="safm_change_filter",
+                        help="只影響下方預覽，不影響 Excel 導出。",
+                    )
+                    _disp = change_df if _safm_filter == "全部" else change_df[change_df["Safety變化分類"] == _safm_filter]
+                    st.dataframe(_disp.head(200).rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                    st.caption(f"共 {len(_disp):,} 列環比事件（按 Brand／SKU／Site Code／本月排序；僅顯示前 200 筆）。")
+                else:
+                    st.info("無符合資料")
+            with tab_mch1:
+                st.markdown("#### By Adj. MCH1 每月合計（Net／Sold 以月化基準）")
+                if mch1_df is not None and not mch1_df.empty:
+                    st.dataframe(mch1_df.rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_sst:
+                st.markdown("#### By Adj. SST 每月合計（Net／Sold 以月化基準）")
+                if sst_df is not None and not sst_df.empty:
+                    st.dataframe(sst_df.rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_cross:
+                st.markdown("#### By MCH1×SST 每月合計")
+                if cross_df is not None and not cross_df.empty:
+                    st.dataframe(cross_df.head(200).rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                    st.caption(f"共 {len(cross_df):,} 列組合；僅顯示前 200 筆。")
+                else:
+                    st.info("無符合資料")
+            with tab_shop:
+                st.markdown("#### By Shop 每月合計＋環比變化")
+                if shop_df is not None and not shop_df.empty:
+                    st.dataframe(shop_df.rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_raw:
+                st.markdown("#### RAW 原始明細（含 YEAR-MONTH 與月化估算欄）")
+                if raw_df is not None and not raw_df.empty:
+                    _raw_disp = raw_df[[c for c in raw_df.columns if not str(c).startswith("_")]]
+                    st.dataframe(_raw_disp.head(50).rename(columns=_display_safety_header), width='stretch')
+                    st.caption(f"僅顯示前 50 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 Safety Stock 月度變化分析_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載 Safety Stock 月度變化分析報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
