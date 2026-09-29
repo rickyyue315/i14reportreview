@@ -283,7 +283,7 @@ MODE_DESCRIPTIONS = {
     "Stock Impact Analysis (簡化)": "快速檢視各品項三期存貨與銷售趨勢。",
     "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
     "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 須大於 0），分類維度可切換 MAKE UP／Item Class／Adj. MCH1，或交叉維度 MAKE UP × Item Class／MAKE UP × Adj. MCH1（按主分類逐列交叉次分類）；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈，另按 SKU 及 Buyer 統計出現店舖數。",
-    "P90D 0 Sales Review(個別店舖)": "供個別店舖查閱自身 P90D 0 Sales 情況（Shop Stock Qty (LM) 須大於 0），分類固定以 MAKE UP 分類統計；輸出各店最高庫存 Top 10 ALL SKU（包括 MAKE UP 與 Non-MAKE UP 全部 SKU，不設店舖回覆欄），以及 Shop Nature 與 OM 分佈，另按 SKU 及 Buyer 統計出現店舖數。",
+    "P90D 0 Sales Review(個別店舖)": "供個別店舖查閱自身 P90D 0 Sales 情況（Shop Stock Qty (LM) 須大於 0），分類固定以 MAKE UP 分類統計；輸出各店全部 SKU 明細（ALL SKU，包括 MAKE UP 與 Non-MAKE UP，不設列數上限與店舖回覆欄，按庫存由大至小排序），以及 Shop Nature 與 OM 分佈，另按 SKU 及 Buyer 統計出現店舖數。",
     "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
     "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
@@ -3897,9 +3897,9 @@ if uploaded_file is not None:
             with r2_col2:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #06b6d4;">
-                    <div class="metric-title">Top 10 ALL SKU 列數</div>
+                    <div class="metric-title">ALL SKU 列數</div>
                     <div class="metric-value" style="color: #06b6d4;">{len(top10_df) if top10_df is not None else 0:,}</div>
-                    <div class="metric-desc">各店舖最高庫存 Top 10 合計列數（包括全部 SKU）</div>
+                    <div class="metric-desc">各店舖全部 SKU 合計列數（包括全部 SKU）</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -3907,7 +3907,7 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_shop, tab_top, tab_sku, tab_buyer, tab_nature, tab_om = st.tabs(["🏪 By Shop（店舖統計）", "📝 店舖90日零銷售Top 10 ALL SKU", "🔢 By SKU（出現店舖數）", "👤 By Buyer（出現店舖數）", "🏬 By Nature", "🗺️ By OM"])
+            tab_shop, tab_top, tab_sku, tab_buyer, tab_nature, tab_om = st.tabs(["🏪 By Shop（店舖統計）", "📝 店舖90日零銷售ALL SKU", "🔢 By SKU（出現店舖數）", "👤 By Buyer（出現店舖數）", "🏬 By Nature", "🗺️ By OM"])
             with tab_shop:
                 st.markdown("#### 各店舖 P90D 0 Sales SKU 統計（MAKE UP 分類）")
                 if by_shop_df is not None and not by_shop_df.empty:
@@ -3915,7 +3915,7 @@ if uploaded_file is not None:
                 else:
                     st.info("無符合資料")
             with tab_top:
-                st.markdown("#### 各店舖最高庫存 SKU（Top 10 Shop Stock Qty (CM)，包括全部 SKU，供店舖查閱）")
+                st.markdown("#### 各店舖全部 SKU（按 Shop Stock Qty (CM) 由大至小排序，包括全部 SKU，供店舖查閱）")
                 if top10_df is not None and not top10_df.empty:
                     st.dataframe(top10_df.head(100).rename(columns=_display_safety_header), width='stretch', hide_index=True)
                     st.caption(f"僅顯示前 100 筆，完整 {len(top10_df):,} 筆資料將包含在下載的 Excel 報表中。")

@@ -191,13 +191,13 @@ MODES = [
      """
 - 供個別店舖查閱自身 P90D 0 Sales 情況，篩選準則與店舖回覆版相同（`Shop Stock Status` 為 P90D 0 Sales 狀態且 `Shop Stock Qty (LM)` 大於 0）
 - 分類固定以 MAKE UP 分類統計（MAKE UP／Non-MAKE UP 同時顯示 SKU 數與庫存總數），適合個別店舖原始資料
-- 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列，包括 MAKE UP 與 Non-MAKE UP 全部 SKU，不設「店舖回覆」欄，供店舖查閱自身其他零銷售 SKU 情況
-- Top 10 欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
+- 各店舖全部列按 Shop Stock Qty (CM) 由大至小排序，包括 MAKE UP 與 Non-MAKE UP 全部 SKU，不設「店舖回覆」欄，供店舖查閱自身其他零銷售 SKU 情況
+- ALL SKU 明細欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
 - 按 Shop Nature 及 OM 統計分佈（涉及店舖數、SKU 數、行數、分類分項 SKU 數、庫存總數）
 - 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序
 - 按 Buyer 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序
 - 六個工作表均不含 Value／COGS／GP 欄位
-- 輸出：By Shop、店舖90日零銷售Top 10 ALL SKU、By SKU、By Buyer、By Nature、By OM
+- 輸出：By Shop、店舖90日零銷售ALL SKU、By SKU、By Buyer、By Nature、By OM
      """,
      """
 篩選與店舖回覆版相同：

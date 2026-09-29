@@ -21,7 +21,8 @@ MAKE UP 判定：``Adj. MCH1`` 去除前後空格後等於 ``02 - MAKE UP`` 者�
 6. By Buyer — 按 Buyer 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序
 
 個別店舖版（P90D 0 Sales Review(個別店舖)）：篩選準則相同，分類固定以 MAKE UP 分類；
-Top 10 工作表為「店舖90日零銷售Top 10 ALL SKU」，包括全部 SKU 且不設「店舖回覆」欄，
+明細工作表為「店舖90日零銷售ALL SKU」，列出各店舖全部 SKU（包括 MAKE UP 與
+Non-MAKE UP，不設列數上限）且不設「店舖回覆」欄，
 供個別店舖查閱自身全部零銷售 SKU 情況。
 """
 
@@ -55,6 +56,7 @@ __all__ = [
     "_build_op90d_by_shop",
     "_build_op90d_top10",
     "_build_op90d_top10_all",
+    "_build_op90d_all_sku",
     "_build_op90d_by_nature",
     "_build_op90d_by_om",
     "_build_op90d_by_sku",
@@ -73,6 +75,8 @@ __all__ = [
     "_OP90D_TOP10_COLUMNS",
     "_OP90D_TOP10_ALL_SHEET",
     "_OP90D_TOP10_ALL_COLUMNS",
+    "_OP90D_ALL_SKU_SHEET",
+    "_OP90D_ALL_SKU_COLUMNS",
     "_OP90D_BY_NATURE_COLUMNS",
     "_OP90D_BY_OM_COLUMNS",
     "_OP90D_BY_SKU_COLUMNS",
@@ -161,9 +165,12 @@ _OP90D_TOP10_COLUMNS = [
     "店舖回覆",
 ]
 
-# 個別店舖版 Top 10：包含 MAKE UP 與 Non-MAKE UP 全部 SKU，不設「店舖回覆」欄
-_OP90D_TOP10_ALL_SHEET = "店舖90日零銷售Top 10 ALL SKU"
-_OP90D_TOP10_ALL_COLUMNS = [c for c in _OP90D_TOP10_COLUMNS if c != "店舖回覆"]
+# 個別店舖版 ALL SKU 明細：包含 MAKE UP 與 Non-MAKE UP 全部 SKU，不設「店舖回覆」欄
+_OP90D_ALL_SKU_SHEET = "店舖90日零銷售ALL SKU"
+_OP90D_ALL_SKU_COLUMNS = [c for c in _OP90D_TOP10_COLUMNS if c != "店舖回覆"]
+# 相容別名（舊名含 Top 10，現已改為全部 SKU）
+_OP90D_TOP10_ALL_SHEET = _OP90D_ALL_SKU_SHEET
+_OP90D_TOP10_ALL_COLUMNS = _OP90D_ALL_SKU_COLUMNS
 
 _OP90D_BY_NATURE_COLUMNS = [
     "Shop Nature",
@@ -497,17 +504,45 @@ def _build_op90d_top10(raw: pd.DataFrame, top_n: int = 10, include_makeup: bool 
     return top10[cols]
 
 
-def _build_op90d_top10_all(raw: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
-    """個別店舖版 Top 10：各店舖按 Shop Stock Qty (CM) 取前 N 列，包含全部 SKU。
+def _build_op90d_all_sku(raw: pd.DataFrame) -> pd.DataFrame:
+    """個別店舖版 ALL SKU 明細：各店舖全部列按 Shop Stock Qty (CM) 由大至小排序。
 
-    與店舖回覆版的差異：固定包括 MAKE UP SKU，且不輸出「店舖回覆」欄，
-    供店舖查閱自身全部零銷售 SKU 情況，無須回覆。
+    與店舖回覆版 Top 10 的差異：不設列數上限（輸出全部 SKU），固定包括 MAKE UP SKU，
+    且不輸出「店舖回覆」欄，供店舖查閱自身全部零銷售 SKU 情況，無須回覆。
     """
-    top10 = _build_op90d_top10(raw, top_n=top_n, include_makeup=True)
-    if top10.empty:
-        return pd.DataFrame(columns=_OP90D_TOP10_ALL_COLUMNS)
-    cols = [c for c in _OP90D_TOP10_ALL_COLUMNS if c in top10.columns]
-    return top10[cols]
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=_OP90D_ALL_SKU_COLUMNS)
+    df = raw.copy()
+    site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
+    df["Site Code"] = site_code
+    df["Shop Name"] = [_extract_shop_name(item_shop.iloc[i], site_code.iloc[i]) for i in range(len(df))]
+    df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    df["Shop Nature"] = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
+    df["SKU"] = df["SKU"].apply(_safe_sku)
+    df = df.sort_values(
+        ["Site Code", "_stock_cm", "Brand", "SKU"],
+        ascending=[True, False, True, True],
+        kind="stable",
+    )
+    parts = []
+    for _site, group in df.groupby("Site Code", dropna=False, observed=True):
+        ranked = group.copy()
+        ranked["店內庫存排名"] = range(1, len(ranked) + 1)
+        parts.append(ranked)
+    all_sku = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=list(df.columns) + ["店內庫存排名"])
+    available = set(all_sku.columns)
+    cols = [c for c in _OP90D_ALL_SKU_COLUMNS if _resolve_column_name(c, available) is not None]
+    if "MAKE UP 分類" not in cols:
+        cols.insert(cols.index("Adj. MCH1") + 1 if "Adj. MCH1" in cols else len(cols), "MAKE UP 分類")
+    if "店內庫存排名" not in cols:
+        cols.append("店內庫存排名")
+    return all_sku[cols]
+
+
+def _build_op90d_top10_all(raw: pd.DataFrame, top_n: int | None = None) -> pd.DataFrame:
+    """相容別名：現輸出全部列，``top_n`` 參數已停用而保留。"""
+    return _build_op90d_all_sku(raw)
 
 
 def _build_distribution(raw: pd.DataFrame, key: str, breakdown: str = _OP90D_BREAKDOWN_MAKEUP) -> pd.DataFrame:
@@ -818,8 +853,8 @@ def transform_overstock_p90d_shop(
 ):
     """個別店舖版：篩選準則與店舖回覆版相同，分類固定以 MAKE UP 分類統計。
 
-    Top 10 固定包括 MAKE UP 與 Non-MAKE UP 全部 SKU，不輸出「店舖回覆」欄，
-    供店舖查閱自身全部零銷售 SKU 情況，無須回覆。
+    ALL SKU 明細包括 MAKE UP 與 Non-MAKE UP 全部 SKU（不設列數上限），
+    不輸出「店舖回覆」欄，供店舖查閱自身全部零銷售 SKU 情況，無須回覆。
     """
     if progress_callback:
         progress_callback(0.0, "驗證輸入資料...")
@@ -830,8 +865,8 @@ def transform_overstock_p90d_shop(
     by_shop = _build_op90d_by_shop(raw, _OP90D_BREAKDOWN_MAKEUP)
 
     if progress_callback:
-        progress_callback(0.5, "擷取各店最高庫存 SKU...")
-    top10 = _build_op90d_top10_all(raw)
+        progress_callback(0.5, "建立各店全部 SKU 明細...")
+    top10 = _build_op90d_all_sku(raw)
 
     if progress_callback:
         progress_callback(0.65, "建立 Nature 及 OM 分佈...")
@@ -905,12 +940,12 @@ def generate_excel_overstock_p90d(
 
     ``by_sku``／``by_buyer`` 為 None 時略過對應工作表（保持舊有呼叫相容）；
     傳入統計表時分別另加「By SKU」及「By Buyer」工作表。
-    ``top_sheet_title`` 指定 Top 10 工作表名稱，預設為店舖回覆版名稱；
-    個別店舖版傳入 ``_OP90D_TOP10_ALL_SHEET``。
+    ``top_sheet_title`` 指定明細工作表名稱，預設為店舖回覆版名稱；
+    個別店舖版傳入 ``_OP90D_ALL_SKU_SHEET``。
     """
     top_title = top_sheet_title or "店舖90日零銷售Top 10 SKU回覆"
     top_default_cols = (
-        _OP90D_TOP10_ALL_COLUMNS if top_title == _OP90D_TOP10_ALL_SHEET
+        _OP90D_ALL_SKU_COLUMNS if top_title == _OP90D_ALL_SKU_SHEET
         else _OP90D_TOP10_COLUMNS
     )
     for name, frame in (("By Shop", by_shop), (top_title, top10), ("By Nature", by_nature), ("By OM", by_om),
@@ -990,7 +1025,7 @@ def generate_excel_overstock_p90d_shop(
     by_sku: pd.DataFrame | None = None,
     by_buyer: pd.DataFrame | None = None,
 ) -> BytesIO:
-    """個別店舖版 Excel：Top 10 工作表為「店舖90日零銷售Top 10 ALL SKU」。
+    """個別店舖版 Excel：明細工作表為「店舖90日零銷售ALL SKU」。
 
     其餘五個工作表與店舖回覆版相同（無 RAW；include_raw 僅為介面相容而保留）。
     """
@@ -1000,5 +1035,5 @@ def generate_excel_overstock_p90d_shop(
         include_raw=include_raw,
         by_sku=by_sku,
         by_buyer=by_buyer,
-        top_sheet_title=_OP90D_TOP10_ALL_SHEET,
+        top_sheet_title=_OP90D_ALL_SKU_SHEET,
     )
