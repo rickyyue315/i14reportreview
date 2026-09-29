@@ -956,7 +956,9 @@ def generate_excel_safety_monthly(
     if ym_list and shop_pivot is not None and not shop_pivot.empty:
         start_row = 16
         ws_dash.cell(row=start_row, column=1, value="每月合計（全店舖月化基準）").font = Font(bold=True, size=12, color="1E40AF")
-        headers = ["YEAR-MONTH", "SKU數", "Safety合計", "Sold月化合計", "Net月化合計", "Stock合計"]
+        headers = ["YEAR-MONTH", "SKU 數", "Safety Stock Qty 合計",
+                   "Sold Qty 合計 (月化)", "Net Sales 合計 (月化)",
+                   "Net Stock Qty 合計", "RF→ND 事件數", "ND→RF 事件數"]
         for col_idx, h in enumerate(headers, 1):
             cell = ws_dash.cell(row=start_row + 1, column=col_idx, value=h)
             cell.font = Font(bold=True, color="FFFFFF", size=11)
@@ -968,17 +970,36 @@ def generate_excel_safety_monthly(
             Sold月化合計=("Sold月化合計", "sum"), Net月化合計=("Net月化合計", "sum"),
             Stock合計=("Stock合計", "sum"),
         ).reset_index()
+        _rp_month = {}
+        if change_df is not None and not change_df.empty and "本月" in change_df.columns:
+            _rp_ct = change_df.groupby("本月")["RP轉變"].value_counts().unstack(fill_value=0)
+            for _ym, _row in _rp_ct.iterrows():
+                _rp_month[str(_ym)] = {
+                    "RF→ND 事件數": int(_row.get("RF→ND", 0)),
+                    "ND→RF 事件數": int(_row.get("ND→RF", 0)),
+                }
         order = {label: i for i, label in enumerate(ym_list)}
         agg["_o"] = agg[_SAFM_YM_COLUMN].map(order).fillna(9999)
         agg = agg.sort_values("_o").drop(columns=["_o"])
         for r_idx, (_, r) in enumerate(agg.iterrows(), start_row + 2):
+            _ym_label_val = str(r.get(_SAFM_YM_COLUMN, ""))
+            _vals = {
+                "YEAR-MONTH": r.get(_SAFM_YM_COLUMN),
+                "SKU 數": r.get("SKU數"),
+                "Safety Stock Qty 合計": r.get("Safety合計"),
+                "Sold Qty 合計 (月化)": r.get("Sold月化合計"),
+                "Net Sales 合計 (月化)": r.get("Net月化合計"),
+                "Net Stock Qty 合計": r.get("Stock合計"),
+                "RF→ND 事件數": _rp_month.get(_ym_label_val, {}).get("RF→ND 事件數", 0),
+                "ND→RF 事件數": _rp_month.get(_ym_label_val, {}).get("ND→RF 事件數", 0),
+            }
             for col_idx, h in enumerate(headers, 1):
-                v = r.get(h)
+                v = _vals.get(h)
                 cell = ws_dash.cell(row=r_idx, column=col_idx, value=None if pd.isna(v) else v)
                 cell.border = thin_border
                 cell.alignment = Alignment(horizontal="center", vertical="center")
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
-                    cell.number_format = "#,##0.00" if "Net" in h else "#,##0"
+                    cell.number_format = "#,##0.00" if h.startswith("Net Sales") else "#,##0"
         _auto_width(ws_dash)
 
     if progress_callback:

@@ -1,5 +1,13 @@
 # 版本記錄
 
+## v1.66.0 (2026-09-29)
+
+Safety Stock 月度變化分析「月度摘要」每月合計表加入每月 RF→ND／ND→RF 事件數，欄名改用全稱；其餘模式零變動：
+
+- **摘要表** — 每月合計欄改為全稱（Safety Stock Qty 合計／Sold Qty 合計 (月化)／Net Sales 合計 (月化)／Net Stock Qty 合計），新增「RF→ND 事件數」「ND→RF 事件數」兩欄（按「本月」統計環比事件）
+- **文件** — README 同步
+- Change: `version.py` → 1.66.0
+
 ## v1.65.0 (2026-09-29)
 
 Safety Stock 月度變化分析加入 RP Type 轉變統計（重點為 RF→ND 與 ND→RF）；其餘模式零變動：
