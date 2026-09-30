@@ -1,5 +1,15 @@
 # 版本記錄
 
+## v1.70.0 (2026-09-30)
+
+Safety Stock 月度變化分析「RP Type 變化」下半首尾月份對比明細加入最早／最新月份的生意與 Safety 對比欄；其餘模式零變動：
+
+- **對比欄** — 新增 11 欄：最早／最新 Sold Qty 月化、Sold Qty 變化量(月化基準)／變化率、最早／最新 Net Sales 月化、Net Sales 變化量(月化基準)／變化率、最早／最新 Safety Stock Qty、Safety Stock Qty 變化量（Sold Qty／Net Sales 以月化基準，Safety Stock Qty 為原始值；變化率＝變化量 ÷ 最早月份絕對值，最早為 0 留空，與 SKU月度變化同一規則）
+- **輸出** — Excel「RP Type 變化」下半明細由 14 欄增至 25 欄；Streamlit「🔀 RP Type 變化」分頁首尾對比明細同步顯示新欄（是否轉變／首尾轉變篩選照舊）
+- **介面與文件** — 說明頁導讀、使用說明頁與 README 同步
+- **測試** — 新增首尾對比數值與最早月份為 0 時變化率留空兩項測試；全量 531 項通過；HA19 樣本報表視覺複核通過（無 ######## 溢位、無欄寬截斷）
+- Change: `version.py` → 1.70.0
+
 ## v1.69.0 (2026-09-30)
 
 Safety Stock 月度變化分析三個樞紐工作表（By Adj. MCH1／By Adj. SST／By MCH1×SST）版面重排，照報告設計改為四項指標區塊左右並排；其餘模式零變動：

@@ -25,7 +25,7 @@
 4. By Adj. SST — 各 SST 三段式樞紐（版面同 By Adj. MCH1）
 5. By MCH1×SST — MCH1 與 SST 組合三段式樞紐（版面同 By Adj. MCH1）
 6. By Shop — 每間店舖每月合計＋環比變化
-7. RP Type 變化 — RP Type 轉變 × 月份配對統計＋首尾月份對比明細
+7. RP Type 變化 — RP Type 轉變 × 月份配對統計＋首尾月份對比明細（含最早／最新月份 Sold Qty 月化、Net Sales 月化與 Safety Stock Qty 對比）
 8. 月度摘要 — 指標卡＋每月合計表
 9. RAW — 原始明細＋YEAR-MONTH 與月化估算欄
 """
@@ -717,6 +717,9 @@ _SAFM_RP_ENDPOINT_COLUMNS = [
     "Adj. MCH1", "Adj. SST",
     "最早月份", "最早 RP Type", "最新月份", "最新 RP Type",
     "首尾轉變", "是否轉變",
+    "最早 Sold Qty 月化", "最新 Sold Qty 月化", "Sold Qty 變化量(月化基準)", "Sold Qty 變化率",
+    "最早 Net Sales 月化", "最新 Net Sales 月化", "Net Sales 變化量(月化基準)", "Net Sales 變化率",
+    "最早 Safety Stock Qty", "最新 Safety Stock Qty", "Safety Stock Qty 變化量",
 ]
 
 
@@ -725,6 +728,8 @@ def _build_safm_rp_endpoints(monthly: pd.DataFrame, ym_keys: list[int]
     """首尾月份 RP 對比明細：每組取最早與最新月份各一列比較。
 
     只收錄最早與最新月份皆有資料的組合；缺任一者不納入並計入 excluded。
+    另附兩個月份的生意與 Safety 對比（Sold Qty／Net Sales 以月化基準，
+    Safety Stock Qty 為原始值；變化率＝變化量 ÷ 最早月份絕對值，最早為 0 留空）。
     回傳 (明細表, {"first": 首月標籤, "last": 尾月標籤, "comparable": 可比組數,
     "excluded": 未納入組數, "rf_to_nd": 首尾 RF→ND 組數, "nd_to_rf": 首尾 ND→RF 組數})。
     """
@@ -756,6 +761,10 @@ def _build_safm_rp_endpoints(monthly: pd.DataFrame, ym_keys: list[int]
             curr = curr.iloc[0]
         rp_prev, rp_curr = str(prev["rp"]), str(curr["rp"])
         trans = f"{rp_prev}→{rp_curr}"
+        sold_prev, sold_curr = int(prev["sold_adj"]), int(curr["sold_adj"])
+        net_prev = round(float(prev["net_adj"]), 2)
+        net_curr = round(float(curr["net_adj"]), 2)
+        safety_prev, safety_curr = int(prev["safety"]), int(curr["safety"])
         rows.append({
             "Site Code": site, "Shop Name": _pick(curr["shop"], prev["shop"]),
             "SKU": sku, "SKU Desc": _pick(curr["desc"], prev["desc"]),
@@ -766,6 +775,14 @@ def _build_safm_rp_endpoints(monthly: pd.DataFrame, ym_keys: list[int]
             "最早月份": first_label, "最早 RP Type": rp_prev,
             "最新月份": last_label, "最新 RP Type": rp_curr,
             "首尾轉變": trans, "是否轉變": "是" if rp_prev != rp_curr else "否",
+            "最早 Sold Qty 月化": sold_prev, "最新 Sold Qty 月化": sold_curr,
+            "Sold Qty 變化量(月化基準)": sold_curr - sold_prev,
+            "Sold Qty 變化率": _change_rate(float(sold_curr), float(sold_prev)),
+            "最早 Net Sales 月化": net_prev, "最新 Net Sales 月化": net_curr,
+            "Net Sales 變化量(月化基準)": round(net_curr - net_prev, 2),
+            "Net Sales 變化率": _change_rate(net_curr, net_prev),
+            "最早 Safety Stock Qty": safety_prev, "最新 Safety Stock Qty": safety_curr,
+            "Safety Stock Qty 變化量": safety_curr - safety_prev,
         })
     detail = pd.DataFrame(rows, columns=_SAFM_RP_ENDPOINT_COLUMNS)
     if not detail.empty:
@@ -1060,6 +1077,8 @@ def _write_safety_monthly_guide_sheet(ws, stats):
         "最新月份月化：Sold Qty 月化＝Sold Qty (CM - MTD) × 係數；Net Sales 月化＝Net Sales (CM - MTD) × 係數；舊月份月化值等於原始值。",
         "Safety Stock Qty 變化量＝本月 Adj. Safety Stock − 上月；正數為增加、負數為減少、零為不變（只看原始值，不作建議值計算）。",
         "RP Type 轉變記錄上月→本月（如 RF→ND）；Sold Qty／Net Sales 變化量以月化基準計算，變化率＝變化量 ÷ 上月絕對值（上月為 0 時留空）。",
+        "首尾月份對比另附最早／最新月份的 Sold Qty 月化、Net Sales 月化與 Safety Stock Qty：變化量以月化基準（Safety Stock Qty 為原始值），"
+        "變化率＝變化量 ÷ 最早月份絕對值（最早為 0 時留空）。",
         "樞紐四項指標：Sold Qty＝Sold Qty (CM - MTD) 月化合計；Net Sales＝Net Sales (CM - MTD) 月化合計；"
         "Net Stock Qty＝店舖存貨 Shop Stock Qty (CM) 合計（時點快照）；Safety Stock Qty＝Adj. Safety Stock 合計。",
         "樞紐三段式：每月合計 → 月環比%（上月為 0 或首月留空）→ 月環比絕對值；"
@@ -1072,7 +1091,7 @@ def _write_safety_monthly_guide_sheet(ws, stats):
         ("By Adj. SST", "各 SST 三段式樞紐（版面同 By Adj. MCH1）", "比較不同供應類型每月生意變化"),
         ("By MCH1×SST", "MCH1 與 SST 組合三段式樞紐（版面同 By Adj. MCH1）", "細分品類 × 供應類型"),
         ("By Shop", "每間店舖每月合計＋環比變化", "多店舖檔案時比較各店走勢"),
-        ("RP Type 變化", "RP Type 轉變 × 月份配對統計＋首尾月份對比明細", "重點看 RF→ND 與 ND→RF 兩列：哪些月份最多轉換；下半首尾對比看整個期間的最終轉變"),
+        ("RP Type 變化", "RP Type 轉變 × 月份配對統計＋首尾月份對比明細（含 Sold Qty／Net Sales 月化與 Safety Stock Qty 對比）", "重點看 RF→ND 與 ND→RF 兩列：哪些月份最多轉換；下半首尾對比看整個期間的最終轉變，以及生意與 Safety 設定的前後變化"),
         ("月度摘要", "指標卡（含 RF→ND／ND→RF 一排）＋每月合計", "管理層概覽"),
         ("RAW", "原始明細＋YEAR-MONTH 與月化估算欄", "核對逐列數值"),
     ]

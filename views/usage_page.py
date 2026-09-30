@@ -298,7 +298,7 @@ SKU 級 Forecast 計算（v2 加權混合）：
 - 此模式必須包含 MONTH 與 YEAR 欄位（位於來源檔案尾部），用以分類每個月的變化；缺少任一即停止
 - 分析欄固定五項：Adj. Safety Stock（只看原始值增減）／RP Type 轉變／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM)
 - 相鄰月份環比；最新月份按數據截止日月化（Sold Qty 與 Net Sales 同時月化，係數＝當月總日數 ÷ 截止日日號）
-- 維度：Adj. MCH1、Adj. SST、MCH1×SST、Site Code；另附 RP Type 轉變統計（逐月配對＋首尾月份對比，重點為 RF→ND 與 ND→RF）
+- 維度：Adj. MCH1、Adj. SST、MCH1×SST、Site Code；另附 RP Type 轉變統計（逐月配對，重點為 RF→ND 與 ND→RF）＋首尾月份對比（含最早／最新月份 Sold Qty 月化、Net Sales 月化與 Safety Stock Qty 值＋變化量對比）
 - 輸出：說明、SKU月度變化、By Adj. MCH1、By Adj. SST、By MCH1×SST、By Shop、RP Type 變化、月度摘要、RAW 共 9 個工作表
      """,
      """

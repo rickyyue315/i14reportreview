@@ -339,6 +339,46 @@ def test_rp_endpoints_first_vs_last():
     assert set(detail["SKU"].astype(str)) == {"1", "2", "3"}
 
 
+def test_rp_endpoints_value_comparison():
+    # 首尾對比附最早／最新月份 Sold Qty 月化、Net Sales 月化與 Safety Stock Qty 對比
+    change, _m, _s, _c, _sh, _r, stats, _ = _run([
+        {"SKU": 1, "Month": 5, "Sold Qty (CM - MTD)": 100.0, "Net Sales (CM - MTD)": 1000.0,
+         "Adj. Safety Stock": 10.0},
+        {"SKU": 1, "Month": 9, "Sold Qty (CM - MTD)": 150.0, "Net Sales (CM - MTD)": 800.0,
+         "Adj. Safety Stock": 4.0},
+        {"SKU": 2, "Month": 9, "Sold Qty (CM - MTD)": 50.0},  # 缺最早月份，不納入
+    ])
+    detail = stats["rp_endpoints"]
+    assert list(detail.columns)[-11:] == [
+        "最早 Sold Qty 月化", "最新 Sold Qty 月化", "Sold Qty 變化量(月化基準)", "Sold Qty 變化率",
+        "最早 Net Sales 月化", "最新 Net Sales 月化", "Net Sales 變化量(月化基準)", "Net Sales 變化率",
+        "最早 Safety Stock Qty", "最新 Safety Stock Qty", "Safety Stock Qty 變化量",
+    ]
+    row = detail[detail["SKU"].astype(str) == "1"].iloc[0]
+    assert (row["最早 Sold Qty 月化"], row["最新 Sold Qty 月化"]) == (100, 150)
+    assert row["Sold Qty 變化量(月化基準)"] == 50
+    assert row["Sold Qty 變化率"] == 0.5
+    assert (row["最早 Net Sales 月化"], row["最新 Net Sales 月化"]) == (1000.0, 800.0)
+    assert row["Net Sales 變化量(月化基準)"] == -200.0
+    assert row["Net Sales 變化率"] == round(-200.0 / 1000.0, 4)
+    assert (row["最早 Safety Stock Qty"], row["最新 Safety Stock Qty"]) == (10, 4)
+    assert row["Safety Stock Qty 變化量"] == -6
+
+
+def test_rp_endpoints_zero_base_rate_blank():
+    # 最早月份為 0 時變化率留空（與 SKU月度變化同一規則），變化量照計
+    change, _m, _s, _c, _sh, _r, stats, _ = _run([
+        {"SKU": 1, "Month": 5, "Sold Qty (CM - MTD)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": 1, "Month": 9, "Sold Qty (CM - MTD)": 30.0, "Net Sales (CM - MTD)": 300.0},
+    ])
+    detail = stats["rp_endpoints"]
+    row = detail.iloc[0]
+    assert row["Sold Qty 變化率"] is None or pd.isna(row["Sold Qty 變化率"])
+    assert row["Net Sales 變化率"] is None or pd.isna(row["Net Sales 變化率"])
+    assert row["Sold Qty 變化量(月化基準)"] == 30
+    assert row["Net Sales 變化量(月化基準)"] == 300.0
+
+
 def test_rp_endpoints_empty():
     from transformer import _build_safm_rp_endpoints
     detail, info = _build_safm_rp_endpoints(pd.DataFrame(), [])
