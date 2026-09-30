@@ -21,9 +21,9 @@
 輸出九個工作表：
 1. 說明 — 本次執行參數、核心邏輯與工作表導讀（預設開啟頁）
 2. SKU月度變化 — 每組 ``Site Code × SKU`` 相鄰月份環比事件（上月缺資料者標示新增組合）
-3. By Adj. MCH1 — 各 MCH1 每月合計（月化基準）＋全部合計
-4. By Adj. SST — 各 SST 每月合計（月化基準）＋全部合計
-5. By MCH1×SST — MCH1 與 SST 組合每月合計
+3. By Adj. MCH1 — 三段式樞紐，四項指標區塊左右並排（每月合計／月環比%／月環比）
+4. By Adj. SST — 各 SST 三段式樞紐（版面同 By Adj. MCH1）
+5. By MCH1×SST — MCH1 與 SST 組合三段式樞紐（版面同 By Adj. MCH1）
 6. By Shop — 每間店舖每月合計＋環比變化
 7. RP Type 變化 — RP Type 轉變 × 月份配對統計＋首尾月份對比明細
 8. 月度摘要 — 指標卡＋每月合計表
@@ -33,12 +33,14 @@
 import calendar
 import datetime
 import gc
+import unicodedata
 from io import BytesIO
 
 import numpy as np
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 from modes.common import (
     _ADJ_SAFETY_SOURCE_COL,
@@ -82,13 +84,6 @@ _SAFM_PIVOT_METRICS = ("Sold Qty", "Net Sales", "Net Stock Qty", "Safety Stock Q
 
 # RP Type 轉變固定顯示順序（RF→ND 與 ND→RF 為重點觀察對象，置於後方兩列）
 _SAFM_RP_ORDER = ("RF→RF", "ND→ND", "RF→ND", "ND→RF")
-
-_SAFM_METRIC_COLORS = {
-    "Sold Qty": "4472C4",
-    "Net Sales": "70AD47",
-    "Net Stock Qty": "ED7D31",
-    "Safety Stock Qty": "A855F7",
-}
 
 # 新契約欄名（未經明確要求不得改動）
 _SAFM_YM_COLUMN = "YEAR-MONTH"
@@ -815,71 +810,142 @@ def safety_monthly_dashboard_metrics(change_df: pd.DataFrame, stats: dict | None
     return row1, row2, row3
 
 
+_SAFM_PIVOT_BLOCKS = ("每月合計", "月環比%", "月環比")
+
+
+def _safm_cjk_len(text: str) -> float:
+    return sum(2.0 if unicodedata.east_asian_width(c) in ("W", "F") else 1.0 for c in str(text))
+
+
+def _safm_fit_pivot_columns(ws, dim_count: int, ym_count: int):
+    """並排樞紐欄寬：按格式化後的顯示字元數計算（數值含千分位／小數），
+    表頭預留自動篩選按鈕寬度，避免出現 ########## 或月份表頭被按鈕遮尾。"""
+    block_width = 1 + ym_count + 1
+    n_cols = dim_count + len(_SAFM_PIVOT_METRICS) * block_width
+    for col_idx in range(1, n_cols + 1):
+        header = str(ws.cell(row=1, column=col_idx).value or "")
+        need = _safm_cjk_len(header) + 3.5
+        money = False
+        if col_idx > dim_count:
+            offset = (col_idx - dim_count - 1) % block_width
+            metric_idx = (col_idx - dim_count - 1) // block_width
+            money = offset > 0 and _SAFM_PIVOT_METRICS[metric_idx] == "Net Sales"
+        for row_idx in range(2, ws.max_row + 1):
+            v = ws.cell(row=row_idx, column=col_idx).value
+            if v is None or isinstance(v, bool):
+                continue
+            if isinstance(v, (int, float)):
+                text = f"{v:,.2f}" if money else f"{v:,.0f}"
+            else:
+                text = str(v)
+            need = max(need, _safm_cjk_len(text) + 2.0)
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max(need, 8.0), 50.0)
+
+
 def _write_safm_pivot_sheet(ws, df: pd.DataFrame, progress_callback=None,
                             progress_start=0.0, progress_end=0.1):
-    """三段式樞紐工作表：項目欄按指標配色分段，總計列加粗灰底。"""
+    """三段式樞紐工作表（四項指標區塊左右並排）。
+
+    版面：維度欄置最左（只出現一次），其後 Sold Qty／Net Sales／Net Stock Qty／
+    Safety Stock Qty 各成一個區塊，每區塊自帶「項目」＋各 YEAR-MONTH＋「全部合計」欄；
+    上中下三段為每月合計 → 月環比% → 月環比，每段一列一維度，總計列（粗體灰底）置於段末。
+    輸入仍為長格式樞紐表（每指標連續三列），於寫出時重排為並排區塊。
+    """
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
     )
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
-    total_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    total_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
     total_font = Font(bold=True, size=11)
-    center = Alignment(horizontal="center", vertical="center")
-    center_wrap = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="center")
+    left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    right = Alignment(horizontal="right", vertical="center")
     if df is None or df.empty:
         ws.cell(row=1, column=1, value="無符合資料").font = Font(size=12)
         return
     headers = list(df.columns)
-    item_idx = headers.index("項目") if "項目" in headers else -1
-    for col_idx, h in enumerate(headers, 1):
+    item_idx = headers.index("項目")
+    dim_cols = headers[:item_idx]
+    ym_cols = headers[item_idx + 1:-1]  # 「全部合計」固定為最後一欄
+    block_width = 1 + len(ym_cols) + 1
+
+    def _split_item(text: str) -> tuple[str, str]:
+        for block in _SAFM_PIVOT_BLOCKS:
+            suffix = f" {block}"
+            if text.endswith(suffix):
+                return text[: -len(suffix)], block
+        return text, ""
+
+    lookup: dict[tuple[tuple, str, str], tuple] = {}
+    dim_order: list[tuple] = []
+    for row_data in df.itertuples(index=False, name=None):
+        dim_key = tuple(row_data[:item_idx])
+        metric, block = _split_item(str(row_data[item_idx]))
+        lookup[(dim_key, block, metric)] = row_data
+        if dim_key not in dim_order:
+            dim_order.append(dim_key)
+
+    header_cells = list(dim_cols)
+    for _metric in _SAFM_PIVOT_METRICS:
+        header_cells += ["項目"] + list(ym_cols) + ["全部合計"]
+    for col_idx, h in enumerate(header_cells, 1):
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = center_wrap
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = thin_border
-    total = len(df)
-    for row_idx, row_data in enumerate(df.itertuples(index=False, name=None), 2):
-        row_dict = dict(zip(headers, row_data))
-        item_text = str(row_dict.get("項目", ""))
-        metric = next(
-            (m for m in _SAFM_PIVOT_METRICS if item_text.startswith(m + " ")), ""
-        )
-        is_total = any(str(row_dict.get(c, "")) == "總計" for c in headers[:2])
-        is_money = item_text.startswith("Net Sales")
-        is_pct_block = item_text.endswith("月環比%")
-        for col_idx, (h, v) in enumerate(zip(headers, row_data), 1):
-            if pd.isna(v):
-                v = None
-            cell = ws.cell(row=row_idx, column=col_idx, value=v)
-            cell.border = thin_border
-            if col_idx - 1 == item_idx and metric in _SAFM_METRIC_COLORS:
-                cell.fill = PatternFill(
-                    start_color=_SAFM_METRIC_COLORS[metric],
-                    end_color=_SAFM_METRIC_COLORS[metric], fill_type="solid",
+
+    total_rows = len(_SAFM_PIVOT_BLOCKS) * len(dim_order)
+    written = 0
+    row_idx = 1
+    for block in _SAFM_PIVOT_BLOCKS:
+        for dim_key in dim_order:
+            row_idx += 1
+            is_total = str(dim_key[0]) == "總計"
+            for col_idx, v in enumerate(dim_key, 1):
+                cell = ws.cell(row=row_idx, column=col_idx, value=None if pd.isna(v) else v)
+                cell.border = thin_border
+                cell.alignment = left_wrap
+                if is_total:
+                    cell.font = total_font
+                    cell.fill = total_fill
+            base_col = len(dim_cols)
+            for metric in _SAFM_PIVOT_METRICS:
+                item_cell = ws.cell(row=row_idx, column=base_col + 1, value=f"{metric} {block}")
+                item_cell.border = thin_border
+                item_cell.alignment = left
+                if is_total:
+                    item_cell.font = total_font
+                    item_cell.fill = total_fill
+                row_data = lookup.get((dim_key, block, metric))
+                values = (
+                    row_data[item_idx + 1:]
+                    if row_data is not None else [None] * (block_width - 1)
                 )
-                cell.font = Font(bold=True, color="FFFFFF", size=11)
-                cell.alignment = center
-            elif is_total:
-                cell.font = total_font
-                cell.fill = total_fill
-                if isinstance(v, (int, float)) and not isinstance(v, bool):
-                    cell.number_format = "#,##0.00" if is_money else "#,##0"
-                    cell.alignment = center
-                else:
-                    cell.alignment = center_wrap
-            elif isinstance(v, (int, float)) and not isinstance(v, bool):
-                cell.number_format = "#,##0.00" if is_money else "#,##0"
-                cell.alignment = center
-            else:
-                cell.alignment = center_wrap
-        if progress_callback and (row_idx % 500 == 0 or row_idx == total + 1):
-            p = progress_start + (progress_end - progress_start) * (row_idx / max(total + 1, 1))
-            progress_callback(p, f"寫入工作表 ({row_idx-1}/{total})...")
+                is_money = metric == "Net Sales"
+                for offset, v in enumerate(values):
+                    cell = ws.cell(
+                        row=row_idx, column=base_col + 2 + offset,
+                        value=None if pd.isna(v) else v,
+                    )
+                    cell.border = thin_border
+                    cell.alignment = right
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        cell.number_format = "#,##0.00" if is_money else "#,##0"
+                    if is_total:
+                        cell.font = total_font
+                        cell.fill = total_fill
+                base_col += block_width
+            written += 1
+            if progress_callback and (written % 200 == 0 or written == total_rows):
+                p = progress_start + (progress_end - progress_start) * (written / max(total_rows, 1))
+                progress_callback(p, f"寫入工作表 ({written}/{total_rows})...")
+
     ws.auto_filter.ref = ws.dimensions
-    ws.freeze_panes = "C2"
-    _auto_width(ws)
+    ws.freeze_panes = f"{get_column_letter(len(dim_cols) + 1)}2"
+    _safm_fit_pivot_columns(ws, len(dim_cols), len(ym_cols))
 
 
 def _write_safm_block(ws, df: pd.DataFrame, start_row: int = 1,
@@ -996,14 +1062,15 @@ def _write_safety_monthly_guide_sheet(ws, stats):
         "RP Type 轉變記錄上月→本月（如 RF→ND）；Sold Qty／Net Sales 變化量以月化基準計算，變化率＝變化量 ÷ 上月絕對值（上月為 0 時留空）。",
         "樞紐四項指標：Sold Qty＝Sold Qty (CM - MTD) 月化合計；Net Sales＝Net Sales (CM - MTD) 月化合計；"
         "Net Stock Qty＝店舖存貨 Shop Stock Qty (CM) 合計（時點快照）；Safety Stock Qty＝Adj. Safety Stock 合計。",
-        "樞紐三段式：每月合計 → 月環比%（上月為 0 或首月留空）→ 月環比絕對值；項目欄按指標配色分段。",
+        "樞紐三段式：每月合計 → 月環比%（上月為 0 或首月留空）→ 月環比絕對值；"
+        "四項指標區塊左右並排，每區塊各含項目、各月與全部合計欄，每段一列一維度，總計列置於段末。",
     ]
     sheet_rows = [
         ("說明（本頁）", "月化邏輯、本次參數與導讀", "先核對覆蓋月份與月化係數是否符合預期"),
         ("SKU月度變化", "每組相鄰月份環比事件（上月／本月值＋變化量＋變化率）", "篩選 Safety Stock Qty 變化分類＝增加／減少，查看同期 Sold Qty 與 Net Sales 變化"),
-        ("By Adj. MCH1", "各 MCH1 三段式樞紐（四項指標 × 每月合計／月環比%／月環比）", "先看每月合計，再看月環比% 找變動最大的品類"),
-        ("By Adj. SST", "各 SST 三段式樞紐", "比較不同供應類型每月生意變化"),
-        ("By MCH1×SST", "MCH1 與 SST 組合三段式樞紐", "細分品類 × 供應類型"),
+        ("By Adj. MCH1", "各 MCH1 三段式樞紐（四項指標區塊左右並排：每月合計／月環比%／月環比）", "先看每月合計，再看月環比% 找變動最大的品類"),
+        ("By Adj. SST", "各 SST 三段式樞紐（版面同 By Adj. MCH1）", "比較不同供應類型每月生意變化"),
+        ("By MCH1×SST", "MCH1 與 SST 組合三段式樞紐（版面同 By Adj. MCH1）", "細分品類 × 供應類型"),
         ("By Shop", "每間店舖每月合計＋環比變化", "多店舖檔案時比較各店走勢"),
         ("RP Type 變化", "RP Type 轉變 × 月份配對統計＋首尾月份對比明細", "重點看 RF→ND 與 ND→RF 兩列：哪些月份最多轉換；下半首尾對比看整個期間的最終轉變"),
         ("月度摘要", "指標卡（含 RF→ND／ND→RF 一排）＋每月合計", "管理層概覽"),

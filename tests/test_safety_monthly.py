@@ -209,6 +209,61 @@ def test_pivots_three_blocks_four_metrics():
     assert "YEAR-MONTH" in raw.columns
 
 
+def test_excel_pivot_side_by_side_layout():
+    # Excel 樞紐工作表照報告設計：四項指標區塊左右並排，上下三段，總計列置段末
+    change, mch1, sst, cross, shop, raw, stats, _ = _run([
+        {"SKU": 1, "Month": 5, "Adj. MCH1": "01 - SKIN CARE", "Adj. SST": "SST1",
+         "Sold Qty (CM - MTD)": 100.0, "Net Sales (CM - MTD)": 1000.0,
+         "Shop Stock Qty (CM)": 50.0, "Adj. Safety Stock": 10.0},
+        {"SKU": 1, "Month": 6, "Adj. MCH1": "01 - SKIN CARE", "Adj. SST": "SST1",
+         "Sold Qty (CM - MTD)": 150.0, "Net Sales (CM - MTD)": 1500.0,
+         "Shop Stock Qty (CM)": 40.0, "Adj. Safety Stock": 12.0},
+    ])
+    buf = generate_excel_safety_monthly(change, mch1, sst, cross, shop, raw, stats)
+    wb = load_workbook(BytesIO(buf.getvalue()))
+    ws = wb["By Adj. SST"]
+    # 表頭：維度欄一個，其後四個區塊（項目＋各月＋全部合計）
+    assert [ws.cell(1, c).value for c in range(1, 6)] == [
+        "Adj. SST", "項目", "2026-05", "2026-06", "全部合計"]
+    assert ws.cell(1, 6).value == "項目" and ws.cell(1, 9).value == "全部合計"
+    assert ws.cell(1, 10).value == "項目" and ws.cell(1, 13).value == "全部合計"
+    assert ws.cell(1, 14).value == "項目" and ws.cell(1, 17).value == "全部合計"
+    # 第一段（每月合計）：一列一維度，四區塊並排
+    assert ws.cell(2, 1).value == "SST1"
+    assert [ws.cell(2, c).value for c in (2, 6, 10, 14)] == [
+        "Sold Qty 每月合計", "Net Sales 每月合計",
+        "Net Stock Qty 每月合計", "Safety Stock Qty 每月合計",
+    ]
+    assert (ws.cell(2, 3).value, ws.cell(2, 4).value, ws.cell(2, 5).value) == (100, 150, 250)
+    assert (ws.cell(2, 7).value, ws.cell(2, 8).value, ws.cell(2, 9).value) == (1000, 1500, 2500)
+    assert (ws.cell(2, 11).value, ws.cell(2, 12).value, ws.cell(2, 13).value) == (50, 40, 90)
+    assert (ws.cell(2, 15).value, ws.cell(2, 16).value, ws.cell(2, 17).value) == (10, 12, 22)
+    # 總計列置段末（粗體＋灰底），其後為月環比% 段（首月與全部合計留空）
+    assert ws.cell(3, 1).value == "總計"
+    assert ws.cell(3, 2).font.bold
+    assert str(ws.cell(3, 2).fill.start_color.rgb).endswith("D9D9D9")
+    assert ws.cell(4, 2).value == "Sold Qty 月環比%"
+    assert ws.cell(4, 3).value is None
+    assert ws.cell(4, 4).value == "+50.0%"
+    assert ws.cell(4, 5).value is None
+    assert ws.cell(5, 1).value == "總計"
+    # 第三段（月環比）絕對值：Sold +50、Net Sales +500、Net Stock −10、Safety +2
+    assert ws.cell(6, 2).value == "Sold Qty 月環比"
+    assert ws.cell(6, 4).value == 50
+    assert ws.cell(6, 8).value == 500
+    assert ws.cell(6, 12).value == -10
+    assert ws.cell(6, 16).value == 2
+    assert ws.cell(7, 1).value == "總計"
+    # 凍結維度欄＋表頭列
+    assert ws.freeze_panes == "B2"
+    # By MCH1×SST：兩欄維度，區塊自 C 欄起，凍結兩欄
+    wc = wb["By MCH1×SST"]
+    assert [wc.cell(1, c).value for c in range(1, 4)] == ["Adj. MCH1", "Adj. SST", "項目"]
+    assert wc.freeze_panes == "C2"
+    assert wc.cell(2, 3).value == "Sold Qty 每月合計"
+    assert wc.cell(2, 1).value == "01 - SKIN CARE" and wc.cell(2, 2).value == "SST1"
+
+
 def test_mom_pct_zero_base_blank():
     change, mch1, *_rest, stats, _ = _run([
         {"SKU": 1, "Month": 5, "Sold Qty (CM - MTD)": 0.0},
