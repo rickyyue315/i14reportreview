@@ -22,10 +22,12 @@ from modes.common import (
     _auto_width,
     _clean_dataframe,
     _compute_raw_extra_columns,
+    _iter_header_rows,
     _resolve_column_name,
     _safe_default_series,
     _safe_numeric,
     _safe_sku,
+    _cached_safe_sku_series,
     _write_guide_sheet,
     _write_metric_cards,
     _write_raw_placeholder,
@@ -181,11 +183,16 @@ def _stock_checking_buyer_stats(raw: pd.DataFrame, need_series: pd.Series | None
     tmp = pd.DataFrame({"_sku": raw["SKU"], "_buyer": buyer})
     tmp = tmp[tmp["_sku"].isin(need_skus)]
 
-    def _first_nonempty(s: pd.Series) -> str:
-        s = s[s != ""]
-        return s.iloc[0] if len(s) else "(未填 Buyer)"
+    # P0：空字串遮成 NaN＋內建 first 取代自訂 agg；全空組回填「(未填 Buyer)」，語意等價
+    try:
+        _masked = tmp["_buyer"].mask(tmp["_buyer"] == "")
+        per_sku_buyer = _masked.groupby(tmp["_sku"], sort=False).first().fillna("(未填 Buyer)")
+    except Exception:
+        def _first_nonempty(s: pd.Series) -> str:
+            s = s[s != ""]
+            return s.iloc[0] if len(s) else "(未填 Buyer)"
 
-    per_sku_buyer = tmp.groupby("_sku", sort=False)["_buyer"].agg(_first_nonempty)
+        per_sku_buyer = tmp.groupby("_sku", sort=False)["_buyer"].agg(_first_nonempty)
     counts = per_sku_buyer.value_counts()
     return sorted(((str(b), int(c)) for b, c in counts.items()), key=lambda kv: (-kv[1], kv[0]))
 
@@ -348,12 +355,31 @@ def transform_stock_checking(
         gap_np = np.zeros(len(df), dtype=int)
         desc_np = np.full(len(df), "", dtype=object)
 
+        # P0：預建 SKU→列索引，避免每 SKU 全表 sku_arr==sku 掃描；集合內容與順序與原實作一致
+        sku_to_idx: dict = {}
+        for _p in range(len(df)):
+            _k = sku_arr[_p]
+            try:
+                if pd.isna(_k):
+                    continue
+            except Exception:
+                pass
+            sku_to_idx.setdefault(_k, []).append(int(_p))
         need_sku_set = set(sku_arr[need_mask])
         for sku in need_sku_set:
-            sku_mask = sku_arr == sku
-            need_rows = np.nonzero(sku_mask & need_mask)[0]
-            nt_src = [int(p) for p in np.nonzero(sku_mask & (nt_avail > 0))[0]]
-            mix_src = [int(p) for p in np.nonzero(sku_mask & (mix_avail > 0))[0]]
+            try:
+                if pd.isna(sku):
+                    continue
+            except Exception:
+                pass
+            _idx_list = sku_to_idx.get(sku, [])
+            if not _idx_list:
+                continue
+            need_rows = np.array([p for p in _idx_list if bool(need_mask[p])], dtype=int)
+            if need_rows.size == 0:
+                continue
+            nt_src = [int(p) for p in _idx_list if float(nt_avail[p]) > 0]
+            mix_src = [int(p) for p in _idx_list if float(mix_avail[p]) > 0]
             order = np.argsort(-demand_np[need_rows], kind="stable")
             remain_nt = {int(p): float(nt_avail[p]) for p in nt_src}
             remain_mix = {int(p): float(mix_avail[p]) for p in mix_src}
@@ -1030,13 +1056,16 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
         _auto_width(ws)
         return
 
-    _text_keys = ["Brand", "SKU Desc", "Buyer", "Adj. SST"]
-    _center_text_keys = ["SKU", "Supply Source"]
+    _text_keys = {"Brand", "SKU Desc", "Buyer", "Adj. SST"}
+    _center_text_keys = {"SKU", "Supply Source"}
 
     total = len(summary)
     n_cols = len(_headers)
     _stock_letters = [get_column_letter(base_col + i * 4) for i in range(G)]
     _sold_letters = [get_column_letter(base_col + i * 4 + 1) for i in range(G)]
+    # P0：TurnDay 公式欄字母只與分組有關，與列無關，預先計算避免逐列重算；值與公式語意不變
+    _s_letters = [get_column_letter(base_col + i * 4) for i in range(G)]
+    _m_letters = [get_column_letter(base_col + i * 4 + 1) for i in range(G)]
     for r_idx, (_, row) in enumerate(summary.iterrows()):
         excel_row = r_idx + 6
         is_band = (r_idx % 2 == 1)
@@ -1073,8 +1102,8 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
                 cc.alignment = center
                 if is_band:
                     cc.fill = band_fill
-            s_letter = get_column_letter(bcol)
-            m_letter = get_column_letter(bcol + 1)
+            s_letter = _s_letters[i]
+            m_letter = _m_letters[i]
             if msold is not None and pd.notna(msold) and float(msold) > 0:
                 c_td = ws.cell(row=excel_row, column=bcol + 2,
                                value=f"=ROUND({s_letter}{excel_row}/{m_letter}{excel_row}*30.5,0)")

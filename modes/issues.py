@@ -24,8 +24,10 @@ from transformer import (
 
 from modes.common import (
     _auto_width,
+    _cached_shop_names,
     _display_safety_header,
     _extract_shop_name,
+    _iter_header_rows,
     _resolve_column_name,
     _safe_default_series,
     _safe_numeric,
@@ -142,8 +144,9 @@ def _shop_name_lookup(raw: pd.DataFrame) -> dict[str, str]:
     if "Shop Name" in raw.columns:
         names = raw["Shop Name"].fillna("").astype(str).str.strip()
     elif "Item_Shop" in raw.columns:
+        # P0：快取解析（同一店舖×品項只執行一次正則），輸出與逐列解析完全一致
         names = pd.Series(
-            [_extract_shop_name(raw["Item_Shop"].iloc[i], site.iloc[i]) for i in range(len(raw))],
+            _cached_shop_names(raw["Item_Shop"], site),
             index=raw.index,
         )
     else:
@@ -607,15 +610,17 @@ def _write_shop_issue_sheet(ws, issue_df, *, title, progress_callback=None, prog
         cell.border = thin_border
     ws.row_dimensions[3].height = 30
     total = len(issue_df)
-    for r_idx, (_, row) in enumerate(issue_df.iterrows()):
+    # P0：itertuples＋set 查詢取代 iterrows＋list 查詢；值與格式語意不變
+    _text_set = set(_text_keys)
+    for r_idx, _vals in enumerate(_iter_header_rows(issue_df, headers)):
         excel_row = r_idx + 4
         is_band = (r_idx % 2 == 1)
         for col_idx, h in enumerate(headers, 1):
-            val = row.get(h)
+            val = _vals[col_idx - 1]
             cell = ws.cell(row=excel_row, column=col_idx, value=None if pd.isna(val) else val)
             cell.border = thin_border
-            cell.alignment = left_wrap if h in _text_keys else center
-            if isinstance(val, (int, float)) and not isinstance(val, bool) and h not in _text_keys:
+            cell.alignment = left_wrap if h in _text_set else center
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and h not in _text_set:
                 cell.number_format = "#,##0"
             if is_band:
                 cell.fill = band_fill

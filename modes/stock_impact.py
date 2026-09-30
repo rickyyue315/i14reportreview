@@ -22,10 +22,12 @@ from modes.common import (
     _auto_width,
     _clean_dataframe,
     _compute_raw_extra_columns,
+    _iter_header_rows,
     _parse_launch_dates,
     _safe_default_series,
     _safe_numeric,
     _safe_sku,
+    _cached_safe_sku_series,
     _write_metric_cards,
     _write_raw_placeholder,
     _write_raw_sheet,
@@ -1198,21 +1200,24 @@ def _write_oos_detail_sheet(ws, raw_df, header_font, header_fill, thin_border, p
     ws.cell(row=1, column=1, value="OOS Impact Detail — 缺貨銷售影響明細（按缺貨期數降序，含 NDRF Status）").font = Font(bold=True, size=12, color="1E40AF")
 
     headers = list(detail.columns)
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for col_idx, h in enumerate(headers, 1):
         cell = ws.cell(row=3, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.alignment = header_align
         cell.border = thin_border
 
     total_rows = len(detail)
+    # P0：共用對齊取代逐格新建 Alignment；值與格式語意不變（已使用 itertuples）
+    center_align = Alignment(horizontal="center", vertical="center")
     for row_idx, row_data in enumerate(detail.itertuples(index=False), start=4):
         for col_idx, val in enumerate(row_data, 1):
             if pd.isna(val):
                 val = None
             cell = ws.cell(row=row_idx, column=col_idx, value=val)
             cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.alignment = center_align
             if isinstance(val, bool):
                 cell.value = "✓" if val else ""
             elif isinstance(val, (int, float)):
@@ -1229,26 +1234,30 @@ def _write_stock_impact_summary_sheet(ws, summary_df, sheet_title, header_font, 
     ws.cell(row=1, column=1, value=sheet_title).font = Font(bold=True, size=12, color="1E40AF")
 
     headers = list(summary_df.columns)
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for col_idx, h in enumerate(headers, 1):
         cell = ws.cell(row=3, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.alignment = header_align
         cell.border = thin_border
 
     total_rows = len(summary_df)
-    for row_idx, row_data in summary_df.iterrows():
+    # P0：itertuples＋共用對齊／字型取代 iterrows＋逐格新建；值與格式語意不變
+    center_align = Alignment(horizontal="center", vertical="center")
+    total_bold = Font(bold=True, size=11)
+    for row_idx, _vals in enumerate(_iter_header_rows(summary_df, headers)):
         excel_row = 4 + row_idx
-        is_total = any(str(v) == "總計" for v in row_data.values if isinstance(v, str))
+        is_total = any(str(v) == "總計" for v in _vals if isinstance(v, str))
         for col_idx, h in enumerate(headers, 1):
-            val = row_data.get(h)
+            val = _vals[col_idx - 1]
             if pd.isna(val):
                 val = None
             cell = ws.cell(row=excel_row, column=col_idx, value=val)
             cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.alignment = center_align
             if is_total:
-                cell.font = Font(bold=True, size=11)
+                cell.font = total_bold
             if isinstance(val, (int, float)):
                 cell.number_format = "#,##0"
         if progress_callback and (row_idx % 500 == 0 or row_idx == total_rows - 1):
@@ -2277,10 +2286,24 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     idx = df.index
 
+    # P0（個別模式）：同欄數值轉換快取，避免同一欄重複 pd.to_numeric；轉換口徑不變
+    _num_cache: dict[str, pd.Series] = {}
+    def _cached_numeric(col: str | None) -> pd.Series:
+        if col is None:
+            return _safe_numeric(_safe_default_series(0, idx))
+        if col in _num_cache:
+            return _num_cache[col]
+        try:
+            s = _safe_numeric(df.get(col, _safe_default_series(0, idx)))
+        except Exception:
+            s = _safe_numeric(_safe_default_series(0, idx))
+        _num_cache[col] = s
+        return s
+
     # ── 缺貨判定（Shop Stock = 0）──────────────────────────────────────────────
     oos_flags = {}
     for label, stock_col, _sold_col in _STOCK_SOLD_PERIODS:
-        stock = _safe_numeric(df.get(stock_col, _safe_default_series(0, idx)))
+        stock = _cached_numeric(stock_col)
         is_oos = stock <= 0
         df[f"Is OOS ({label})"] = is_oos
         oos_flags[label] = is_oos
@@ -2303,9 +2326,9 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── 銷售損失（雙基準並列）─────────────────────────────────────────────────
     # 需求基準 1：Sold Qty (M-2)
-    m2_sold = _safe_numeric(df.get("Sold Qty (M-2)", _safe_default_series(0, idx)))
+    m2_sold = _cached_numeric("Sold Qty (M-2)")
     # 需求基準 2：Shop Monthly Sold Qty (P90D)
-    p90d = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, idx)))
+    p90d = _cached_numeric("Shop Monthly Sold Qty (P90D)")
 
     loss_m2_max = np.zeros(len(df))
     loss_p90d_max = np.zeros(len(df))
@@ -2313,7 +2336,7 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     loss_p90d_sum = np.zeros(len(df))
 
     for label, _stock_col, sold_col in _STOCK_SOLD_PERIODS:
-        sold = _safe_numeric(df.get(sold_col, _safe_default_series(0, idx)))
+        sold = _cached_numeric(sold_col)
         is_oos = oos_flags[label].values
         # 缺貨當期才算損失；損失 = max(0, 需求基準 − 當期實際銷售)
         loss_m2 = np.where(is_oos & (m2_sold.values > 0), np.maximum(0, m2_sold.values - sold.values), 0)

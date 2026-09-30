@@ -53,6 +53,7 @@ from modes.common import (
     _safe_default_series,
     _safe_numeric,
     _safe_sku,
+    _cached_safe_sku_series,
     _write_guide_sheet,
     _write_metric_cards,
     _write_raw_placeholder,
@@ -769,24 +770,74 @@ def _build_safm_shop_pivot(monthly: pd.DataFrame, ym_keys: list[int],
     df = monthly.copy()
     _rp_counts = rp_counts or {}
     ym_labels = {k: _ym_label(k // 100, k % 100) for k in ym_keys}
+    # P0：單次 groupby 預彙總取代每店×每月全表切片；缺組合補 0，與原空群組回 0 一致
+    _site_shop = pd.Series(dtype=object)
+    try:
+        _shop_s = df["shop"].fillna("").astype(str).str.strip()
+        _shop_masked = _shop_s.mask(_shop_s == "")
+        _site_shop = _shop_masked.groupby(df["_site"], sort=True).first()
+    except Exception:
+        try:
+            _site_shop = df.groupby("_site", sort=True)["shop"].first()
+        except Exception:
+            _site_shop = pd.Series(dtype=object)
+    _lookup: dict = {}
+    try:
+        _agg = df.groupby(["_site", "_ym"], sort=True).agg(
+            _sku_n=("_sku", "nunique"),
+            _safety=("safety", "sum"),
+            _sold_raw=("sold_raw", "sum"),
+            _sold_adj=("sold_adj", "sum"),
+            _net_raw=("net_raw", "sum"),
+            _net_adj=("net_adj", "sum"),
+            _stock=("stock", "sum"),
+        )
+        _lookup = {(str(s), int(y)): (r["_sku_n"], r["_safety"], r["_sold_raw"], r["_sold_adj"], r["_net_raw"], r["_net_adj"], r["_stock"]) for (s, y), r in _agg.iterrows()}
+    except Exception:
+        _lookup = {}
     rows = []
-    for site, g_site in df.groupby("_site", sort=True):
-        shop_name = ""
-        _names = g_site["shop"].fillna("").astype(str)
-        _names = _names[_names.str.strip() != ""]
-        if len(_names):
-            shop_name = str(_names.iloc[0])
+    try:
+        _sites = sorted(df["_site"].dropna().astype(str).unique().tolist())
+    except Exception:
+        _sites = []
+        for site, g_site in df.groupby("_site", sort=True):
+            _sites.append(site)
+    for site in _sites:
+        try:
+            _sn = _site_shop.get(site, "")
+            shop_name = "" if pd.isna(_sn) else str(_sn).strip()
+            if shop_name.lower() == "nan":
+                shop_name = ""
+        except Exception:
+            shop_name = ""
+            try:
+                _names = df.loc[df["_site"] == site, "shop"].fillna("").astype(str)
+                _names = _names[_names.str.strip() != ""]
+                if len(_names):
+                    shop_name = str(_names.iloc[0])
+            except Exception:
+                pass
         _shop_monthly = (_rp_counts.get((site,)) or {}).get("monthly") or {}
         prev_sold = prev_net = prev_safety = None
         for key in ym_keys:
-            gg = g_site[g_site["_ym"] == key]
-            sku_n = int(gg["_sku"].nunique()) if not gg.empty else 0
-            safety_sum = int(gg["safety"].sum()) if not gg.empty else 0
-            sold_raw = int(gg["sold_raw"].sum()) if not gg.empty else 0
-            sold_adj = int(gg["sold_adj"].sum()) if not gg.empty else 0
-            net_raw = round(float(gg["net_raw"].sum()), 2) if not gg.empty else 0.0
-            net_adj = round(float(gg["net_adj"].sum()), 2) if not gg.empty else 0.0
-            stock_sum = int(gg["stock"].sum()) if not gg.empty else 0
+            _hit = _lookup.get((str(site), int(key)))
+            if _hit is None:
+                sku_n = 0
+                safety_sum = 0
+                sold_raw = 0
+                sold_adj = 0
+                net_raw = 0.0
+                net_adj = 0.0
+                stock_sum = 0
+            else:
+                _sku_n, _safety, _sold_raw, _sold_adj, _net_raw, _net_adj, _stock = _hit
+                sku_n = int(_sku_n) if pd.notna(_sku_n) else 0
+                safety_sum = int(_safety) if pd.notna(_safety) else 0
+                sold_raw = int(_sold_raw) if pd.notna(_sold_raw) else 0
+                sold_adj = int(_sold_adj) if pd.notna(_sold_adj) else 0
+                net_raw = round(float(_net_raw), 2) if pd.notna(_net_raw) else 0.0
+                net_adj = round(float(_net_adj), 2) if pd.notna(_net_adj) else 0.0
+                stock_sum = int(_stock) if pd.notna(_stock) else 0
             if prev_sold is None:
                 sold_chg = net_chg = safety_chg = None
             else:
@@ -859,22 +910,59 @@ def _build_safm_rp_summary(change_df: pd.DataFrame) -> pd.DataFrame:
     present = df["RP Type 轉變"].fillna("").astype(str).tolist()
     order = [t for t in _SAFM_RP_ORDER if t in set(present)]
     order += sorted(set(present) - set(order) - {""})
+    # P0：單次 groupby 預彙總取代每轉變×每配對全表掃描；計數與不重複 SKU 口徑不變
+    try:
+        _grp = df.groupby(["RP Type 轉變", "_pair"], sort=False, observed=True).agg(
+            _cnt=("SKU", "size"),
+            _nuniq=("SKU", "nunique"),
+        )
+        _lookup = {(str(t), str(p)): (int(r["_cnt"]), int(r["_nuniq"])) for (t, p), r in _grp.iterrows()}
+        _trans_total = df.groupby("RP Type 轉變", sort=False, observed=True).agg(
+            _cnt=("SKU", "size"),
+            _nuniq=("SKU", "nunique"),
+        )
+        _trans_lookup = {str(t): (int(r["_cnt"]), int(r["_nuniq"])) for t, r in _trans_total.iterrows()}
+        _pair_total = df.groupby("_pair", sort=False, observed=True).agg(
+            _cnt=("SKU", "size"),
+            _nuniq=("SKU", "nunique"),
+        )
+        _pair_lookup = {str(p): (int(r["_cnt"]), int(r["_nuniq"])) for p, r in _pair_total.iterrows()}
+    except Exception:
+        _lookup = {}
+        _trans_lookup = {}
+        _pair_lookup = {}
     rows = []
     for trans in order:
-        g = df[df["RP Type 轉變"] == trans]
         row = {"RP Type 轉變": trans}
         for p in pairs:
-            gg = g[g["_pair"] == p]
-            row[f"{p} 事件數"] = int(len(gg))
-            row[f"{p} SKU數"] = int(gg["SKU"].nunique()) if not gg.empty else 0
-        row["總計 事件數"] = int(len(g))
-        row["總計 SKU數"] = int(g["SKU"].nunique())
+            if _lookup:
+                _c, _u = _lookup.get((str(trans), str(p)), (0, 0))
+                row[f"{p} 事件數"] = int(_c)
+                row[f"{p} SKU數"] = int(_u)
+            else:
+                g = df[df["RP Type 轉變"] == trans]
+                gg = g[g["_pair"] == p]
+                row[f"{p} 事件數"] = int(len(gg))
+                row[f"{p} SKU數"] = int(gg["SKU"].nunique()) if not gg.empty else 0
+        if _trans_lookup and str(trans) in _trans_lookup:
+            _c, _u = _trans_lookup[str(trans)]
+            row["總計 事件數"] = int(_c)
+            row["總計 SKU數"] = int(_u)
+        else:
+            g = df[df["RP Type 轉變"] == trans]
+            row["總計 事件數"] = int(len(g))
+            row["總計 SKU數"] = int(g["SKU"].nunique())
         rows.append(row)
     total = {"RP Type 轉變": "總計"}
     for p in pairs:
-        gg = df[df["_pair"] == p]
-        total[f"{p} 事件數"] = int(len(gg))
-        total[f"{p} SKU數"] = int(gg["SKU"].nunique()) if not gg.empty else 0
+        if _pair_lookup and str(p) in _pair_lookup:
+            _c, _u = _pair_lookup[str(p)]
+            total[f"{p} 事件數"] = int(_c)
+            total[f"{p} SKU數"] = int(_u)
+        else:
+            gg = df[df["_pair"] == p]
+            total[f"{p} 事件數"] = int(len(gg))
+            total[f"{p} SKU數"] = int(gg["SKU"].nunique()) if not gg.empty else 0
     total["總計 事件數"] = int(len(df))
     total["總計 SKU數"] = int(df["SKU"].nunique())
     rows.append(total)

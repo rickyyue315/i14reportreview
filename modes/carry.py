@@ -20,11 +20,14 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 from modes.common import (
     _auto_width,
+    _cached_shop_names,
     _clean_dataframe,
     _extract_shop_name,
+    _iter_header_rows,
     _safe_default_series,
     _safe_numeric,
     _safe_sku,
+    _cached_safe_sku_series,
     _write_raw_placeholder,
     _write_raw_sheet,
     validate_input,
@@ -51,12 +54,21 @@ def _build_site_to_name(df: pd.DataFrame) -> dict:
     if "Item_Shop" in df.columns:
         site_code = df["Site Code"].fillna("").astype(str).str.strip()
         item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
-        for i in range(len(df)):
-            sc = site_code.iloc[i]
-            if sc and sc not in site_to_name:
-                name = _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
-                if name:
-                    site_to_name[sc] = name
+        # P0：先按 Site Code 取首列再解析（原逐列迴圈首見保留語意），避免逐列 .iloc
+        try:
+            uniq = pd.DataFrame({"_site": site_code, "_item": item_shop}).drop_duplicates(subset=["_site"], keep="first")
+            for sc, it in zip(uniq["_site"].to_numpy(), uniq["_item"].to_numpy()):
+                if sc and sc not in site_to_name:
+                    name = _extract_shop_name(it, sc)
+                    if name:
+                        site_to_name[sc] = name
+        except Exception:
+            for i in range(len(df)):
+                sc = site_code.iloc[i]
+                if sc and sc not in site_to_name:
+                    name = _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
+                    if name:
+                        site_to_name[sc] = name
         for sc in site_code.unique():
             if sc and sc not in site_to_name:
                 site_to_name[sc] = ""
@@ -405,19 +417,31 @@ def generate_excel_carry(
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = thin_border
 
-    for row_idx, row_data in dashboard_df.iterrows():
+    # P0：預先計算公式欄索引＋共用對齊＋itertuples，值與公式語意不變
+    center_align = Alignment(horizontal="center", vertical="center")
+    _formula_col = "Shop Name: P90D 0 Sales SKU 總數/SKU總數 (#P90D 0 Sales的店舖貨量)"
+    try:
+        _idx_shop = db_headers.index("Shop Name")
+        _idx_sku_total = db_headers.index("SKU 總數")
+        _idx_p90d = db_headers.index("P90D 0 Sales SKU 總數")
+        _idx_p90d_stock = db_headers.index("P90D 0 Sales的店舖貨量")
+        _has_formula_cols = True
+    except ValueError:
+        _has_formula_cols = False
+        _idx_shop = _idx_sku_total = _idx_p90d = _idx_p90d_stock = -1
+    for row_idx, _vals in enumerate(_iter_header_rows(dashboard_df, db_headers)):
         excel_row = 4 + row_idx
-        is_total = row_data.get("Site Code") == "總計"
+        is_total = _vals[0] == "總計"
         for col_idx, h in enumerate(db_headers, 1):
             cell = ws_dashboard.cell(row=excel_row, column=col_idx)
-            if h == "Shop Name: P90D 0 Sales SKU 總數/SKU總數 (#P90D 0 Sales的店舖貨量)" and not is_total:
-                col_b = get_column_letter(db_headers.index("Shop Name") + 1)
-                col_c = get_column_letter(db_headers.index("SKU 總數") + 1)
-                col_g = get_column_letter(db_headers.index("P90D 0 Sales SKU 總數") + 1)
-                col_h = get_column_letter(db_headers.index("P90D 0 Sales的店舖貨量") + 1)
+            if h == _formula_col and not is_total and _has_formula_cols:
+                col_b = get_column_letter(_idx_shop + 1)
+                col_c = get_column_letter(_idx_sku_total + 1)
+                col_g = get_column_letter(_idx_p90d + 1)
+                col_h = get_column_letter(_idx_p90d_stock + 1)
                 cell.value = f'=CONCATENATE({col_b}{excel_row},":",{col_g}{excel_row},"/",{col_c}{excel_row}," (#",{col_h}{excel_row},")")'
             else:
-                val = row_data.get(h)
+                val = _vals[col_idx - 1]
                 if pd.isna(val):
                     val = None
                 if isinstance(val, float) and not isinstance(val, bool):
@@ -426,7 +450,7 @@ def generate_excel_carry(
                 if isinstance(val, (int, float)) and col_idx >= 3:
                     cell.number_format = "#,##0"
             cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.alignment = center_align
             if is_total:
                 cell.font = bold_font
 
@@ -506,47 +530,52 @@ def _write_pivot_block(ws, pivot_df, start_row, excel_cols, detail_cols, data_co
     category_col_name = pivot_df.columns[2]
 
     total_rows = len(pivot_df)
-    for row_idx, row_data in pivot_df.iterrows():
+    # P0：共用對齊＋itertuples 取代 iterrows＋逐格新建 Alignment；值與格式語意不變
+    center_align = Alignment(horizontal="center", vertical="center")
+    detail_set = set(detail_cols) if detail_cols else set()
+    need_cols = ["Site Code", "Shop Name", category_col_name] + list(data_cols)
+    for row_idx, _vals in enumerate(_iter_header_rows(pivot_df, need_cols)):
         excel_row = start_row + row_idx
-        is_subtotal = "合計" in str(row_data["Site Code"])
+        site_val = _vals[0]
+        shop_val = _vals[1]
+        cat_val = _vals[2]
+        is_subtotal = "合計" in str(site_val)
 
         # Col 1: Site Code
-        site_val = row_data["Site Code"]
         cell = ws.cell(row=excel_row, column=excel_cols[0], value=site_val if site_val else None)
         cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.alignment = center_align
         if is_subtotal:
             cell.font = bold_font
 
         # Col 2: Shop Name
-        shop_val = row_data.get("Shop Name", "")
         cell = ws.cell(row=excel_row, column=excel_cols[1], value=str(shop_val) if shop_val else None)
         cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.alignment = center_align
         if is_subtotal:
             cell.font = bold_font
 
         # Col 3: category
-        cat_val = row_data.get(category_col_name)
         if pd.isna(cat_val) or cat_val is None:
             cat_val = None
         cell = ws.cell(row=excel_row, column=excel_cols[2], value=str(cat_val) if cat_val is not None else None)
         cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.alignment = center_align
         if is_subtotal:
             cell.font = bold_font
 
         # Cols 4-10: numeric data
         for di, dc in enumerate(data_cols):
             col_excel = excel_cols[3 + di]
-            val = int(row_data.get(dc, 0)) if pd.notna(row_data.get(dc)) else 0
+            raw_v = _vals[3 + di]
+            val = int(raw_v) if pd.notna(raw_v) else 0
 
-            if col_excel in detail_cols:
+            if col_excel in detail_set:
                 val = val if val > 0 else None
 
             cell = ws.cell(row=excel_row, column=col_excel, value=val)
             cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.alignment = center_align
             if is_subtotal:
                 cell.font = bold_font
             if isinstance(val, (int, float)) and val is not None:

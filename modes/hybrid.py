@@ -20,15 +20,18 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 from modes.common import (
     _auto_width,
+    _cached_shop_names,
     _clean_dataframe,
     _compute_raw_extra_columns,
     _display_safety_header,
     _extract_shop_name,
+    _iter_header_rows,
     _normalize_ref_date,
     _resolve_column_name,
     _safe_default_series,
     _safe_numeric,
     _safe_sku,
+    _cached_safe_sku_series,
     _write_metric_cards,
     _write_raw_placeholder,
     _write_raw_sheet,
@@ -294,8 +297,10 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
     if "Shop Name" in raw.columns:
         name_all = raw["Shop Name"].fillna("").astype(str).str.strip()
     elif "Item_Shop" in raw.columns:
+        # P0：快取解析（同一店舖×品項只執行一次正則），輸出與逐列解析完全一致
+        _fb_site = raw.get("Site Code", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
         name_all = pd.Series(
-            [_extract_shop_name(raw["Item_Shop"].iloc[i], site_all.iloc[i]) for i in range(len(raw))],
+            _cached_shop_names(raw["Item_Shop"], _fb_site),
             index=raw.index,
         )
     else:
@@ -415,22 +420,74 @@ def _build_hybrid_diag_summary(raw: pd.DataFrame, dimension: str = "nature", om_
 
     _total_key = {"列數": "合計 列數", "SKU 數": "合計 SKU 數", "建議調整量合計": "合計 建議調整量"}
 
+    # P0（個別模式）：單次 groupby 預彙總取代每診斷×每分組全表掃描；列數／不重複 SKU／調整量口徑不變
+    try:
+        _tmp = pd.DataFrame({"_diag": diag, "_grp": grp, "_sku": df["SKU"] if "SKU" in df.columns else "", "_chg": df["_chg"]})
+        _pre = _tmp.groupby(["_diag", "_grp"], sort=False, observed=True).agg(
+            _cnt=("_sku", "size"),
+            _nuniq=("_sku", lambda s: int(s.dropna().nunique())),
+            _sum=("_chg", "sum"),
+        )
+        _pre_map = {(str(d), str(g)): (int(r["_cnt"]), int(r["_nuniq"]), float(r["_sum"])) for (d, g), r in _pre.iterrows()}
+        _diag_tot = _tmp.groupby(["_diag"], sort=False, observed=True).agg(
+            _cnt=("_sku", "size"),
+            _nuniq=("_sku", lambda s: int(s.dropna().nunique())),
+            _sum=("_chg", "sum"),
+        )
+        _diag_map = {str(d): (int(r["_cnt"]), int(r["_nuniq"]), float(r["_sum"])) for d, r in _diag_tot.iterrows()}
+        _grp_tot = _tmp.groupby(["_grp"], sort=False, observed=True).agg(
+            _cnt=("_sku", "size"),
+            _nuniq=("_sku", lambda s: int(s.dropna().nunique())),
+            _sum=("_chg", "sum"),
+        )
+        _grp_map = {str(g): (int(r["_cnt"]), int(r["_nuniq"]), float(r["_sum"])) for g, r in _grp_tot.iterrows()}
+        _all_cnt = int(len(_tmp))
+        _all_nuniq = int(_tmp["_sku"].dropna().nunique()) if "SKU" in df.columns else 0
+        _all_sum = float(_tmp["_chg"].sum())
+        _use_pre3 = True
+    except Exception:
+        _pre_map = {}
+        _diag_map = {}
+        _grp_map = {}
+        _use_pre3 = False
     rows = []
     for d in _HYBRID_DIAG_ORDER:
-        sub_d = df[diag == d]
-        row = {"Safety Review": d}
-        for g in groups:
-            for k, v in _agg(sub_d[grp.loc[sub_d.index] == g]).items():
-                row[f"{g} {k}"] = v
-        for k, v in _agg(sub_d).items():
-            row[_total_key[k]] = v
+        if _use_pre3:
+            row = {"Safety Review": d}
+            for g in groups:
+                _c, _u, _s = _pre_map.get((str(d), str(g)), (0, 0, 0.0))
+                row[f"{g} 列數"] = int(_c)
+                row[f"{g} SKU 數"] = int(_u)
+                row[f"{g} 建議調整量合計"] = int(round(float(_s)))
+            _c, _u, _s = _diag_map.get(str(d), (0, 0, 0.0))
+            row[_total_key["列數"]] = int(_c)
+            row[_total_key["SKU 數"]] = int(_u)
+            row[_total_key["建議調整量合計"]] = int(round(float(_s)))
+        else:
+            sub_d = df[diag == d]
+            row = {"Safety Review": d}
+            for g in groups:
+                for k, v in _agg(sub_d[grp.loc[sub_d.index] == g]).items():
+                    row[f"{g} {k}"] = v
+            for k, v in _agg(sub_d).items():
+                row[_total_key[k]] = v
         rows.append(row)
     total_row = {"Safety Review": "總計"}
-    for g in groups:
-        for k, v in _agg(df[grp == g]).items():
-            total_row[f"{g} {k}"] = v
-    for k, v in _agg(df).items():
-        total_row[_total_key[k]] = v
+    if _use_pre3:
+        for g in groups:
+            _c, _u, _s = _grp_map.get(str(g), (0, 0, 0.0))
+            total_row[f"{g} 列數"] = int(_c)
+            total_row[f"{g} SKU 數"] = int(_u)
+            total_row[f"{g} 建議調整量合計"] = int(round(float(_s)))
+        total_row[_total_key["列數"]] = int(_all_cnt)
+        total_row[_total_key["SKU 數"]] = int(_all_nuniq)
+        total_row[_total_key["建議調整量合計"]] = int(round(float(_all_sum)))
+    else:
+        for g in groups:
+            for k, v in _agg(df[grp == g]).items():
+                total_row[f"{g} {k}"] = v
+        for k, v in _agg(df).items():
+            total_row[_total_key[k]] = v
     rows.append(total_row)
     return pd.DataFrame(rows, columns=cols)
 
@@ -739,11 +796,16 @@ def _hybrid_buyer_need_stats(raw: pd.DataFrame, need_series: pd.Series | None = 
     tmp = pd.DataFrame({"_sku": raw["SKU"], "_buyer": buyer})
     tmp = tmp[tmp["_sku"].isin(need_skus)]
 
-    def _first_nonempty(s: pd.Series) -> str:
-        s = s[s != ""]
-        return s.iloc[0] if len(s) else "(未填 Buyer)"
+    # P0：空字串遮成 NaN＋內建 first 取代自訂 agg；全空組回填「(未填 Buyer)」，語意等價
+    try:
+        _masked = tmp["_buyer"].mask(tmp["_buyer"] == "")
+        per_sku_buyer = _masked.groupby(tmp["_sku"], sort=False).first().fillna("(未填 Buyer)")
+    except Exception:
+        def _first_nonempty(s: pd.Series) -> str:
+            s = s[s != ""]
+            return s.iloc[0] if len(s) else "(未填 Buyer)"
 
-    per_sku_buyer = tmp.groupby("_sku", sort=False)["_buyer"].agg(_first_nonempty)
+        per_sku_buyer = tmp.groupby("_sku", sort=False)["_buyer"].agg(_first_nonempty)
     counts = per_sku_buyer.value_counts()
     return sorted(((str(b), int(c)) for b, c in counts.items()), key=lambda kv: (-kv[1], kv[0]))
 
@@ -783,18 +845,33 @@ def _hybrid_buyer_safety_stats(raw: pd.DataFrame) -> list[tuple[str, int, int]]:
     if tmp.empty:
         return []
 
-    def _first_nonempty(s: pd.Series) -> str:
-        s = s[s != ""]
-        return s.iloc[0] if len(s) else "(未填 Buyer)"
+    # P0：空字串遮成 NaN＋內建 first 取代自訂 agg；全空組回填「(未填 Buyer)」，語意等價；
+    # 另以單次 agg 同時取首個 Buyer 與調整量合計，取代兩次 groupby＋逐鍵 .loc
+    try:
+        _masked = tmp["_buyer"].mask(tmp["_buyer"] == "")
+        _agg = tmp.assign(_buyer_m=_masked).groupby("_sku", sort=False).agg(
+            _buyer_first=("_buyer_m", "first"),
+            _chg_sum=("_chg", "sum"),
+        )
+        _agg["_buyer_first"] = _agg["_buyer_first"].fillna("(未填 Buyer)")
+        per_buyer_skus: dict[str, int] = {}
+        per_buyer_chg: dict[str, float] = {}
+        for b, c in zip(_agg["_buyer_first"].astype(str), _agg["_chg_sum"].astype(float)):
+            per_buyer_skus[b] = per_buyer_skus.get(b, 0) + 1
+            per_buyer_chg[b] = per_buyer_chg.get(b, 0.0) + float(c)
+    except Exception:
+        def _first_nonempty(s: pd.Series) -> str:
+            s = s[s != ""]
+            return s.iloc[0] if len(s) else "(未填 Buyer)"
 
-    per_sku_buyer = tmp.groupby("_sku", sort=False)["_buyer"].agg(_first_nonempty)
-    per_sku_chg = tmp.groupby("_sku", sort=False)["_chg"].sum()
-    per_buyer_skus: dict[str, int] = {}
-    per_buyer_chg: dict[str, float] = {}
-    for sku, b in per_sku_buyer.items():
-        b = str(b)
-        per_buyer_skus[b] = per_buyer_skus.get(b, 0) + 1
-        per_buyer_chg[b] = per_buyer_chg.get(b, 0.0) + float(per_sku_chg.loc[sku])
+        per_sku_buyer = tmp.groupby("_sku", sort=False)["_buyer"].agg(_first_nonempty)
+        per_sku_chg = tmp.groupby("_sku", sort=False)["_chg"].sum()
+        per_buyer_skus: dict[str, int] = {}
+        per_buyer_chg: dict[str, float] = {}
+        for sku, b in per_sku_buyer.items():
+            b = str(b)
+            per_buyer_skus[b] = per_buyer_skus.get(b, 0) + 1
+            per_buyer_chg[b] = per_buyer_chg.get(b, 0.0) + float(per_sku_chg.loc[sku])
     result = [
         (b, int(per_buyer_skus[b]), int(round(per_buyer_chg[b])))
         for b in per_buyer_skus
@@ -850,11 +927,16 @@ def _hybrid_buyer_combined_detail(raw: pd.DataFrame) -> list[tuple[str, int, int
     )
     sku = raw["SKU"]
 
-    def _first_nonempty(s: pd.Series) -> str:
-        s = s[s != ""]
-        return s.iloc[0] if len(s) else "(未填 Buyer)"
+    # P0：空字串遮成 NaN＋內建 first 取代自訂 agg；全空組回填「(未填 Buyer)」，語意等價
+    try:
+        _bb = buyer.mask(buyer == "")
+        per_sku_buyer = _bb.groupby(sku, sort=False).first().fillna("(未填 Buyer)")
+    except Exception:
+        def _first_nonempty(s: pd.Series) -> str:
+            s = s[s != ""]
+            return s.iloc[0] if len(s) else "(未填 Buyer)"
 
-    per_sku_buyer = pd.DataFrame({"_sku": sku, "_buyer": buyer}).groupby("_sku", sort=False)["_buyer"].agg(_first_nonempty)
+        per_sku_buyer = pd.DataFrame({"_sku": sku, "_buyer": buyer}).groupby("_sku", sort=False)["_buyer"].agg(_first_nonempty)
 
     need_mask = raw.get("需要調貨", _safe_default_series("", raw.index)).astype(str) == "是"
     demand = pd.to_numeric(
@@ -1125,17 +1207,36 @@ def _hybrid_allocate_transfers(
             return keys
         return [p for p in keys if nd_flag[p]] + [p for p in keys if not nd_flag[p]]
 
+    # P0：預建 SKU→列索引，避免每 SKU 全表 sku_arr==sku 掃描；集合內容與順序與原實作一致
+    sku_to_idx: dict = {}
+    for _p in range(n_rows):
+        _k = sku_arr[_p]
+        try:
+            if pd.isna(_k):
+                continue
+        except Exception:
+            pass
+        sku_to_idx.setdefault(_k, []).append(int(_p))
     for sku in set(sku_arr[need_mask]):
-        sku_mask = sku_arr == sku
-        need_rows = np.nonzero(sku_mask & need_mask)[0]
-        nt_src = [int(p) for p in np.nonzero(sku_mask & (nt_avail > 0))[0]]
-        mix_src = [int(p) for p in np.nonzero(sku_mask & (mix_avail > 0))[0]]
+        try:
+            if pd.isna(sku):
+                continue
+        except Exception:
+            pass
+        _idx_list = sku_to_idx.get(sku, [])
+        if not _idx_list:
+            continue
+        need_rows = np.array([p for p in _idx_list if bool(need_mask[p])], dtype=int)
+        if need_rows.size == 0:
+            continue
+        nt_src = [int(p) for p in _idx_list if float(nt_avail[p]) > 0]
+        mix_src = [int(p) for p in _idx_list if float(mix_avail[p]) > 0]
         order = np.argsort(-demand[need_rows], kind="stable")
         remain_nt = {p: float(nt_avail[p]) for p in _nd_first(nt_src)}
         remain_mix = {p: float(mix_avail[p]) for p in _nd_first(mix_src)}
         pools = [remain_nt, remain_mix]
         if tourist_avail is not None:
-            tourist_src = [int(p) for p in np.nonzero(sku_mask & (tourist_avail > 0))[0]]
+            tourist_src = [int(p) for p in _idx_list if float(tourist_avail[p]) > 0]
             pools.append({p: float(tourist_avail[p]) for p in _nd_first(tourist_src)})
         for n in order:
             row_pos = int(need_rows[n])
@@ -1902,18 +2003,20 @@ def _write_hybrid_diagnosis_sheet(ws, diagnosis: pd.DataFrame, progress_callback
         return
 
     total = len(diagnosis)
-    for r_idx, (_, row) in enumerate(diagnosis.iterrows()):
+    # P0：itertuples＋set 查詢取代 iterrows＋list 查詢；值與格式語意不變
+    _text_set = set(_text_keys)
+    for r_idx, _vals in enumerate(_iter_header_rows(diagnosis, headers)):
         excel_row = r_idx + 2
         is_band = (r_idx % 2 == 1)
         for col_idx, h in enumerate(headers, 1):
-            val = row.get(h)
+            val = _vals[col_idx - 1]
             cell = ws.cell(row=excel_row, column=col_idx, value=None if pd.isna(val) else val)
             cell.border = thin_border
-            if h in _text_keys:
+            if h in _text_set:
                 cell.alignment = left_wrap
             else:
                 cell.alignment = center
-            if isinstance(val, (int, float)) and not isinstance(val, bool) and h not in _text_keys:
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and h not in _text_set:
                 cell.number_format = _decimal_keys.get(h, "#,##0")
             if is_band:
                 cell.fill = band_fill
@@ -1959,15 +2062,17 @@ def _write_hybrid_transfer_detail_sheet(ws, detail: pd.DataFrame, progress_callb
         return
 
     total = len(detail)
-    for r_idx, (_, row) in enumerate(detail.iterrows()):
+    # P0：itertuples＋set 查詢取代 iterrows＋list 查詢；值與格式語意不變
+    _text_set = set(_text_keys)
+    for r_idx, _vals in enumerate(_iter_header_rows(detail, headers)):
         excel_row = r_idx + 2
         is_band = (r_idx % 2 == 1)
         for col_idx, h in enumerate(headers, 1):
-            val = row.get(h)
+            val = _vals[col_idx - 1]
             cell = ws.cell(row=excel_row, column=col_idx, value=None if pd.isna(val) else val)
             cell.border = thin_border
-            cell.alignment = left_wrap if h in _text_keys else center
-            if isinstance(val, (int, float)) and not isinstance(val, bool) and h not in _text_keys:
+            cell.alignment = left_wrap if h in _text_set else center
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and h not in _text_set:
                 cell.number_format = "#,##0"
             if is_band:
                 cell.fill = band_fill
@@ -2016,15 +2121,17 @@ def _write_hybrid_full_safety_sheet(ws, detail: pd.DataFrame, progress_callback=
         return
 
     total = len(detail)
-    for r_idx, (_, row) in enumerate(detail.iterrows()):
+    # P0：itertuples＋set 查詢取代 iterrows＋list 查詢；值與格式語意不變
+    _text_set = set(_text_keys)
+    for r_idx, _vals in enumerate(_iter_header_rows(detail, headers)):
         excel_row = r_idx + 2
         is_band = (r_idx % 2 == 1)
         for col_idx, h in enumerate(headers, 1):
-            val = row.get(h)
+            val = _vals[col_idx - 1]
             cell = ws.cell(row=excel_row, column=col_idx, value=None if pd.isna(val) else val)
             cell.border = thin_border
-            cell.alignment = left_wrap if h in _text_keys else center
-            if isinstance(val, (int, float)) and not isinstance(val, bool) and h not in _text_keys:
+            cell.alignment = left_wrap if h in _text_set else center
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and h not in _text_set:
                 cell.number_format = _decimal_keys.get(h, "#,##0")
             if is_band:
                 cell.fill = band_fill

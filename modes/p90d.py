@@ -14,14 +14,17 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from modes.common import (
     _auto_width,
+    _cached_shop_names,
     _clean_dataframe,
     _compute_raw_extra_columns,
     _extract_shop_name,
+    _iter_header_rows,
     _reorder_raw_columns,
     _resolve_column_name,
     _safe_default_series,
     _safe_numeric,
     _safe_sku,
+    _cached_safe_sku_series,
     _write_raw_placeholder,
     _write_raw_sheet,
     validate_input,
@@ -79,10 +82,8 @@ def _build_p90d_zero_sales_by_shop_summary(raw: pd.DataFrame) -> pd.DataFrame:
     df = raw.copy()
     site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
-    shop_name = [
-        _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
-        for i in range(len(df))
-    ]
+    # P0：快取解析（同一店舖×品項只執行一次正則），輸出與逐列解析完全一致
+    shop_name = _cached_shop_names(item_shop, site_code)
     df["Site Code"] = site_code
     df["Shop Name"] = shop_name
     df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
@@ -218,18 +219,20 @@ def generate_excel_p90d_zero_sales(
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = thin_border
 
+    # P0：itertuples＋共用對齊取代 iterrows＋逐格新建 Alignment；值與格式語意不變
+    center_align = Alignment(horizontal="center", vertical="center")
     if summary_by_shop is not None and not summary_by_shop.empty:
         total_summary = len(summary_by_shop)
-        for row_idx, row_data in summary_by_shop.iterrows():
+        for row_idx, _vals in enumerate(_iter_header_rows(summary_by_shop, summary_headers)):
             excel_row = row_idx + 2
-            is_total = row_data.get("Site Code") == "總計"
+            is_total = _vals[0] == "總計"
             for col_idx, h in enumerate(summary_headers, 1):
-                val = row_data.get(h)
+                val = _vals[col_idx - 1]
                 if pd.isna(val):
                     val = None
                 cell = ws_summary.cell(row=excel_row, column=col_idx, value=val)
                 cell.border = thin_border
-                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.alignment = center_align
                 if is_total:
                     cell.font = bold_font
                 if isinstance(val, (int, float)) and col_idx >= 4:

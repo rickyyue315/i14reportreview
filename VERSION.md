@@ -1,5 +1,15 @@
 # 版本記錄
 
+## v1.74.0 (2026-09-30)
+
+全模式執行速度優化，輸出零變動（報表轉換與 Excel 逐格內容、數字格式、對齊完全等價）：
+
+- **共用基礎** — 店舖名稱與品項描述改不重複鍵快取（同一店舖×品項只執行一次正則）；SKU 正規化加記憶化；新增共用 `itertuples` 表格列走訪，取代 `iterrows` 逐列重建 Series
+- **Excel 階段** — 各模式摘要及明細改 `itertuples`＋共用對齊／字型，取代逐格新建 Alignment／Font；Carry 公式欄索引預算；Forecast 訂量欄字型預建；Hybrid 文字欄集合查詢；Stock Checking 公式欄字母預算
+- **轉換階段（個別模式）** — Forecast 識別欄改空遮＋內建 `first`、買家計數向量化、SKU 聚合 9 次掃描合併單次 `agg`；Stock Checking／Hybrid 買家統計改空遮＋`first`、調貨分配預建 SKU 索引；Hybrid 診斷交叉表單次 `groupby`；NDRF 樞紐單次 `groupby`、店名去重建表；P90D By Shop 及 By SKU 預彙總；Safety Monthly By Shop 及 RP 摘要單次彙總；Stock Impact 數值轉換欄快取
+- **等價驗證** — 全量 529 項通過，3 項略過
+- Change: `version.py` → 1.74.0
+
 ## v1.73.0 (2026-09-30)
 
 Safety Stock 月度變化分析新增三個生意視角（RP 轉變群組生意對比／店舖精簡成效／轉變前後追蹤 T0）；其餘模式零變動：

@@ -37,14 +37,17 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from modes.common import (
     _auto_width,
+    _cached_shop_names,
     _clean_dataframe,
     _compute_raw_extra_columns,
     _display_safety_header,
     _extract_shop_name,
+    _iter_header_rows,
     _resolve_column_name,
     _safe_default_series,
     _safe_numeric,
     _safe_sku,
+    _cached_safe_sku_series,
     validate_input,
 )
 
@@ -344,7 +347,8 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
     site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
     df["Site Code"] = site_code
-    df["Shop Name"] = [_extract_shop_name(item_shop.iloc[i], site_code.iloc[i]) for i in range(len(df))]
+    # P0：快取解析（同一店舖×品項只執行一次正則），輸出與逐列解析完全一致
+    df["Shop Name"] = _cached_shop_names(item_shop, site_code)
     df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     df["SKU"] = df["SKU"].apply(_safe_sku)
     df["_group"] = _op90d_group_series(df, breakdown)
@@ -355,20 +359,53 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
     headers = _OP90D_BY_SHOP_BASE + _OP90D_BY_SHOP_TAIL + pair_headers
 
     rows = []
+    # P0（個別模式）：單次 groupby 預彙總取代每店×每分類全表切片；不重複計數與合計口徑不變
+    try:
+        _pre = df.groupby(["Site Code", "Shop Name", "OM", "_group"], sort=False, observed=True).agg(
+            _sku_n=("SKU", lambda s: int(s.dropna().astype(str).nunique())),
+            _stock=("_stock_cm", "sum"),
+        ).reset_index()
+        _pre_map = {(str(r["Site Code"]), str(r["Shop Name"]), str(r["OM"]), str(r["_group"])): (int(r["_sku_n"]), float(r["_stock"])) for _, r in _pre.iterrows()}
+        _shop_tot = df.groupby(["Site Code", "Shop Name", "OM"], sort=False, observed=True).agg(
+            _sku_tot=("SKU", lambda s: int(s.dropna().astype(str).nunique())),
+            _stock_tot=("_stock_cm", "sum"),
+        )
+        _shop_tot_map = {(str(s), str(n), str(o)): (int(r["_sku_tot"]), float(r["_stock_tot"])) for (s, n, o), r in _shop_tot.iterrows()}
+        _use_pre = True
+    except Exception:
+        _pre_map = {}
+        _shop_tot_map = {}
+        _use_pre = False
     for (site, name, om), group in df.groupby(["Site Code", "Shop Name", "OM"], dropna=False, observed=True):
-        skus = group["SKU"].dropna().astype(str)
-        row = {
-            "Site Code": site,
-            "Shop Name": name,
-            "OM": om,
-            "Shop Nature": _representative_nature(group),
-            "P90D 0 Sales SKU 總數": int(skus.nunique()),
-        }
-        for g, h, sh in zip(groups, group_headers, group_stock_headers):
-            gslice = group[group["_group"] == g]
-            row[h] = int(gslice["SKU"].dropna().astype(str).nunique())
-            row[sh] = int(float(gslice["_stock_cm"].sum()))
-        row["Shop Stock Qty (CM) 總數"] = int(float(group["_stock_cm"].sum()))
+        if _use_pre:
+            _key3 = (str(site), str(name), str(om))
+            _tot_n, _tot_s = _shop_tot_map.get(_key3, (0, 0.0))
+            row = {
+                "Site Code": site,
+                "Shop Name": name,
+                "OM": om,
+                "Shop Nature": _representative_nature(group),
+                "P90D 0 Sales SKU 總數": int(_tot_n),
+            }
+            for g, h, sh in zip(groups, group_headers, group_stock_headers):
+                _n, _s = _pre_map.get((str(site), str(name), str(om), str(g)), (0, 0.0))
+                row[h] = int(_n)
+                row[sh] = int(float(_s))
+            row["Shop Stock Qty (CM) 總數"] = int(float(_tot_s))
+        else:
+            skus = group["SKU"].dropna().astype(str)
+            row = {
+                "Site Code": site,
+                "Shop Name": name,
+                "OM": om,
+                "Shop Nature": _representative_nature(group),
+                "P90D 0 Sales SKU 總數": int(skus.nunique()),
+            }
+            for g, h, sh in zip(groups, group_headers, group_stock_headers):
+                gslice = group[group["_group"] == g]
+                row[h] = int(gslice["SKU"].dropna().astype(str).nunique())
+                row[sh] = int(float(gslice["_stock_cm"].sum()))
+            row["Shop Stock Qty (CM) 總數"] = int(float(group["_stock_cm"].sum()))
         rows.append(row)
     by_shop = pd.DataFrame(rows, columns=headers)
     by_shop = by_shop.sort_values(
@@ -384,10 +421,22 @@ def _build_op90d_by_shop(raw: pd.DataFrame, breakdown: str = _OP90D_BREAKDOWN_MA
             "Shop Nature": "",
             "P90D 0 Sales SKU 總數": int(df["SKU"].dropna().astype(str).nunique()),
         }
-        for g, h, sh in zip(groups, group_headers, group_stock_headers):
-            gslice = df[df["_group"] == g]
-            total_row[h] = int(gslice["SKU"].dropna().astype(str).nunique())
-            total_row[sh] = int(float(gslice["_stock_cm"].sum()))
+        # P0（個別模式）：總計列沿用預彙總，避免每分類全表掃描；口徑不變
+        try:
+            _gtot = df.groupby("_group", sort=False, observed=True).agg(
+                _sku_n=("SKU", lambda s: int(s.dropna().astype(str).nunique())),
+                _stock=("_stock_cm", "sum"),
+            )
+            _gtot_map = {str(k): (int(r["_sku_n"]), float(r["_stock"])) for k, r in _gtot.iterrows()}
+            for g, h, sh in zip(groups, group_headers, group_stock_headers):
+                _n, _s = _gtot_map.get(str(g), (0, 0.0))
+                total_row[h] = int(_n)
+                total_row[sh] = int(float(_s))
+        except Exception:
+            for g, h, sh in zip(groups, group_headers, group_stock_headers):
+                gslice = df[df["_group"] == g]
+                total_row[h] = int(gslice["SKU"].dropna().astype(str).nunique())
+                total_row[sh] = int(float(gslice["_stock_cm"].sum()))
         total_row["Shop Stock Qty (CM) 總數"] = int(float(df["_stock_cm"].sum()))
         by_shop = pd.concat([by_shop, pd.DataFrame([total_row])], ignore_index=True)
     return by_shop[headers]
@@ -404,7 +453,8 @@ def _build_op90d_by_shop_cross(raw: pd.DataFrame, sub: str) -> pd.DataFrame:
     site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
     df["Site Code"] = site_code
-    df["Shop Name"] = [_extract_shop_name(item_shop.iloc[i], site_code.iloc[i]) for i in range(len(df))]
+    # P0：快取解析（同一店舖×品項只執行一次正則），輸出與逐列解析完全一致
+    df["Shop Name"] = _cached_shop_names(item_shop, site_code)
     df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     df["SKU"] = df["SKU"].apply(_safe_sku)
     df["_pri"] = _op90d_group_series(df, _OP90D_BREAKDOWN_MAKEUP)
@@ -477,7 +527,8 @@ def _build_op90d_top10(raw: pd.DataFrame, top_n: int = 10, include_makeup: bool 
     site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
     df["Site Code"] = site_code
-    df["Shop Name"] = [_extract_shop_name(item_shop.iloc[i], site_code.iloc[i]) for i in range(len(df))]
+    # P0：快取解析（同一店舖×品項只執行一次正則），輸出與逐列解析完全一致
+    df["Shop Name"] = _cached_shop_names(item_shop, site_code)
     df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     df["Shop Nature"] = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     df["SKU"] = df["SKU"].apply(_safe_sku)
@@ -516,7 +567,8 @@ def _build_op90d_all_sku(raw: pd.DataFrame) -> pd.DataFrame:
     site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
     df["Site Code"] = site_code
-    df["Shop Name"] = [_extract_shop_name(item_shop.iloc[i], site_code.iloc[i]) for i in range(len(df))]
+    # P0：快取解析（同一店舖×品項只執行一次正則），輸出與逐列解析完全一致
+    df["Shop Name"] = _cached_shop_names(item_shop, site_code)
     df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     df["Shop Nature"] = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     df["SKU"] = df["SKU"].apply(_safe_sku)
@@ -692,13 +744,32 @@ def _build_op90d_by_sku(raw: pd.DataFrame) -> pd.DataFrame:
         df["_stock_cm"] = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
 
     rows = []
+    # P0（個別模式）：店舖數／行數／庫存預彙總取代每 SKU 重複字串清洗；代表值維持眾數語意不變
+    try:
+        _site_clean = site.fillna("").astype(str).str.strip().replace("", np.nan)
+        _site_n_map = _site_clean.groupby(df["SKU"], sort=False, observed=True).nunique().astype(int).to_dict()
+        _cnt_map = df.groupby("SKU", sort=False, observed=True).size().astype(int).to_dict()
+        _stock_map = df.groupby("SKU", sort=False, observed=True)["_stock_cm"].sum().to_dict()
+        _use_pre2 = True
+    except Exception:
+        _site_n_map = {}
+        _cnt_map = {}
+        _stock_map = {}
+        _use_pre2 = False
     for sku, group in df.groupby("SKU", dropna=False, observed=True):
         sku_txt = "" if pd.isna(sku) else str(sku).strip()
         if not sku_txt:
             continue
-        site_n = int(
-            group["Site Code"].replace("", pd.NA).dropna().astype(str).str.strip().replace("", pd.NA).dropna().nunique()
-        )
+        if _use_pre2 and sku in _site_n_map:
+            site_n = int(_site_n_map.get(sku, 0))
+            _rows_n = int(_cnt_map.get(sku, len(group)))
+            _stock_tot = float(_stock_map.get(sku, 0.0))
+        else:
+            site_n = int(
+                group["Site Code"].replace("", pd.NA).dropna().astype(str).str.strip().replace("", pd.NA).dropna().nunique()
+            )
+            _rows_n = int(len(group))
+            _stock_tot = float(group["_stock_cm"].sum())
         rows.append({
             "SKU": sku_txt,
             "SKU Desc": _op90d_representative(group.get("SKU Desc", _safe_default_series("", group.index))),
@@ -712,8 +783,8 @@ def _build_op90d_by_sku(raw: pd.DataFrame) -> pd.DataFrame:
             "Item Status": _op90d_representative(group.get("Item Status", _safe_default_series("", group.index))),
             "Launch Date": _op90d_representative_value(group.get("Launch Date", _safe_default_series("", group.index))),
             "出現店舖數": site_n,
-            "P90D 0 Sales 行數": int(len(group)),
-            "Shop Stock Qty (CM) 總數": int(float(group["_stock_cm"].sum())),
+            "P90D 0 Sales 行數": _rows_n,
+            "Shop Stock Qty (CM) 總數": int(_stock_tot),
         })
     by_sku = pd.DataFrame(rows, columns=_OP90D_BY_SKU_COLUMNS)
     if by_sku.empty:
@@ -893,24 +964,27 @@ def _write_op90d_table(ws, headers, data: pd.DataFrame, progress_callback=None,
     header_font = Font(bold=True, color="FFFFFF", size=11)
     bold_font = Font(bold=True, size=11)
     display_headers = [_display_safety_header(h) for h in headers]
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for col_idx, h in enumerate(display_headers, 1):
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.alignment = header_align
         cell.border = thin_border
+    # P0：itertuples＋共用對齊取代 iterrows＋逐格新建 Alignment；值與格式語意不變
+    center_align = Alignment(horizontal="center", vertical="center")
     if data is not None and not data.empty:
         total = len(data)
-        for row_idx, (_, row_data) in enumerate(data.iterrows()):
+        for row_idx, _vals in enumerate(_iter_header_rows(data, headers)):
             excel_row = row_idx + 2
-            is_total = str(row_data.iloc[0]) == "總計"
+            is_total = str(_vals[0]) == "總計"
             for col_idx, h in enumerate(headers, 1):
-                val = row_data.get(h)
+                val = _vals[col_idx - 1]
                 if pd.isna(val):
                     val = None
                 cell = ws.cell(row=excel_row, column=col_idx, value=val)
                 cell.border = thin_border
-                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.alignment = center_align
                 if is_total:
                     cell.font = bold_font
                 if isinstance(val, (int, float)) and h not in _OP90D_TEXT_COLUMNS:

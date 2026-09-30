@@ -22,11 +22,13 @@ from modes.common import (
     _auto_width,
     _clean_dataframe,
     _compute_raw_extra_columns,
+    _iter_header_rows,
     _parse_launch_dates,
     _resolve_column_name,
     _safe_default_series,
     _safe_numeric,
     _safe_sku,
+    _cached_safe_sku_series,
     _write_metric_cards,
     _write_raw_placeholder,
     _write_raw_sheet,
@@ -732,13 +734,40 @@ def transform_forecast(
         "_f_m1": factor_m1.to_numpy(dtype=float),
     })
     grp = work.groupby("_sku", sort=False)
-    sku_mtd = grp["_mtd"].sum()
-    sku_p90d = grp["_sold_p90d"].sum()
-    B_sku = grp["_p90d_m"].sum()
-    # v2：SKU 聚合後才做情境；M-2／M-1 先按 SKU 折算，CM 月化已在逐列用有效日數處理
-    S2 = grp["_r2_m2"].sum() * grp["_f_m2"].first()
-    S1 = grp["_r2_m1"].sum() * grp["_f_m1"].first()
-    sku_r2_cm = grp["_r2_cm"].sum()
+    # P0（個別模式）：單次 agg 取代 9 次同鍵 groupby 掃描；合計／首值／列數口徑不變
+    _rf_count_pre = None
+    _row_count_pre = None
+    try:
+        _sku_agg = work.groupby("_sku", sort=False).agg(
+            _mtd_sum=("_mtd", "sum"),
+            _sold_p90d_sum=("_sold_p90d", "sum"),
+            _p90d_m_sum=("_p90d_m", "sum"),
+            _r2_m2_sum=("_r2_m2", "sum"),
+            _r2_m1_sum=("_r2_m1", "sum"),
+            _r2_cm_sum=("_r2_cm", "sum"),
+            _f_m2_first=("_f_m2", "first"),
+            _f_m1_first=("_f_m1", "first"),
+            _is_rf_sum=("_is_rf", "sum"),
+            _cnt=("_is_rf", "size"),
+        )
+        sku_mtd = _sku_agg["_mtd_sum"]
+        sku_p90d = _sku_agg["_sold_p90d_sum"]
+        B_sku = _sku_agg["_p90d_m_sum"]
+        S2 = _sku_agg["_r2_m2_sum"] * _sku_agg["_f_m2_first"]
+        S1 = _sku_agg["_r2_m1_sum"] * _sku_agg["_f_m1_first"]
+        sku_r2_cm = _sku_agg["_r2_cm_sum"]
+        _rf_count_pre = _sku_agg["_is_rf_sum"]
+        _row_count_pre = _sku_agg["_cnt"]
+    except Exception:
+        sku_mtd = grp["_mtd"].sum()
+        sku_p90d = grp["_sold_p90d"].sum()
+        B_sku = grp["_p90d_m"].sum()
+        # v2：SKU 聚合後才做情境；M-2／M-1 先按 SKU 折算，CM 月化已在逐列用有效日數處理
+        S2 = grp["_r2_m2"].sum() * grp["_f_m2"].first()
+        S1 = grp["_r2_m1"].sum() * grp["_f_m1"].first()
+        sku_r2_cm = grp["_r2_cm"].sum()
+        _rf_count_pre = None
+        _row_count_pre = None
     if mtd_ok:
         sku_mtd_ann = sku_r2_cm
         r_cred = float(mtd_days) / float(month_total_days)
@@ -807,16 +836,22 @@ def transform_forecast(
         df[_c] = sku_key.map(_scen[_c]).fillna(0).astype(int)
 
     # ── 識別欄（Brand／Buyer／SKU Desc 取同 SKU 首個非空值；併最早 Launch Date）──
+    # P0：空字串遮成 NaN＋內建 first（Cython 路徑）取代 groupby.apply 自訂函數；
+    # 語意等價：first 略過 NaN＝首個非空字串，全空組回填空字串。
     for col in ("Brand", "Buyer", "SKU Desc"):
         if col in df.columns:
             s = df[col].fillna("").astype(str).str.strip()
+            s_masked = s.mask(s == "")
+            try:
+                first_vals = s_masked.groupby(sku_key, sort=False).first()
+            except Exception:
+                def _first_nonempty(x: pd.Series) -> str:
+                    x = x[x != ""]
+                    return x.iloc[0] if len(x) else ""
 
-            def _first_nonempty(x: pd.Series) -> str:
-                x = x[x != ""]
-                return x.iloc[0] if len(x) else ""
-
+                first_vals = sku_key.groupby(sku_key).apply(lambda g: _first_nonempty(s.loc[g.index]))
             main[col] = (
-                sku_key.groupby(sku_key).apply(lambda g: _first_nonempty(s.loc[g.index])).reindex(main["SKU"]).values
+                first_vals.reindex(main["SKU"]).fillna("").values
             )
         else:
             main[col] = ""
@@ -833,8 +868,13 @@ def transform_forecast(
         main["FC 最早 Launch Date"] = ""
 
     # RP 概況：RF 列數／總列數（全 ND 即無 RF 列）
-    rf_count = grp["_is_rf"].sum()
-    row_count = grp["_is_rf"].size()
+    # P0（個別模式）：沿用單次 agg 預彙總，避免重複同鍵掃描；口徑不變
+    if "_rf_count_pre" in locals() and "_row_count_pre" in locals() and _rf_count_pre is not None and _row_count_pre is not None:
+        rf_count = _rf_count_pre
+        row_count = _row_count_pre
+    else:
+        rf_count = grp["_is_rf"].sum()
+        row_count = grp["_is_rf"].size()
     main["FC RF 列數"] = rf_count.reindex(main["SKU"]).fillna(0).astype(int).values
     main["FC 總列數"] = row_count.reindex(main["SKU"]).fillna(0).astype(int).values
     main["FC RP 概況"] = np.where(
@@ -1016,10 +1056,13 @@ def transform_forecast(
         "_sku": main["SKU"].values,
     })
     bgrp = buyer_df.groupby("Buyer", sort=False)
+    # P0：(s>0).sum() 向量化取代 groupby.apply(lambda)，語意完全等價
+    _order_pos = (buyer_df["_order"] > 0).astype(int).groupby(buyer_df["Buyer"], sort=False).sum()
+    _order_pos = _order_pos.reindex(bgrp.size().index).fillna(0).astype(int).values
     buyer_out = pd.DataFrame({
         "Buyer": bgrp.size().index,
         "FC SKU 數": bgrp["_sku"].nunique().values,
-        "FC 建議訂貨 SKU 數": bgrp["_order"].apply(lambda s: int((s > 0).sum())).values,
+        "FC 建議訂貨 SKU 數": _order_pos,
         "FC 建議訂量合計 (D001 PO)": bgrp["_d001"].sum().astype(int).values,
         "FC 建議訂量合計 (Shop PO)": bgrp["_shop"].sum().astype(int).values,
         "FC 爆升 SKU 數": bgrp["_surge"].sum().astype(int).values,
@@ -1311,17 +1354,19 @@ def _write_forecast_sheet(ws, df: pd.DataFrame, columns: list[str], title: str,
             cell.border = thin_border
     order_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
     order_col_idx = columns.index("FC 建議訂量") + 1 if "FC 建議訂量" in columns else None
+    order_bold = Font(bold=True)
     total = len(df)
-    for i, (_, row) in enumerate(df.iterrows()):
+    # P0：itertuples＋預先共用字型取代 iterrows＋逐格新建 Font；值與格式語意不變
+    for i, _vals in enumerate(_iter_header_rows(df, columns)):
         r = i + 3
         for col_idx, h in enumerate(columns, 1):
-            v = row[h] if h in df.columns else None
+            v = _vals[col_idx - 1]
             cell = ws.cell(row=r, column=col_idx, value=None if pd.isna(v) else v)
             if thin_border is not None:
                 cell.border = thin_border
             if highlight_order and col_idx == order_col_idx:
                 cell.fill = order_fill
-                cell.font = Font(bold=True)
+                cell.font = order_bold
         if progress_callback and total and (i % 1000 == 0 or i == total - 1):
             p = progress_start + (progress_end - progress_start) * ((i + 1) / total)
             progress_callback(p, f"寫入 {title} ({i+1}/{total})...")
@@ -1444,14 +1489,16 @@ def generate_excel_forecast(
             cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.border = thin_border
         rr = _br + 2
-        for _, brow in buyer_df.iterrows():
-            for col_idx, h in enumerate(("Buyer", "FC 建議訂貨 SKU 數",
-                                         "FC 建議訂量合計 (D001 PO)", "FC 建議訂量合計 (Shop PO)"), 1):
-                cell = ws_dash.cell(row=rr, column=col_idx, value=brow.get(h))
+        _buyer_headers = ("Buyer", "FC 建議訂貨 SKU 數",
+                          "FC 建議訂量合計 (D001 PO)", "FC 建議訂量合計 (Shop PO)")
+        _buyer_center = Alignment(horizontal="center", vertical="center")
+        for _bvals in _iter_header_rows(buyer_df, list(_buyer_headers)):
+            for col_idx, h in enumerate(_buyer_headers, 1):
+                cell = ws_dash.cell(row=rr, column=col_idx, value=_bvals[col_idx - 1])
                 cell.border = thin_border
                 if col_idx > 1:
                     cell.number_format = "#,##0"
-                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                    cell.alignment = _buyer_center
             rr += 1
         _auto_width(ws_dash)
 

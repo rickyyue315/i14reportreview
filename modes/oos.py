@@ -21,14 +21,17 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from modes.common import (
     _ADJ_SAFETY_SOURCE_COL,
     _auto_width,
+    _cached_shop_names,
     _clean_dataframe,
     _display_safety_header,
     _extract_shop_name,
+    _iter_header_rows,
     _nature_rate_arr,
     _resolve_column_name,
     _safe_default_series,
     _safe_numeric,
     _safe_sku,
+    _cached_safe_sku_series,
     _write_metric_cards,
     _write_raw_placeholder,
     _write_raw_sheet,
@@ -138,10 +141,8 @@ def _build_oos_by_shop_summary(raw):
 
     site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
-    shop_name = [
-        _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
-        for i in range(len(df))
-    ]
+    # P0：快取解析（同一店舖×品項只執行一次正則），輸出與逐列解析完全一致
+    shop_name = _cached_shop_names(item_shop, site_code)
 
     df["Site Code"] = site_code
     df["Shop Name"] = shop_name
@@ -323,27 +324,30 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None, i
     ws_summary["D3"] = "Shop Stock Status"
 
     headers = ["Buyer", "Brand", "SKU"] + categories + ["總計", "Safety Qty Increase"]
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for col_idx, h in enumerate(headers, 1):
         cell = ws_summary.cell(row=4, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.alignment = header_align
         cell.border = thin_border
 
     data_start = 5
     total_summary = len(summary_df)
+    # P0：itertuples＋共用對齊取代 iterrows＋逐格新建 Alignment；值與格式語意不變
+    center_align = Alignment(horizontal="center", vertical="center")
 
-    for row_idx, row_data in summary_df.iterrows():
+    for row_idx, _vals in enumerate(_iter_header_rows(summary_df, headers)):
         excel_row = data_start + row_idx
-        is_total = row_data["Buyer"] == "總計"
+        is_total = _vals[0] == "總計"
 
         for col_idx, h in enumerate(headers, 1):
-            val = row_data.get(h)
+            val = _vals[col_idx - 1]
             if pd.isna(val):
                 val = None
             cell = ws_summary.cell(row=excel_row, column=col_idx, value=val)
             cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.alignment = center_align
 
             if is_total:
                 cell.font = bold_font
@@ -377,19 +381,19 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None, i
         cell = ws_by_shop.cell(row=1, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.alignment = header_align
         cell.border = thin_border
 
-    for row_idx, row_data in by_shop_df.iterrows():
+    for row_idx, _vals in enumerate(_iter_header_rows(by_shop_df, by_shop_headers)):
         excel_row = row_idx + 2
-        is_total = row_data.get("Site Code") == "總計"
+        is_total = _vals[0] == "總計"
         for col_idx, h in enumerate(by_shop_headers, 1):
-            val = row_data.get(h)
+            val = _vals[col_idx - 1]
             if pd.isna(val):
                 val = None
             cell = ws_by_shop.cell(row=excel_row, column=col_idx, value=val)
             cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.alignment = center_align
             if is_total:
                 cell.font = bold_font
             if isinstance(val, (int, float)) and col_idx >= 4:

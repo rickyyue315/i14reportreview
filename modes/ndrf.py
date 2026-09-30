@@ -20,9 +20,11 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 from modes.common import (
     _auto_width,
+    _cached_shop_names,
     _clean_dataframe,
     _compute_raw_extra_columns,
     _extract_shop_name,
+    _iter_header_rows,
     _safe_default_series,
     _safe_numeric,
     _write_raw_placeholder,
@@ -45,22 +47,25 @@ def _write_ndrf_generic_pivot(ws, pivot_df, thin_border, header_font, header_fil
         ws.cell(row=1, column=1, value="無樞紐資料").font = Font(size=12)
         return
     headers = list(pivot_df.columns)
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for col_idx, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.alignment = header_align
         cell.border = thin_border
-    for row_idx, row_data in pivot_df.iterrows():
+    # P0：itertuples＋共用對齊取代 iterrows＋逐格新建 Alignment；值與格式語意不變
+    center_align = Alignment(horizontal="center", vertical="center")
+    for row_idx, _vals in enumerate(_iter_header_rows(pivot_df, headers)):
         excel_row = row_idx + 2
-        is_subtotal = "合計" in str(row_data.get("Site Code", ""))
+        is_subtotal = "合計" in str(_vals[0] if len(_vals) else "")
         for col_idx, h in enumerate(headers, 1):
-            val = row_data.get(h)
+            val = _vals[col_idx - 1]
             if pd.isna(val):
                 val = None
             cell = ws.cell(row=excel_row, column=col_idx, value=val)
             cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.alignment = center_align
             if is_subtotal:
                 cell.font = bold_font
             if isinstance(val, (int, float)) and val is not None:
@@ -117,14 +122,22 @@ def transform_ndrf_comparison(
         df = _compute_raw_extra_columns(df)
 
     if "Shop" not in df.columns:
-        shop_name_vals = [
-            _extract_shop_name(
-                df["Item_Shop"].iloc[i] if "Item_Shop" in df.columns else "",
-                df["Site Code"].iloc[i] if "Site Code" in df.columns else ""
-            )
-            for i in range(len(df))
-        ]
-        df["Shop"] = shop_name_vals
+        # P0：快取解析（同一店舖×品項只執行一次正則），輸出與逐列解析完全一致
+        if "Item_Shop" in df.columns and "Site Code" in df.columns:
+            _shop_item = df["Item_Shop"]
+            _shop_site = df["Site Code"].fillna("").astype(str).str.strip()
+            df["Shop"] = _cached_shop_names(_shop_item, _shop_site)
+        else:
+            _item_fallback = df["Item_Shop"] if "Item_Shop" in df.columns else _safe_default_series("", df.index)
+            _site_fallback = df["Site Code"] if "Site Code" in df.columns else _safe_default_series("", df.index)
+            shop_name_vals = [
+                _extract_shop_name(
+                    _item_fallback.iloc[i] if hasattr(_item_fallback, "iloc") else "",
+                    _site_fallback.iloc[i] if hasattr(_site_fallback, "iloc") else ""
+                )
+                for i in range(len(df))
+            ]
+            df["Shop"] = shop_name_vals
 
     df = df.copy()
     rp_type = df["RP Type"].fillna("").astype(str).str.strip().str.upper()
@@ -270,23 +283,41 @@ def _build_ndrf_category_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, 
             ["ND_With_Stock", "ND_No_Stock"],
             default="RF"
         )
-        count_pivot = df.groupby(["Site Code", category_col, "_cat"], dropna=False, observed=True).size().reset_index(name="count")
-        wide = count_pivot.pivot_table(index=["Site Code", category_col], columns="_cat", values="count", fill_value=0).reset_index()
-        for c in ["ND_With_Stock", "RF"]:
-            if c not in wide.columns:
-                wide[c] = 0
-        wide["ND_With_Stock"] = wide["ND_With_Stock"].fillna(0).astype(int)
-        wide["RF_Total"] = wide["RF"].fillna(0).astype(int)
-        wide["Carry"] = (wide["ND_With_Stock"] + wide["RF_Total"]).astype(int)
-        stock_agg = df.groupby(["Site Code", category_col], dropna=False, observed=True).agg(
-            Stock_Qty=("_stock_qty", "sum"),
-            Stock_Value=("_stock_value", "sum"),
-        ).reset_index()
-        result = wide.merge(stock_agg, on=["Site Code", category_col], how="left")
-        for c in ["Stock_Qty", "Stock_Value"]:
-            result[c] = result[c].fillna(0).astype(int)
-        keep = ["Site Code", category_col, "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]
-        return result[keep].sort_values(["Site Code", category_col])
+        # P0（個別模式）：單次 groupby 取代 size＋pivot＋sum 兩次掃描；計數與合計口徑不變
+        try:
+            df["_is_ndws"] = (df["_cat"] == "ND_With_Stock").astype(int)
+            df["_is_rf"] = (df["_cat"] == "RF").astype(int)
+            _agg = df.groupby(["Site Code", category_col], sort=False, observed=True, dropna=False).agg(
+                ND_With_Stock=("_is_ndws", "sum"),
+                RF_Total=("_is_rf", "sum"),
+                Stock_Qty=("_stock_qty", "sum"),
+                Stock_Value=("_stock_value", "sum"),
+            ).reset_index()
+            _agg["ND_With_Stock"] = _agg["ND_With_Stock"].fillna(0).astype(int)
+            _agg["RF_Total"] = _agg["RF_Total"].fillna(0).astype(int)
+            _agg["Carry"] = (_agg["ND_With_Stock"] + _agg["RF_Total"]).astype(int)
+            for c in ["Stock_Qty", "Stock_Value"]:
+                _agg[c] = _agg[c].fillna(0).astype(int)
+            keep = ["Site Code", category_col, "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]
+            return _agg[keep].sort_values(["Site Code", category_col])
+        except Exception:
+            count_pivot = df.groupby(["Site Code", category_col, "_cat"], dropna=False, observed=True).size().reset_index(name="count")
+            wide = count_pivot.pivot_table(index=["Site Code", category_col], columns="_cat", values="count", fill_value=0).reset_index()
+            for c in ["ND_With_Stock", "RF"]:
+                if c not in wide.columns:
+                    wide[c] = 0
+            wide["ND_With_Stock"] = wide["ND_With_Stock"].fillna(0).astype(int)
+            wide["RF_Total"] = wide["RF"].fillna(0).astype(int)
+            wide["Carry"] = (wide["ND_With_Stock"] + wide["RF_Total"]).astype(int)
+            stock_agg = df.groupby(["Site Code", category_col], dropna=False, observed=True).agg(
+                Stock_Qty=("_stock_qty", "sum"),
+                Stock_Value=("_stock_value", "sum"),
+            ).reset_index()
+            result = wide.merge(stock_agg, on=["Site Code", category_col], how="left")
+            for c in ["Stock_Qty", "Stock_Value"]:
+                result[c] = result[c].fillna(0).astype(int)
+            keep = ["Site Code", category_col, "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]
+            return result[keep].sort_values(["Site Code", category_col])
 
     pivot_a = _pivot_for(df_a) if not df_a.empty else pd.DataFrame()
     pivot_b = _pivot_for(df_b) if not df_b.empty else pd.DataFrame()
@@ -304,14 +335,26 @@ def _build_ndrf_category_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, 
             pivot_b[c] = 0
 
     site_to_name = {}
-    for _src in [df_a, df_b]:
-        if _src.empty:
-            continue
-        sc = _src["Site Code"].fillna("").astype(str).str.strip()
-        sn = _src.get("Shop Name", _src.get("Shop", _safe_default_series("", _src.index))).fillna("").astype(str).str.strip()
-        for s, n in zip(sc, sn):
-            if s and s not in site_to_name:
-                site_to_name[s] = n if n else ""
+    # P0（個別模式）：去重後建表取代逐列 zip；首見保留語意不變
+    try:
+        for _src in [df_a, df_b]:
+            if _src.empty:
+                continue
+            sc = _src["Site Code"].fillna("").astype(str).str.strip()
+            sn = _src.get("Shop Name", _src.get("Shop", _safe_default_series("", _src.index))).fillna("").astype(str).str.strip()
+            _uniq = pd.DataFrame({"_s": sc, "_n": sn}).drop_duplicates(subset=["_s"], keep="first")
+            for s, n in zip(_uniq["_s"].to_numpy(), _uniq["_n"].to_numpy()):
+                if s and s not in site_to_name:
+                    site_to_name[s] = n if n else ""
+    except Exception:
+        for _src in [df_a, df_b]:
+            if _src.empty:
+                continue
+            sc = _src["Site Code"].fillna("").astype(str).str.strip()
+            sn = _src.get("Shop Name", _src.get("Shop", _safe_default_series("", _src.index))).fillna("").astype(str).str.strip()
+            for s, n in zip(sc, sn):
+                if s and s not in site_to_name:
+                    site_to_name[s] = n if n else ""
 
     data_cols = ["ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]
     a_suffix = f"_{month_a_label}"
@@ -403,23 +446,26 @@ def generate_excel_ndrf_comparison(
     ws_compare.title = "月份對比 (By Shop)"
 
     headers = list(comparison_by_shop.columns)
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for col_idx, h in enumerate(headers, 1):
         cell = ws_compare.cell(row=1, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.alignment = header_align
         cell.border = thin_border
 
-    for row_idx, row_data in comparison_by_shop.iterrows():
+    # P0：itertuples＋共用對齊取代 iterrows＋逐格新建 Alignment；值與格式語意不變
+    center_align = Alignment(horizontal="center", vertical="center")
+    for row_idx, _vals in enumerate(_iter_header_rows(comparison_by_shop, headers)):
         excel_row = row_idx + 2
-        is_total = row_data.get("Site Code") == "總計"
+        is_total = _vals[0] == "總計"
         for col_idx, h in enumerate(headers, 1):
-            val = row_data.get(h)
+            val = _vals[col_idx - 1]
             if pd.isna(val):
                 val = None
             cell = ws_compare.cell(row=excel_row, column=col_idx, value=val)
             cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.alignment = center_align
             if is_total:
                 cell.font = bold_font
             if isinstance(val, (int, float)) and col_idx >= 3:

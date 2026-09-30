@@ -7,6 +7,7 @@ import gc
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from io import BytesIO
 
 import numpy as np
@@ -27,6 +28,9 @@ __all__ = [
     "_clean_dataframe",
     "_compute_raw_extra_columns",
     "_compute_raw_extra_columns_impl",
+    "_cached_shop_names",
+    "_cached_safe_sku_series",
+    "_iter_header_rows",
     "_display_safety_header",
     "_downcast_numeric_dtypes",
     "_drop_unnamed_empty_columns",
@@ -238,13 +242,83 @@ def validate_input(df: pd.DataFrame) -> list[str]:
 
 
 
-def _safe_sku(x):
+def _safe_sku_uncached(x):
     if pd.notna(x):
         try:
             return str(int(float(x)))
         except (ValueError, TypeError):
             return str(x)
     return x
+
+
+@lru_cache(maxsize=200000)
+def _safe_sku_cached(x):
+    # lru_cache 要求參數可雜湊；SKU 正常為字串／數字／None，皆可雜湊。
+    # 邏輯與 _safe_sku_uncached 完全一致，僅記憶化重複值。
+    if pd.notna(x):
+        try:
+            return str(int(float(x)))
+        except (ValueError, TypeError):
+            return str(x)
+    return x
+
+
+def _safe_sku(x):
+    try:
+        return _safe_sku_cached(x)
+    except TypeError:
+        # 不可雜湊輸入（如 list）退回非快取路徑，保證不中斷輸出
+        return _safe_sku_uncached(x)
+
+
+
+def _cached_safe_sku_series(s: pd.Series) -> pd.Series:
+    """SKU 正規化快取版本：與 s.apply(_safe_sku) 完全等價，僅以不重複鍵減少重複轉換。
+
+    同一 SKU 在多間店舖重複出現，快取命中率高；NaN 沿原值直接回傳，不入快取。
+    """
+    try:
+        n = len(s)
+    except Exception:
+        return s
+    if n == 0:
+        return s
+    try:
+        arr = s.to_numpy(dtype=object, copy=False)
+    except Exception:
+        try:
+            arr = list(s)
+        except Exception:
+            return s.apply(_safe_sku)
+    cache: dict = {}
+    out = [None] * n
+    for i in range(n):
+        v = arr[i]
+        try:
+            is_na = pd.isna(v)
+        except Exception:
+            is_na = False
+        if is_na:
+            out[i] = v
+            continue
+        try:
+            key = v
+            hash(key)
+        except Exception:
+            try:
+                key = str(v)
+            except Exception:
+                out[i] = _safe_sku(v)
+                continue
+        hit = cache.get(key, None)
+        if hit is None and key not in cache:
+            hit = _safe_sku(v)
+            cache[key] = hit
+        out[i] = hit
+    try:
+        return pd.Series(out, index=s.index, dtype=object)
+    except Exception:
+        return pd.Series(out, index=s.index)
 
 
 
@@ -333,17 +407,89 @@ def _compute_raw_extra_columns_impl(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
-    shop_name = [
-        _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
-        for i in range(len(df))
-    ]
-    sku_desc = [
-        _extract_sku_desc(item_shop.iloc[i], site_code.iloc[i])
-        for i in range(len(df))
-    ]
+    # P0 全模式共用：以不重複鍵快取解析結果，避免同一店舖×品項重複執行正則；
+    # 仍呼叫同一純量函數，輸出與逐列解析完全一致，僅減少重複計算。
+    # 以 numpy 陣列一次性取值，避免逐列 .iloc 重建 Series。
+    site_arr = site_code.to_numpy(dtype=object, copy=False)
+    item_arr = item_shop.to_numpy(dtype=object, copy=False)
+    cache_shop: dict[tuple, str] = {}
+    cache_desc: dict[tuple, str] = {}
+    shop_name: list[str] = ["" for _ in range(len(df))]
+    sku_desc: list[str] = ["" for _ in range(len(df))]
+    for i in range(len(df)):
+        item_val = item_arr[i]
+        site_val = site_arr[i]
+        # 鍵以正規化字串計：_extract 內部一律 str(...).strip()，故等價字串可共用結果；
+        # NaN 正規化為空字串，與 _extract 的 pd.isna→"" 語意一致。
+        if pd.isna(item_val):
+            item_key = ""
+        else:
+            try:
+                item_key = str(item_val)
+            except Exception:
+                item_key = ""
+        if pd.isna(site_val):
+            site_key = ""
+        else:
+            site_key = str(site_val)
+        key = (item_key, site_key)
+        hit_shop = cache_shop.get(key)
+        if hit_shop is None and key not in cache_shop:
+            hit_shop = _extract_shop_name(item_val, site_val)
+            cache_shop[key] = hit_shop
+            hit_desc = _extract_sku_desc(item_val, site_val)
+            cache_desc[key] = hit_desc
+        else:
+            hit_desc = cache_desc.get(key, "")
+        shop_name[i] = hit_shop if hit_shop is not None else ""
+        sku_desc[i] = hit_desc if hit_desc is not None else ""
     df["Shop Name"] = shop_name
     df["SKU Desc"] = sku_desc
     return df
+
+
+def _cached_shop_names(item_shop: pd.Series, site_code: pd.Series) -> list[str]:
+    """單欄 Shop Name 快取解析：與 _extract_shop_name 逐列呼叫完全等價，僅以不重複鍵減少正則次數。
+
+    供各模式 By Shop／Top 明細等只須 Shop Name 的路徑共用，避免重複全表迴圈。
+    """
+    try:
+        n = len(item_shop)
+    except Exception:
+        return []
+    if n == 0:
+        return []
+    try:
+        item_arr = item_shop.to_numpy(dtype=object, copy=False)
+    except Exception:
+        item_arr = list(item_shop)
+    try:
+        site_arr = site_code.to_numpy(dtype=object, copy=False)
+    except Exception:
+        site_arr = list(site_code)
+    cache: dict[tuple, str] = {}
+    out: list[str] = ["" for _ in range(n)]
+    for i in range(n):
+        item_val = item_arr[i]
+        site_val = site_arr[i]
+        if pd.isna(item_val):
+            item_key = ""
+        else:
+            try:
+                item_key = str(item_val)
+            except Exception:
+                item_key = ""
+        if pd.isna(site_val):
+            site_key = ""
+        else:
+            site_key = str(site_val)
+        key = (item_key, site_key)
+        hit = cache.get(key)
+        if hit is None and key not in cache:
+            hit = _extract_shop_name(item_val, site_val)
+            cache[key] = hit
+        out[i] = hit if hit is not None else ""
+    return out
 
 
 
@@ -471,6 +617,30 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
 
     ws.auto_filter.ref = ws.dimensions
     _auto_width(ws)
+
+
+
+def _iter_header_rows(df: pd.DataFrame, headers: list[str]):
+    """逐列回傳 header 順序的值（產生器），語意等價於 iterrows＋row.get(h)。
+
+    P0 全模式共用：以 itertuples 取代 iterrows（後者每列重建 Series），
+    缺欄回傳 None（與 Series.get 缺欄回 None＋後續 pd.isna→None 一致），
+    值、順序、缺欄語意完全不變，僅減少逐列建造成本。
+    """
+    if df is None or len(df) == 0:
+        return
+    try:
+        col_pos = {c: i for i, c in enumerate(df.columns)}
+    except Exception:
+        return
+    idx_list = [col_pos.get(h, None) for h in headers]
+    try:
+        for tup in df.itertuples(index=False, name=None):
+            yield tuple(tup[i] if i is not None else None for i in idx_list)
+    except Exception:
+        # 極端欄名導致 itertuples 失敗時退回 iterrows，保證不中斷輸出
+        for _, row_data in df.iterrows():
+            yield tuple(row_data.get(h) for h in headers)
 
 
 

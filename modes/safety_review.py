@@ -21,10 +21,12 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from modes.common import (
     _ADJ_SAFETY_SOURCE_COL,
     _auto_width,
+    _cached_shop_names,
     _clean_dataframe,
     _compute_raw_extra_columns,
     _display_safety_header,
     _extract_shop_name,
+    _iter_header_rows,
     _nature_rate_arr,
     _normalize_ref_date,
     _parse_launch_dates,
@@ -32,6 +34,7 @@ from modes.common import (
     _safe_default_series,
     _safe_numeric,
     _safe_sku,
+    _cached_safe_sku_series,
     _write_guide_sheet,
     _write_metric_cards,
     _write_raw_placeholder,
@@ -394,10 +397,8 @@ def _build_combined_by_shop_summary(raw):
 
     site_code = df.get("Site Code", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     item_shop = df.get("Item_Shop", _safe_default_series("", df.index))
-    shop_name = [
-        _extract_shop_name(item_shop.iloc[i], site_code.iloc[i])
-        for i in range(len(df))
-    ]
+    # P0：快取解析（同一店舖×品項只執行一次正則），輸出與逐列解析完全一致
+    shop_name = _cached_shop_names(item_shop, site_code)
 
     df["Site Code"] = site_code
     df["Shop Name"] = shop_name
@@ -766,13 +767,18 @@ def _write_summary_sheet(ws, change_summary, nd_summary, thin_border, cross_tab=
         sc.alignment = Alignment(horizontal="left", vertical="center")
 
         header_row = start_row + 1
+        header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
         for col_idx, h in enumerate(cols, 1):
             cell = ws.cell(row=header_row, column=col_idx, value=h)
             cell.font = header_font
             cell.fill = header_fill
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.alignment = header_align
             cell.border = thin_border
 
+        # P0：共用對齊物件，避免逐格新建 Alignment；值與格式語意不變
+        center_align = Alignment(horizontal="center", vertical="center")
+        left_align = Alignment(horizontal="left", vertical="center")
+        left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
         for r, row_data in enumerate(block.itertuples(index=False), header_row + 1):
             is_total = row_data[0] == "總計"
             for col_idx, v in enumerate(row_data, 1):
@@ -783,11 +789,11 @@ def _write_summary_sheet(ws, change_summary, nd_summary, thin_border, cross_tab=
                     cell.fill = total_fill
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
                     cell.number_format = "#,##0"
-                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                    cell.alignment = center_align
                 elif col_idx == 1:
-                    cell.alignment = Alignment(horizontal="left", vertical="center")
+                    cell.alignment = left_align
                 else:
-                    cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                    cell.alignment = left_wrap
         return header_row + len(block) + 1
 
     next_row = _write_block(3, "① Safety Qty Change 分類（增加 / 減少 / 不變）", change_summary)
@@ -851,24 +857,27 @@ def generate_excel_combined(
     ws_summary = wb.create_sheet(title="Shop Stock Status")
 
     headers = ["Buyer", "Brand", "SKU", "SKU Desc"] + categories + ["總計", "Safety Qty Change", "增加Safety Qty的店舖數量", "減少Safety Qty的店舖數量", "Safety Qty不變的店舖數量"]
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for col_idx, h in enumerate(headers, 1):
         cell = ws_summary.cell(row=1, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.alignment = header_align
         cell.border = thin_border
 
     total_summary = len(summary_df)
-    for row_idx, row_data in summary_df.iterrows():
+    # P0：itertuples＋共用對齊取代 iterrows＋逐格新建 Alignment；值與格式語意不變
+    center_align = Alignment(horizontal="center", vertical="center")
+    for row_idx, _vals in enumerate(_iter_header_rows(summary_df, headers)):
         excel_row = 2 + row_idx
-        is_total = row_data["Buyer"] == "總計"
+        is_total = _vals[0] == "總計"
         for col_idx, h in enumerate(headers, 1):
-            val = row_data.get(h)
+            val = _vals[col_idx - 1]
             if pd.isna(val):
                 val = None
             cell = ws_summary.cell(row=excel_row, column=col_idx, value=val)
             cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.alignment = center_align
             if is_total:
                 cell.font = bold_font
             if isinstance(val, (int, float)) and col_idx >= 4 and h != "SKU":
@@ -901,19 +910,19 @@ def generate_excel_combined(
         cell = ws_by_shop.cell(row=1, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.alignment = header_align
         cell.border = thin_border
 
-    for row_idx, row_data in by_shop_df.iterrows():
+    for row_idx, _vals in enumerate(_iter_header_rows(by_shop_df, by_shop_headers)):
         excel_row = row_idx + 2
-        is_total = row_data.get("Site Code") == "總計"
+        is_total = _vals[0] == "總計"
         for col_idx, h in enumerate(by_shop_headers, 1):
-            val = row_data.get(h)
+            val = _vals[col_idx - 1]
             if pd.isna(val):
                 val = None
             cell = ws_by_shop.cell(row=excel_row, column=col_idx, value=val)
             cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.alignment = center_align
             if is_total:
                 cell.font = bold_font
             if isinstance(val, (int, float)) and col_idx >= 4:
