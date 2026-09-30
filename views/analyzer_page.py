@@ -4206,7 +4206,7 @@ if uploaded_file is not None:
                 st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
             _ym_txt = "、".join(stats.get("ym_list", []))
             _factor_txt = stats.get("annual_factor", 1.0)
-            st.caption(f"覆蓋月份：{_ym_txt}；最新月份 {stats.get('latest_ym', '')} 月化係數 {_factor_txt}（Sold 與 Net 同時月化；數據截止日 {stats.get('ref_date', '')}）。Safety 只看原始值增減；Sold／Net 變化以月化基準計算。")
+            st.caption(f"覆蓋月份：{_ym_txt}；最新月份 {stats.get('latest_ym', '')} 月化係數 {_factor_txt}（Sold Qty 與 Net Sales 同時月化；數據截止日 {stats.get('ref_date', '')}）。Safety Stock Qty 只看原始值增減；Sold Qty／Net Sales 變化以月化基準計算。")
             st.markdown('</div>', unsafe_allow_html=True)
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -4215,28 +4215,28 @@ if uploaded_file is not None:
                 "📋 SKU月度變化", "By Adj. MCH1", "By Adj. SST", "By MCH1×SST", "By Shop", "🔀 RP Type 變化", "📄 RAW 明細",
             ])
             with tab_change:
-                st.markdown("#### 每組相鄰月份環比事件（Safety 只看原始值增減；Sold／Net 以月化基準）")
+                st.markdown("#### 每組相鄰月份環比事件（Safety Stock Qty 只看原始值增減；Sold Qty／Net Sales 以月化基準）")
                 if change_df is not None and not change_df.empty:
                     _fcol1, _fcol2 = st.columns(2)
                     with _fcol1:
                         _safm_filter = st.selectbox(
-                            "Safety 變化篩選",
+                            "Safety Stock Qty 變化篩選",
                             options=["全部", "增加", "減少", "不變"],
                             index=0, key="safm_change_filter",
                             help="只影響下方預覽，不影響 Excel 導出。",
                         )
                     with _fcol2:
                         _safm_rp_filter = st.selectbox(
-                            "RP轉變篩選",
+                            "RP Type 轉變篩選",
                             options=["全部", "RF→RF", "ND→ND", "RF→ND", "ND→RF"],
                             index=0, key="safm_rp_filter",
                             help="只影響下方預覽，不影響 Excel 導出；重點觀察 RF→ND 與 ND→RF。",
                         )
                     _disp = change_df
                     if _safm_filter != "全部":
-                        _disp = _disp[_disp["Safety變化分類"] == _safm_filter]
+                        _disp = _disp[_disp["Safety Stock Qty 變化分類"] == _safm_filter]
                     if _safm_rp_filter != "全部":
-                        _disp = _disp[_disp["RP轉變"] == _safm_rp_filter]
+                        _disp = _disp[_disp["RP Type 轉變"] == _safm_rp_filter]
                     st.dataframe(_disp.head(200).rename(columns=_display_safety_header), width='stretch', hide_index=True)
                     st.caption(f"共 {len(_disp):,} 列環比事件（按 Brand／SKU／Site Code／本月排序；僅顯示前 200 筆）。")
                 else:
@@ -4288,7 +4288,7 @@ if uploaded_file is not None:
                     st.caption(
                         f"重點觀察 RF→ND（{int(stats.get('rp_rf_to_nd', 0)):,} 事件／{int(stats.get('rp_rf_to_nd_skus', 0)):,} SKU）"
                         f"與 ND→RF（{int(stats.get('rp_nd_to_rf', 0)):,} 事件／{int(stats.get('rp_nd_to_rf_skus', 0)):,} SKU）；"
-                        "總計列 SKU 數為不重複 SKU；轉變明細見「📋 SKU月度變化」分頁（RP轉變篩選）。"
+                        "總計列 SKU 數為不重複 SKU；轉變明細見「📋 SKU月度變化」分頁（RP Type 轉變篩選）。"
                     )
                 else:
                     st.info("無符合資料")

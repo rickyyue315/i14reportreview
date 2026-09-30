@@ -16,17 +16,18 @@
 
 月化規則：除上載當月外，其餘月份的 ``CM - MTD`` 已是足月實績；
 上載當月只截至數據截止日（預設昨日）。月化係數＝當月總日數 ÷ 截止日日號，
-僅套用於最新 ``YEAR-MONTH`` 的 Sold 與 Net Sales，舊月份係數為 1。
+僅套用於最新 ``YEAR-MONTH`` 的 Sold Qty 與 Net Sales，舊月份係數為 1。
 
-輸出八個工作表：
+輸出九個工作表：
 1. 說明 — 本次執行參數、核心邏輯與工作表導讀（預設開啟頁）
 2. SKU月度變化 — 每組 ``Site Code × SKU`` 相鄰月份環比事件（上月缺資料者標示新增組合）
 3. By Adj. MCH1 — 各 MCH1 每月合計（月化基準）＋全部合計
 4. By Adj. SST — 各 SST 每月合計（月化基準）＋全部合計
 5. By MCH1×SST — MCH1 與 SST 組合每月合計
 6. By Shop — 每間店舖每月合計＋環比變化
-7. 月度摘要 — 指標卡＋每月合計表
-8. RAW — 原始明細＋YEAR-MONTH 與月化估算欄
+7. RP Type 變化 — RP Type 轉變 × 月份配對統計＋首尾月份對比明細
+8. 月度摘要 — 指標卡＋每月合計表
+9. RAW — 原始明細＋YEAR-MONTH 與月化估算欄
 """
 
 import calendar
@@ -108,25 +109,25 @@ _SAFM_CHANGE_COLUMNS = [
     "Adj. MCH1", "Adj. SST",
     "上月", "本月", "是否相鄰曆月",
     "上月 Adj. Safety Stock", "本月 Adj. Safety Stock",
-    "Safety變化量", "Safety變化分類",
-    "上月 RP Type", "本月 RP Type", "RP轉變",
+    "Safety Stock Qty 變化量", "Safety Stock Qty 變化分類",
+    "上月 RP Type", "本月 RP Type", "RP Type 轉變",
     "上月 Sold Qty (CM-MTD)", "本月 Sold Qty (CM-MTD)",
-    "上月 Sold月化", "本月 Sold月化",
-    "Sold變化量(月化基準)", "Sold變化率",
+    "上月 Sold Qty 月化", "本月 Sold Qty 月化",
+    "Sold Qty 變化量(月化基準)", "Sold Qty 變化率",
     "上月 Net Sales (CM-MTD)", "本月 Net Sales (CM-MTD)",
-    "上月 Net月化", "本月 Net月化",
-    "Net變化量(月化基準)", "Net變化率",
+    "上月 Net Sales 月化", "本月 Net Sales 月化",
+    "Net Sales 變化量(月化基準)", "Net Sales 變化率",
     "上月 Shop Stock Qty (CM)", "本月 Shop Stock Qty (CM)",
-    "Stock變化量", "Stock變化率",
+    "Net Stock Qty 變化量", "Net Stock Qty 變化率",
 ]
 
 _SAFM_SHOP_COLUMNS = [
     "Site Code", "Shop Name", "YEAR-MONTH",
-    "SKU數", "Safety合計",
-    "Sold原始合計", "Sold月化合計",
-    "Net原始合計", "Net月化合計",
-    "Stock合計",
-    "Sold環比變化", "Net環比變化", "Safety環比變化",
+    "SKU數", "Safety Stock Qty 合計",
+    "Sold Qty 原始合計", "Sold Qty 月化合計",
+    "Net Sales 原始合計", "Net Sales 月化合計",
+    "Net Stock Qty 合計",
+    "Sold Qty 環比變化", "Net Sales 環比變化", "Safety Stock Qty 環比變化",
 ]
 
 
@@ -371,7 +372,8 @@ def transform_safety_monthly(
     if int(dup_keys):
         warnings.append(
             f"偵測到「Site Code × SKU × YEAR-MONTH」重複列 {int(dup_keys)} 列；"
-            "同一主鍵多列時，Sold／Net／Stock 以加總計，Safety／RP／MCH1／SST 取首個非空值。"
+            "同一主鍵多列時，Sold Qty／Net Sales／Net Stock Qty 以加總計，"
+            "Safety Stock Qty／RP Type／Adj. MCH1／Adj. SST 取首個非空值。"
         )
 
     def _first_nonempty(s: pd.Series) -> str:
@@ -430,25 +432,25 @@ def transform_safety_monthly(
                 "是否相鄰曆月": "是" if _is_calendar_adjacent(prev_key, curr_key) else "否",
                 "上月 Adj. Safety Stock": int(prev["safety"]),
                 "本月 Adj. Safety Stock": int(curr["safety"]),
-                "Safety變化量": safety_delta, "Safety變化分類": safety_cat,
+                "Safety Stock Qty 變化量": safety_delta, "Safety Stock Qty 變化分類": safety_cat,
                 "上月 RP Type": rp_prev, "本月 RP Type": rp_curr,
-                "RP轉變": f"{rp_prev}→{rp_curr}",
+                "RP Type 轉變": f"{rp_prev}→{rp_curr}",
                 "上月 Sold Qty (CM-MTD)": int(prev["sold_raw"]),
                 "本月 Sold Qty (CM-MTD)": int(curr["sold_raw"]),
-                "上月 Sold月化": int(prev["sold_adj"]),
-                "本月 Sold月化": int(curr["sold_adj"]),
-                "Sold變化量(月化基準)": sold_delta,
-                "Sold變化率": _change_rate(float(curr["sold_adj"]), float(prev["sold_adj"])),
+                "上月 Sold Qty 月化": int(prev["sold_adj"]),
+                "本月 Sold Qty 月化": int(curr["sold_adj"]),
+                "Sold Qty 變化量(月化基準)": sold_delta,
+                "Sold Qty 變化率": _change_rate(float(curr["sold_adj"]), float(prev["sold_adj"])),
                 "上月 Net Sales (CM-MTD)": round(float(prev["net_raw"]), 2),
                 "本月 Net Sales (CM-MTD)": round(float(curr["net_raw"]), 2),
-                "上月 Net月化": round(float(prev["net_adj"]), 2),
-                "本月 Net月化": round(float(curr["net_adj"]), 2),
-                "Net變化量(月化基準)": net_delta,
-                "Net變化率": _change_rate(float(curr["net_adj"]), float(prev["net_adj"])),
+                "上月 Net Sales 月化": round(float(prev["net_adj"]), 2),
+                "本月 Net Sales 月化": round(float(curr["net_adj"]), 2),
+                "Net Sales 變化量(月化基準)": net_delta,
+                "Net Sales 變化率": _change_rate(float(curr["net_adj"]), float(prev["net_adj"])),
                 "上月 Shop Stock Qty (CM)": int(prev["stock"]),
                 "本月 Shop Stock Qty (CM)": int(curr["stock"]),
-                "Stock變化量": stock_delta,
-                "Stock變化率": _change_rate(float(curr["stock"]), float(prev["stock"])),
+                "Net Stock Qty 變化量": stock_delta,
+                "Net Stock Qty 變化率": _change_rate(float(curr["stock"]), float(prev["stock"])),
             })
     change_df = pd.DataFrame(change_rows, columns=_SAFM_CHANGE_COLUMNS)
     if not change_df.empty:
@@ -470,11 +472,11 @@ def transform_safety_monthly(
     raw_df = raw_df.drop(columns=[c for c in drop_internal if c not in ("_safm_ym_key",)], errors="ignore")
     raw_df = raw_df.drop(columns=["_safm_ym_key"], errors="ignore")
 
-    safety_delta_total = int(change_df["Safety變化量"].sum()) if not change_df.empty else 0
-    rp_counts = change_df["RP轉變"].value_counts().to_dict() if not change_df.empty else {}
+    safety_delta_total = int(change_df["Safety Stock Qty 變化量"].sum()) if not change_df.empty else 0
+    rp_counts = change_df["RP Type 轉變"].value_counts().to_dict() if not change_df.empty else {}
     if not change_df.empty:
-        _rf_to_nd = change_df["RP轉變"] == "RF→ND"
-        _nd_to_rf = change_df["RP轉變"] == "ND→RF"
+        _rf_to_nd = change_df["RP Type 轉變"] == "RF→ND"
+        _nd_to_rf = change_df["RP Type 轉變"] == "ND→RF"
         rp_rf_to_nd = int(_rf_to_nd.sum())
         rp_nd_to_rf = int(_nd_to_rf.sum())
         rp_rf_to_nd_skus = int(change_df.loc[_rf_to_nd, "SKU"].nunique())
@@ -494,9 +496,9 @@ def transform_safety_monthly(
         "total_skus": int(monthly["_sku"].nunique()),
         "total_shops": int(monthly["_site"].nunique()),
         "total_events": int(len(change_df)),
-        "safety_inc": int((change_df["Safety變化分類"] == "增加").sum()) if not change_df.empty else 0,
-        "safety_dec": int((change_df["Safety變化分類"] == "減少").sum()) if not change_df.empty else 0,
-        "safety_same": int((change_df["Safety變化分類"] == "不變").sum()) if not change_df.empty else 0,
+        "safety_inc": int((change_df["Safety Stock Qty 變化分類"] == "增加").sum()) if not change_df.empty else 0,
+        "safety_dec": int((change_df["Safety Stock Qty 變化分類"] == "減少").sum()) if not change_df.empty else 0,
+        "safety_same": int((change_df["Safety Stock Qty 變化分類"] == "不變").sum()) if not change_df.empty else 0,
         "safety_delta_total": safety_delta_total,
         "rp_counts": {str(k): int(v) for k, v in rp_counts.items()},
         "rp_rf_to_nd": rp_rf_to_nd,
@@ -664,12 +666,12 @@ def _build_safm_shop_pivot(monthly: pd.DataFrame, ym_keys: list[int]) -> pd.Data
             rows.append({
                 "Site Code": site, "Shop Name": shop_name,
                 _SAFM_YM_COLUMN: ym_labels[key],
-                "SKU數": sku_n, "Safety合計": safety_sum,
-                "Sold原始合計": sold_raw, "Sold月化合計": sold_adj,
-                "Net原始合計": net_raw, "Net月化合計": net_adj,
-                "Stock合計": stock_sum,
-                "Sold環比變化": sold_chg, "Net環比變化": net_chg,
-                "Safety環比變化": safety_chg,
+                "SKU數": sku_n, "Safety Stock Qty 合計": safety_sum,
+                "Sold Qty 原始合計": sold_raw, "Sold Qty 月化合計": sold_adj,
+                "Net Sales 原始合計": net_raw, "Net Sales 月化合計": net_adj,
+                "Net Stock Qty 合計": stock_sum,
+                "Sold Qty 環比變化": sold_chg, "Net Sales 環比變化": net_chg,
+                "Safety Stock Qty 環比變化": safety_chg,
             })
             prev_sold, prev_net, prev_safety = sold_adj, net_adj, safety_sum
     return pd.DataFrame(rows, columns=_SAFM_SHOP_COLUMNS)
@@ -682,17 +684,17 @@ def _build_safm_rp_summary(change_df: pd.DataFrame) -> pd.DataFrame:
     欄為各「上月→本月」配對的事件數／SKU數＋總計；總計列 SKU 數為不重複 SKU。
     """
     if change_df is None or change_df.empty:
-        return pd.DataFrame(columns=["RP轉變"])
+        return pd.DataFrame(columns=["RP Type 轉變"])
     df = change_df.copy()
     df["_pair"] = df["上月"].fillna("").astype(str) + "→" + df["本月"].fillna("").astype(str)
     pairs = sorted(df["_pair"].unique().tolist())
-    present = df["RP轉變"].fillna("").astype(str).tolist()
+    present = df["RP Type 轉變"].fillna("").astype(str).tolist()
     order = [t for t in _SAFM_RP_ORDER if t in set(present)]
     order += sorted(set(present) - set(order) - {""})
     rows = []
     for trans in order:
-        g = df[df["RP轉變"] == trans]
-        row = {"RP轉變": trans}
+        g = df[df["RP Type 轉變"] == trans]
+        row = {"RP Type 轉變": trans}
         for p in pairs:
             gg = g[g["_pair"] == p]
             row[f"{p} 事件數"] = int(len(gg))
@@ -700,7 +702,7 @@ def _build_safm_rp_summary(change_df: pd.DataFrame) -> pd.DataFrame:
         row["總計 事件數"] = int(len(g))
         row["總計 SKU數"] = int(g["SKU"].nunique())
         rows.append(row)
-    total = {"RP轉變": "總計"}
+    total = {"RP Type 轉變": "總計"}
     for p in pairs:
         gg = df[df["_pair"] == p]
         total[f"{p} 事件數"] = int(len(gg))
@@ -708,7 +710,7 @@ def _build_safm_rp_summary(change_df: pd.DataFrame) -> pd.DataFrame:
     total["總計 事件數"] = int(len(df))
     total["總計 SKU數"] = int(df["SKU"].nunique())
     rows.append(total)
-    cols = ["RP轉變"]
+    cols = ["RP Type 轉變"]
     for p in pairs:
         cols += [f"{p} 事件數", f"{p} SKU數"]
     cols += ["總計 事件數", "總計 SKU數"]
@@ -794,12 +796,12 @@ def safety_monthly_dashboard_metrics(change_df: pd.DataFrame, stats: dict | None
     total_events = int(stats.get("total_events", len(change_df) if change_df is not None else 0))
     row1 = [
         ("環比事件數", total_events, "相鄰月份比較事件總數", "3B82F6"),
-        ("Safety 增加事件", int(stats.get("safety_inc", 0)), "原始值增加的事件數", "EF4444"),
-        ("Safety 減少事件", int(stats.get("safety_dec", 0)), "原始值減少的事件數", "10B981"),
-        ("Safety 不變事件", int(stats.get("safety_same", 0)), "原始值不變的事件數", "64748B"),
+        ("Safety Stock Qty 增加事件", int(stats.get("safety_inc", 0)), "原始值增加的事件數", "EF4444"),
+        ("Safety Stock Qty 減少事件", int(stats.get("safety_dec", 0)), "原始值減少的事件數", "10B981"),
+        ("Safety Stock Qty 不變事件", int(stats.get("safety_same", 0)), "原始值不變的事件數", "64748B"),
     ]
     row2 = [
-        ("Safety 淨變化量", int(stats.get("safety_delta_total", 0)), "全部事件變化量合計（件）", "8B5CF6"),
+        ("Safety Stock Qty 淨變化量", int(stats.get("safety_delta_total", 0)), "全部事件變化量合計（件）", "8B5CF6"),
         ("涉及 SKU 數", int(stats.get("total_skus", 0)), "不重複 SKU（已刪除重複）", "F59E0B"),
         ("涉及店舖數", int(stats.get("total_shops", 0)), "不重複店舖數", "06B6D4"),
         ("覆蓋月份數", int(stats.get("ym_count", 0)), "YEAR-MONTH 不重複數", "EC4899"),
@@ -841,7 +843,9 @@ def _write_safm_pivot_sheet(ws, df: pd.DataFrame, progress_callback=None,
     for row_idx, row_data in enumerate(df.itertuples(index=False, name=None), 2):
         row_dict = dict(zip(headers, row_data))
         item_text = str(row_dict.get("項目", ""))
-        metric = item_text.split(" ")[0] if " " in item_text else ""
+        metric = next(
+            (m for m in _SAFM_PIVOT_METRICS if item_text.startswith(m + " ")), ""
+        )
         is_total = any(str(row_dict.get(c, "")) == "總計" for c in headers[:2])
         is_money = item_text.startswith("Net Sales")
         is_pct_block = item_text.endswith("月環比%")
@@ -981,31 +985,32 @@ def _write_safety_monthly_guide_sheet(ws, stats):
         ("覆蓋月份", "、".join(ym_list) if ym_list else "—"),
         ("數據截止日", f'{st_.get("ref_date") or "—"}（最新月份 {st_.get("latest_ym") or "—"} 月化係數＝當月總日數 ÷ 截止日日號＝{factor}；舊月份係數為 1）'),
         ("環比方式", "相鄰月份環比（每組 Site Code × SKU 與上一個有資料月份比較；上月缺資料者標示新增組合，不計變化）"),
-        ("分析欄", "Adj. Safety Stock（只看原始值增減）／RP Type 轉變／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM)；Sold 與 Net 同時月化，Stock 與 Safety 為快照不月化"),
+        ("分析欄", "Adj. Safety Stock（只看原始值增減）／RP Type 轉變／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM)；"
+         "Sold Qty 與 Net Sales 同時月化，Shop Stock Qty 與 Adj. Safety Stock 為快照不月化"),
         ("維度", "Adj. MCH1、Adj. SST、MCH1×SST、Site Code"),
     ]
     logic = [
         "YEAR-MONTH 由 YEAR × 100 ＋ MONTH 排序；MONTH 須為 1–12 整數，無效列略過並列警告。",
-        "最新月份月化：Sold月化＝Sold Qty (CM - MTD) × 係數；Net月化＝Net Sales (CM - MTD) × 係數；舊月份月化值等於原始值。",
-        "Safety變化量＝本月 Adj. Safety Stock − 上月；正數為增加、負數為減少、零為不變（只看原始值，不作建議值計算）。",
-        "RP轉變記錄上月→本月（如 RF→ND）；Sold／Net 變化量以月化基準計算，變化率＝變化量 ÷ 上月絕對值（上月為 0 時留空）。",
+        "最新月份月化：Sold Qty 月化＝Sold Qty (CM - MTD) × 係數；Net Sales 月化＝Net Sales (CM - MTD) × 係數；舊月份月化值等於原始值。",
+        "Safety Stock Qty 變化量＝本月 Adj. Safety Stock − 上月；正數為增加、負數為減少、零為不變（只看原始值，不作建議值計算）。",
+        "RP Type 轉變記錄上月→本月（如 RF→ND）；Sold Qty／Net Sales 變化量以月化基準計算，變化率＝變化量 ÷ 上月絕對值（上月為 0 時留空）。",
         "樞紐四項指標：Sold Qty＝Sold Qty (CM - MTD) 月化合計；Net Sales＝Net Sales (CM - MTD) 月化合計；"
         "Net Stock Qty＝店舖存貨 Shop Stock Qty (CM) 合計（時點快照）；Safety Stock Qty＝Adj. Safety Stock 合計。",
         "樞紐三段式：每月合計 → 月環比%（上月為 0 或首月留空）→ 月環比絕對值；項目欄按指標配色分段。",
     ]
     sheet_rows = [
         ("說明（本頁）", "月化邏輯、本次參數與導讀", "先核對覆蓋月份與月化係數是否符合預期"),
-        ("SKU月度變化", "每組相鄰月份環比事件（上月／本月值＋變化量＋變化率）", "篩選 Safety 增加／減少，查看同期 Sold Qty 與 Net Sales 變化"),
+        ("SKU月度變化", "每組相鄰月份環比事件（上月／本月值＋變化量＋變化率）", "篩選 Safety Stock Qty 變化分類＝增加／減少，查看同期 Sold Qty 與 Net Sales 變化"),
         ("By Adj. MCH1", "各 MCH1 三段式樞紐（四項指標 × 每月合計／月環比%／月環比）", "先看每月合計，再看月環比% 找變動最大的品類"),
         ("By Adj. SST", "各 SST 三段式樞紐", "比較不同供應類型每月生意變化"),
         ("By MCH1×SST", "MCH1 與 SST 組合三段式樞紐", "細分品類 × 供應類型"),
         ("By Shop", "每間店舖每月合計＋環比變化", "多店舖檔案時比較各店走勢"),
-        ("RP Type 變化", "RP轉變 × 月份配對統計＋首尾月份對比明細", "重點看 RF→ND 與 ND→RF 兩列：哪些月份最多轉換；下半首尾對比看整個期間的最終轉變"),
+        ("RP Type 變化", "RP Type 轉變 × 月份配對統計＋首尾月份對比明細", "重點看 RF→ND 與 ND→RF 兩列：哪些月份最多轉換；下半首尾對比看整個期間的最終轉變"),
         ("月度摘要", "指標卡（含 RF→ND／ND→RF 一排）＋每月合計", "管理層概覽"),
         ("RAW", "原始明細＋YEAR-MONTH 與月化估算欄", "核對逐列數值"),
     ]
     tips = [
-        "最新月份為非足月時，Sold 與 Net 的環比已按月化基準計算；原始 MTD 值仍保留於主表以供核對。",
+        "最新月份為非足月時，Sold Qty 與 Net Sales 的環比已按月化基準計算；原始 MTD 值仍保留於主表以供核對。",
         "數據截止日與最新月份不一致時，最新月份不作月化（係數為 1），並列出警告。",
         "上月缺資料的組合不計變化，屬新增組合；變化率分母為 0 時留空。",
         "RF→ND 的 SKU 轉為不可補貨後，留意其後月份 Sold Qty 與 Net Sales 是否受影響；ND→RF 則留意補貨是否恢復。",
@@ -1102,13 +1107,15 @@ def generate_excel_safety_monthly(
             cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.border = thin_border
         agg = shop_pivot.groupby(_SAFM_YM_COLUMN, sort=True).agg(
-            SKU數=("SKU數", "sum"), Safety合計=("Safety合計", "sum"),
-            Sold月化合計=("Sold月化合計", "sum"), Net月化合計=("Net月化合計", "sum"),
-            Stock合計=("Stock合計", "sum"),
+            SKU數=("SKU數", "sum"),
+            SafetyStockQty合計=("Safety Stock Qty 合計", "sum"),
+            SoldQty月化合計=("Sold Qty 月化合計", "sum"),
+            NetSales月化合計=("Net Sales 月化合計", "sum"),
+            NetStockQty合計=("Net Stock Qty 合計", "sum"),
         ).reset_index()
         _rp_month = {}
         if change_df is not None and not change_df.empty and "本月" in change_df.columns:
-            _rp_ct = change_df.groupby("本月")["RP轉變"].value_counts().unstack(fill_value=0)
+            _rp_ct = change_df.groupby("本月")["RP Type 轉變"].value_counts().unstack(fill_value=0)
             for _ym, _row in _rp_ct.iterrows():
                 _rp_month[str(_ym)] = {
                     "RF→ND 事件數": int(_row.get("RF→ND", 0)),
@@ -1122,10 +1129,10 @@ def generate_excel_safety_monthly(
             _vals = {
                 "YEAR-MONTH": r.get(_SAFM_YM_COLUMN),
                 "SKU 數": r.get("SKU數"),
-                "Safety Stock Qty 合計": r.get("Safety合計"),
-                "Sold Qty 合計 (月化)": r.get("Sold月化合計"),
-                "Net Sales 合計 (月化)": r.get("Net月化合計"),
-                "Net Stock Qty 合計": r.get("Stock合計"),
+                "Safety Stock Qty 合計": r.get("SafetyStockQty合計"),
+                "Sold Qty 合計 (月化)": r.get("SoldQty月化合計"),
+                "Net Sales 合計 (月化)": r.get("NetSales月化合計"),
+                "Net Stock Qty 合計": r.get("NetStockQty合計"),
                 "RF→ND 事件數": _rp_month.get(_ym_label_val, {}).get("RF→ND 事件數", 0),
                 "ND→RF 事件數": _rp_month.get(_ym_label_val, {}).get("ND→RF 事件數", 0),
             }

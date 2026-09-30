@@ -199,12 +199,12 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 追蹤店舖每月 Safety Stock 原始值變化對生意的影響（主鍵 `Site Code × SKU × YEAR-MONTH`，兼容多店舖檔案）：
 
 1. **YEAR-MONTH** — 由 `YEAR × 100 ＋ MONTH` 排序；`MONTH` 須為 1–12 整數，無效列略過並列警告；至少需 2 個月份方可作環比
-2. **月化** — 除上載當月外，其餘月份的 `CM - MTD` 已是足月實績；最新月份按數據截止日月化（係數＝當月總日數 ÷ 截止日日號，僅套用於 `Sold Qty (CM - MTD)` 與 `Net Sales (CM - MTD)` 兩欄；`Shop Stock Qty (CM)` 與 Safety 為快照不月化）
-3. **Safety 變化** — 只看原始值增減：`Safety變化量＝本月 Adj. Safety Stock − 上月`（正數為增加、負數為減少、零為不變，不作建議值計算）
-4. **RP 轉變** — 記錄上月→本月（如 `RF→ND`）；Sold／Net 變化量以月化基準計算，變化率＝變化量 ÷ 上月絕對值（上月為 0 留空）
+2. **月化** — 除上載當月外，其餘月份的 `CM - MTD` 已是足月實績；最新月份按數據截止日月化（係數＝當月總日數 ÷ 截止日日號，僅套用於 `Sold Qty (CM - MTD)` 與 `Net Sales (CM - MTD)` 兩欄；`Shop Stock Qty (CM)` 與 `Adj. Safety Stock` 為快照不月化）
+3. **Safety Stock Qty 變化** — 只看原始值增減：`Safety Stock Qty 變化量＝本月 Adj. Safety Stock − 上月`（正數為增加、負數為減少、零為不變，不作建議值計算）
+4. **RP Type 轉變** — 記錄上月→本月（如 `RF→ND`）；Sold Qty／Net Sales 變化量以月化基準計算，變化率＝變化量 ÷ 上月絕對值（上月為 0 留空）
 5. **維度樞紐（三段式）** — `Adj. MCH1`、`Adj. SST`、`MCH1×SST`、`Site Code`；四項指標全稱：Sold Qty／Net Sales／Net Stock Qty（店舖存貨 `Shop Stock Qty (CM)` 合計）／Safety Stock Qty；每項連續三列：每月合計 → 月環比% → 月環比絕對值
 
-輸出包含 **9 個工作表**：說明（首頁導讀：月化邏輯＋本次執行參數＋工作表導讀；開啟 Excel 時預設顯示本頁）、SKU月度變化（每組相鄰月份環比事件）、By Adj. MCH1、By Adj. SST、By MCH1×SST、By Shop、RP Type 變化（RP轉變 × 月份配對 事件數／SKU數，重點為 RF→ND 與 ND→RF）、月度摘要（指標卡含 RF→ND／ND→RF 一排＋每月合計）、RAW（含 YEAR-MONTH 與月化估算欄）。
+輸出包含 **9 個工作表**：說明（首頁導讀：月化邏輯＋本次執行參數＋工作表導讀；開啟 Excel 時預設顯示本頁）、SKU月度變化（每組相鄰月份環比事件）、By Adj. MCH1、By Adj. SST、By MCH1×SST、By Shop、RP Type 變化（RP Type 轉變 × 月份配對 事件數／SKU數，重點為 RF→ND 與 ND→RF）、月度摘要（指標卡含 RF→ND／ND→RF 一排＋每月合計）、RAW（含 YEAR-MONTH 與月化估算欄）。
 
 ### Forecast Review（SKU 級建議訂貨量）
 
@@ -241,11 +241,11 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 | 店舖覆蓋 | Forecast Review — 有訂量 SKU 的每店可用日數與風險旗（按 SKU＋風險＋日數排序） |
 | 按 Buyer 彙總 | Forecast Review — 各 Buyer 的建議訂量合計（分 D001 PO／Shop PO 兩欄） |
 | Forecast 摘要 | Forecast Review Dashboard — 指標卡（SKU 數／爆升 SKU 數／建議總訂量／其中 D001 PO／其中 Shop PO／已封頂 SKU 數／ND 不訂 SKU 數／店舖覆蓋列數）＋按 Buyer 表 |
-| SKU月度變化 | Safety Stock 月度變化分析 — 每組相鄰月份環比事件（上月／本月值＋變化量＋變化率；Safety 只看原始值；Sold／Net 以月化基準） |
+| SKU月度變化 | Safety Stock 月度變化分析 — 每組相鄰月份環比事件（上月／本月值＋變化量＋變化率；Safety Stock Qty 只看原始值；Sold Qty／Net Sales 以月化基準） |
 | By Adj. MCH1／By Adj. SST／By MCH1×SST | Safety Stock 月度變化分析 — 三段式樞紐（四項指標全稱 × 每月合計／月環比%／月環比絕對值）；項目欄按指標配色分段 |
 | By Shop | Safety Stock 月度變化分析 — 每間店舖每月合計＋環比變化 |
-| RP Type 變化 | Safety Stock 月度變化分析 — 上半：RP轉變 × 月份配對（事件數／SKU數）；下半：首尾月份對比明細（最早與最新月份皆有資料的組合，有轉變列置前；重點為 RF→ND 與 ND→RF） |
-| 月度摘要 | Safety Stock 月度變化分析 Dashboard — 指標卡（環比事件數／Safety 增加／減少／不變／淨變化量／SKU 數／店舖數／月份數／RF→ND 事件／ND→RF 事件／RF→ND SKU數／ND→RF SKU數）＋每月合計（全稱欄＋每月 RF→ND／ND→RF 事件數） |
+| RP Type 變化 | Safety Stock 月度變化分析 — 上半：RP Type 轉變 × 月份配對（事件數／SKU數）；下半：首尾月份對比明細（最早與最新月份皆有資料的組合，有轉變列置前；重點為 RF→ND 與 ND→RF） |
+| 月度摘要 | Safety Stock 月度變化分析 Dashboard — 指標卡（環比事件數／Safety Stock Qty 增加／減少／不變／淨變化量／SKU 數／店舖數／月份數／RF→ND 事件／ND→RF 事件／RF→ND SKU數／ND→RF SKU數）＋每月合計（全稱欄＋每月 RF→ND／ND→RF 事件數） |
 
 ## 版本
 

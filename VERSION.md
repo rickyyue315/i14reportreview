@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.68.0 (2026-09-30)
+
+Safety Stock 月度變化分析報表全面改用指標全稱，不再出現簡稱（Sold→Sold Qty、Net→Net Sales、Stock→Net Stock Qty、Safety→Safety Stock Qty、RP轉變→RP Type 轉變）；其餘模式零變動：
+
+- **SKU月度變化** — 欄名改全稱：Safety Stock Qty 變化量／變化分類、上月／本月 Sold Qty 月化、Sold Qty 變化量(月化基準)／變化率、上月／本月 Net Sales 月化、Net Sales 變化量(月化基準)／變化率、Net Stock Qty 變化量／變化率、RP Type 轉變
+- **By Shop** — 欄名改全稱：Safety Stock Qty 合計、Sold Qty 原始合計／月化合計、Net Sales 原始合計／月化合計、Net Stock Qty 合計、Sold Qty／Net Sales／Safety Stock Qty 環比變化（月度摘要每月合計表同步改讀全稱欄）
+- **月度摘要** — 指標卡標題改全稱（Safety Stock Qty 增加／減少／不變事件、Safety Stock Qty 淨變化量）
+- **修復** — 三個樞紐「項目」欄配色比對殘留簡稱邏輯（`split(" ")[0]` 取得「Sold」無法對應「Sold Qty」色碼），v1.64.0 起配色實際未生效，改按 `_SAFM_PIVOT_METRICS` 全稱前綴比對後恢復
+- **介面與文件** — SKU月度變化分頁篩選（Safety Stock Qty 變化篩選／RP Type 轉變篩選）、摘要說明文字、使用說明頁與 README 同步；測試改用全稱欄名並新增 By Shop 欄序斷言
+- Change: `version.py` → 1.68.0
+
 ## v1.67.0 (2026-09-29)
 
 Safety Stock 月度變化分析「RP Type 變化」新增下半「首尾月份對比」（最早月份 vs 最新月份）；其餘模式零變動：

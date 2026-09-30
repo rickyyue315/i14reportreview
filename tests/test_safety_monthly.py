@@ -105,7 +105,7 @@ def test_mom_event_and_safety_classification():
         {"SKU": 3, "Month": 6, "Adj. Safety Stock": 5.0},
     ])
     assert len(change) == 3
-    by_sku = dict(zip(change["SKU"].astype(str), change["Safety變化分類"]))
+    by_sku = dict(zip(change["SKU"].astype(str), change["Safety Stock Qty 變化分類"]))
     assert by_sku == {"1": "增加", "2": "減少", "3": "不變"}
     assert stats["safety_inc"] == 1 and stats["safety_dec"] == 1 and stats["safety_same"] == 1
     assert stats["safety_delta_total"] == 1  # (8-5)+(3-5)+0
@@ -116,7 +116,7 @@ def test_rp_transition_recorded():
         {"SKU": 1, "Month": 5, "RP Type": "RF"},
         {"SKU": 1, "Month": 6, "RP Type": "ND"},
     ])
-    assert change.iloc[0]["RP轉變"] == "RF→ND"
+    assert change.iloc[0]["RP Type 轉變"] == "RF→ND"
 
 
 def test_new_combo_has_no_event():
@@ -141,11 +141,11 @@ def test_latest_month_annualized_both_columns():
     )
     assert stats["annual_factor"] == 2.0
     row = change.iloc[0]
-    assert row["本月 Sold月化"] == 20
-    assert row["本月 Net月化"] == 200.0
+    assert row["本月 Sold Qty 月化"] == 20
+    assert row["本月 Net Sales 月化"] == 200.0
     # 環比以月化基準：20-30=-10；200-300=-100
-    assert row["Sold變化量(月化基準)"] == -10
-    assert row["Net變化量(月化基準)"] == -100.0
+    assert row["Sold Qty 變化量(月化基準)"] == -10
+    assert row["Net Sales 變化量(月化基準)"] == -100.0
 
 
 def test_full_month_factor_one():
@@ -157,7 +157,7 @@ def test_full_month_factor_one():
         ref_date=datetime.date(2026, 6, 30),
     )
     assert stats["annual_factor"] == 1.0
-    assert change.iloc[0]["本月 Sold月化"] == 10
+    assert change.iloc[0]["本月 Sold Qty 月化"] == 10
 
 
 # ── 4. 樞紐與 Excel ──────────────────────────────────────────────────
@@ -198,6 +198,14 @@ def test_pivots_three_blocks_four_metrics():
     assert set(sst["Adj. SST"]) >= {"SST1", "總計"}
     assert len(cross) == 2 * 12  # 1 組合＋總計 × 12 項目列
     assert set(shop["Site Code"]) == {"S01"}
+    assert list(shop.columns) == [
+        "Site Code", "Shop Name", "YEAR-MONTH",
+        "SKU數", "Safety Stock Qty 合計",
+        "Sold Qty 原始合計", "Sold Qty 月化合計",
+        "Net Sales 原始合計", "Net Sales 月化合計",
+        "Net Stock Qty 合計",
+        "Sold Qty 環比變化", "Net Sales 環比變化", "Safety Stock Qty 環比變化",
+    ]
     assert "YEAR-MONTH" in raw.columns
 
 
@@ -238,19 +246,19 @@ def test_rp_summary_transition_counts():
     assert stats["rp_rf_to_nd"] == 1 and stats["rp_nd_to_rf"] == 1
     assert stats["rp_rf_to_nd_skus"] == 1 and stats["rp_nd_to_rf_skus"] == 1
     rp = stats["rp_summary"]
-    assert list(rp["RP轉變"]) == ["RF→RF", "ND→ND", "RF→ND", "ND→RF", "總計"]
-    rf_nd = rp[rp["RP轉變"] == "RF→ND"].iloc[0]
+    assert list(rp["RP Type 轉變"]) == ["RF→RF", "ND→ND", "RF→ND", "ND→RF", "總計"]
+    rf_nd = rp[rp["RP Type 轉變"] == "RF→ND"].iloc[0]
     assert rf_nd["2026-05→2026-06 事件數"] == 1
     assert rf_nd["2026-05→2026-06 SKU數"] == 1
     assert rf_nd["總計 事件數"] == 1
-    total = rp[rp["RP轉變"] == "總計"].iloc[0]
+    total = rp[rp["RP Type 轉變"] == "總計"].iloc[0]
     assert total["總計 事件數"] == 4 and total["總計 SKU數"] == 4
 
 
 def test_rp_summary_empty_change():
     from transformer import _build_safm_rp_summary
     rp = _build_safm_rp_summary(pd.DataFrame())
-    assert list(rp.columns) == ["RP轉變"] and rp.empty
+    assert list(rp.columns) == ["RP Type 轉變"] and rp.empty
 
 
 # ── 6. 首尾月份對比 ──────────────────────────────────────────────────
