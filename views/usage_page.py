@@ -299,7 +299,8 @@ SKU 級 Forecast 計算（v2 加權混合）：
 - 分析欄固定五項：Adj. Safety Stock（只看原始值增減）／RP Type 轉變／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM)
 - 相鄰月份環比；最新月份按數據截止日月化（Sold Qty 與 Net Sales 同時月化，係數＝當月總日數 ÷ 截止日日號）
 - 維度：Adj. MCH1、Adj. SST、MCH1×SST、Site Code；另附 RP Type 轉變統計（逐月配對，重點為 RF→ND 與 ND→RF）＋首尾月份對比（含最早／最新月份 Sold Qty 月化、Net Sales 月化與 Safety Stock Qty 值＋變化量對比）
-- 輸出：說明、SKU月度變化、By Adj. MCH1、By Adj. SST、By MCH1×SST、By Shop、RP Type 變化、月度摘要、RAW 共 9 個工作表
+- 生意視角：RP轉變生意對比（按轉變群組隔離生意變化）／店舖精簡成效（驗證減少 SKU 後留存 SKU 是否承接生意）／轉變前後追蹤(T0)（以轉變本月為 T0 的去化路徑）；RF 代表執行自動補貨，ND 代表不執行自動補貨
+- 輸出：說明、SKU月度變化、By Adj. MCH1、By Adj. SST、By MCH1×SST、By Shop、RP Type 變化、RP轉變生意對比、店舖精簡成效、轉變前後追蹤(T0)、月度摘要、RAW 共 12 個工作表
      """,
      """
 Safety Stock 月度變化計算：
@@ -308,6 +309,9 @@ Safety Stock 月度變化計算：
 3. **Safety Stock Qty 變化量** = 本月 Adj. Safety Stock − 上月；正數為增加、負數為減少、零為不變（只看原始值，不作建議值計算）
 4. **RP Type 轉變** = 上月→本月（如 RF→ND）；Sold Qty／Net Sales 變化量以月化基準計算，變化率＝變化量 ÷ 上月絕對值（上月為 0 留空）
 5. **樞紐（三段式，四項指標全稱）** = Sold Qty（Sold Qty (CM - MTD) 月化合計）／Net Sales（Net Sales (CM - MTD) 月化合計）／Net Stock Qty（店舖存貨 Shop Stock Qty (CM) 合計）／Safety Stock Qty（Adj. Safety Stock 合計）；四項指標區塊左右並排（每區塊各含項目、各月與全部合計欄），每段一列一維度、總計列置段末：每月合計 → 月環比%（上月為 0 或首月留空）→ 月環比絕對值；表尾另附 RF→ND SKU數／ND→RF SKU數 分月份統計（當月發生轉變的不重複 SKU 數，按轉變的「本月」歸月；全部合計為整個期間）
+6. **RP轉變生意對比** = 按 RP Type 轉變 × 本月分組加總上月與本月生意，重點比較 RF→ND 群組與 RF→RF 群組的同期變化率
+7. **店舖精簡成效** = 每店每月 RF／ND／總 SKU 數、淨精簡數（RF→ND 減 ND→RF）、被精簡掉的上月生意基數與留存 RF 組對比；首月無上月可比，轉變計數恆為 0
+8. **轉變前後追蹤(T0)** = 只收 RF→ND 與 ND→RF 事件，以轉變本月為 T0 列示 T-1／T0／T+1；T+1 取資料內下一個月份，缺資料者標示未有次月資料
      """),
 
 ]

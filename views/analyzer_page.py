@@ -4211,8 +4211,9 @@ if uploaded_file is not None:
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_change, tab_mch1, tab_sst, tab_cross, tab_shop, tab_rp, tab_raw = st.tabs([
-                "📋 SKU月度變化", "By Adj. MCH1", "By Adj. SST", "By MCH1×SST", "By Shop", "🔀 RP Type 變化", "📄 RAW 明細",
+            tab_change, tab_mch1, tab_sst, tab_cross, tab_shop, tab_rp, tab_cohort, tab_effect, tab_t0, tab_raw = st.tabs([
+                "📋 SKU月度變化", "By Adj. MCH1", "By Adj. SST", "By MCH1×SST", "By Shop", "🔀 RP Type 變化",
+                "📊 RP轉變生意對比", "🏪 店舖精簡成效", "⏳ 轉變前後追蹤", "📄 RAW 明細",
             ])
             with tab_change:
                 st.markdown("#### 每組相鄰月份環比事件（Safety Stock Qty 只看原始值增減；Sold Qty／Net Sales 以月化基準）")
@@ -4325,6 +4326,84 @@ if uploaded_file is not None:
                         f"另有 {int(_rp_end_info.get('excluded', 0)):,} 組缺首尾月份資料未納入；"
                         f"首尾 RF→ND {int(_rp_end_info.get('rf_to_nd', 0)):,} 組、ND→RF {int(_rp_end_info.get('nd_to_rf', 0)):,} 組。"
                     )
+                else:
+                    st.info("無符合資料")
+            with tab_cohort:
+                st.markdown("#### RP 轉變群組生意對比（隔離轉變群組，避免與持續群組混合）")
+                _cohort_df = (stats or {}).get("rp_cohort")
+                if _cohort_df is not None and not _cohort_df.empty:
+                    _ccol1, _ccol2 = st.columns(2)
+                    with _ccol1:
+                        _cohort_trans = st.selectbox(
+                            "RP Type 轉變篩選",
+                            options=["全部", "RF→RF", "ND→ND", "RF→ND", "ND→RF", "總計"],
+                            index=0, key="safm_cohort_trans",
+                            help="只影響下方預覽，不影響 Excel 導出。",
+                        )
+                    with _ccol2:
+                        _cohort_months = ["全部"] + sorted(_cohort_df["本月"].fillna("").astype(str).unique().tolist())
+                        _cohort_month = st.selectbox(
+                            "本月篩選", options=_cohort_months, index=0, key="safm_cohort_month",
+                            help="只影響下方預覽，不影響 Excel 導出。",
+                        )
+                    _cdisp = _cohort_df
+                    if _cohort_trans != "全部":
+                        _cdisp = _cdisp[_cdisp["RP Type 轉變"] == _cohort_trans]
+                    if _cohort_month != "全部":
+                        _cdisp = _cdisp[_cdisp["本月"] == _cohort_month]
+                    st.dataframe(_cdisp.rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                    st.caption("每列一組轉變 × 本月；變化率以該群組上月合計為分母（為 0 留空）。判斷轉 ND 對生意有無影響時，以 RF→ND 群組與 RF→RF 群組的同期變化率對照為準，而非全店合計。")
+                else:
+                    st.info("無符合資料")
+            with tab_effect:
+                st.markdown("#### 店舖精簡成效（總 SKU 下降而留存 RF 組上升，即其餘 SKU 承接生意）")
+                _effect_df = (stats or {}).get("shop_effect")
+                if _effect_df is not None and not _effect_df.empty:
+                    _ecol1, _ecol2 = st.columns(2)
+                    with _ecol1:
+                        _effect_sites = ["全部"] + sorted(_effect_df["Site Code"].fillna("").astype(str).unique().tolist())
+                        _effect_site = st.selectbox(
+                            "店舖篩選", options=_effect_sites, index=0, key="safm_effect_site",
+                            help="只影響下方預覽，不影響 Excel 導出。",
+                        )
+                    with _ecol2:
+                        _effect_months = ["全部"] + sorted(_effect_df["本月"].fillna("").astype(str).unique().tolist())
+                        _effect_month = st.selectbox(
+                            "本月篩選", options=_effect_months, index=0, key="safm_effect_month",
+                            help="只影響下方預覽，不影響 Excel 導出。",
+                        )
+                    _edisp2 = _effect_df
+                    if _effect_site != "全部":
+                        _edisp2 = _edisp2[_edisp2["Site Code"].fillna("").astype(str) == _effect_site]
+                    if _effect_month != "全部":
+                        _edisp2 = _edisp2[_edisp2["本月"] == _effect_month]
+                    st.dataframe(_edisp2.rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                    st.caption("淨精簡SKU數＝RF→ND 減 ND→RF；留存RF組＝同一店舖同一 SKU 上月與本月皆為 RF；首月無上月可比，轉變計數恆為 0。RF 代表執行自動補貨，ND 代表不執行自動補貨。")
+                else:
+                    st.info("無符合資料")
+            with tab_t0:
+                st.markdown("#### 轉變前後追蹤（以轉變本月為 T0，觀察次月去化）")
+                _t0_df = (stats or {}).get("t0_track")
+                if _t0_df is not None and not _t0_df.empty:
+                    _tcol1, _tcol2 = st.columns(2)
+                    with _tcol1:
+                        _t0_trans = st.selectbox(
+                            "轉變類型篩選", options=["全部", "RF→ND", "ND→RF"], index=0, key="safm_t0_trans",
+                            help="只影響下方預覽，不影響 Excel 導出。",
+                        )
+                    with _tcol2:
+                        _t0_statuses = ["全部"] + sorted(_t0_df["去化狀態"].fillna("").astype(str).unique().tolist())
+                        _t0_status = st.selectbox(
+                            "去化狀態篩選", options=_t0_statuses, index=0, key="safm_t0_status",
+                            help="只影響下方預覽，不影響 Excel 導出。",
+                        )
+                    _tdisp = _t0_df
+                    if _t0_trans != "全部":
+                        _tdisp = _tdisp[_tdisp["轉變類型"] == _t0_trans]
+                    if _t0_status != "全部":
+                        _tdisp = _tdisp[_tdisp["去化狀態"] == _t0_status]
+                    st.dataframe(_tdisp.head(200).rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                    st.caption(f"共 {len(_tdisp):,} 列轉變事件（僅顯示前 200 筆）。T+1 為資料內下一個月份；缺資料者標示未有次月資料。RF→ND 預期去化（已清空／去化中），ND→RF 預期回升。")
                 else:
                     st.info("無符合資料")
             with tab_raw:

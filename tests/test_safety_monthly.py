@@ -296,7 +296,9 @@ def test_excel_eight_sheets_and_guide_first():
     buf = generate_excel_safety_monthly(change, mch1, sst, cross, shop, raw, stats)
     wb = load_workbook(BytesIO(buf.getvalue()))
     assert wb.sheetnames == ["說明", "SKU月度變化", "By Adj. MCH1", "By Adj. SST",
-                             "By MCH1×SST", "By Shop", "RP Type 變化", "月度摘要", "RAW"]
+                             "By MCH1×SST", "By Shop", "RP Type 變化",
+                             "RP轉變生意對比", "店舖精簡成效", "轉變前後追蹤(T0)",
+                             "月度摘要", "RAW"]
     assert wb.active.title == "說明"
 
 
@@ -433,3 +435,86 @@ def test_rp_endpoints_empty():
     from transformer import _build_safm_rp_endpoints
     detail, info = _build_safm_rp_endpoints(pd.DataFrame(), [])
     assert detail.empty and info["comparable"] == 0
+
+
+# ── 7. RP 轉變群組生意對比 ──────────────────────────────────────────
+def test_rp_cohort_isolates_transition_groups():
+    from transformer import _build_safm_rp_cohort
+    change, _m, _s, _c, _sh, _r, stats, _ = _run([
+        {"SKU": 1, "Month": 5, "RP Type": "RF", "Sold Qty (CM - MTD)": 100.0, "Net Sales (CM - MTD)": 1000.0},
+        {"SKU": 1, "Month": 6, "RP Type": "ND", "Sold Qty (CM - MTD)": 20.0, "Net Sales (CM - MTD)": 200.0},
+        {"SKU": 2, "Month": 5, "RP Type": "RF", "Sold Qty (CM - MTD)": 50.0, "Net Sales (CM - MTD)": 500.0},
+        {"SKU": 2, "Month": 6, "RP Type": "RF", "Sold Qty (CM - MTD)": 60.0, "Net Sales (CM - MTD)": 600.0},
+    ])
+    cohort = stats["rp_cohort"]
+    assert list(cohort.columns) == [
+        "RP Type 轉變", "本月",
+        "事件數", "SKU數",
+        "上月 Sold Qty 月化合計", "本月 Sold Qty 月化合計",
+        "Sold Qty 變化量(月化基準)", "Sold Qty 變化率",
+        "上月 Net Sales 月化合計", "本月 Net Sales 月化合計",
+        "Net Sales 變化量(月化基準)", "Net Sales 變化率",
+        "上月 Net Stock Qty 合計", "本月 Net Stock Qty 合計", "Net Stock Qty 變化量",
+        "上月 Safety Stock Qty 合計", "本月 Safety Stock Qty 合計", "Safety Stock Qty 變化量",
+    ]
+    rf_nd = cohort[(cohort["RP Type 轉變"] == "RF→ND") & (cohort["本月"] == "2026-06")].iloc[0]
+    assert (rf_nd["上月 Sold Qty 月化合計"], rf_nd["本月 Sold Qty 月化合計"]) == (100, 20)
+    assert rf_nd["Sold Qty 變化量(月化基準)"] == -80
+    assert rf_nd["Sold Qty 變化率"] == -0.8
+    rf_rf = cohort[(cohort["RP Type 轉變"] == "RF→RF") & (cohort["本月"] == "2026-06")].iloc[0]
+    assert (rf_rf["上月 Sold Qty 月化合計"], rf_rf["本月 Sold Qty 月化合計"]) == (50, 60)
+    assert rf_rf["Sold Qty 變化率"] == 0.2
+    # 全檔總計列
+    grand = cohort[(cohort["RP Type 轉變"] == "總計") & (cohort["本月"] == "全部合計")].iloc[0]
+    assert grand["事件數"] == 2 and grand["SKU數"] == 2
+    # 空輸入回傳空表但欄位齊全
+    empty = _build_safm_rp_cohort(pd.DataFrame())
+    assert empty.empty and list(empty.columns)[0] == "RP Type 轉變"
+
+
+# ── 8. 店舖精簡成效 ────────────────────────────────────────────────
+def test_shop_effect_retained_vs_removed():
+    change, _m, _s, _c, _sh, _r, stats, _ = _run([
+        {"SKU": 1, "Month": 5, "RP Type": "RF", "Sold Qty (CM - MTD)": 100.0, "Net Sales (CM - MTD)": 1000.0},
+        {"SKU": 1, "Month": 6, "RP Type": "ND", "Sold Qty (CM - MTD)": 10.0, "Net Sales (CM - MTD)": 100.0},
+        {"SKU": 2, "Month": 5, "RP Type": "RF", "Sold Qty (CM - MTD)": 50.0, "Net Sales (CM - MTD)": 500.0},
+        {"SKU": 2, "Month": 6, "RP Type": "RF", "Sold Qty (CM - MTD)": 70.0, "Net Sales (CM - MTD)": 700.0},
+    ])
+    effect = stats["shop_effect"]
+    assert "淨精簡SKU數" in effect.columns and "留存RF組 Sold 變化量" in effect.columns
+    jun = effect[effect["本月"] == "2026-06"].iloc[0]
+    assert (jun["RF SKU數"], jun["ND SKU數"], jun["總SKU數"]) == (1, 1, 2)
+    assert (jun["RF→ND SKU數"], jun["ND→RF SKU數"], jun["淨精簡SKU數"]) == (1, 0, 1)
+    assert jun["RF→ND組上月 Sold 合計(月化)"] == 100
+    assert jun["留存RF組 SKU數"] == 1
+    assert (jun["留存RF組上月 Sold 合計(月化)"], jun["留存RF組本月 Sold 合計(月化)"]) == (50, 70)
+    assert jun["留存RF組 Sold 變化量"] == 20
+    assert jun["留存RF組 Sold 變化率"] == 0.4
+    # 首月無上月可比，轉變計數恆為 0
+    may = effect[effect["本月"] == "2026-05"].iloc[0]
+    assert (may["RF→ND SKU數"], may["ND→RF SKU數"]) == (0, 0)
+
+
+# ── 9. 轉變前後追蹤（T0 對齊） ─────────────────────────────────────
+def test_t0_track_next_month_depletion():
+    change, _m, _s, _c, _sh, _r, stats, _ = _run([
+        {"SKU": 1, "Month": 5, "RP Type": "RF", "Sold Qty (CM - MTD)": 100.0, "Shop Stock Qty (CM)": 50.0},
+        {"SKU": 1, "Month": 6, "RP Type": "ND", "Sold Qty (CM - MTD)": 20.0, "Shop Stock Qty (CM)": 30.0},
+        {"SKU": 1, "Month": 9, "RP Type": "ND", "Sold Qty (CM - MTD)": 0.0, "Shop Stock Qty (CM)": 0.0},
+    ])
+    t0 = stats["t0_track"]
+    assert "去化狀態" in t0.columns and "T+1 Sold Qty 月化" in t0.columns
+    assert len(t0) == 1
+    row = t0.iloc[0]
+    assert (row["T-1月份"], row["T0月份"], row["T+1月份"]) == ("2026-05", "2026-06", "2026-09")
+    assert (row["T-1 Sold Qty 月化"], row["T0 Sold Qty 月化"], row["T+1 Sold Qty 月化"]) == (100, 20, 0)
+    assert row["T0環比變化量"] == -80 and row["T+1環比變化量"] == -20
+    assert row["去化狀態"] == "已清空"
+    # 最新月份轉變者無次月資料
+    change2, *_rest2, stats2, _ = _run([
+        {"SKU": 5, "Month": 5, "RP Type": "RF"},
+        {"SKU": 5, "Month": 6, "RP Type": "ND"},
+    ])
+    row2 = stats2["t0_track"].iloc[0]
+    assert row2["T+1 Sold Qty 月化"] is None or pd.isna(row2["T+1 Sold Qty 月化"])
+    assert row2["去化狀態"] == "未有次月資料"

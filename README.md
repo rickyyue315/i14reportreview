@@ -203,8 +203,9 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 3. **Safety Stock Qty 變化** — 只看原始值增減：`Safety Stock Qty 變化量＝本月 Adj. Safety Stock − 上月`（正數為增加、負數為減少、零為不變，不作建議值計算）
 4. **RP Type 轉變** — 記錄上月→本月（如 `RF→ND`）；Sold Qty／Net Sales 變化量以月化基準計算，變化率＝變化量 ÷ 上月絕對值（上月為 0 留空）
 5. **維度樞紐（三段式）** — `Adj. MCH1`、`Adj. SST`、`MCH1×SST`、`Site Code`；四項指標全稱：Sold Qty／Net Sales／Net Stock Qty（店舖存貨 `Shop Stock Qty (CM)` 合計）／Safety Stock Qty；四項指標區塊左右並排（每區塊各含項目、各月與全部合計欄），每段一列一維度、總計列置段末：每月合計 → 月環比% → 月環比絕對值；表尾另附 RF→ND SKU數／ND→RF SKU數 兩個分月份區塊（當月發生轉變的不重複 SKU 數，按轉變的「本月」歸月；全部合計為整個期間）
+6. **生意視角（三項）** — RP轉變生意對比（按 RP Type 轉變 × 本月分組，隔離 RF→ND 群組與持續群組的生意變化）／店舖精簡成效（每店每月 RF／ND／總 SKU 數、淨精簡數、被精簡生意基數與留存 RF 組對比）／轉變前後追蹤(T0)（RF→ND 與 ND→RF 事件以轉變本月為 T0 的 T-1／T0／T+1 對比與去化狀態）；RF 代表執行自動補貨，ND 代表不執行自動補貨
 
-輸出包含 **9 個工作表**：說明（首頁導讀：月化邏輯＋本次執行參數＋工作表導讀；開啟 Excel 時預設顯示本頁）、SKU月度變化（每組相鄰月份環比事件）、By Adj. MCH1、By Adj. SST、By MCH1×SST、By Shop、RP Type 變化（RP Type 轉變 × 月份配對 事件數／SKU數，重點為 RF→ND 與 ND→RF）、月度摘要（指標卡含 RF→ND／ND→RF 一排＋每月合計）、RAW（含 YEAR-MONTH 與月化估算欄）。
+輸出包含 **12 個工作表**：說明（首頁導讀：月化邏輯＋本次執行參數＋工作表導讀；開啟 Excel 時預設顯示本頁）、SKU月度變化（每組相鄰月份環比事件）、By Adj. MCH1、By Adj. SST、By MCH1×SST、By Shop、RP Type 變化（RP Type 轉變 × 月份配對 事件數／SKU數，重點為 RF→ND 與 ND→RF）、RP轉變生意對比、店舖精簡成效、轉變前後追蹤(T0)、月度摘要（指標卡含 RF→ND／ND→RF 一排＋每月合計）、RAW（含 YEAR-MONTH 與月化估算欄）。
 
 ### Forecast Review（SKU 級建議訂貨量）
 

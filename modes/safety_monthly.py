@@ -66,6 +66,9 @@ __all__ = [
     "safety_monthly_dashboard_metrics",
     "_SAFM_CHANGE_COLUMNS",
     "_SAFM_SHOP_COLUMNS",
+    "_SAFM_COHORT_COLUMNS",
+    "_SAFM_SHOP_EFFECT_COLUMNS",
+    "_SAFM_T0_COLUMNS",
     "_SAFM_YM_COLUMN",
     "_SAFM_SOLD_ADJ_COLUMN",
     "_SAFM_NET_ADJ_COLUMN",
@@ -75,6 +78,9 @@ __all__ = [
     "_SAFM_RP_ENDPOINT_COLUMNS",
     "_build_safm_rp_summary",
     "_build_safm_rp_endpoints",
+    "_build_safm_rp_cohort",
+    "_build_safm_shop_effect",
+    "_build_safm_t0_track",
 ]
 
 # 樞紐四項指標（顯示全稱，不用簡稱）：
@@ -129,6 +135,52 @@ _SAFM_SHOP_COLUMNS = [
     "Net Stock Qty 合計",
     "Sold Qty 環比變化", "Net Sales 環比變化", "Safety Stock Qty 環比變化",
     "RF→ND SKU數", "ND→RF SKU數",
+]
+
+# ── RP 轉變群組生意對比：按 RP Type 轉變 × 本月分組，隔離轉變群組的生意變化 ──
+# 群組口徑為 SKU月度變化事件（Site Code × SKU 相鄰月份環比），避免與持續群組混合。
+_SAFM_COHORT_COLUMNS = [
+    "RP Type 轉變", "本月",
+    "事件數", "SKU數",
+    "上月 Sold Qty 月化合計", "本月 Sold Qty 月化合計",
+    "Sold Qty 變化量(月化基準)", "Sold Qty 變化率",
+    "上月 Net Sales 月化合計", "本月 Net Sales 月化合計",
+    "Net Sales 變化量(月化基準)", "Net Sales 變化率",
+    "上月 Net Stock Qty 合計", "本月 Net Stock Qty 合計", "Net Stock Qty 變化量",
+    "上月 Safety Stock Qty 合計", "本月 Safety Stock Qty 合計", "Safety Stock Qty 變化量",
+]
+
+# ── 店舖精簡成效：按店舖 × 本月，驗證減少 SKU 數量後留存 SKU 生意是否提升 ──
+# 留存 RF 組＝同一店舖同一 SKU 上月與本月皆為 RF（RF→RF 事件）；
+# RF→ND 組上月生意＝被精簡掉的生意基數；全店變化以月度彙總為準（含新增與消失組合）。
+_SAFM_SHOP_EFFECT_COLUMNS = [
+    "Site Code", "Shop Name", "本月",
+    "RF SKU數", "ND SKU數", "總SKU數",
+    "RF SKU數環比變化", "總SKU數環比變化",
+    "RF→ND SKU數", "ND→RF SKU數", "淨精簡SKU數",
+    "RF→ND組上月 Sold 合計(月化)",
+    "留存RF組 SKU數",
+    "留存RF組上月 Sold 合計(月化)", "留存RF組本月 Sold 合計(月化)",
+    "留存RF組 Sold 變化量", "留存RF組 Sold 變化率",
+    "留存RF組上月 Net 合計(月化)", "留存RF組本月 Net 合計(月化)",
+    "留存RF組 Net 變化量", "留存RF組 Net 變化率",
+    "全店 Sold 變化量(月化基準)", "全店 Net 變化量(月化基準)",
+]
+
+# ── 轉變前後追蹤（T0 對齊）：以轉變發生的本月為 T0，追蹤 T-1／T0／T+1 ──
+# ND 代表不執行自動補貨，賣出／調走／退貨後不再銷售，故 RF→ND 後生意與存貨應逐步去化；
+# T+1 取資料內下一個 YEAR-MONTH（非曆月推算），缺資料者標示未有次月資料。
+_SAFM_T0_COLUMNS = [
+    "轉變類型", "Site Code", "Shop Name", "SKU", "SKU Desc", "Brand", "Buyer",
+    "Adj. MCH1", "Adj. SST",
+    "T-1月份", "T0月份", "T+1月份",
+    "T-1 RP Type", "T0 RP Type", "T+1 RP Type",
+    "T-1 Sold Qty 月化", "T0 Sold Qty 月化", "T+1 Sold Qty 月化",
+    "T0環比變化量", "T+1環比變化量",
+    "T-1 Net Sales 月化", "T0 Net Sales 月化", "T+1 Net Sales 月化",
+    "T-1 Net Stock Qty", "T0 Net Stock Qty", "T+1 Net Stock Qty",
+    "T-1 Safety Stock Qty", "T0 Safety Stock Qty", "T+1 Safety Stock Qty",
+    "去化狀態",
 ]
 
 
@@ -535,6 +587,9 @@ def transform_safety_monthly(
         rp_rf_to_nd = rp_nd_to_rf = rp_rf_to_nd_skus = rp_nd_to_rf_skus = 0
     rp_summary = _build_safm_rp_summary(change_df)
     rp_endpoints, rp_end_info = _build_safm_rp_endpoints(monthly, ym_keys)
+    rp_cohort = _build_safm_rp_cohort(change_df)
+    shop_effect = _build_safm_shop_effect(change_df, monthly, ym_keys, ym_labels)
+    t0_track = _build_safm_t0_track(change_df, monthly, ym_keys, ym_labels)
     stats = {
         "ym_list": ym_labels,
         "ym_count": len(ym_labels),
@@ -558,6 +613,9 @@ def transform_safety_monthly(
         "rp_summary": rp_summary,
         "rp_endpoints": rp_endpoints,
         "rp_end_info": rp_end_info,
+        "rp_cohort": rp_cohort,
+        "shop_effect": shop_effect,
+        "t0_track": t0_track,
     }
     if change_df.empty:
         warnings.append("所有組合皆只有單一月份資料，無相鄰月份環比事件可輸出。")
@@ -931,6 +989,388 @@ def _build_safm_rp_endpoints(monthly: pd.DataFrame, ym_keys: list[int]
     return detail, info
 
 
+def _safm_label_to_key(label: str) -> int | None:
+    """將 YEAR-MONTH 標籤（如 2026-06）轉為排序鍵 YYYYMM，無法解析時回傳 None。"""
+    try:
+        parts = str(label).strip().split("-")
+        if len(parts) != 2:
+            return None
+        return int(parts[0]) * 100 + int(parts[1])
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_safm_rp_cohort(change_df: pd.DataFrame) -> pd.DataFrame:
+    """RP 轉變群組生意對比：按 RP Type 轉變 × 本月分組，隔離各群組的生意變化。
+
+    母體為 SKU月度變化事件（Site Code × SKU 相鄰月份環比），每列一組轉變 × 本月。
+    另附每種轉變的全部合計列、每月總計列與全檔總計列，便於對照
+    RF→ND 群組與持續 RF 群組的同期生意走勢。
+    變化率＝變化量 ÷ 上月合計絕對值，上月合計為 0 時留空。
+    """
+    if change_df is None or change_df.empty:
+        return pd.DataFrame(columns=_SAFM_COHORT_COLUMNS)
+    df = change_df.copy()
+    if "RP Type 轉變" not in df.columns or "本月" not in df.columns:
+        return pd.DataFrame(columns=_SAFM_COHORT_COLUMNS)
+
+    def _agg(group: pd.DataFrame) -> dict:
+        prev_sold = int(pd.to_numeric(group["上月 Sold Qty 月化"], errors="coerce").fillna(0).sum())
+        curr_sold = int(pd.to_numeric(group["本月 Sold Qty 月化"], errors="coerce").fillna(0).sum())
+        prev_net = round(float(pd.to_numeric(group["上月 Net Sales 月化"], errors="coerce").fillna(0).sum()), 2)
+        curr_net = round(float(pd.to_numeric(group["本月 Net Sales 月化"], errors="coerce").fillna(0).sum()), 2)
+        prev_stock = int(pd.to_numeric(group["上月 Shop Stock Qty (CM)"], errors="coerce").fillna(0).sum())
+        curr_stock = int(pd.to_numeric(group["本月 Shop Stock Qty (CM)"], errors="coerce").fillna(0).sum())
+        prev_safety = int(pd.to_numeric(group["上月 Adj. Safety Stock"], errors="coerce").fillna(0).sum())
+        curr_safety = int(pd.to_numeric(group["本月 Adj. Safety Stock"], errors="coerce").fillna(0).sum())
+        return {
+            "事件數": int(len(group)),
+            "SKU數": int(group["SKU"].nunique()) if "SKU" in group.columns else int(len(group)),
+            "上月 Sold Qty 月化合計": prev_sold,
+            "本月 Sold Qty 月化合計": curr_sold,
+            "Sold Qty 變化量(月化基準)": int(curr_sold - prev_sold),
+            "Sold Qty 變化率": _change_rate(float(curr_sold), float(prev_sold)),
+            "上月 Net Sales 月化合計": prev_net,
+            "本月 Net Sales 月化合計": curr_net,
+            "Net Sales 變化量(月化基準)": round(curr_net - prev_net, 2),
+            "Net Sales 變化率": _change_rate(float(curr_net), float(prev_net)),
+            "上月 Net Stock Qty 合計": prev_stock,
+            "本月 Net Stock Qty 合計": curr_stock,
+            "Net Stock Qty 變化量": int(curr_stock - prev_stock),
+            "上月 Safety Stock Qty 合計": prev_safety,
+            "本月 Safety Stock Qty 合計": curr_safety,
+            "Safety Stock Qty 變化量": int(curr_safety - prev_safety),
+        }
+
+    months = sorted(df["本月"].fillna("").astype(str).unique().tolist())
+    present = df["RP Type 轉變"].fillna("").astype(str)
+    order = [t for t in _SAFM_RP_ORDER if t in set(present.tolist())]
+    order += sorted(set(present.tolist()) - set(order) - {""})
+    if "" in set(present.tolist()):
+        order.append("")
+
+    rows: list[dict] = []
+    for trans in order:
+        sub = df[df["RP Type 轉變"].fillna("").astype(str) == trans]
+        if sub.empty:
+            continue
+        for ym in months:
+            g = sub[sub["本月"].fillna("").astype(str) == ym]
+            if g.empty:
+                continue
+            row = {"RP Type 轉變": trans, "本月": ym}
+            row.update(_agg(g))
+            rows.append(row)
+        total = {"RP Type 轉變": trans, "本月": "全部合計"}
+        total.update(_agg(sub))
+        rows.append(total)
+    for ym in months:
+        g = df[df["本月"].fillna("").astype(str) == ym]
+        if g.empty:
+            continue
+        row = {"RP Type 轉變": "總計", "本月": ym}
+        row.update(_agg(g))
+        rows.append(row)
+    grand = {"RP Type 轉變": "總計", "本月": "全部合計"}
+    grand.update(_agg(df))
+    rows.append(grand)
+
+    result = pd.DataFrame(rows, columns=_SAFM_COHORT_COLUMNS)
+    order_idx = {t: i for i, t in enumerate(order + ["總計"])}
+    month_idx = {m: i for i, m in enumerate(months + ["全部合計"])}
+    result["_o1"] = result["RP Type 轉變"].map(order_idx).fillna(99).astype(int)
+    result["_o2"] = result["本月"].map(month_idx).fillna(99).astype(int)
+    result = result.sort_values(["_o1", "_o2"], kind="stable").drop(
+        columns=["_o1", "_o2"]).reset_index(drop=True)
+    return result
+
+
+def _build_safm_shop_effect(
+    change_df: pd.DataFrame | None,
+    monthly: pd.DataFrame | None,
+    ym_keys: list[int] | None = None,
+    ym_labels: list[str] | None = None,
+) -> pd.DataFrame:
+    """店舖精簡成效：按店舖 × 本月，驗證減少 SKU 數量後留存 SKU 生意是否提升。
+
+    每列一間店舖一個轉變月份，包含當月 RF／ND／總 SKU 數及其環比變化、
+    RF→ND／ND→RF SKU 數與淨精簡數、RF→ND 組被精簡掉的上月生意基數、
+    留存 RF 組（RF→RF 事件）上月與本月生意對比，以及全店生意變化。
+    全店變化以月度彙總為準（含新增與消失組合），留存組只計可比事件，
+    兩者並列即可判斷精簡後其餘 SKU 是否承接生意。
+    """
+    if monthly is None or monthly.empty:
+        return pd.DataFrame(columns=_SAFM_SHOP_EFFECT_COLUMNS)
+    ym_keys = list(ym_keys or sorted(monthly["_ym"].unique().tolist()))
+    if not ym_keys:
+        return pd.DataFrame(columns=_SAFM_SHOP_EFFECT_COLUMNS)
+    if not ym_labels:
+        ym_labels = [_ym_label(k // 100, k % 100) for k in ym_keys]
+    key_to_label = {int(k): str(l) for k, l in zip(ym_keys, ym_labels)}
+    label_to_key = {str(l): int(k) for k, l in zip(ym_keys, ym_labels)}
+
+    df_m = monthly.copy()
+    sites = sorted(df_m["_site"].fillna("").astype(str).unique().tolist())
+
+    totals: dict[tuple, dict] = {}
+    for (site, key), g in df_m.groupby(["_site", "_ym"], sort=False):
+        totals[(str(site), int(key))] = {
+            "rf": int(((g["rp"] == "RF")).sum()),
+            "nd": int(((g["rp"] == "ND")).sum()),
+            "total": int(g["_sku"].nunique()),
+            "sold": int(pd.to_numeric(g["sold_adj"], errors="coerce").fillna(0).sum()),
+            "net": round(float(pd.to_numeric(g["net_adj"], errors="coerce").fillna(0).sum()), 2),
+            "shop": str(g["shop"].fillna("").astype(str).loc[g["shop"].fillna("").astype(str).str.strip() != ""].iloc[0])
+            if (g["shop"].fillna("").astype(str).str.strip() != "").any() else "",
+        }
+
+    by_site_month: dict[tuple, dict] = {}
+    if change_df is not None and not change_df.empty and "本月" in change_df.columns:
+        cdf = change_df.copy()
+        cdf["_site_s"] = cdf["Site Code"].fillna("").astype(str)
+        for (site, ym_label), g in cdf.groupby(["_site_s", "本月"], sort=False):
+            g_rf_nd = g[g["RP Type 轉變"] == "RF→ND"]
+            g_nd_rf = g[g["RP Type 轉變"] == "ND→RF"]
+            g_keep = g[g["RP Type 轉變"] == "RF→RF"]
+            keep_sold_prev = int(pd.to_numeric(g_keep["上月 Sold Qty 月化"], errors="coerce").fillna(0).sum()) if not g_keep.empty else 0
+            keep_sold_curr = int(pd.to_numeric(g_keep["本月 Sold Qty 月化"], errors="coerce").fillna(0).sum()) if not g_keep.empty else 0
+            keep_net_prev = round(float(pd.to_numeric(g_keep["上月 Net Sales 月化"], errors="coerce").fillna(0).sum()), 2) if not g_keep.empty else 0.0
+            keep_net_curr = round(float(pd.to_numeric(g_keep["本月 Net Sales 月化"], errors="coerce").fillna(0).sum()), 2) if not g_keep.empty else 0.0
+            by_site_month[(str(site), str(ym_label))] = {
+                "rf_to_nd_skus": int(g_rf_nd["SKU"].nunique()) if not g_rf_nd.empty and "SKU" in g_rf_nd.columns else int(len(g_rf_nd)),
+                "nd_to_rf_skus": int(g_nd_rf["SKU"].nunique()) if not g_nd_rf.empty and "SKU" in g_nd_rf.columns else int(len(g_nd_rf)),
+                "removed_sold": int(pd.to_numeric(g_rf_nd["上月 Sold Qty 月化"], errors="coerce").fillna(0).sum()) if not g_rf_nd.empty else 0,
+                "keep_skus": int(g_keep["SKU"].nunique()) if not g_keep.empty and "SKU" in g_keep.columns else int(len(g_keep)),
+                "keep_sold_prev": keep_sold_prev,
+                "keep_sold_curr": keep_sold_curr,
+                "keep_sold_chg": int(keep_sold_curr - keep_sold_prev),
+                "keep_sold_rate": _change_rate(float(keep_sold_curr), float(keep_sold_prev)) if not g_keep.empty else None,
+                "keep_net_prev": keep_net_prev,
+                "keep_net_curr": keep_net_curr,
+                "keep_net_chg": round(keep_net_curr - keep_net_prev, 2),
+                "keep_net_rate": _change_rate(float(keep_net_curr), float(keep_net_prev)) if not g_keep.empty else None,
+            }
+
+    rows: list[dict] = []
+    for site in sites:
+        prev_rf = prev_total = prev_sold = prev_net = None
+        shop_name = ""
+        for key in ym_keys:
+            label = key_to_label.get(int(key), "")
+            t = totals.get((site, int(key)), {"rf": 0, "nd": 0, "total": 0, "sold": 0, "net": 0.0, "shop": ""})
+            if t.get("shop"):
+                shop_name = t["shop"]
+            info = by_site_month.get((site, label), {})
+            rf_to_nd = int(info.get("rf_to_nd_skus", 0))
+            nd_to_rf = int(info.get("nd_to_rf_skus", 0))
+            if prev_rf is None:
+                rf_chg = total_chg = sold_chg = net_chg = None
+            else:
+                rf_chg = int(t["rf"] - prev_rf)
+                total_chg = int(t["total"] - prev_total)
+                sold_chg = int(t["sold"] - prev_sold)
+                net_chg = round(float(t["net"]) - float(prev_net), 2)
+            # 首月無上月可比，轉變計數恆為 0，避免將期初存量誤讀為當月精簡
+            if prev_rf is None:
+                rf_to_nd = 0
+                nd_to_rf = 0
+                removed = 0
+                keep = {"keep_skus": 0, "keep_sold_prev": 0, "keep_sold_curr": 0,
+                        "keep_sold_chg": None, "keep_sold_rate": None,
+                        "keep_net_prev": 0.0, "keep_net_curr": 0.0,
+                        "keep_net_chg": None, "keep_net_rate": None}
+            else:
+                removed = int(info.get("removed_sold", 0))
+                keep = {
+                    "keep_skus": int(info.get("keep_skus", 0)),
+                    "keep_sold_prev": int(info.get("keep_sold_prev", 0)),
+                    "keep_sold_curr": int(info.get("keep_sold_curr", 0)),
+                    "keep_sold_chg": int(info.get("keep_sold_chg", 0)) if info else 0,
+                    "keep_sold_rate": info.get("keep_sold_rate"),
+                    "keep_net_prev": round(float(info.get("keep_net_prev", 0.0)), 2),
+                    "keep_net_curr": round(float(info.get("keep_net_curr", 0.0)), 2),
+                    "keep_net_chg": round(float(info.get("keep_net_chg", 0.0)), 2) if info else 0.0,
+                    "keep_net_rate": info.get("keep_net_rate"),
+                }
+                if not info:
+                    keep["keep_sold_chg"] = 0
+                    keep["keep_net_chg"] = 0.0
+            rows.append({
+                "Site Code": site, "Shop Name": shop_name or site, "本月": label,
+                "RF SKU數": int(t["rf"]), "ND SKU數": int(t["nd"]), "總SKU數": int(t["total"]),
+                "RF SKU數環比變化": rf_chg, "總SKU數環比變化": total_chg,
+                "RF→ND SKU數": rf_to_nd, "ND→RF SKU數": nd_to_rf,
+                "淨精簡SKU數": int(rf_to_nd - nd_to_rf),
+                "RF→ND組上月 Sold 合計(月化)": removed,
+                "留存RF組 SKU數": keep["keep_skus"],
+                "留存RF組上月 Sold 合計(月化)": keep["keep_sold_prev"],
+                "留存RF組本月 Sold 合計(月化)": keep["keep_sold_curr"],
+                "留存RF組 Sold 變化量": keep["keep_sold_chg"],
+                "留存RF組 Sold 變化率": keep["keep_sold_rate"],
+                "留存RF組上月 Net 合計(月化)": keep["keep_net_prev"],
+                "留存RF組本月 Net 合計(月化)": keep["keep_net_curr"],
+                "留存RF組 Net 變化量": keep["keep_net_chg"],
+                "留存RF組 Net 變化率": keep["keep_net_rate"],
+                "全店 Sold 變化量(月化基準)": sold_chg,
+                "全店 Net 變化量(月化基準)": net_chg,
+            })
+            prev_rf, prev_total, prev_sold, prev_net = t["rf"], t["total"], t["sold"], t["net"]
+    void = [k for k in label_to_key if k not in set(ym_labels)]
+    _ = void
+    return pd.DataFrame(rows, columns=_SAFM_SHOP_EFFECT_COLUMNS)
+
+
+def _build_safm_t0_track(
+    change_df: pd.DataFrame | None,
+    monthly: pd.DataFrame | None,
+    ym_keys: list[int] | None = None,
+    ym_labels: list[str] | None = None,
+) -> pd.DataFrame:
+    """轉變前後追蹤（T0 對齊）：以轉變發生的本月為 T0，追蹤 T-1／T0／T+1。
+
+    只收錄 RF→ND 與 ND→RF 事件；T+1 為資料內下一個 YEAR-MONTH，
+    缺資料者 T+1 各欄留空並於去化狀態標示未有次月資料。
+    RF→ND 屬退出自動補貨，預期存貨逐步去化；ND→RF 屬恢復補貨，預期存貨回升。
+    """
+    if change_df is None or change_df.empty or monthly is None or monthly.empty:
+        return pd.DataFrame(columns=_SAFM_T0_COLUMNS)
+    ym_keys = list(ym_keys or sorted(monthly["_ym"].unique().tolist()))
+    if len(ym_keys) < 2:
+        return pd.DataFrame(columns=_SAFM_T0_COLUMNS)
+    if not ym_labels:
+        ym_labels = [_ym_label(k // 100, k % 100) for k in ym_keys]
+    next_label = {str(ym_labels[i]): str(ym_labels[i + 1]) for i in range(len(ym_labels) - 1)}
+
+    lookup: dict[tuple, dict] = {}
+    for row in monthly.itertuples(index=False, name=None):
+        try:
+            cols = list(monthly.columns)
+            site = str(row[cols.index("_site")])
+            sku = row[cols.index("_sku")]
+            key = int(row[cols.index("_ym")])
+            lookup[(site, str(sku), key)] = {
+                "sold": int(row[cols.index("sold_adj")]),
+                "net": round(float(row[cols.index("net_adj")]), 2),
+                "stock": int(row[cols.index("stock")]),
+                "safety": int(row[cols.index("safety")]),
+                "rp": str(row[cols.index("rp")]),
+            }
+        except (ValueError, TypeError, IndexError):
+            continue
+
+    sub = change_df[change_df["RP Type 轉變"].isin(["RF→ND", "ND→RF"])].copy()
+    if sub.empty:
+        return pd.DataFrame(columns=_SAFM_T0_COLUMNS)
+    rows: list[dict] = []
+    for r in sub.itertuples(index=False, name=None):
+        cols = list(sub.columns)
+        try:
+            site = str(r[cols.index("Site Code")])
+            sku = r[cols.index("SKU")]
+            t0_label = str(r[cols.index("本月")])
+            t1_label = str(r[cols.index("上月")])
+        except (ValueError, IndexError):
+            continue
+        t0_key = _safm_label_to_key(t0_label)
+        if t0_key is None:
+            continue
+        t1_sold = r[cols.index("上月 Sold Qty 月化")] if "上月 Sold Qty 月化" in cols else None
+        t0_sold = r[cols.index("本月 Sold Qty 月化")] if "本月 Sold Qty 月化" in cols else None
+        t1_net = r[cols.index("上月 Net Sales 月化")] if "上月 Net Sales 月化" in cols else None
+        t0_net = r[cols.index("本月 Net Sales 月化")] if "本月 Net Sales 月化" in cols else None
+        t1_stock = r[cols.index("上月 Shop Stock Qty (CM)")] if "上月 Shop Stock Qty (CM)" in cols else None
+        t0_stock = r[cols.index("本月 Shop Stock Qty (CM)")] if "本月 Shop Stock Qty (CM)" in cols else None
+        t1_safety = r[cols.index("上月 Adj. Safety Stock")] if "上月 Adj. Safety Stock" in cols else None
+        t0_safety = r[cols.index("本月 Adj. Safety Stock")] if "本月 Adj. Safety Stock" in cols else None
+        try:
+            t1_sold = int(t1_sold) if t1_sold is not None and not pd.isna(t1_sold) else None
+            t0_sold = int(t0_sold) if t0_sold is not None and not pd.isna(t0_sold) else None
+            t1_net = round(float(t1_net), 2) if t1_net is not None and not pd.isna(t1_net) else None
+            t0_net = round(float(t0_net), 2) if t0_net is not None and not pd.isna(t0_net) else None
+            t1_stock = int(t1_stock) if t1_stock is not None and not pd.isna(t1_stock) else None
+            t0_stock = int(t0_stock) if t0_stock is not None and not pd.isna(t0_stock) else None
+            t1_safety = int(t1_safety) if t1_safety is not None and not pd.isna(t1_safety) else None
+            t0_safety = int(t0_safety) if t0_safety is not None and not pd.isna(t0_safety) else None
+        except (TypeError, ValueError):
+            pass
+        t2_label = next_label.get(t0_label)
+        nxt = None
+        if t2_label is not None:
+            t2_key = _safm_label_to_key(t2_label)
+            if t2_key is not None:
+                nxt = lookup.get((site, str(sku), int(t2_key)))
+        if nxt is None:
+            t2_sold = t2_net = t2_stock = t2_safety = t2_rp = None
+            t1_chg = None
+            status = "未有次月資料"
+        else:
+            t2_sold, t2_net, t2_stock, t2_safety, t2_rp = nxt["sold"], nxt["net"], nxt["stock"], nxt["safety"], nxt["rp"]
+            t1_chg = None
+            try:
+                if t0_sold is not None and t2_sold is not None:
+                    t1_chg = int(t2_sold - t0_sold)
+            except (TypeError, ValueError):
+                t1_chg = None
+            trans = str(r[cols.index("RP Type 轉變")])
+            if trans == "RF→ND":
+                if t0_stock is not None and t2_stock is not None:
+                    if t0_stock == 0 and t2_stock == 0:
+                        status = "已無存貨"
+                    elif t2_stock == 0:
+                        status = "已清空"
+                    elif t2_stock < t0_stock:
+                        status = "去化中"
+                    elif t2_stock == t0_stock:
+                        status = "持平滯留"
+                    else:
+                        status = "存貨回升(異常)"
+                else:
+                    status = "資料不齊"
+            else:
+                if t0_stock is not None and t2_stock is not None:
+                    if t2_stock > t0_stock:
+                        status = "存貨回升"
+                    elif t2_stock == t0_stock:
+                        status = "持平"
+                    else:
+                        status = "存貨下降"
+                else:
+                    status = "資料不齊"
+        try:
+            t0_chg = int(t0_sold - t1_sold) if t0_sold is not None and t1_sold is not None else None
+        except (TypeError, ValueError):
+            t0_chg = None
+        rows.append({
+            "轉變類型": str(r[cols.index("RP Type 轉變")]),
+            "Site Code": site,
+            "Shop Name": str(r[cols.index("Shop Name")]) if "Shop Name" in cols else "",
+            "SKU": sku,
+            "SKU Desc": str(r[cols.index("SKU Desc")]) if "SKU Desc" in cols else "",
+            "Brand": str(r[cols.index("Brand")]) if "Brand" in cols else "",
+            "Buyer": str(r[cols.index("Buyer")]) if "Buyer" in cols else "",
+            "Adj. MCH1": str(r[cols.index("Adj. MCH1")]) if "Adj. MCH1" in cols else "",
+            "Adj. SST": str(r[cols.index("Adj. SST")]) if "Adj. SST" in cols else "",
+            "T-1月份": t1_label, "T0月份": t0_label, "T+1月份": t2_label or "",
+            "T-1 RP Type": str(r[cols.index("上月 RP Type")]) if "上月 RP Type" in cols else "",
+            "T0 RP Type": str(r[cols.index("本月 RP Type")]) if "本月 RP Type" in cols else "",
+            "T+1 RP Type": t2_rp or "",
+            "T-1 Sold Qty 月化": t1_sold, "T0 Sold Qty 月化": t0_sold, "T+1 Sold Qty 月化": t2_sold,
+            "T0環比變化量": t0_chg, "T+1環比變化量": t1_chg,
+            "T-1 Net Sales 月化": t1_net, "T0 Net Sales 月化": t0_net, "T+1 Net Sales 月化": t2_net,
+            "T-1 Net Stock Qty": t1_stock, "T0 Net Stock Qty": t0_stock, "T+1 Net Stock Qty": t2_stock,
+            "T-1 Safety Stock Qty": t1_safety, "T0 Safety Stock Qty": t0_safety, "T+1 Safety Stock Qty": t2_safety,
+            "去化狀態": status,
+        })
+    detail = pd.DataFrame(rows, columns=_SAFM_T0_COLUMNS)
+    if not detail.empty:
+        order = {"RF→ND": 0, "ND→RF": 1}
+        detail["_o"] = detail["轉變類型"].map(order).fillna(99).astype(int)
+        detail = detail.sort_values(
+            ["_o", "Brand", "SKU", "Site Code", "T0月份"],
+            kind="stable").drop(columns=["_o"]).reset_index(drop=True)
+    return detail
+
+
 def safety_monthly_dashboard_metrics(change_df: pd.DataFrame, stats: dict | None = None):
     """月度摘要指標卡（與 Streamlit 看板及 Excel 摘要同一準則）。"""
     stats = stats or {}
@@ -1256,7 +1696,7 @@ def _write_safety_monthly_guide_sheet(ws, stats):
         ("環比方式", "相鄰月份環比（每組 Site Code × SKU 與上一個有資料月份比較；上月缺資料者標示新增組合，不計變化）"),
         ("分析欄", "Adj. Safety Stock（只看原始值增減）／RP Type 轉變／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM)；"
          "Sold Qty 與 Net Sales 同時月化，Shop Stock Qty 與 Adj. Safety Stock 為快照不月化"),
-        ("維度", "Adj. MCH1、Adj. SST、MCH1×SST、Site Code"),
+        ("維度", "Adj. MCH1、Adj. SST、MCH1×SST、Site Code；另按 RP Type 轉變群組、店舖精簡成效與 T0 轉變前後追蹤三個生意視角覆核"),
     ]
     logic = [
         "YEAR-MONTH 由 YEAR × 100 ＋ MONTH 排序；MONTH 須為 1–12 整數，無效列略過並列警告。",
@@ -1272,6 +1712,14 @@ def _write_safety_monthly_guide_sheet(ws, stats):
         "RF→ND SKU數／ND→RF SKU數：三個樞紐按維度、By Shop 按店舖，分月份統計當月發生該轉變的不重複 SKU 數"
         "（按轉變的「本月」歸月，取自 SKU月度變化事件；樞紐的「全部合計」為整個期間不重複 SKU 數，"
         "總計列為全檔口徑，各維度相加可大於總計——同一 SKU 可在多個維度、多個月份轉變）。",
+        "RP 轉變群組生意對比：母體同為 SKU月度變化事件，按 RF→RF／ND→ND／RF→ND／ND→RF 四組各自加總上月與本月生意，"
+        "避免轉 ND 群組與持續群組混合；重點比較 RF→ND 群組與 RF→RF 群組的同期變化率。",
+        "店舖精簡成效：每店每月列示 RF／ND／總 SKU 數及其環比變化、淨精簡數（RF→ND 減 ND→RF）、"
+        "被精簡掉的上月生意基數（RF→ND 組上月合計）與留存 RF 組（RF→RF 事件）上月與本月對比；"
+        "留存組上升而總 SKU 下降，即其餘 SKU 承接生意；首月無上月可比，轉變計數恆為 0。",
+        "轉變前後追蹤（T0 對齊）：只收 RF→ND 與 ND→RF 事件，以轉變本月為 T0，列示 T-1／T0／T+1 的生意、存貨與 Safety；"
+        "T+1 取資料內下一個 YEAR-MONTH，缺資料者標示未有次月資料；RF 代表執行自動補貨，ND 代表不執行自動補貨，"
+        "故 RF→ND 後預期存貨逐步去化（已清空／去化中／持平滯留），ND→RF 後預期存貨回升。",
     ]
     sheet_rows = [
         ("說明（本頁）", "月化邏輯、本次參數與導讀", "先核對覆蓋月份與月化係數是否符合預期"),
@@ -1281,6 +1729,9 @@ def _write_safety_monthly_guide_sheet(ws, stats):
         ("By MCH1×SST", "MCH1 與 SST 組合三段式樞紐（版面同 By Adj. MCH1）", "細分品類 × 供應類型"),
         ("By Shop", "每間店舖每月合計＋環比變化＋RF→ND／ND→RF SKU數（當月）", "多店舖檔案時比較各店走勢"),
         ("RP Type 變化", "RP Type 轉變 × 月份配對統計＋首尾月份對比明細（含 Sold Qty／Net Sales 月化與 Safety Stock Qty 對比）", "重點看 RF→ND 與 ND→RF 兩列：哪些月份最多轉換；下半首尾對比看整個期間的最終轉變，以及生意與 Safety 設定的前後變化"),
+        ("RP轉變生意對比", "按 RP Type 轉變 × 本月分組的生意合計與變化（事件數／SKU數／Sold／Net Sales／存貨／Safety）", "直接比較 RF→ND 群組與 RF→RF 群組的同期變化率，判斷轉 ND 對生意有無影響"),
+        ("店舖精簡成效", "每店每月 RF／ND／總 SKU 數、淨精簡數、被精簡生意基數與留存 RF 組生意對比", "總 SKU 下降而留存 RF 組生意上升，即精簡後其餘 SKU 承接生意"),
+        ("轉變前後追蹤(T0)", "RF→ND 與 ND→RF 事件以轉變本月為 T0 的 T-1／T0／T+1 對比＋去化狀態", "逐列查看轉 ND 後次月是否去化（已清空／去化中）或滯留"),
         ("月度摘要", "指標卡（含 RF→ND／ND→RF 一排）＋每月合計", "管理層概覽"),
         ("RAW", "原始明細＋YEAR-MONTH 與月化估算欄", "核對逐列數值"),
     ]
@@ -1289,6 +1740,8 @@ def _write_safety_monthly_guide_sheet(ws, stats):
         "數據截止日與最新月份不一致時，最新月份不作月化（係數為 1），並列出警告。",
         "上月缺資料的組合不計變化，屬新增組合；變化率分母為 0 時留空。",
         "RF→ND 的 SKU 轉為不可補貨後，留意其後月份 Sold Qty 與 Net Sales 是否受影響；ND→RF 則留意補貨是否恢復。",
+        "判斷轉 ND 對生意有無影響時，以 RP轉變生意對比的群組變化率為準，而非全店合計；全店合計同時受持續群組影響。",
+        "驗證精簡假設時，以店舖精簡成效的留存 RF 組變化為準；若留存組上升而全店持平或上升，表示其餘 SKU 已承接被精簡 SKU 的生意。",
     ]
     _write_guide_sheet(
         ws, title="Safety Stock 月度變化分析 說明與導讀",
@@ -1307,8 +1760,11 @@ def generate_excel_safety_monthly(
     stats: dict | None = None,
     progress_callback=None,
     include_raw: bool = True,
+    rp_cohort_df: pd.DataFrame | None = None,
+    shop_effect_df: pd.DataFrame | None = None,
+    t0_df: pd.DataFrame | None = None,
 ) -> BytesIO:
-    """Safety Stock 月度變化分析輸出九個工作表（說明預設開啟）。"""
+    """Safety Stock 月度變化分析輸出十二個工作表（說明預設開啟）。"""
     wb = Workbook()
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
@@ -1355,7 +1811,33 @@ def generate_excel_safety_monthly(
                          progress_callback, 0.7, 0.76)
 
     if progress_callback:
-        progress_callback(0.78, "建立月度摘要...")
+        progress_callback(0.76, "建立 RP 轉變生意對比...")
+    _rp_cohort = rp_cohort_df
+    if _rp_cohort is None:
+        _rp_cohort = (stats or {}).get("rp_cohort")
+    if _rp_cohort is None:
+        _rp_cohort = _build_safm_rp_cohort(change_df)
+    ws_cohort = wb.create_sheet(title="RP轉變生意對比")
+    _write_safm_table_sheet(ws_cohort, _rp_cohort, progress_callback, 0.76, 0.79)
+
+    if progress_callback:
+        progress_callback(0.79, "建立店舖精簡成效...")
+    _shop_effect = shop_effect_df
+    if _shop_effect is None:
+        _shop_effect = (stats or {}).get("shop_effect")
+    ws_effect = wb.create_sheet(title="店舖精簡成效")
+    _write_safm_table_sheet(ws_effect, _shop_effect, progress_callback, 0.79, 0.82)
+
+    if progress_callback:
+        progress_callback(0.82, "建立轉變前後追蹤...")
+    _t0 = t0_df
+    if _t0 is None:
+        _t0 = (stats or {}).get("t0_track")
+    ws_t0 = wb.create_sheet(title="轉變前後追蹤(T0)")
+    _write_safm_table_sheet(ws_t0, _t0, progress_callback, 0.82, 0.85)
+
+    if progress_callback:
+        progress_callback(0.85, "建立月度摘要...")
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
@@ -1366,7 +1848,7 @@ def generate_excel_safety_monthly(
     _write_metric_cards(
         ws_dash, "Safety Stock 月度變化摘要 (Monthly Safety Review Dashboard)",
         row1, row2, thin_border, desc_font, progress_callback,
-        progress_pct=0.82, row3_metrics=row3,
+        progress_pct=0.86, row3_metrics=row3,
     )
     ym_list = (stats or {}).get("ym_list") or []
     if ym_list and shop_pivot is not None and not shop_pivot.empty:
