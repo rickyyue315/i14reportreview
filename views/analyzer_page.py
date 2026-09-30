@@ -4247,7 +4247,7 @@ if uploaded_file is not None:
                 if mch1_df is not None and not mch1_df.empty:
                     _mch1_disp = mch1_df if _safm_m == "全部" else mch1_df[mch1_df["項目"].str.startswith(_safm_m)]
                     st.dataframe(_mch1_disp.rename(columns=_display_safety_header), width='stretch', hide_index=True)
-                    st.caption("Net Sales 以月化基準加總（2 位小數）；Net Stock Qty 為店舖存貨 Shop Stock Qty (CM) 合計；月環比% 上月為 0 或首月留空。")
+                    st.caption("Net Sales 以月化基準加總（2 位小數）；Net Stock Qty 為店舖存貨 Shop Stock Qty (CM) 合計；月環比% 上月為 0 或首月留空；RF→ND SKU數／ND→RF SKU數 為該維度整個期間發生轉變的不重複 SKU 數。")
                 else:
                     st.info("無符合資料")
             with tab_sst:
@@ -4256,7 +4256,7 @@ if uploaded_file is not None:
                 if sst_df is not None and not sst_df.empty:
                     _sst_disp = sst_df if _safm_s == "全部" else sst_df[sst_df["項目"].str.startswith(_safm_s)]
                     st.dataframe(_sst_disp.rename(columns=_display_safety_header), width='stretch', hide_index=True)
-                    st.caption("Net Sales 以月化基準加總（2 位小數）；Net Stock Qty 為店舖存貨 Shop Stock Qty (CM) 合計；月環比% 上月為 0 或首月留空。")
+                    st.caption("Net Sales 以月化基準加總（2 位小數）；Net Stock Qty 為店舖存貨 Shop Stock Qty (CM) 合計；月環比% 上月為 0 或首月留空；RF→ND SKU數／ND→RF SKU數 為該維度整個期間發生轉變的不重複 SKU 數。")
                 else:
                     st.info("無符合資料")
             with tab_cross:
@@ -4265,13 +4265,14 @@ if uploaded_file is not None:
                 if cross_df is not None and not cross_df.empty:
                     _cross_disp = cross_df if _safm_c == "全部" else cross_df[cross_df["項目"].str.startswith(_safm_c)]
                     st.dataframe(_cross_disp.head(200).rename(columns=_display_safety_header), width='stretch', hide_index=True)
-                    st.caption(f"共 {len(_cross_disp):,} 列；僅顯示前 200 筆。")
+                    st.caption(f"共 {len(_cross_disp):,} 列；僅顯示前 200 筆；RF→ND SKU數／ND→RF SKU數 為該組合整個期間發生轉變的不重複 SKU 數。")
                 else:
                     st.info("無符合資料")
             with tab_shop:
                 st.markdown("#### By Shop 每月合計＋環比變化")
                 if shop_df is not None and not shop_df.empty:
                     st.dataframe(shop_df.rename(columns=_display_safety_header), width='stretch', hide_index=True)
+                    st.caption("RF→ND SKU數／ND→RF SKU數 為該店舖整個期間發生轉變的不重複 SKU 數（各月份列重複顯示同一值）。")
                 else:
                     st.info("無符合資料")
             with tab_rp:

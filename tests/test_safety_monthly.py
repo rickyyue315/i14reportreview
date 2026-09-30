@@ -205,7 +205,13 @@ def test_pivots_three_blocks_four_metrics():
         "Net Sales 原始合計", "Net Sales 月化合計",
         "Net Stock Qty 合計",
         "Sold Qty 環比變化", "Net Sales 環比變化", "Safety Stock Qty 環比變化",
+        "RF→ND SKU數", "ND→RF SKU數",
     ]
+    # 樞紐表尾附 RF→ND／ND→RF SKU數（此資料全為 RF→RF，故為 0）
+    assert list(mch1.columns)[-2:] == ["RF→ND SKU數", "ND→RF SKU數"]
+    assert (mch1["RF→ND SKU數"] == 0).all() and (mch1["ND→RF SKU數"] == 0).all()
+    assert list(sst.columns)[-2:] == ["RF→ND SKU數", "ND→RF SKU數"]
+    assert list(cross.columns)[-2:] == ["RF→ND SKU數", "ND→RF SKU數"]
     assert "YEAR-MONTH" in raw.columns
 
 
@@ -228,6 +234,9 @@ def test_excel_pivot_side_by_side_layout():
     assert ws.cell(1, 6).value == "項目" and ws.cell(1, 9).value == "全部合計"
     assert ws.cell(1, 10).value == "項目" and ws.cell(1, 13).value == "全部合計"
     assert ws.cell(1, 14).value == "項目" and ws.cell(1, 17).value == "全部合計"
+    # 附加統計欄（RF→ND／ND→RF SKU數）置於四個區塊之後
+    assert ws.cell(1, 18).value == "RF→ND SKU數" and ws.cell(1, 19).value == "ND→RF SKU數"
+    assert ws.cell(2, 18).value == 0 and ws.cell(2, 19).value == 0
     # 第一段（每月合計）：一列一維度，四區塊並排
     assert ws.cell(2, 1).value == "SST1"
     assert [ws.cell(2, c).value for c in (2, 6, 10, 14)] == [
@@ -377,6 +386,37 @@ def test_rp_endpoints_zero_base_rate_blank():
     assert row["Net Sales 變化率"] is None or pd.isna(row["Net Sales 變化率"])
     assert row["Sold Qty 變化量(月化基準)"] == 30
     assert row["Net Sales 變化量(月化基準)"] == 300.0
+
+
+def test_rp_sku_counts_in_pivots_and_shop():
+    # 樞紐與 By Shop 附 RF→ND SKU數／ND→RF SKU數（整個期間不重複 SKU；總計列為全檔不重複）
+    change, mch1, sst, cross, shop, raw, stats, _ = _run([
+        # SST1／01 - SKIN CARE：SKU1、SKU2 皆 RF→ND
+        {"SKU": 1, "Month": 5, "Adj. SST": "SST1", "Adj. MCH1": "01 - SKIN CARE", "RP Type": "RF"},
+        {"SKU": 1, "Month": 6, "Adj. SST": "SST1", "Adj. MCH1": "01 - SKIN CARE", "RP Type": "ND"},
+        {"SKU": 2, "Month": 5, "Adj. SST": "SST1", "Adj. MCH1": "01 - SKIN CARE", "RP Type": "RF"},
+        {"SKU": 2, "Month": 6, "Adj. SST": "SST1", "Adj. MCH1": "01 - SKIN CARE", "RP Type": "ND"},
+        # SST2／02 - MAKE UP：SKU3 ND→RF
+        {"SKU": 3, "Month": 5, "Adj. SST": "SST2", "Adj. MCH1": "02 - MAKE UP", "RP Type": "ND"},
+        {"SKU": 3, "Month": 6, "Adj. SST": "SST2", "Adj. MCH1": "02 - MAKE UP", "RP Type": "RF"},
+        # SST1：SKU4 RF→RF 不計入
+        {"SKU": 4, "Month": 5, "Adj. SST": "SST1", "Adj. MCH1": "01 - SKIN CARE", "RP Type": "RF"},
+        {"SKU": 4, "Month": 6, "Adj. SST": "SST1", "Adj. MCH1": "01 - SKIN CARE", "RP Type": "RF"},
+    ])
+    sst1 = sst[sst["Adj. SST"] == "SST1"].iloc[0]
+    assert (sst1["RF→ND SKU數"], sst1["ND→RF SKU數"]) == (2, 0)
+    sst2 = sst[sst["Adj. SST"] == "SST2"].iloc[0]
+    assert (sst2["RF→ND SKU數"], sst2["ND→RF SKU數"]) == (0, 1)
+    sst_total = sst[sst["Adj. SST"] == "總計"].iloc[0]
+    assert (sst_total["RF→ND SKU數"], sst_total["ND→RF SKU數"]) == (2, 1)
+    m01 = mch1[mch1["Adj. MCH1"] == "01 - SKIN CARE"].iloc[0]
+    assert (m01["RF→ND SKU數"], m01["ND→RF SKU數"]) == (2, 0)
+    cr = cross[(cross["Adj. MCH1"] == "01 - SKIN CARE") & (cross["Adj. SST"] == "SST1")].iloc[0]
+    assert (cr["RF→ND SKU數"], cr["ND→RF SKU數"]) == (2, 0)
+    cross_total = cross[cross["Adj. MCH1"] == "總計"].iloc[0]
+    assert (cross_total["RF→ND SKU數"], cross_total["ND→RF SKU數"]) == (2, 1)
+    # By Shop：同店各月份列重複顯示同一值
+    assert (shop["RF→ND SKU數"] == 2).all() and (shop["ND→RF SKU數"] == 1).all()
 
 
 def test_rp_endpoints_empty():

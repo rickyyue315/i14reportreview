@@ -1,5 +1,17 @@
 # 版本記錄
 
+## v1.71.0 (2026-09-30)
+
+Safety Stock 月度變化分析三個樞紐（By Adj. MCH1／By Adj. SST／By MCH1×SST）與 By Shop 加入 RF→ND SKU數／ND→RF SKU數 統計；其餘模式零變動：
+
+- **統計欄** — 新增 `_safm_rp_sku_counts()`：按維度（Adj. MCH1／Adj. SST／MCH1×SST）或店舖（Site Code）統計整個期間發生 RF→ND／ND→RF 轉變的不重複 SKU 數（取自 SKU月度變化事件；樞紐總計列為全檔不重複 SKU 數，各維度相加可大於總計——同一 SKU 可在多個維度轉變）
+- **樞紐** — 四項指標區塊之後附加「RF→ND SKU數」「ND→RF SKU數」兩欄，同一維度各段列顯示同一值，總計列為全檔數；Excel 寫表改以「全部合計」欄位定位，支援區塊後附加欄
+- **By Shop** — 表尾新增同兩欄，同店各月份列重複顯示同一值
+- **欄寬** — `_safm_cjk_len()` 將模糊寬度字元（如「→」「×」）計為 2 個字元寬，表頭預留按鈕寬度加大至 4.5，修復新欄表頭「數」字被自動篩選按鈕遮尾
+- **介面與文件** — Streamlit 三個樞紐與 By Shop 分頁說明文字、說明頁導讀、使用說明頁、README 同步
+- **測試** — 新增 `test_rp_sku_counts_in_pivots_and_shop`（各維度／店舖計數、總計列全檔不重複、By Shop 重複顯示）；樞紐欄序與 Excel 版面測試同步；全量 532 項通過；HA19 樣本視覺複核通過（01 - Local：RF→ND 417 SKU／ND→RF 75 SKU；全檔 1,195／165）
+- Change: `version.py` → 1.71.0
+
 ## v1.70.1 (2026-09-30)
 
 Safety Stock 月度變化分析執行速度優化，輸出零變動（報表轉換與 Excel 逐格內容、數字格式、對齊完全等價）：

@@ -21,10 +21,10 @@
 輸出九個工作表：
 1. 說明 — 本次執行參數、核心邏輯與工作表導讀（預設開啟頁）
 2. SKU月度變化 — 每組 ``Site Code × SKU`` 相鄰月份環比事件（上月缺資料者標示新增組合）
-3. By Adj. MCH1 — 三段式樞紐，四項指標區塊左右並排（每月合計／月環比%／月環比）
+3. By Adj. MCH1 — 三段式樞紐，四項指標區塊左右並排（每月合計／月環比%／月環比）＋RF→ND／ND→RF SKU數
 4. By Adj. SST — 各 SST 三段式樞紐（版面同 By Adj. MCH1）
 5. By MCH1×SST — MCH1 與 SST 組合三段式樞紐（版面同 By Adj. MCH1）
-6. By Shop — 每間店舖每月合計＋環比變化
+6. By Shop — 每間店舖每月合計＋環比變化＋RF→ND／ND→RF SKU數
 7. RP Type 變化 — RP Type 轉變 × 月份配對統計＋首尾月份對比明細（含最早／最新月份 Sold Qty 月化、Net Sales 月化與 Safety Stock Qty 對比）
 8. 月度摘要 — 指標卡＋每月合計表
 9. RAW — 原始明細＋YEAR-MONTH 與月化估算欄
@@ -82,6 +82,9 @@ __all__ = [
 # Net Stock Qty＝店舖存貨 Shop Stock Qty (CM) 合計（時點快照）；Safety Stock Qty＝Adj. Safety Stock 合計。
 _SAFM_PIVOT_METRICS = ("Sold Qty", "Net Sales", "Net Stock Qty", "Safety Stock Qty")
 
+# 樞紐與 By Shop 附加的 RP 轉變 SKU 統計欄（整個期間不重複 SKU 數）
+_SAFM_RP_SKU_COUNT_COLUMNS = ("RF→ND SKU數", "ND→RF SKU數")
+
 # RP Type 轉變固定顯示順序（RF→ND 與 ND→RF 為重點觀察對象，置於後方兩列）
 _SAFM_RP_ORDER = ("RF→RF", "ND→ND", "RF→ND", "ND→RF")
 
@@ -123,6 +126,7 @@ _SAFM_SHOP_COLUMNS = [
     "Net Sales 原始合計", "Net Sales 月化合計",
     "Net Stock Qty 合計",
     "Sold Qty 環比變化", "Net Sales 環比變化", "Safety Stock Qty 環比變化",
+    "RF→ND SKU數", "ND→RF SKU數",
 ]
 
 
@@ -488,10 +492,26 @@ def transform_safety_monthly(
 
     if progress_callback:
         progress_callback(0.65, "建立維度樞紐...")
-    mch1_pivot = _build_safm_metric_pivot(monthly, "mch1", "Adj. MCH1", ym_keys)
-    sst_pivot = _build_safm_metric_pivot(monthly, "sst", "Adj. SST", ym_keys)
-    mch1_sst_pivot = _build_safm_metric_pivot(monthly, ["mch1", "sst"], None, ym_keys)
-    shop_pivot = _build_safm_shop_pivot(monthly, ym_keys)
+    _mch1_counts_raw, _rp_totals = _safm_rp_sku_counts(change_df, ["Adj. MCH1"])
+    _sst_counts_raw, _ = _safm_rp_sku_counts(change_df, ["Adj. SST"])
+    _cross_counts_raw, _ = _safm_rp_sku_counts(change_df, ["Adj. MCH1", "Adj. SST"])
+    _shop_counts, _ = _safm_rp_sku_counts(change_df, ["Site Code"])
+    mch1_pivot = _build_safm_metric_pivot(
+        monthly, "mch1", "Adj. MCH1", ym_keys,
+        rp_counts={_blank_dim(k[0]): v for k, v in _mch1_counts_raw.items()},
+        rp_totals=_rp_totals,
+    )
+    sst_pivot = _build_safm_metric_pivot(
+        monthly, "sst", "Adj. SST", ym_keys,
+        rp_counts={_blank_dim(k[0]): v for k, v in _sst_counts_raw.items()},
+        rp_totals=_rp_totals,
+    )
+    mch1_sst_pivot = _build_safm_metric_pivot(
+        monthly, ["mch1", "sst"], None, ym_keys,
+        rp_counts={"｜".join(k): v for k, v in _cross_counts_raw.items()},
+        rp_totals=_rp_totals,
+    )
+    shop_pivot = _build_safm_shop_pivot(monthly, ym_keys, rp_counts=_shop_counts)
 
     if progress_callback:
         progress_callback(0.8, "整理 RAW 明細...")
@@ -577,13 +597,16 @@ def _safm_dim_cells(dim_val: str, dim_cols: list[str]) -> dict:
 
 
 def _build_safm_metric_pivot(
-    monthly: pd.DataFrame, group_keys, header, ym_keys: list[int]
+    monthly: pd.DataFrame, group_keys, header, ym_keys: list[int],
+    rp_counts: dict | None = None, rp_totals: dict | None = None,
 ) -> pd.DataFrame:
     """維度樞紐（三段式：每月合計 → 月環比% → 月環比絕對值，四項指標齊列）。
 
     每個指標連續三列（項目＝「{指標} 每月合計」「{指標} 月環比%」「{指標} 月環比」），
     欄為維度欄＋項目＋各 YEAR-MONTH＋全部合計（環比兩列的全部合計留空）。
     月環比% 為顯示字串（上月為 0 或首月留空）；其餘為數值。
+    表尾另附 RF→ND SKU數／ND→RF SKU數（整個期間該維度發生轉變的不重複 SKU 數；
+    rp_counts 以樞紐的維度值為 key，rp_totals 供總計列使用，全檔不重複 SKU 數）。
     """
     if monthly is None or monthly.empty:
         return pd.DataFrame()
@@ -598,6 +621,8 @@ def _build_safm_metric_pivot(
         dim_cols = [header]
     ym_labels = [_ym_label(k // 100, k % 100) for k in ym_keys]
     dim_vals = sorted(df["_dim"].unique().tolist())
+    _rp_counts = rp_counts or {}
+    _rp_totals = rp_totals or {}
 
     # P0：單次 groupby 聚合取代逐維度×逐月的全表布林掃描（後者接近平方級增長）。
     # 缺組合（某維度某月無資料）以 0 補，與原「空群組回 0」一致。
@@ -656,16 +681,25 @@ def _build_safm_metric_pivot(
                     )
                 else:
                     row["全部合計"] = None
+                _counts_src = _rp_totals if dim_val == "總計" else _rp_counts.get(dim_val) or {}
+                for _label in _SAFM_RP_SKU_COUNT_COLUMNS:
+                    row[_label] = int(_counts_src.get(_label, 0))
                 rows.append(row)
-    cols = dim_cols + ["項目"] + ym_labels + ["全部合計"]
+    cols = dim_cols + ["項目"] + ym_labels + ["全部合計"] + list(_SAFM_RP_SKU_COUNT_COLUMNS)
     return pd.DataFrame(rows, columns=cols)
 
 
-def _build_safm_shop_pivot(monthly: pd.DataFrame, ym_keys: list[int]) -> pd.DataFrame:
-    """By Shop：每間店舖每月合計＋環比變化（月化基準）。"""
+def _build_safm_shop_pivot(monthly: pd.DataFrame, ym_keys: list[int],
+                           rp_counts: dict | None = None) -> pd.DataFrame:
+    """By Shop：每間店舖每月合計＋環比變化（月化基準）。
+
+    表尾另附 RF→ND SKU數／ND→RF SKU數（整個期間該店舖發生轉變的不重複 SKU 數，
+    同店各月份列重複顯示同一值）。
+    """
     if monthly is None or monthly.empty:
         return pd.DataFrame(columns=_SAFM_SHOP_COLUMNS)
     df = monthly.copy()
+    _rp_counts = rp_counts or {}
     ym_labels = {k: _ym_label(k // 100, k % 100) for k in ym_keys}
     rows = []
     for site, g_site in df.groupby("_site", sort=True):
@@ -674,6 +708,7 @@ def _build_safm_shop_pivot(monthly: pd.DataFrame, ym_keys: list[int]) -> pd.Data
         _names = _names[_names.str.strip() != ""]
         if len(_names):
             shop_name = str(_names.iloc[0])
+        _shop_counts = _rp_counts.get((site,)) or {}
         prev_sold = prev_net = prev_safety = None
         for key in ym_keys:
             gg = g_site[g_site["_ym"] == key]
@@ -699,9 +734,39 @@ def _build_safm_shop_pivot(monthly: pd.DataFrame, ym_keys: list[int]) -> pd.Data
                 "Net Stock Qty 合計": stock_sum,
                 "Sold Qty 環比變化": sold_chg, "Net Sales 環比變化": net_chg,
                 "Safety Stock Qty 環比變化": safety_chg,
+                "RF→ND SKU數": int(_shop_counts.get("RF→ND SKU數", 0)),
+                "ND→RF SKU數": int(_shop_counts.get("ND→RF SKU數", 0)),
             })
             prev_sold, prev_net, prev_safety = sold_adj, net_adj, safety_sum
     return pd.DataFrame(rows, columns=_SAFM_SHOP_COLUMNS)
+
+
+def _safm_rp_sku_counts(change_df: pd.DataFrame, keys: list[str]) -> tuple[dict, dict]:
+    """按維度統計 RP 轉變涉及的不重複 SKU 數（RF→ND／ND→RF，整個期間）。
+
+    keys 為 change_df 的分組欄（如 ["Adj. MCH1"] 或 ["Adj. MCH1", "Adj. SST"]）。
+    回傳 (每維度計數, 全檔總計)：
+    - 每維度計數：{dim_tuple: {"RF→ND SKU數": n, "ND→RF SKU數": m}}（僅列有轉變的維度）
+    - 全檔總計：{"RF→ND SKU數": n, "ND→RF SKU數": m}（全檔不重複 SKU 數，
+      非各維度相加——同一 SKU 可在多個維度發生轉變）
+    """
+    empty_totals = {"RF→ND SKU數": 0, "ND→RF SKU數": 0}
+    if change_df is None or change_df.empty or not all(k in change_df.columns for k in keys):
+        return {}, empty_totals
+    by_dim: dict[tuple, dict] = {}
+    for trans, label in (("RF→ND", "RF→ND SKU數"), ("ND→RF", "ND→RF SKU數")):
+        sub = change_df.loc[change_df["RP Type 轉變"] == trans]
+        if sub.empty:
+            continue
+        for dim_vals, n in sub.groupby(keys)["SKU"].nunique().items():
+            key = dim_vals if isinstance(dim_vals, tuple) else (dim_vals,)
+            by_dim.setdefault(key, {})[label] = int(n)
+    totals = dict(empty_totals)
+    for trans, label in (("RF→ND", "RF→ND SKU數"), ("ND→RF", "ND→RF SKU數")):
+        sub = change_df.loc[change_df["RP Type 轉變"] == trans]
+        if not sub.empty:
+            totals[label] = int(sub["SKU"].nunique())
+    return by_dim, totals
 
 
 def _build_safm_rp_summary(change_df: pd.DataFrame) -> pd.DataFrame:
@@ -877,21 +942,27 @@ _SAFM_PIVOT_BLOCKS = ("每月合計", "月環比%", "月環比")
 
 
 def _safm_cjk_len(text: str) -> float:
-    return sum(2.0 if unicodedata.east_asian_width(c) in ("W", "F") else 1.0 for c in str(text))
+    # 全形（W／F）與模糊寬度（A，如「→」「×」）在 Excel 一律以約 2 個字元寬渲染
+    return sum(
+        2.0 if unicodedata.east_asian_width(c) in ("W", "F", "A") else 1.0
+        for c in str(text)
+    )
 
 
-def _safm_fit_pivot_columns(ws, dim_count: int, ym_count: int):
+def _safm_fit_pivot_columns(ws, dim_count: int, ym_count: int, extra_count: int = 0):
     """並排樞紐欄寬：按格式化後的顯示字元數計算（數值含千分位／小數），
     表頭預留自動篩選按鈕寬度，避免出現 ########## 或月份表頭被按鈕遮尾。"""
     block_width = 1 + ym_count + 1
-    n_cols = dim_count + len(_SAFM_PIVOT_METRICS) * block_width
+    metric_span = len(_SAFM_PIVOT_METRICS) * block_width
+    n_cols = dim_count + metric_span + extra_count
     for col_idx in range(1, n_cols + 1):
         header = str(ws.cell(row=1, column=col_idx).value or "")
-        need = _safm_cjk_len(header) + 3.5
+        need = _safm_cjk_len(header) + 4.5
         money = False
-        if col_idx > dim_count:
-            offset = (col_idx - dim_count - 1) % block_width
-            metric_idx = (col_idx - dim_count - 1) // block_width
+        if dim_count < col_idx <= dim_count + metric_span:
+            rel = col_idx - dim_count - 1
+            offset = rel % block_width
+            metric_idx = rel // block_width
             money = offset > 0 and _SAFM_PIVOT_METRICS[metric_idx] == "Net Sales"
         for row_idx in range(2, ws.max_row + 1):
             v = ws.cell(row=row_idx, column=col_idx).value
@@ -911,6 +982,7 @@ def _write_safm_pivot_sheet(ws, df: pd.DataFrame, progress_callback=None,
 
     版面：維度欄置最左（只出現一次），其後 Sold Qty／Net Sales／Net Stock Qty／
     Safety Stock Qty 各成一個區塊，每區塊自帶「項目」＋各 YEAR-MONTH＋「全部合計」欄；
+    區塊之後為附加統計欄（RF→ND SKU數／ND→RF SKU數，同一維度各列相同）；
     上中下三段為每月合計 → 月環比% → 月環比，每段一列一維度，總計列（粗體灰底）置於段末。
     輸入仍為長格式樞紐表（每指標連續三列），於寫出時重排為並排區塊。
     """
@@ -930,8 +1002,10 @@ def _write_safm_pivot_sheet(ws, df: pd.DataFrame, progress_callback=None,
         return
     headers = list(df.columns)
     item_idx = headers.index("項目")
+    total_idx = headers.index("全部合計")
     dim_cols = headers[:item_idx]
-    ym_cols = headers[item_idx + 1:-1]  # 「全部合計」固定為最後一欄
+    ym_cols = headers[item_idx + 1:total_idx]
+    extra_cols = headers[total_idx + 1:]  # 區塊之後的附加統計欄（如 RF→ND／ND→RF SKU數）
     block_width = 1 + len(ym_cols) + 1
 
     def _split_item(text: str) -> tuple[str, str]:
@@ -953,6 +1027,7 @@ def _write_safm_pivot_sheet(ws, df: pd.DataFrame, progress_callback=None,
     header_cells = list(dim_cols)
     for _metric in _SAFM_PIVOT_METRICS:
         header_cells += ["項目"] + list(ym_cols) + ["全部合計"]
+    header_cells += list(extra_cols)
     for col_idx, h in enumerate(header_cells, 1):
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = header_font
@@ -984,7 +1059,7 @@ def _write_safm_pivot_sheet(ws, df: pd.DataFrame, progress_callback=None,
                     item_cell.fill = total_fill
                 row_data = lookup.get((dim_key, block, metric))
                 values = (
-                    row_data[item_idx + 1:]
+                    row_data[item_idx + 1:total_idx + 1]
                     if row_data is not None else [None] * (block_width - 1)
                 )
                 is_money = metric == "Net Sales"
@@ -1001,6 +1076,29 @@ def _write_safm_pivot_sheet(ws, df: pd.DataFrame, progress_callback=None,
                         cell.font = total_font
                         cell.fill = total_fill
                 base_col += block_width
+            if extra_cols:
+                # 附加統計欄（同一維度各列相同），取該維度任一列的值寫出
+                _extra_row = next(
+                    (lookup[(dim_key, block, m)] for m in _SAFM_PIVOT_METRICS
+                     if (dim_key, block, m) in lookup),
+                    None,
+                )
+                _extra_values = (
+                    list(_extra_row[total_idx + 1:])
+                    if _extra_row is not None else [None] * len(extra_cols)
+                )
+                for j, v in enumerate(_extra_values):
+                    cell = ws.cell(
+                        row=row_idx, column=base_col + 1 + j,
+                        value=None if pd.isna(v) else v,
+                    )
+                    cell.border = thin_border
+                    cell.alignment = right
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        cell.number_format = "#,##0"
+                    if is_total:
+                        cell.font = total_font
+                        cell.fill = total_fill
             written += 1
             if progress_callback and (written % 200 == 0 or written == total_rows):
                 p = progress_start + (progress_end - progress_start) * (written / max(total_rows, 1))
@@ -1008,7 +1106,7 @@ def _write_safm_pivot_sheet(ws, df: pd.DataFrame, progress_callback=None,
 
     ws.auto_filter.ref = ws.dimensions
     ws.freeze_panes = f"{get_column_letter(len(dim_cols) + 1)}2"
-    _safm_fit_pivot_columns(ws, len(dim_cols), len(ym_cols))
+    _safm_fit_pivot_columns(ws, len(dim_cols), len(ym_cols), len(extra_cols))
 
 
 def _write_safm_block(ws, df: pd.DataFrame, start_row: int = 1,
@@ -1167,14 +1265,16 @@ def _write_safety_monthly_guide_sheet(ws, stats):
         "Net Stock Qty＝店舖存貨 Shop Stock Qty (CM) 合計（時點快照）；Safety Stock Qty＝Adj. Safety Stock 合計。",
         "樞紐三段式：每月合計 → 月環比%（上月為 0 或首月留空）→ 月環比絕對值；"
         "四項指標區塊左右並排，每區塊各含項目、各月與全部合計欄，每段一列一維度，總計列置於段末。",
+        "RF→ND SKU數／ND→RF SKU數：三個樞紐按維度、By Shop 按店舖，統計整個期間發生該轉變的不重複 SKU 數"
+        "（取自 SKU月度變化事件；總計列為全檔不重複 SKU 數，各維度相加可大於總計——同一 SKU 可在多個維度轉變）。",
     ]
     sheet_rows = [
         ("說明（本頁）", "月化邏輯、本次參數與導讀", "先核對覆蓋月份與月化係數是否符合預期"),
         ("SKU月度變化", "每組相鄰月份環比事件（上月／本月值＋變化量＋變化率）", "篩選 Safety Stock Qty 變化分類＝增加／減少，查看同期 Sold Qty 與 Net Sales 變化"),
-        ("By Adj. MCH1", "各 MCH1 三段式樞紐（四項指標區塊左右並排：每月合計／月環比%／月環比）", "先看每月合計，再看月環比% 找變動最大的品類"),
+        ("By Adj. MCH1", "各 MCH1 三段式樞紐（四項指標區塊左右並排：每月合計／月環比%／月環比）＋RF→ND／ND→RF SKU數", "先看每月合計，再看月環比% 找變動最大的品類"),
         ("By Adj. SST", "各 SST 三段式樞紐（版面同 By Adj. MCH1）", "比較不同供應類型每月生意變化"),
         ("By MCH1×SST", "MCH1 與 SST 組合三段式樞紐（版面同 By Adj. MCH1）", "細分品類 × 供應類型"),
-        ("By Shop", "每間店舖每月合計＋環比變化", "多店舖檔案時比較各店走勢"),
+        ("By Shop", "每間店舖每月合計＋環比變化＋RF→ND／ND→RF SKU數", "多店舖檔案時比較各店走勢"),
         ("RP Type 變化", "RP Type 轉變 × 月份配對統計＋首尾月份對比明細（含 Sold Qty／Net Sales 月化與 Safety Stock Qty 對比）", "重點看 RF→ND 與 ND→RF 兩列：哪些月份最多轉換；下半首尾對比看整個期間的最終轉變，以及生意與 Safety 設定的前後變化"),
         ("月度摘要", "指標卡（含 RF→ND／ND→RF 一排）＋每月合計", "管理層概覽"),
         ("RAW", "原始明細＋YEAR-MONTH 與月化估算欄", "核對逐列數值"),
