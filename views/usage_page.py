@@ -307,7 +307,7 @@ Safety Stock 月度變化計算：
 2. **月化** = 最新月份 Sold Qty 月化＝Sold Qty (CM - MTD) × 係數、Net Sales 月化＝Net Sales (CM - MTD) × 係數；舊月份係數為 1；Shop Stock Qty 與 Adj. Safety Stock 為快照不月化
 3. **Safety Stock Qty 變化量** = 本月 Adj. Safety Stock − 上月；正數為增加、負數為減少、零為不變（只看原始值，不作建議值計算）
 4. **RP Type 轉變** = 上月→本月（如 RF→ND）；Sold Qty／Net Sales 變化量以月化基準計算，變化率＝變化量 ÷ 上月絕對值（上月為 0 留空）
-5. **樞紐（三段式，四項指標全稱）** = Sold Qty（Sold Qty (CM - MTD) 月化合計）／Net Sales（Net Sales (CM - MTD) 月化合計）／Net Stock Qty（店舖存貨 Shop Stock Qty (CM) 合計）／Safety Stock Qty（Adj. Safety Stock 合計）；四項指標區塊左右並排（每區塊各含項目、各月與全部合計欄），每段一列一維度、總計列置段末：每月合計 → 月環比%（上月為 0 或首月留空）→ 月環比絕對值；表尾另附 RF→ND SKU數／ND→RF SKU數（整個期間該維度或店舖發生轉變的不重複 SKU 數）
+5. **樞紐（三段式，四項指標全稱）** = Sold Qty（Sold Qty (CM - MTD) 月化合計）／Net Sales（Net Sales (CM - MTD) 月化合計）／Net Stock Qty（店舖存貨 Shop Stock Qty (CM) 合計）／Safety Stock Qty（Adj. Safety Stock 合計）；四項指標區塊左右並排（每區塊各含項目、各月與全部合計欄），每段一列一維度、總計列置段末：每月合計 → 月環比%（上月為 0 或首月留空）→ 月環比絕對值；表尾另附 RF→ND SKU數／ND→RF SKU數 分月份統計（當月發生轉變的不重複 SKU 數，按轉變的「本月」歸月；全部合計為整個期間）
      """),
 
 ]
