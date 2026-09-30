@@ -255,5 +255,5 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 
 - **前端/框架**: Streamlit
 - **資料處理**: Pandas, NumPy
-- **Excel 產生**: OpenPyXL
+- **Excel 產生**: OpenPyXL（安裝 lxml 時改用 lxml 寫出器加速存檔）
 - **部署**: Docker, Zeabur

@@ -6,3 +6,5 @@ openpyxl==3.1.5
 pyarrow==22.0.0
 # python-calamine（Rust 解析）：上傳讀取改用 calamine 引擎，較 openpyxl 快 6 至 10 倍；不鎖版本以便各 Python 版自動取有 wheel 的最新版，缺失時程式自動退回 openpyxl
 python-calamine>=0.8.2
+# lxml：openpyxl 儲存工作簿時改用 lxml 寫出器，大報表存檔明顯較快；缺失時 openpyxl 自動退回純 Python 寫出器
+lxml>=5.0.0

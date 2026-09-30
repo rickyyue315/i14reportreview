@@ -371,12 +371,17 @@ def transform_safety_monthly(
             "Safety Stock Qty／RP Type／Adj. MCH1／Adj. SST 取首個非空值。"
         )
 
-    def _first_nonempty(s: pd.Series) -> str:
-        s = s.fillna("").astype(str)
-        s = s[s.str.strip() != ""]
-        return s.iloc[0] if len(s) else ""
+    # P0：文字欄「首個非空值」改以空字串遮成 NaN＋內建 first 聚合（Cython 路徑）。
+    # 自訂 Python 函數會令 pandas 放棄快速路徑、逐組逐欄呼叫，為轉換階段主要瓶頸；
+    # 語意等價：first 略過 NaN＝首個非空字串，全空組聚合後回填空字串。
+    _safm_text_cols = ["_brand", "_buyer", "_mch1", "_sst", "_shop", "_desc"]
+    agg_df = tmp.copy()
+    for _c in _safm_text_cols:
+        _blank = agg_df[_c].str.strip() == ""
+        if _blank.any():
+            agg_df.loc[_blank, _c] = None
 
-    monthly = tmp.groupby(["_site", "_sku", "_ym"], sort=True).agg(
+    monthly = agg_df.groupby(["_site", "_sku", "_ym"], sort=True).agg(
         safety=("_safety", "first"),
         sold_raw=("_sold_raw", "sum"),
         sold_adj=("_sold_adj", "sum"),
@@ -384,69 +389,97 @@ def transform_safety_monthly(
         net_adj=("_net_adj", "sum"),
         stock=("_stock", "sum"),
         rp=("_rp", "first"),
-        brand=("_brand", _first_nonempty),
-        buyer=("_buyer", _first_nonempty),
-        mch1=("_mch1", _first_nonempty),
-        sst=("_sst", _first_nonempty),
-        shop=("_shop", _first_nonempty),
-        desc=("_desc", _first_nonempty),
+        brand=("_brand", "first"),
+        buyer=("_buyer", "first"),
+        mch1=("_mch1", "first"),
+        sst=("_sst", "first"),
+        shop=("_shop", "first"),
+        desc=("_desc", "first"),
     ).reset_index()
+    monthly[["brand", "buyer", "mch1", "sst", "shop", "desc"]] = (
+        monthly[["brand", "buyer", "mch1", "sst", "shop", "desc"]].fillna("")
+    )
     monthly = monthly.sort_values(["_site", "_sku", "_ym"]).reset_index(drop=True)
 
     if progress_callback:
         progress_callback(0.45, "計算相鄰月份環比事件...")
+    # P0：monthly 已按 Site Code × SKU × YEAR-MONTH 排序，同一組合的列必然相鄰，
+    # 直接以原生 list 相鄰列配對取代 groupby＋逐列 .iloc（每次 .iloc 都會重建 Series）。
+    _m_site = monthly["_site"].tolist()
+    _m_sku = monthly["_sku"].tolist()
+    _m_ym = monthly["_ym"].tolist()
+    _m_safety = monthly["safety"].tolist()
+    _m_sold_raw = monthly["sold_raw"].tolist()
+    _m_sold_adj = monthly["sold_adj"].tolist()
+    _m_net_raw = monthly["net_raw"].tolist()
+    _m_net_adj = monthly["net_adj"].tolist()
+    _m_stock = monthly["stock"].tolist()
+    _m_rp = monthly["rp"].tolist()
+    _m_brand = monthly["brand"].tolist()
+    _m_buyer = monthly["buyer"].tolist()
+    _m_mch1 = monthly["mch1"].tolist()
+    _m_sst = monthly["sst"].tolist()
+    _m_shop = monthly["shop"].tolist()
+    _m_desc = monthly["desc"].tolist()
+
     change_rows: list[dict] = []
-    for (_site, _sku), g in monthly.groupby(["_site", "_sku"], sort=False):
-        g = g.sort_values("_ym").reset_index(drop=True)
-        if len(g) < 2:
+    for i in range(1, len(monthly)):
+        if _m_site[i] != _m_site[i - 1] or _m_sku[i] != _m_sku[i - 1]:
             continue
-        for i in range(1, len(g)):
-            prev = g.iloc[i - 1]
-            curr = g.iloc[i]
-            prev_key, curr_key = int(prev["_ym"]), int(curr["_ym"])
-            safety_delta = int(curr["safety"]) - int(prev["safety"])
-            if safety_delta > 0:
-                safety_cat = "增加"
-            elif safety_delta < 0:
-                safety_cat = "減少"
-            else:
-                safety_cat = "不變"
-            rp_prev, rp_curr = str(prev["rp"]), str(curr["rp"])
-            sold_delta = int(curr["sold_adj"]) - int(prev["sold_adj"])
-            net_delta = round(float(curr["net_adj"]) - float(prev["net_adj"]), 2)
-            stock_delta = int(curr["stock"]) - int(prev["stock"])
-            change_rows.append({
-                "Site Code": _site, "Shop Name": curr["shop"], "SKU": _sku,
-                "SKU Desc": curr["desc"] or prev["desc"],
-                "Brand": curr["brand"] or prev["brand"],
-                "Buyer": curr["buyer"] or prev["buyer"],
-                "Adj. MCH1": curr["mch1"] or prev["mch1"],
-                "Adj. SST": curr["sst"] or prev["sst"],
-                "上月": _ym_label(prev_key // 100, prev_key % 100),
-                "本月": _ym_label(curr_key // 100, curr_key % 100),
-                "是否相鄰曆月": "是" if _is_calendar_adjacent(prev_key, curr_key) else "否",
-                "上月 Adj. Safety Stock": int(prev["safety"]),
-                "本月 Adj. Safety Stock": int(curr["safety"]),
-                "Safety Stock Qty 變化量": safety_delta, "Safety Stock Qty 變化分類": safety_cat,
-                "上月 RP Type": rp_prev, "本月 RP Type": rp_curr,
-                "RP Type 轉變": f"{rp_prev}→{rp_curr}",
-                "上月 Sold Qty (CM-MTD)": int(prev["sold_raw"]),
-                "本月 Sold Qty (CM-MTD)": int(curr["sold_raw"]),
-                "上月 Sold Qty 月化": int(prev["sold_adj"]),
-                "本月 Sold Qty 月化": int(curr["sold_adj"]),
-                "Sold Qty 變化量(月化基準)": sold_delta,
-                "Sold Qty 變化率": _change_rate(float(curr["sold_adj"]), float(prev["sold_adj"])),
-                "上月 Net Sales (CM-MTD)": round(float(prev["net_raw"]), 2),
-                "本月 Net Sales (CM-MTD)": round(float(curr["net_raw"]), 2),
-                "上月 Net Sales 月化": round(float(prev["net_adj"]), 2),
-                "本月 Net Sales 月化": round(float(curr["net_adj"]), 2),
-                "Net Sales 變化量(月化基準)": net_delta,
-                "Net Sales 變化率": _change_rate(float(curr["net_adj"]), float(prev["net_adj"])),
-                "上月 Shop Stock Qty (CM)": int(prev["stock"]),
-                "本月 Shop Stock Qty (CM)": int(curr["stock"]),
-                "Net Stock Qty 變化量": stock_delta,
-                "Net Stock Qty 變化率": _change_rate(float(curr["stock"]), float(prev["stock"])),
-            })
+        prev_key = int(_m_ym[i - 1])
+        curr_key = int(_m_ym[i])
+        prev_safety = int(_m_safety[i - 1])
+        curr_safety = int(_m_safety[i])
+        safety_delta = curr_safety - prev_safety
+        if safety_delta > 0:
+            safety_cat = "增加"
+        elif safety_delta < 0:
+            safety_cat = "減少"
+        else:
+            safety_cat = "不變"
+        rp_prev = str(_m_rp[i - 1])
+        rp_curr = str(_m_rp[i])
+        prev_sold_adj = int(_m_sold_adj[i - 1])
+        curr_sold_adj = int(_m_sold_adj[i])
+        sold_delta = curr_sold_adj - prev_sold_adj
+        # 變化量與變化率沿用未捨入的聚合值（與原實作一致），顯示月化值取 2 位小數
+        prev_net_adj = round(float(_m_net_adj[i - 1]), 2)
+        curr_net_adj = round(float(_m_net_adj[i]), 2)
+        net_delta = round(float(_m_net_adj[i]) - float(_m_net_adj[i - 1]), 2)
+        prev_stock = int(_m_stock[i - 1])
+        curr_stock = int(_m_stock[i])
+        change_rows.append({
+            "Site Code": _m_site[i], "Shop Name": _m_shop[i], "SKU": _m_sku[i],
+            "SKU Desc": _m_desc[i] or _m_desc[i - 1],
+            "Brand": _m_brand[i] or _m_brand[i - 1],
+            "Buyer": _m_buyer[i] or _m_buyer[i - 1],
+            "Adj. MCH1": _m_mch1[i] or _m_mch1[i - 1],
+            "Adj. SST": _m_sst[i] or _m_sst[i - 1],
+            "上月": _ym_label(prev_key // 100, prev_key % 100),
+            "本月": _ym_label(curr_key // 100, curr_key % 100),
+            "是否相鄰曆月": "是" if _is_calendar_adjacent(prev_key, curr_key) else "否",
+            "上月 Adj. Safety Stock": prev_safety,
+            "本月 Adj. Safety Stock": curr_safety,
+            "Safety Stock Qty 變化量": safety_delta, "Safety Stock Qty 變化分類": safety_cat,
+            "上月 RP Type": rp_prev, "本月 RP Type": rp_curr,
+            "RP Type 轉變": f"{rp_prev}→{rp_curr}",
+            "上月 Sold Qty (CM-MTD)": int(_m_sold_raw[i - 1]),
+            "本月 Sold Qty (CM-MTD)": int(_m_sold_raw[i]),
+            "上月 Sold Qty 月化": prev_sold_adj,
+            "本月 Sold Qty 月化": curr_sold_adj,
+            "Sold Qty 變化量(月化基準)": sold_delta,
+            "Sold Qty 變化率": _change_rate(float(curr_sold_adj), float(prev_sold_adj)),
+            "上月 Net Sales (CM-MTD)": round(float(_m_net_raw[i - 1]), 2),
+            "本月 Net Sales (CM-MTD)": round(float(_m_net_raw[i]), 2),
+            "上月 Net Sales 月化": prev_net_adj,
+            "本月 Net Sales 月化": curr_net_adj,
+            "Net Sales 變化量(月化基準)": net_delta,
+            "Net Sales 變化率": _change_rate(float(_m_net_adj[i]), float(_m_net_adj[i - 1])),
+            "上月 Shop Stock Qty (CM)": prev_stock,
+            "本月 Shop Stock Qty (CM)": curr_stock,
+            "Net Stock Qty 變化量": curr_stock - prev_stock,
+            "Net Stock Qty 變化率": _change_rate(float(curr_stock), float(prev_stock)),
+        })
     change_df = pd.DataFrame(change_rows, columns=_SAFM_CHANGE_COLUMNS)
     if not change_df.empty:
         change_df = change_df.sort_values(
@@ -518,17 +551,6 @@ def _blank_dim(value: str) -> str:
     return text if text else "空白"
 
 
-def _safm_metric_value(g: pd.DataFrame, metric: str):
-    """維度單月合計（月化基準）：Net Sales 取 2 位小數，其餘取整。"""
-    if metric == "Net Sales":
-        return round(float(g["net_adj"].sum()), 2) if not g.empty else 0.0
-    if metric == "Sold Qty":
-        return int(g["sold_adj"].sum()) if not g.empty else 0
-    if metric == "Net Stock Qty":
-        return int(g["stock"].sum()) if not g.empty else 0
-    return int(g["safety"].sum()) if not g.empty else 0
-
-
 def _safm_mom_pct(curr: float, prev: float):
     """月環比%（字串）：上月為 0 時回傳 None（留空）；零變動顯示 0.0%。"""
     try:
@@ -577,15 +599,25 @@ def _build_safm_metric_pivot(
     ym_labels = [_ym_label(k // 100, k % 100) for k in ym_keys]
     dim_vals = sorted(df["_dim"].unique().tolist())
 
+    # P0：單次 groupby 聚合取代逐維度×逐月的全表布林掃描（後者接近平方級增長）。
+    # 缺組合（某維度某月無資料）以 0 補，與原「空群組回 0」一致。
+    _agg = df.groupby(["_dim", "_ym"], sort=False)[
+        ["sold_adj", "net_adj", "stock", "safety"]
+    ].sum()
     base: dict[tuple[str, int, str], float] = {}
-    for dim_val in dim_vals:
-        for key in ym_keys:
-            gg = df[(df["_dim"] == dim_val) & (df["_ym"] == key)]
-            for metric in _SAFM_PIVOT_METRICS:
-                base[(dim_val, key, metric)] = _safm_metric_value(gg, metric)
+    for (_dim_val, _key), (_sold, _net, _stock, _safety) in zip(
+        _agg.index, _agg.itertuples(index=False, name=None)
+    ):
+        base[(_dim_val, int(_key), "Sold Qty")] = int(_sold)
+        base[(_dim_val, int(_key), "Net Sales")] = round(float(_net), 2)
+        base[(_dim_val, int(_key), "Net Stock Qty")] = int(_stock)
+        base[(_dim_val, int(_key), "Safety Stock Qty")] = int(_safety)
 
     def _total(dim_val: str | None, key: int, metric: str):
-        vals = [base[(d, key, metric)] for d in (dim_vals if dim_val is None else [dim_val])]
+        if dim_val is None:
+            vals = [base.get((d, key, metric), 0) for d in dim_vals]
+        else:
+            vals = [base.get((dim_val, key, metric), 0)]
         return round(float(sum(vals)), 2) if metric == "Net Sales" else int(sum(vals))
 
     rows = []
@@ -740,10 +772,8 @@ def _build_safm_rp_endpoints(monthly: pd.DataFrame, ym_keys: list[int]
     first_key, last_key = int(ym_keys[0]), int(ym_keys[-1])
     first_label = _ym_label(first_key // 100, first_key % 100)
     last_label = _ym_label(last_key // 100, last_key % 100)
-    first_m = monthly[monthly["_ym"] == first_key].set_index(["_site", "_sku"])
-    last_m = monthly[monthly["_ym"] == last_key].set_index(["_site", "_sku"])
-    common = first_m.index.intersection(last_m.index)
-    excluded = int(monthly[["_site", "_sku"]].drop_duplicates().shape[0] - len(common))
+    first_m = monthly[monthly["_ym"] == first_key]
+    last_m = monthly[monthly["_ym"] == last_key]
 
     def _pick(latest_val, earliest_val) -> str:
         latest_text = "" if pd.isna(latest_val) else str(latest_val).strip()
@@ -751,27 +781,42 @@ def _build_safm_rp_endpoints(monthly: pd.DataFrame, ym_keys: list[int]
             return latest_text
         return "" if pd.isna(earliest_val) else str(earliest_val).strip()
 
+    # P0：以鍵值直查（dict）取代逐組 Series.loc；monthly 主鍵唯一，
+    # 逐組順序與原 index.intersection 相同（按首月列序）。
+    _end_cols = ["shop", "desc", "brand", "buyer", "mch1", "sst", "rp", "sold_adj", "net_adj", "safety"]
+    _last = last_m.reset_index(drop=True)
+    _last_site = _last["_site"].tolist()
+    _last_sku = _last["_sku"].tolist()
+    _last_pos: dict[tuple, int] = {}
+    for _j in range(len(_last)):
+        _last_pos[(_last_site[_j], _last_sku[_j])] = _j
+    _last_val = {c: _last[c].tolist() for c in _end_cols}
+    _first_site = first_m["_site"].tolist()
+    _first_sku = first_m["_sku"].tolist()
+    _first_val = {c: first_m[c].tolist() for c in _end_cols}
+
     rows = []
-    for site, sku in common.tolist():
-        prev = first_m.loc[(site, sku)]
-        curr = last_m.loc[(site, sku)]
-        if isinstance(prev, pd.DataFrame):
-            prev = prev.iloc[0]
-        if isinstance(curr, pd.DataFrame):
-            curr = curr.iloc[0]
-        rp_prev, rp_curr = str(prev["rp"]), str(curr["rp"])
+    for _i in range(len(first_m)):
+        _key = (_first_site[_i], _first_sku[_i])
+        _j = _last_pos.get(_key)
+        if _j is None:
+            continue
+        site, sku = _key
+        rp_prev, rp_curr = str(_first_val["rp"][_i]), str(_last_val["rp"][_j])
         trans = f"{rp_prev}→{rp_curr}"
-        sold_prev, sold_curr = int(prev["sold_adj"]), int(curr["sold_adj"])
-        net_prev = round(float(prev["net_adj"]), 2)
-        net_curr = round(float(curr["net_adj"]), 2)
-        safety_prev, safety_curr = int(prev["safety"]), int(curr["safety"])
+        sold_prev, sold_curr = int(_first_val["sold_adj"][_i]), int(_last_val["sold_adj"][_j])
+        net_prev = round(float(_first_val["net_adj"][_i]), 2)
+        net_curr = round(float(_last_val["net_adj"][_j]), 2)
+        safety_prev, safety_curr = int(_first_val["safety"][_i]), int(_last_val["safety"][_j])
         rows.append({
-            "Site Code": site, "Shop Name": _pick(curr["shop"], prev["shop"]),
-            "SKU": sku, "SKU Desc": _pick(curr["desc"], prev["desc"]),
-            "Brand": _pick(curr["brand"], prev["brand"]),
-            "Buyer": _pick(curr["buyer"], prev["buyer"]),
-            "Adj. MCH1": _pick(curr["mch1"], prev["mch1"]),
-            "Adj. SST": _pick(curr["sst"], prev["sst"]),
+            "Site Code": site,
+            "Shop Name": _pick(_last_val["shop"][_j], _first_val["shop"][_i]),
+            "SKU": sku,
+            "SKU Desc": _pick(_last_val["desc"][_j], _first_val["desc"][_i]),
+            "Brand": _pick(_last_val["brand"][_j], _first_val["brand"][_i]),
+            "Buyer": _pick(_last_val["buyer"][_j], _first_val["buyer"][_i]),
+            "Adj. MCH1": _pick(_last_val["mch1"][_j], _first_val["mch1"][_i]),
+            "Adj. SST": _pick(_last_val["sst"][_j], _first_val["sst"][_i]),
             "最早月份": first_label, "最早 RP Type": rp_prev,
             "最新月份": last_label, "最新 RP Type": rp_curr,
             "首尾轉變": trans, "是否轉變": "是" if rp_prev != rp_curr else "否",
@@ -784,6 +829,7 @@ def _build_safm_rp_endpoints(monthly: pd.DataFrame, ym_keys: list[int]
             "最早 Safety Stock Qty": safety_prev, "最新 Safety Stock Qty": safety_curr,
             "Safety Stock Qty 變化量": safety_curr - safety_prev,
         })
+    excluded = int(monthly[["_site", "_sku"]].drop_duplicates().shape[0] - len(rows))
     detail = pd.DataFrame(rows, columns=_SAFM_RP_ENDPOINT_COLUMNS)
     if not detail.empty:
         _order = {t: i for i, t in enumerate(_SAFM_RP_ORDER)}
@@ -968,7 +1014,13 @@ def _write_safm_pivot_sheet(ws, df: pd.DataFrame, progress_callback=None,
 def _write_safm_block(ws, df: pd.DataFrame, start_row: int = 1,
                       progress_callback=None, progress_start=0.0, progress_end=0.1,
                       total_hint: int | None = None) -> int:
-    """於工作表寫入一個表格區塊（表頭＋資料列），回傳下一個可用列號，不設篩選與凍結。"""
+    """於工作表寫入一個表格區塊（表頭＋資料列），回傳下一個可用列號，不設篩選與凍結。
+
+    P0：逐格 isinstance／pd.isna 分支改為按欄位 dtype 預先分類——float 欄按表頭定
+    數字格式（變化率→0.00%、Net→#,##0.00、其他→#,##0）、其餘欄逐格判定，
+    Alignment／Border 物件全區塊共用，NaN 於寫出前一次性行轉 None；
+    儲存格值、數字格式與對齊與原逐格實作完全一致。
+    """
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
@@ -980,33 +1032,65 @@ def _write_safm_block(ws, df: pd.DataFrame, start_row: int = 1,
         return start_row + 2
     headers = list(df.columns)
     display = [_display_safety_header(h) for h in headers]
+    align_center = Alignment(horizontal="center", vertical="center")
+    align_wrap = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for col_idx, h in enumerate(display, 1):
         cell = ws.cell(row=start_row, column=col_idx, value=h)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.alignment = align_wrap
         cell.border = thin_border
+
+    # 欄位級預判定：(數字格式或 None, 對齊)。None＝混合型欄，逐格按值判定。
+    col_spec: list[tuple[str | None, Alignment, Alignment]] = []
+    for h, dtype in zip(headers, df.dtypes):
+        if pd.api.types.is_float_dtype(dtype):
+            if "變化率" in str(h):
+                fmt = "0.00%"
+            elif "Net" in str(h):
+                fmt = "#,##0.00"
+            else:
+                fmt = "#,##0"
+            col_spec.append((fmt, align_center, align_wrap))
+        elif pd.api.types.is_integer_dtype(dtype):
+            col_spec.append(("#,##0", align_center, align_wrap))
+        else:
+            col_spec.append((None, align_center, align_wrap))
+
+    # NaN／None 於寫出前一次性行轉 None，免去逐格 pd.isna
+    values = df.astype(object)
+    for _c in df.columns:
+        _mask = df[_c].isna()
+        if _mask.any():
+            values.loc[_mask, _c] = None
+
     total = len(df)
-    for offset, row_data in enumerate(df.itertuples(index=False, name=None), 1):
+    for offset, row_data in enumerate(values.itertuples(index=False, name=None), 1):
         row_idx = start_row + offset
-        for col_idx, (h, v) in enumerate(zip(headers, row_data), 1):
-            if pd.isna(v):
-                v = None
+        for col_idx, (v, (fmt, align_num, align_wrap_col)) in enumerate(
+            zip(row_data, col_spec), 1
+        ):
             cell = ws.cell(row=row_idx, column=col_idx, value=v)
             cell.border = thin_border
-            if isinstance(v, float):
-                if "變化率" in str(h):
+            if fmt is not None:
+                cell.alignment = align_wrap_col if v is None else align_num
+                if v is not None:
+                    cell.number_format = fmt
+            elif v is None or isinstance(v, (str, bool)):
+                cell.alignment = align_wrap_col
+            elif isinstance(v, float):
+                cell.alignment = align_num
+                if "變化率" in headers[col_idx - 1]:
                     cell.number_format = "0.00%"
-                elif "Net" in str(h):
+                elif "Net" in headers[col_idx - 1]:
                     cell.number_format = "#,##0.00"
                 else:
                     cell.number_format = "#,##0"
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+            elif isinstance(v, int):
+                cell.alignment = align_num
                 cell.number_format = "#,##0"
-                cell.alignment = Alignment(horizontal="center", vertical="center")
             else:
-                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                cell.alignment = align_wrap_col
         if progress_callback and (offset % 2000 == 0 or offset == total):
             denom = max(total_hint or total, 1)
             p = progress_start + (progress_end - progress_start) * (offset / denom)

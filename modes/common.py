@@ -426,9 +426,11 @@ def _write_raw_sheet(ws, raw_df, progress_callback=None, progress_start=0.0, pro
     # 註：必須用 Python 內建 round，不可改用 np.round／Series.round ——
     # numpy 採「縮放後 rint」法，於 .x5 進位邊界與 Python 的十進位正確捨入結果不同
     # （例 43.85、403.05），會使 RAW 輸出與拆分前不一致。
+    # P0：只預處理 float 欄——整數欄 round(x, 1) 為恆等變換，交由下方逐列
+    # append 迴圈統一處理即可，輸出完全不變。
     _round_cols = [
         c for c in raw_cols
-        if pd.api.types.is_numeric_dtype(raw_df[c])
+        if pd.api.types.is_float_dtype(raw_df[c])
         and not pd.api.types.is_bool_dtype(raw_df[c])
     ]
     if _round_cols:

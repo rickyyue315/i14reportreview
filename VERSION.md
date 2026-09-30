@@ -1,5 +1,19 @@
 # 版本記錄
 
+## v1.70.1 (2026-09-30)
+
+Safety Stock 月度變化分析執行速度優化，輸出零變動（報表轉換與 Excel 逐格內容、數字格式、對齊完全等價）：
+
+- **轉換階段（HA19 五個月樣本 19.4 秒 → 0.8 秒）** — 三處熱點改寫：
+  - 月度彙總文字欄「首個非空值」改以空字串遮成 NaN＋pandas 內建 `first` 聚合（Cython 快速路徑），取代自訂 Python 函數 `_first_nonempty`（自訂函數令 pandas 放棄快速路徑、逐組逐欄呼叫，為最大瓶頸）
+  - SKU月度變化環比事件改以原生 list 相鄰列配對，取代 groupby＋逐列 `.iloc`（每次 `.iloc` 皆重建 Series）
+  - 維度樞紐（By Adj. MCH1／By Adj. SST／By MCH1×SST）改單次 groupby 聚合，取代逐維度×逐月全表布林掃描；首尾月份 RP 對比改鍵值直查，取代逐組 `Series.loc`
+- **Excel 階段（22.1 秒 → 16.3 秒）** — 表格區塊（SKU月度變化／By Shop／RP Type 變化）寫出按欄位 dtype 預先判定數字格式與對齊、全區塊共用 Alignment／Border、NaN 一次性行轉 None（原為逐格 isinstance／pd.isna 分支且每格新建 Alignment）；RAW 預先四捨五入只處理 float 欄。餘下耗時主要為 `wb.save`（與有框線儲存格總數成正比，屬版面外觀契約）
+- **部署** — requirements.txt 新增 lxml：openpyxl 偵測到 lxml 時改用 lxml 寫出器，大報表存檔明顯較快；缺失時自動退回純 Python 寫出器（本機已裝、雲端此前未裝）
+- **等價驗證** — 改碼前後以 HA19 樣本比對：9 個工作表共 163 萬儲存格（值／數字格式／對齊）、欄寬、凍結與篩選範圍、全部 DataFrame／stats／警告，零差異；多店規模（10 店 20 萬列）轉換僅 5.5 秒（原實作同規模逾 3 分鐘）
+- **測試** — 全量 531 項通過
+- Change: `version.py` → 1.70.1
+
 ## v1.70.0 (2026-09-30)
 
 Safety Stock 月度變化分析「RP Type 變化」下半首尾月份對比明細加入最早／最新月份的生意與 Safety 對比欄；其餘模式零變動：
