@@ -285,7 +285,8 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
     """簡易調貨明細：只收錄「需要調貨=是」且實際有調入的列，把調貨來源字串
     （如「HB30:2; HB49:3」）逐段拆行，一列一筆來源店→接收店調貨。
     variant="om" 時改用同OM調貨欄位；同一接收列同一來源店重複出現時合併加總。
-    來源店名稱／OM／RP Type 以 RAW 全量建立 Site Code 查找表補回，查不到留空。"""
+    來源店名稱／OM 以 RAW 全量建立 Site Code 查找表補回；RP Type 按 Site Code × SKU
+    查找，查不到留空。"""
     cols = _HYBRID_TRANSFER_DETAIL_COLUMNS
     if raw is None or raw.empty or "需要調貨" not in raw.columns:
         return pd.DataFrame(columns=cols)
@@ -304,6 +305,7 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
         return pd.DataFrame(columns=cols)
 
     site_all = raw.get("Site Code", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
+    sku_all = raw.get("SKU", _safe_default_series("", raw.index)).fillna("").astype(str).str.strip()
     if "Shop Name" in raw.columns:
         name_all = raw["Shop Name"].fillna("").astype(str).str.strip()
     elif "Item_Shop" in raw.columns:
@@ -324,9 +326,9 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
 
     name_map: dict[str, str] = {}
     om_map: dict[str, str] = {}
-    rp_map: dict[str, str] = {}
-    for site_v, name_v, om_v, rp_v in zip(
-        site_all.to_numpy(), name_all.to_numpy(), om_all.to_numpy(), rp_all.to_numpy()
+    rp_map: dict[tuple[str, str], str] = {}
+    for site_v, sku_v, name_v, om_v, rp_v in zip(
+        site_all.to_numpy(), sku_all.to_numpy(), name_all.to_numpy(), om_all.to_numpy(), rp_all.to_numpy()
     ):
         if site_v == "":
             continue
@@ -334,17 +336,18 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
             name_map[site_v] = str(name_v)
         if om_v and site_v not in om_map:
             om_map[site_v] = str(om_v)
-        if rp_v and site_v not in rp_map:
-            rp_map[site_v] = str(rp_v)
+        if rp_v and (site_v, sku_v) not in rp_map:
+            rp_map[(site_v, sku_v)] = str(rp_v)
 
     rows = []
     for idx_pos, row in sel.iterrows():
         site_v = str(row.get("Site Code", "")).strip()
+        sku_v = str(row.get("SKU", "")).strip()
         target_name = str(row.get("Shop Name", "")).strip() if "Shop Name" in sel.columns else ""
         if not target_name:
             target_name = name_map.get(site_v, "")
         target_om = str(row.get("OM", "")).strip() or om_map.get(site_v, "")
-        target_rp = str(row.get("RP Type", "")).strip().upper() or rp_map.get(site_v, "")
+        target_rp = str(row.get("RP Type", "")).strip().upper() or rp_map.get((site_v, sku_v), "")
         per_supply: dict[str, int] = {}
         for part in str(row[src_col]).split(";"):
             part = part.strip()
@@ -373,7 +376,7 @@ def _build_hybrid_transfer_detail(raw: pd.DataFrame, variant: str = "free") -> p
                 "調貨數量": qty_n,
                 "Supply Site Code(調貨來源)": supply_site,
                 "Supply Shop Name": name_map.get(supply_site, ""),
-                "Supply RP Type": rp_map.get(supply_site, ""),
+                "Supply RP Type": rp_map.get((supply_site, sku_v), ""),
                 "Supply OM": om_map.get(supply_site, ""),
             })
     if not rows:
@@ -1121,11 +1124,12 @@ def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
         return int(stats.get(key, 0) or 0)
 
     bidir = bool(stats.get("bidirectional"))
+    rp_mode = _hybrid_dimension(stats.get("dimension")) == "rp"
     nd_prio = bool(stats.get("nd_priority"))
     row1 = [
         ("需調貨 SKU 數", g("need_skus"), "符合調貨條件的 SKU 總數（已刪除重複）", "f97316"),
         ("需要調入列數", g("need_rows"),
-         "符合調貨條件的店舖×SKU 列數（任何 Nature 皆可調入）" if bidir else "符合調貨條件的 Tourist 店舖×SKU 列數", "f59e0b"),
+         "符合調貨條件的 RF 店舖×SKU 列數（任何 Nature 皆可調入）" if bidir or rp_mode else "符合調貨條件的 Tourist 店舖×SKU 列數", "f59e0b"),
         ("轉出來源列數", g("donor_rows"),
          "實際轉出與可轉出未使用的各 Nature 列數" if bidir else "實際轉出與可轉出未使用的 Mix / Non Tourist 列數", "8b5cf6"),
         ("調入需求量", g("total_demand"), "補到 14 日周轉的總需求（件）", "3b82f6"),
@@ -1514,7 +1518,34 @@ def transform_hybrid(
     if df.empty:
         raise ValueError("過濾後無有效資料列，請確認來源檔案中的 Buyer 欄位是否包含有效數據（非空白或總計列）")
 
+    df = df.copy()
+    for column in ("Site Code", "SKU"):
+        cleaned_key = df[column].astype("string").fillna("").astype(str).str.strip()
+        missing_keys = int(cleaned_key.eq("").sum())
+        if missing_keys:
+            raise ValueError(
+                f"「{column}」有 {missing_keys} 列空白，無法可靠識別調貨店舖或商品，請修正來源資料後再執行。"
+            )
+        df[column] = cleaned_key
+    # 共用 SKU 清理會截斷數值小數；調貨前必須拒絕，避免不同商品被合併。
+    numeric_sku = pd.to_numeric(df["SKU"], errors="coerce").to_numpy(dtype=float)
+    invalid_sku = ~np.isnan(numeric_sku) & (
+        ~np.isfinite(numeric_sku) | (numeric_sku != np.floor(numeric_sku))
+    )
+    if invalid_sku.any():
+        raise ValueError("「SKU」的數值編號必須為有限整數，不得含小數或無限大，請修正來源資料後再執行。")
     df["SKU"] = df["SKU"].apply(_safe_sku)
+    duplicate_keys = df.loc[
+        df.duplicated(["Site Code", "SKU"], keep=False), ["Site Code", "SKU"]
+    ].drop_duplicates()
+    if not duplicate_keys.empty:
+        examples = "、".join(
+            f"{site} / {sku}" for site, sku in duplicate_keys.head(5).itertuples(index=False, name=None)
+        )
+        raise ValueError(
+            f"偵測到「Site Code × SKU」重複列 {len(duplicate_keys)} 組（例如：{examples}），"
+            "可能重複計算庫存、需求及轉出量；每間店舖的每個 SKU 必須只有一列，請修正來源資料後再執行。"
+        )
     # SKU Desc 缺失或全欄空白時亦補正（既有空白欄位會讓摘要 groupby 失效）
     if "SKU Desc" not in df.columns or df["SKU Desc"].fillna("").astype(str).str.strip().eq("").all():
         df = _compute_raw_extra_columns(df)
@@ -1861,8 +1892,8 @@ def transform_hybrid(
             )
     om_disp, om_groups = _normalize_hybrid_om(om_src)
     df["OM"] = om_disp
-    # 同OM調貨比對鍵（大小寫不敏感；顯示值另存 df["OM"] 供 RAW／主表稽核）
-    om_arr = om_disp.str.lower().to_numpy(dtype=object)
+    # 比對原值，避免空白群組的顯示名「空白」與實際 OM 名稱碰撞。
+    om_arr = om_src.fillna("").astype(str).str.strip().str.lower().to_numpy(dtype=object)
     # 退回條件按來源是否全空判斷（不以顯示名比對，避免真實 OM 名與「空白」碰撞）
     if dim in ("om", "nature_om") and (om_col is None or n_om_blank == n_rows):
         if om_col is None:
@@ -2682,12 +2713,14 @@ def _write_hybrid_guide_sheet(ws, stats):
 
     # ── ① 本次執行參數 ──
     _sec("① 本次執行參數（供核對）")
-    _kv("分類維度", f"{_HYBRID_DIMENSION_LABELS[dim]}（只影響 Summary／交叉表分組，不影響調貨與 Safety 計算）")
+    _kv("分類維度", "RP Type（需求擴展至任何 Nature 的 RF 列，允許同 Nature 調貨；Safety 基準天數仍按 Nature）"
+        if dim == "rp" else f"{_HYBRID_DIMENSION_LABELS[dim]}（只影響 Summary／交叉表分組，不影響調貨與 Safety 計算）")
     _kv("調貨門檻", f'{st_.get("turnday_threshold", 14)} 日（SKU 級 Nature 池加總 TurnDay）')
     _kv("D001 庫存門檻", f'{st_.get("d001_threshold", 100)} 件（D001 Net Stock Qty (CM) 低於此值才標示需要調貨）')
     _kv("Safety 基準周轉天數", f'Tourist {sd["Tourist"]} 日／Mix {sd["Mix"]} 日／Non Tourist {sd["Non Tourist"]} 日')
     _kv("允許雙向調貨", "開啟（任何 Nature 缺貨皆可調入，Tourist 店舖亦可轉出）" if st_.get("bidirectional")
-        else "關閉（需求限 Tourist，供應限 Mix／Non Tourist）")
+        else ("關閉（RP Type 維度仍允許任何 Nature 的 RF 列調入；供應限 Mix／Non Tourist，不含 Tourist）"
+              if dim == "rp" else "關閉（需求限 Tourist，供應限 Mix／Non Tourist）"))
     _kv("ND 優先轉出", "開啟（同一 Nature 池內 ND 來源列先於 RF 列取用）" if st_.get("nd_priority")
         else "關閉（池內按來源檔列序取用）")
     _kv("銷量分類門檻",
@@ -2712,10 +2745,17 @@ def _write_hybrid_guide_sheet(ws, stats):
 
     # ── ② 核心邏輯 ──
     _sec("② 核心邏輯（這份報告怎樣算出來）")
-    _bullet("調貨段（固定 14 日，與 Safety 無關）：同 SKU 中某 Nature 池的加總 TurnDay（加總庫存 ÷ 加總月銷 × 30.5）"
-            "低於調貨門檻，且 D001 低於門檻，該 Nature 內 RP Type＝RF 的缺貨店舖列標示「需要調貨」，"
-            "需求量＝補到 14 日周轉；供應來源為 Mix／Non Tourist 池的 14 日超額（雙向時另加 Tourist）；"
-            "池級歸零——缺貨池的列一律不可轉出。分配跑兩遍：「不限OM」與「同OM」（來源店須與需求店同 OM）。")
+    if dim == "rp":
+        _bullet("調貨段（固定 14 日，與 Safety 無關）：任何 Nature 的 RF 列皆可調入，仍須所屬 Nature 池加總 TurnDay"
+                "低於調貨門檻、D001 低於門檻及同 SKU 有逐列 14 日超額；需求量＝補到 14 日周轉。"
+                "供應限 Mix／Non Tourist（Tourist 僅在雙向調貨開啟時可作來源）；轉出量按逐列 14 日超額判定，"
+                "不套用池級歸零，缺貨池內的超額列仍可轉出，允許同 Nature 調貨，但一律排除自我調貨。"
+                "分配跑兩遍：「不限OM」與「同OM」（來源店須與需求店同 OM）。")
+    else:
+        _bullet("調貨段（固定 14 日，與 Safety 無關）：同 SKU 中某 Nature 池的加總 TurnDay（加總庫存 ÷ 加總月銷 × 30.5）"
+                "低於調貨門檻，且 D001 低於門檻，該 Nature 內 RP Type＝RF 的缺貨店舖列標示「需要調貨」，"
+                "需求量＝補到 14 日周轉；供應來源為 Mix／Non Tourist 池的 14 日超額（雙向時另加 Tourist）；"
+                "池級歸零——缺貨池的列一律不可轉出。分配跑兩遍：「不限OM」與「同OM」（來源店須與需求店同 OM）。")
     _bullet("Review 段（Safety 基準天數，按 Shop Nature）：Safety 周轉所需量＝ceil(Sold Qty (P90D) ÷ 90 × 該 Nature 基準天數)。"
             "需要調入列：現有 Safety 設定 < 所需量 → 「Safety 設定不足」；有貨轉出列（實際轉出／可轉出未使用）："
             "現有設定 > 生效基準 → 「Safety 設定過高」；等於邊界屬設定正常。建議值＝不足列取所需量、"
@@ -2810,11 +2850,14 @@ def _write_hybrid_guide_sheet(ws, stats):
     if dim in ("sales", "sales_nature"):
         _bullet("Summary 紅底＝零銷組仍有庫存（「加總 - Shop Stock Qty (CM) %」大於 0%）——零銷售而仍有存貨，"
                 "理論上全屬 Overstock，不設佔比門檻一律標示；同格同時觸發橘底時以紅底優先。")
-    _bullet("分類維度只改變 Summary／交叉表的分組顯示，不影響調貨與 Safety 計算。")
+    _bullet("RP Type 維度除分組外，亦擴展需求至任何 Nature 的 RF 列，允許同 Nature 調貨且不套用池級歸零；"
+            "Safety 基準天數仍按 Nature。" if dim == "rp"
+            else "分類維度只改變 Summary／交叉表的分組顯示，不影響調貨與 Safety 計算。")
     _bullet("「可轉出未使用」＝該列有 14 日超額庫存但本次未被取用，可留作後備來源。")
     if st_.get("return_to_d001"):
-        _bullet("「建議退D001 量」＝可退D001 貨量 − 轉出量（不限OM 分配實績）；(同OM) 分配轉出較少時，"
-                "實際可退量可能更多，執行前請按選用的調貨變體自行核對。")
+        _bullet("「建議退D001 量」只扣除「不限OM」轉出量，不能直接與「同OM」調貨合併執行；"
+                "同OM可能改用其他來源店，令個別店舖的調貨與退倉合計超過現有庫存。"
+                "採用同OM時，須按該變體逐店重新核對可退量。")
 
 
 

@@ -23,8 +23,10 @@ import warnings
 warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
+import pytest
 from io import BytesIO
 from openpyxl import load_workbook
+from modes.framework import _transfer_input_consistency_warnings
 from transformer import (
     transform_hybrid,
     generate_excel_hybrid,
@@ -747,6 +749,121 @@ def test_non_integer_stock_rejected():
         assert "整數" in str(e)
 
 
+@pytest.mark.parametrize("column", ["Site Code", "SKU"])
+@pytest.mark.parametrize("value", [None, np.nan, pd.NA, "", "   "])
+def test_missing_transfer_identifier_rejected(column, value):
+    df = _df(_SCENARIO_A).astype({column: object})
+    df.loc[1, column] = value
+    with pytest.raises(ValueError, match=column):
+        transform_hybrid(df)
+
+
+@pytest.mark.parametrize("value", [300.1, "300.9", np.inf, -np.inf])
+def test_invalid_numeric_sku_rejected_before_truncation(value):
+    df = _df(_SCENARIO_A).astype({"SKU": object})
+    df.loc[1, "SKU"] = value
+    with pytest.raises(ValueError, match="SKU"):
+        transform_hybrid(df)
+
+
+@pytest.mark.parametrize("duplicate_pos", [0, 1])
+def test_duplicate_demand_or_supply_rejected(duplicate_pos):
+    df = _df(_SCENARIO_A)
+    df = pd.concat([df, df.iloc[[duplicate_pos]]], ignore_index=True)
+    with pytest.raises(ValueError, match="Site Code × SKU"):
+        transform_hybrid(df)
+
+
+def test_duplicate_normalized_transfer_key_rejected():
+    df = _df(_SCENARIO_A).astype({"SKU": object})
+    duplicate = df.iloc[[1]].copy()
+    duplicate["Site Code"] = " N01 "
+    duplicate["SKU"] = "300.0"
+    with pytest.raises(ValueError, match="Site Code × SKU"):
+        transform_hybrid(pd.concat([df, duplicate], ignore_index=True))
+
+
+def test_transfer_identifiers_trimmed_without_mutating_input():
+    df = _df(_SCENARIO_A).astype({"SKU": object})
+    df["Site Code"] = " " + df["Site Code"] + " "
+    df["SKU"] = " 300 "
+    before = df.copy(deep=True)
+    raw, _, diagnosis, *_ = transform_hybrid(df)
+    assert raw["SKU"].eq("300").all()
+    assert raw["Site Code"].tolist() == ["T01", "N01", "M01"]
+    assert _get(raw, "T01", "調貨來源 (Site Code)") == "N01:9"
+    assert set(diagnosis["Site Code"]) == {"T01", "N01", "M01"}
+    pd.testing.assert_frame_equal(df, before)
+
+
+def test_same_om_blank_display_label_cannot_match_real_om():
+    rows = [dict(r) for r in _SCENARIO_A[:2]]
+    rows[0]["OM"] = "空白"
+    rows[1]["OM"] = None
+    raw, _, _, diagnosis_om, _, stats, _ = transform_hybrid(_df(rows))
+    assert _get(raw, "T01", "實際調入量") == 9
+    assert _get(raw, "T01", "實際調入量 (同OM)") == 0
+    assert _get(raw, "T01", "調入缺口 (同OM)") == 9
+    assert _get(raw, "N01", "轉出量 (同OM)") == 0
+    assert diagnosis_om["實際調入量"].sum() == 0
+    assert stats["total_actual_om"] == 0
+
+
+@pytest.mark.parametrize("dimension", ["nature", "rp", "both", "om", "nature_om", "sales", "sales_nature"])
+@pytest.mark.parametrize("bidirectional", [False, True])
+@pytest.mark.parametrize("sales_rebalance", [False, True])
+@pytest.mark.parametrize("nd_priority", [False, True])
+def test_transfer_inventory_invariants(dimension, bidirectional, sales_rebalance, nd_priority):
+    rng = np.random.default_rng(20261001)
+    rows = []
+    for sku in range(1, 5):
+        for pos in range(12):
+            sold = int(rng.integers(0, 361))
+            rows.append({
+                "SKU": sku, "Site Code": f"S{pos:02}",
+                "Shop Nature": ["Tourist", "Mix", "Non Tourist"][pos % 3],
+                "Sold Qty (P90D)": sold,
+                "Shop Monthly Sold Qty (P90D)": sold / 90 * 30.5,
+                "Shop Stock Qty (CM)": int(rng.integers(0, 81)),
+                "RP Type": "ND" if pos % 4 == 0 else "RF",
+                "OM": "Ivy" if pos % 2 else "Max",
+                "D001 Net Stock Qty (CM)": 0,
+            })
+    raw, *_ = transform_hybrid(
+        _df(rows), dimension=dimension, bidirectional=bidirectional,
+        sales_rebalance=sales_rebalance, nd_priority=nd_priority,
+    )
+    by_key = raw.set_index(["SKU", "Site Code"])
+    for actual, donated, gap, desc in [
+        ("實際調入量", "轉出量", "調入缺口", "調貨來源 (Site Code)"),
+        ("實際調入量 (同OM)", "轉出量 (同OM)", "調入缺口 (同OM)", "調貨來源 (同OM)"),
+    ]:
+        assert (raw[actual] + raw[gap]).equals(raw["調入需求量 (補到14日)"])
+        totals = raw.groupby("SKU")[[actual, donated]].sum()
+        assert (totals[actual] == totals[donated]).all()
+        after = raw["Shop Stock Qty (CM)"] + raw[actual] - raw[donated]
+        assert after.ge(0).all()
+        assert not ((raw[actual] > 0) & (raw[donated] > 0)).any()
+        donors = raw[donated] > 0
+        reserve = np.ceil(raw["Sold Qty (P90D)"] / 90 * 14)
+        assert (after[donors] >= reserve[donors]).all()
+        assert raw.loc[raw["RP Type"] == "ND", actual].eq(0).all()
+        detail = _build_hybrid_transfer_detail(raw, variant="om" if actual.endswith("(同OM)") else "free")
+        assert detail["調貨數量"].sum() == raw[actual].sum()
+        for _, target in raw.iterrows():
+            described = 0
+            for part in filter(None, target[desc].split("; ")):
+                site, qty = part.rsplit(":", 1)
+                source = by_key.loc[(target["SKU"], site)]
+                assert site != target["Site Code"]
+                if dimension != "rp":
+                    assert source["Shop Nature"] != target["Shop Nature"]
+                if actual.endswith("(同OM)"):
+                    assert source["OM"] == target["OM"]
+                described += int(qty)
+            assert described == target[actual]
+
+
 def test_sku_desc_all_blank_derived():
     df = _df([{**r, "Item_Shop": f"Prod-{r['Site Code']}-ShopHK"} for r in _SCENARIO_A])
     df["SKU Desc"] = None
@@ -760,7 +877,7 @@ def test_sku_desc_all_blank_derived():
 # ──────────────────────────────────────────────────────────────────────────────
 # S01 對 SKU 500 同時出現 Tourist 與 Non Tourist 列（重複列＋Nature 不一致的異常輸入）。
 # 修復前：S01-Tourist 由 S01-Non Tourist 調入（自我調貨），S01 同一 SKU 同時調入與調出。
-# 修復後：同店來源一律排除——S01-Tourist 缺口 9 件（無其他來源），S02 正常由 S01 調入 9 件。
+# Hybrid 入口拒絕重複店舖×SKU；分配層仍獨立保留自我調貨守衛。
 _SCENARIO_DUP = [
     {"SKU": 500, "Site Code": "S01", "Shop Nature": "Tourist",
      "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
@@ -779,9 +896,11 @@ def _pick(raw, site, nat):
 
 
 def test_duplicate_site_sku_conflicting_nature_warned():
-    raw, _, _, _, _, _, warns = transform_hybrid(_df(_SCENARIO_DUP))
+    warns = _transfer_input_consistency_warnings(_df(_SCENARIO_DUP))
     assert any("Site Code × SKU" in w and "重複" in w for w in warns)
     assert any("Shop Nature" in w and "不一致" in w for w in warns)
+    with pytest.raises(ValueError, match="Site Code × SKU"):
+        transform_hybrid(_df(_SCENARIO_DUP))
 
 
 def test_duplicate_same_nature_warns_dup_only():
@@ -793,36 +912,27 @@ def test_duplicate_same_nature_warns_dup_only():
          "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
          "Shop Monthly Sold Qty (P90D)": 120.0, "D001 Net Stock Qty (CM)": 10.0},
     ]
-    raw, _, _, _, _, _, warns = transform_hybrid(_df(rows))
+    warns = _transfer_input_consistency_warnings(_df(rows))
     assert any("Site Code × SKU" in w and "重複" in w for w in warns)
     assert not any("不一致" in w for w in warns)
+    with pytest.raises(ValueError, match="Site Code × SKU"):
+        transform_hybrid(_df(rows))
 
 
-def test_self_transfer_guarded_and_no_site_both_in_and_out():
-    raw, _, _, _, _, _, _ = transform_hybrid(_df(_SCENARIO_DUP))
-    t01 = _pick(raw, "S01", "Tourist")
-    t02 = raw[raw["Site Code"] == "S02"].iloc[0]
-    n01 = _pick(raw, "S01", "Non Tourist")
-    # 自我調貨被排除：S01-Tourist 無其他來源 → 全數缺口
-    assert int(t01["實際調入量"]) == 0 and int(t01["調入缺口"]) == 9
-    assert str(t01["調貨來源 (Site Code)"]) == ""
-    assert int(t01["實際調入量 (同OM)"]) == 0 and int(t01["調入缺口 (同OM)"]) == 9
-    # S02 正常由 S01 調入
-    assert int(t02["實際調入量"]) == 9 and str(t02["調貨來源 (Site Code)"]) == "S01:9"
-    assert int(t02["實際調入量 (同OM)"]) == 9 and str(t02["調貨來源 (同OM)"]) == "S01:9"
-    assert int(n01["轉出量"]) == 9 and int(n01["轉出量 (同OM)"]) == 9
-    # 店級：同一 SKU + 同一店舖不得同時調入與調出（兩變體）
-    g = raw.groupby(["SKU", "Site Code"])[["實際調入量", "轉出量", "實際調入量 (同OM)", "轉出量 (同OM)"]].sum()
-    assert not ((g["實際調入量"] > 0) & (g["轉出量"] > 0)).any()
-    assert not ((g["實際調入量 (同OM)"] > 0) & (g["轉出量 (同OM)"] > 0)).any()
-    # 列級與來源欄：任何需求列的調貨來源都不含自己店號
-    for _, r in raw.iterrows():
-        for col in ("調貨來源 (Site Code)", "調貨來源 (同OM)"):
-            src_sites = {p.split(":")[0] for p in str(r[col]).split("; ") if p}
-            assert r["Site Code"] not in src_sites
-    # 守恆：總調入 = 總轉出
-    assert int(raw["實際調入量"].sum()) == int(raw["轉出量"].sum())
-    assert int(raw["實際調入量 (同OM)"].sum()) == int(raw["轉出量 (同OM)"].sum())
+@pytest.mark.parametrize("same_om", [False, True])
+def test_self_transfer_guarded_and_no_site_both_in_and_out(same_om):
+    actual, gap, donated, desc = _hybrid_allocate_transfers(
+        3, np.array(["500"] * 3), np.array(["S01", "S01", "S02"]),
+        np.array([True, False, True]), np.array([9, 0, 9]),
+        np.array([0, 16, 0]), np.zeros(3),
+        om_arr=np.array(["OM1"] * 3) if same_om else None,
+        nature_arr=np.array(["Tourist", "Non Tourist", "Tourist"]),
+    )
+    assert actual.tolist() == [0, 0, 9]
+    assert gap.tolist() == [9, 0, 0]
+    assert donated.tolist() == [0, 9, 0]
+    assert desc.tolist() == ["", "", "S01:9"]
+    assert actual.sum() == donated.sum()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -927,16 +1037,20 @@ def test_bidir_self_site_guard_and_om_restriction_on_tourist_donor():
          "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
          "Shop Monthly Sold Qty (P90D)": 30.5},
     ]
-    raw, _, _, _, _, stats, _ = transform_hybrid(_df(rows), bidirectional=True)
-    mix_rows = raw[raw["Shop Nature"] == "Mix"]
-    assert len(mix_rows) == 1 and str(mix_rows.iloc[0]["需要調貨"]) == "是"
-    assert int(mix_rows.iloc[0]["實際調入量"]) == 9
-    assert str(mix_rows.iloc[0]["調貨來源 (Site Code)"]) == "S07:9"
-    assert int(mix_rows.iloc[0]["實際調入量 (同OM)"]) == 0
-    assert int(mix_rows.iloc[0]["調入缺口 (同OM)"]) == 9
-    assert stats["tourist_transfer"] == 9 and stats["tourist_transfer_om"] == 0
-    t07 = raw[raw["Site Code"] == "S07"].iloc[0]
-    assert int(t07["轉出量"]) == 9 and int(t07["轉出量 (同OM)"]) == 0
+    with pytest.raises(ValueError, match="Site Code × SKU"):
+        transform_hybrid(_df(rows), bidirectional=True)
+    for same_om in (False, True):
+        actual, gap, donated, desc = _hybrid_allocate_transfers(
+            3, np.array(["803"] * 3), np.array(["S06", "S06", "S07"]),
+            np.array([True, False, False]), np.array([9, 0, 0]),
+            np.zeros(3), np.zeros(3), tourist_avail0=np.array([0, 16, 16]),
+            nature_arr=np.array(["Mix", "Tourist", "Tourist"]),
+            om_arr=np.array(["Ivy", "Max", "Max"]) if same_om else None,
+        )
+        assert actual[0] == (0 if same_om else 9)
+        assert gap[0] == (9 if same_om else 0)
+        assert donated.tolist() == ([0, 0, 0] if same_om else [0, 0, 9])
+        assert desc[0] == ("" if same_om else "S07:9")
 
 
 def test_bidir_all_pools_below_threshold_no_flag():
@@ -1608,8 +1722,7 @@ def test_nature_self_exclusion_guard_blocks_same_nature_source():
     assert int(a2.sum()) == 5 and int(d2.sum()) == 5 and "B:5" in desc2[0]
 
 
-def test_dup_rows_diff_site_warns_self_transfer_guard_gap():
-    # 同 SKU 同 Site Code 重複列 → warning 須說明自我調貨守衛以 Site Code 比對的破口
+def test_conflicting_duplicate_stock_rejected_before_transfer():
     rows = [
         {"SKU": 300, "Site Code": "T01", "Shop Nature": "Tourist", "OM": "OM1",
          "Sold Qty (P90D)": 360.0, "Shop Stock Qty (CM)": 47.0,
@@ -1620,9 +1733,8 @@ def test_dup_rows_diff_site_warns_self_transfer_guard_gap():
          "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 3,
          "D001 Net Stock Qty (CM)": 10.0},
     ]
-    _, _, _, _, _, _, warns = transform_hybrid(_df(rows))
-    dup_warn = [w for w in warns if "重複列" in w]
-    assert dup_warn and "自我調貨守衛" in dup_warn[0]
+    with pytest.raises(ValueError, match="Site Code × SKU"):
+        transform_hybrid(_df(rows))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2466,3 +2578,129 @@ def test_full_safety_builders_and_excel_sheet():
     wb = load_workbook(buf, read_only=True)
     assert "Safety 設定建議 (全列)" in wb.sheetnames
     assert "全列 Safety Review" in [c.value for c in next(wb["RAW"].iter_rows(min_row=1, max_row=1))]
+
+
+@pytest.mark.parametrize("variant", ["free", "om"])
+@pytest.mark.parametrize("reverse_rows", [False, True])
+def test_detail_source_rp_type_is_sku_specific_in_builder_and_excel(variant, reverse_rows):
+    rows = []
+    for sku, source_rp in [(820, {"N21": "RF", "M21": "ND"}),
+                           (821, {"N21": "ND", "M21": "RF"})]:
+        for original in _SCENARIO_MULTI:
+            row = dict(original, SKU=sku)
+            row["RP Type"] = source_rp.get(row["Site Code"], "RF")
+            rows.append(row)
+    if reverse_rows:
+        rows.reverse()
+    raw, sc, diag, diag_om, ds, stats, _ = transform_hybrid(_df(rows))
+    before = raw.copy(deep=True)
+    detail = _build_hybrid_transfer_detail(raw, variant=variant)
+    expected = {
+        ("820", "M21"): "ND", ("821", "M21"): "RF",
+    }
+    if variant == "free":
+        expected.update({("820", "N21"): "RF", ("821", "N21"): "ND"})
+    actual = {
+        (str(row["SKU"]), row["Supply Site Code(調貨來源)"]): row["Supply RP Type"]
+        for _, row in detail.iterrows()
+    }
+    assert actual == expected
+    assert list(detail.columns) == _HYBRID_TRANSFER_DETAIL_COLUMNS
+    assert detail["Target RP Type"].eq("RF").all()
+    assert detail["Target Shop Name"].eq("ShopT").all()
+    assert detail["Target OM"].eq("Ivy").all()
+    for site, name, om in [("M21", "ShopM", "Ivy"), ("N21", "ShopN", "Max")]:
+        supply = detail.loc[detail["Supply Site Code(調貨來源)"] == site]
+        assert supply["Supply Shop Name"].eq(name).all()
+        assert supply["Supply OM"].eq(om).all()
+    qty_col = "實際調入量 (同OM)" if variant == "om" else "實際調入量"
+    assert detail["調貨數量"].sum() == raw[qty_col].sum()
+    pd.testing.assert_frame_equal(raw, before)
+
+    wb = load_workbook(generate_excel_hybrid(raw, sc, diag, diag_om, ds, stats))
+    ws = wb["簡易調貨明細 (同OM)" if variant == "om" else "簡易調貨明細 (不限OM)"]
+    assert [cell.value for cell in ws[1]] == _HYBRID_TRANSFER_DETAIL_COLUMNS
+    exported = {
+        (str(row[1]), row[3]): row[5]
+        for row in ws.iter_rows(min_row=2, values_only=True)
+    }
+    assert exported == expected
+
+
+@pytest.mark.parametrize("target_nature", ["Tourist", "Mix", "Non Tourist"])
+@pytest.mark.parametrize("bidirectional", [False, True])
+def test_rp_guide_and_dashboard_match_transfer_rules(target_nature, bidirectional):
+    rows = [dict(row) for row in _SCENARIO_RP]
+    rows[0]["Shop Nature"] = target_nature
+    raw, sc, diag, diag_om, ds, stats, _ = transform_hybrid(
+        _df(rows), dimension="rp", bidirectional=bidirectional,
+    )
+    assert _get(raw, "M01", "需要調貨") == "是"
+    assert _get(raw, "M01", "實際調入量") == 36
+    assert _get(raw, "M02", "轉出量") == 30
+    assert _get(raw, "M02", "可轉出貨量 (Mix)") == 46
+    before = raw.copy(deep=True)
+    need_metric = _hybrid_dashboard_metrics(raw, stats)[0][1]
+    assert need_metric[1] == 1
+    assert "RF" in need_metric[2] and "任何 Nature 皆可調入" in need_metric[2]
+
+    wb = load_workbook(generate_excel_hybrid(raw, sc, diag, diag_om, ds, stats))
+    ws = wb["說明"]
+    pairs = {ws.cell(row, 1).value: ws.cell(row, 2).value for row in range(1, ws.max_row + 1)}
+    assert "任何 Nature 的 RF 列" in pairs["分類維度"]
+    assert "允許同 Nature 調貨" in pairs["分類維度"]
+    assert "不影響調貨" not in pairs["分類維度"]
+    if bidirectional:
+        assert pairs["允許雙向調貨"].startswith("開啟")
+        assert "Tourist 店舖亦可轉出" in pairs["允許雙向調貨"]
+    else:
+        assert pairs["允許雙向調貨"].startswith("關閉")
+        assert "任何 Nature 的 RF 列調入" in pairs["允許雙向調貨"]
+        assert "不含 Tourist" in pairs["允許雙向調貨"]
+    bullets = [ws.cell(row, 2).value for row in range(1, ws.max_row + 1)
+               if ws.cell(row, 1).value == "•"]
+    transfer_logic = next(text for text in bullets if text.startswith("調貨段"))
+    assert "不套用池級歸零" in transfer_logic
+    assert "允許同 Nature 調貨" in transfer_logic
+    assert "Tourist 僅在雙向調貨開啟時可作來源" in transfer_logic
+    assert "缺貨池的列一律不可轉出" not in transfer_logic
+    assert not any("分類維度只改變" in text for text in bullets)
+    pd.testing.assert_frame_equal(raw, before)
+
+
+@pytest.mark.parametrize("bidirectional", [False, True])
+def test_rp_guide_tourist_supply_requires_bidirectional(bidirectional):
+    rows = [dict(_SCENARIO_RP[0]), {
+        "SKU": 400, "Site Code": "T02", "Shop Nature": "Tourist", "RP Type": "ND",
+        "Sold Qty (P90D)": 90.0, "Shop Monthly Sold Qty (P90D)": 30.5,
+        "Shop Stock Qty (CM)": 60.0, "Adj. Safety Stock": 30,
+        "D001 Net Stock Qty (CM)": 10.0,
+    }]
+    raw, sc, diag, diag_om, ds, stats, _ = transform_hybrid(
+        _df(rows), dimension="rp", bidirectional=bidirectional,
+    )
+    assert _get(raw, "T02", "轉出量") == (36 if bidirectional else 0)
+    assert _get(raw, "M01", "實際調入量") == (36 if bidirectional else 0)
+    wb = load_workbook(generate_excel_hybrid(raw, sc, diag, diag_om, ds, stats))
+    assert any("Tourist 僅在雙向調貨開啟時可作來源" in str(cell.value)
+               for row in wb["說明"].iter_rows() for cell in row)
+
+
+def test_return_d001_guide_warns_about_same_om_switched_donor():
+    rows = [dict(row) for row in _SCENARIO_OM]
+    rows[-1]["Adj. Safety Stock"] = 0
+    raw, sc, diag, diag_om, ds, stats, _ = transform_hybrid(_df(rows), return_to_d001=True)
+    assert _get(raw, "M11", "轉出量") == 0
+    assert _get(raw, "M11", "轉出量 (同OM)") == 9
+    assert _get(raw, "M11", "建議退D001 量") == 25
+    assert (_get(raw, "M11", "轉出量 (同OM)") + _get(raw, "M11", "建議退D001 量")
+            > _get(raw, "M11", "Shop Stock Qty (CM)"))
+    before = raw.copy(deep=True)
+    wb = load_workbook(generate_excel_hybrid(raw, sc, diag, diag_om, ds, stats))
+    warnings = [str(cell.value) for row in wb["說明"].iter_rows() for cell in row
+                if "不能直接與「同OM」調貨合併執行" in str(cell.value)]
+    assert len(warnings) == 1
+    assert "只扣除「不限OM」轉出量" in warnings[0]
+    assert "超過現有庫存" in warnings[0]
+    assert "逐店重新核對可退量" in warnings[0]
+    pd.testing.assert_frame_equal(raw, before)

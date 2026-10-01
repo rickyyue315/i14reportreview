@@ -1,3 +1,9 @@
+import ast
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
+
 import pandas as pd
 
 from views.analyzer_helpers import (
@@ -74,3 +80,45 @@ def test_site_code_filter_handles_numeric_and_string_values():
     assert list(filtered["SKU"]) == [1, 3]
     assert len(filter_by_site_code(frame, "全部")) == 4
     assert filter_by_site_code(frame, "missing").empty
+
+
+def test_top_download_button_respects_disabled_state():
+    page = Path(__file__).resolve().parents[1] / "views" / "analyzer_page.py"
+    tree = ast.parse(page.read_text(encoding="utf-8"))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_top_download_button")
+    calls = []
+    namespace = {
+        "datetime": datetime, "ZoneInfo": ZoneInfo,
+        "st": SimpleNamespace(download_button=lambda **kwargs: calls.append(kwargs)),
+    }
+    # 只載入下載函數，避免匯入頁面時執行 Streamlit 上傳與導覽流程。
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(page), "exec"), namespace)
+    button = namespace["_top_download_button"]
+    for disabled in (False, True):
+        button(b"report", "Hybrid", "dl_top_hybrid", disabled=disabled)
+        assert calls[-1]["disabled"] is disabled
+        assert calls[-1]["data"] == b"report"
+    button(b"report", "Other", "dl_other")
+    assert calls[-1]["disabled"] is False
+    button(None, "Hybrid", "dl_top_hybrid", disabled=True)
+    assert len(calls) == 3
+
+
+def test_hybrid_download_entry_points_share_stale_guard():
+    page = Path(__file__).resolve().parents[1] / "views" / "analyzer_page.py"
+    tree = ast.parse(page.read_text(encoding="utf-8"))
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    top = next(
+        node for node in calls
+        if isinstance(node.func, ast.Name) and node.func.id == "_top_download_button"
+        and any(isinstance(arg, ast.Constant) and arg.value == "dl_top_hybrid" for arg in node.args)
+    )
+    bottom = next(
+        node for node in calls
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "download_button"
+        and any(keyword.arg == "label" and isinstance(keyword.value, ast.Constant)
+                and "Safety Stock x NetStock Review" in str(keyword.value.value) for keyword in node.keywords)
+    )
+    for call in (top, bottom):
+        disabled = next(keyword.value for keyword in call.keywords if keyword.arg == "disabled")
+        assert isinstance(disabled, ast.Name) and disabled.id == "hybrid_is_stale"

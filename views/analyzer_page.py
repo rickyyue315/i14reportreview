@@ -98,7 +98,7 @@ def _release_os_memory():
         pass
 
 
-def _top_download_button(excel_data, prefix, key):
+def _top_download_button(excel_data, prefix, key, *, disabled=False):
     """結果頁置頂下載按鈕（內容與底部下載按鈕相同，免捲動；計算邏輯不變）。"""
     if excel_data is None:
         return
@@ -114,6 +114,7 @@ def _top_download_button(excel_data, prefix, key):
         type="primary",
         use_container_width=True,
         key=key,
+        disabled=disabled,
     )
 
 
@@ -1357,7 +1358,10 @@ if uploaded_file is not None:
 
             st.markdown('<div class="custom-card">', unsafe_allow_html=True)
             st.markdown("### 🔀 Safety Stock x NetStock Review 分析摘要 (Hybrid Dashboard)")
-            _top_download_button(excel_data, "I14 Safety Stock x NetStock Review", "dl_top_hybrid")
+            _top_download_button(
+                excel_data, "I14 Safety Stock x NetStock Review", "dl_top_hybrid",
+                disabled=hybrid_is_stale,
+            )
 
             _hyb_rows = _hybrid_dashboard_metrics(raw_df, stats)
 
@@ -1472,6 +1476,10 @@ if uploaded_file is not None:
                         "可退＝庫存 − 2×Safety。"
                         "**調貨優先**：「建議退D001 量」＝可退D001 貨量 − 轉出量（不限OM），需要調貨列一律不退。"
                         "本表只作退倉建議，實際調貨仍按「調貨 Review Safety Stock」的分配結果。"
+                    )
+                    st.warning(
+                        "退D001 建議已扣除不限OM的轉出量，只可與不限OM調貨直接合併執行。"
+                        "如採用同OM調貨，來源店舖可能不同，必須按各店同OM轉出量重新核算可退量，避免超額調出。"
                     )
                     try:
                         _ret_df = _build_hybrid_return_d001(raw_df)
