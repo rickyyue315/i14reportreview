@@ -65,6 +65,11 @@ from modes.framework import (
     _HYBRID_RETURN_D001_GROSS_COLUMN,
     _HYBRID_RETURN_D001_GROSS_INTERNAL,
     _HYBRID_RETURN_D001_SHEET,
+    _HYBRID_RF_TURND_SUFFIX,
+    _HYBRID_FULFILL_COLUMN,
+    _HYBRID_FULFILL_FULL,
+    _HYBRID_FULFILL_PARTIAL,
+    _HYBRID_FULFILL_NONE,
     _HYBRID_SAFETY_DAYS_COLUMN,
     _HYBRID_SAFETY_DAYS_DEFAULT,
     _HYBRID_SAFETY_LINE_COLUMN,
@@ -219,7 +224,12 @@ def _build_hybrid_diagnosis(raw: pd.DataFrame, variant: str = "free") -> pd.Data
     ).astype(int)
     df["_evt_key"] = df["事件類型"].map(_HYBRID_EVENT_ORDER).fillna(9)
     df = df.sort_values(["Brand", "SKU", "_evt_key", "Site Code"], kind="stable")
-    ordered = [c for c in _HYBRID_DIAG_COLUMNS if c in df.columns]
+    # 調貨補足狀態僅 `real_supply_gate` 開啟時存在——不在 _HYBRID_DIAG_COLUMNS 契約內，
+    # 故此動態插入於「調入需求量 (補到14日)」之後（主表 29→30 欄，關閉時維持 29 欄）
+    diag_cols = list(_HYBRID_DIAG_COLUMNS)
+    if _HYBRID_FULFILL_COLUMN in df.columns:
+        diag_cols.insert(diag_cols.index("調入需求量 (補到14日)") + 1, _HYBRID_FULFILL_COLUMN)
+    ordered = [c for c in diag_cols if c in df.columns]
     return df[ordered].reset_index(drop=True)
 
 
@@ -1009,6 +1019,19 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
     over = diag == _HYBRID_DIAG_OVER
     donor = evt.isin([_HYBRID_EVENT_DONATED, _HYBRID_EVENT_DONOR])
     cls_col = raw.get(_HYBRID_SALES_CLASS_COLUMN, _safe_default_series("", raw.index)).fillna("").astype(str)
+    # 補足狀態可由「需要調貨」與「實際調入量」反推（與 sales 分類同一準則）；
+    # 開關狀態無法由 RAW 反推，故 real_supply_gate 不列（回退路徑不顯示該排指標卡）
+    _ful = raw.get(_HYBRID_FULFILL_COLUMN, _safe_default_series("", raw.index)).fillna("").astype(str)
+    if _HYBRID_FULFILL_COLUMN in raw.columns:
+        _no_supply_mask = _ful.eq(_HYBRID_FULFILL_NONE)
+        _full_rows = int(_ful.eq(_HYBRID_FULFILL_FULL).sum())
+        _partial_rows = int(_ful.eq(_HYBRID_FULFILL_PARTIAL).sum())
+        _no_supply_rows = int(_no_supply_mask.sum())
+    else:
+        _no_supply_mask = need & (_safe_numeric(raw.get("實際調入量", _safe_default_series(0, raw.index))).fillna(0) == 0)
+        _full_rows = int((need & ~_no_supply_mask).sum())
+        _partial_rows = 0
+        _no_supply_rows = int(_no_supply_mask.sum())
     _full_chg = pd.to_numeric(raw.get(_HYBRID_FULL_SAFETY_CHG_COLUMN, _safe_default_series(np.nan, raw.index)), errors="coerce")
     _full_review = raw.get(_HYBRID_FULL_SAFETY_REVIEW_COLUMN, _safe_default_series("", raw.index)).fillna("").astype(str)
     _full_under = _full_review == _HYBRID_DIAG_UNDER
@@ -1060,6 +1083,10 @@ def _hybrid_stats_from_raw(raw: pd.DataFrame) -> dict:
         ),
         # 退D001 建議可由 RAW 欄位存在反推（與 bidirectional 同一準則）
         "return_to_d001": _HYBRID_RETURN_D001_COLUMN in raw.columns,
+        "fulfill_full_rows": _full_rows,
+        "fulfill_partial_rows": _partial_rows,
+        "no_supply_need_rows": _no_supply_rows,
+        "no_supply_need_skus": int(raw.loc[_no_supply_mask, "SKU"].nunique()) if bool(_no_supply_mask.any()) else 0,
         "return_rows": int((_safe_numeric(raw.get(_HYBRID_RETURN_D001_COLUMN, _safe_default_series(0, raw.index))) > 0).sum()) if _HYBRID_RETURN_D001_COLUMN in raw.columns else 0,
         "return_skus": int(raw.loc[_safe_numeric(raw[_HYBRID_RETURN_D001_COLUMN]).fillna(0) > 0, "SKU"].nunique()) if (_HYBRID_RETURN_D001_COLUMN in raw.columns and bool((_safe_numeric(raw[_HYBRID_RETURN_D001_COLUMN]).fillna(0) > 0).any())) else 0,
         "return_units": int(_safe_numeric(raw.get(_HYBRID_RETURN_D001_COLUMN, _safe_default_series(0, raw.index))).fillna(0).sum()) if _HYBRID_RETURN_D001_COLUMN in raw.columns else 0,
@@ -1151,6 +1178,15 @@ def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
         ])
     # 末排：退D001 建議（RAW 含「建議退D001 量」欄即顯示——開關狀態可由欄位存在推定，
     # stats 缺失的回退路徑同樣成立）。退回量＝可轉出量扣除已轉出後的剩餘（接收目標 D001）。
+    # 補足狀態概況（僅 real_supply_gate 開啟時）——「無貨可調」指標示需要調貨但實際調入量 0；
+    # 開關關閉時該排亦可用實際調入量反推，故以 stats 旗標決定是否顯示版面。
+    if bool(stats.get("real_supply_gate")):
+        rows.append([
+            ("已補足列數", g("fulfill_full_rows"), "標示需要調貨且調入缺口 0 的店舖×SKU 列數", "10b981"),
+            ("部分補足列數", g("fulfill_partial_rows"), "標示需要調貨且實際調入量介於 0 與需求量之間的列數", "f59e0b"),
+            ("無貨可調列數", g("no_supply_need_rows"), "標示需要調貨但實際調入量 0（供給被爭用／同OM 無來源／守衛阻擋）", "ef4444"),
+            ("無貨可調 SKU 數", g("no_supply_need_skus"), "無貨可調列涉及的不重複 SKU 數（已刪除重複）", "dc2626"),
+        ])
     if raw is not None and _HYBRID_RETURN_D001_COLUMN in raw.columns:
         _ret = _safe_numeric(raw[_HYBRID_RETURN_D001_COLUMN]).fillna(0)
         _ret_pos = _ret > 0
@@ -1178,6 +1214,7 @@ def _hybrid_allocate_transfers(
     tourist_avail0: np.ndarray | None = None,
     nature_arr: np.ndarray | None = None,
     nd_priority: np.ndarray | None = None,
+    urgency_arr: np.ndarray | None = None,
 ):
     """調貨分配：按 SKU 彙總需求，來源池固定 Non Tourist → Mix → Tourist（tourist_avail0
     為 None 時不設 Tourist 池，即現行單向規則），需求列按需求量大→小依序分配。
@@ -1187,6 +1224,9 @@ def _hybrid_allocate_transfers(
     來源店與需求列同為一店（Site Code 相同）時一律排除，防止重複列資料異常造成自我調貨。
     nd_priority 非 None（bool 陣列，True＝該列 RP Type 為 ND）時，**池內**改依 ND 列先於
     RF 列取用（池間順序與全部轉出資格條件不變）。
+    urgency_arr 非 None 時（`urgent_first` 開關）需求列改依**缺貨深度**排序：店舖現有
+    周轉日數由淺至深（0 庫存／周轉最淺者先補），同深度再按需求量由大→小，最後才依來源
+    檔列序。urgency_arr 為 None 時維持現行「需求量由大→小」排序。
     回傳 (actual_np, gap_np, donate_np, desc_np)。"""
     actual_np = np.zeros(n_rows, dtype=int)
     donate_np = np.zeros(n_rows, dtype=int)
@@ -1231,7 +1271,15 @@ def _hybrid_allocate_transfers(
             continue
         nt_src = [int(p) for p in _idx_list if float(nt_avail[p]) > 0]
         mix_src = [int(p) for p in _idx_list if float(mix_avail[p]) > 0]
-        order = np.argsort(-demand[need_rows], kind="stable")
+        if urgency_arr is None:
+            order = np.argsort(-demand[need_rows], kind="stable")
+        else:
+            # 缺貨深度優先：周轉日數由淺至深 → 需求量由大→小 → 來源檔列序
+            # （末段以 need_rows 作 tie-break，維持原 stable 契約；非有限周轉日數
+            #   代表月銷為 0、覆蓋天數無限，等同最不急，排在最後）
+            _urg = np.asarray(urgency_arr, dtype=float)[need_rows]
+            _urg_key = np.where(np.isfinite(_urg), _urg, np.inf)
+            order = np.lexsort((need_rows, -demand[need_rows], _urg_key))
         remain_nt = {p: float(nt_avail[p]) for p in _nd_first(nt_src)}
         remain_mix = {p: float(mix_avail[p]) for p in _nd_first(mix_src)}
         pools = [remain_nt, remain_mix]
@@ -1285,6 +1333,9 @@ def transform_hybrid(
     sales_overstock_days: int | None = None,
     sales_overstock_min_units: int | None = None,
     return_to_d001: bool = False,
+    urgent_first: bool = False,
+    pool_nd_exclude: bool = False,
+    real_supply_gate: bool = False,
 ):
     """Safety Stock x NetStock Review 核心轉換（調貨事件 Review Safety 設定）。
 
@@ -1369,6 +1420,54 @@ def transform_hybrid(
       更多 SKU 有需求列，健康池內積壓列經既有 donor 判定自動入事件表；
       自我調貨／同 Nature／同OM 守衛與 ND 不作需求方全部保留。
       新事件列自動流入 Safety Review、店舖問題 SKU、Buyer 統計與簡易調貨明細。
+    - urgent_first=True（需求排序改缺貨深度優先，預設 False 維持現行契約）：
+      同一 SKU 內需求列的分配次序由現行「需求量由大→小」改為
+      **「該列周轉日數由淺至深（缺貨最深者先補）→ 需求量由大→小 → 來源檔列序」**。
+      周轉日數＝該列調貨前 Shop Stock Qty (CM) ÷ 生效月銷 × 30.5（與「店舖問題 SKU」
+      與銷量存貨分類的店舖周轉日數同一準則）；月銷 0 的列不會成為需求方（需求 > 0 前提）。
+      解決「供給不足時，0 庫存的斷貨店舖反被需求量較大的快滿店舖蓋過而分文未得」；
+      同深度仍以需求量為次要鍵，故同周轉日數時行為與現行一致。
+      只改變同 SKU 內需求列的**分配次序**：各店鋪調入總量、可轉出量、轉出資格、
+      守衛條件、觸發判定與 Safety Review／建議調整量全部不變；被改變者為
+      「實際調入量」／「調入缺口」／「調貨來源 (Site Code)」／「調貨後庫存」／
+      「調貨後 TurnDay」及同OM 對應欄。兩次分配（不限OM／同OM）使用同一排序鍵。
+    - pool_nd_exclude=True（池健康度排除 ND 死庫存，預設 False 維持現行契約）：
+      ND 店舖永不補貨，其庫存不會再進來，卻會灌高該 Nature 的 SKU 級加總 TurnDay，
+      令該池真實缺貨的 RF 店舖因「池看來健康」而不被標示需要調貨（實測：Tourist-ND
+      店持有 300 件 → Tourist 池 TurnDay 300 → 同 SKU 的 0 庫存 RF 店舖連同
+      可用的 26 件 Non Tourist 供應完全未被觸發）。
+      開啟後**需求側門檻**（判定該 Nature 是否缺貨：單向的 Tourist 加總 TurnDay、
+      雙向的各 Nature 加總 TurnDay、rp 維度的所屬 Nature 加總 TurnDay）改以
+      **只計 RP Type＝RF 列**的加總 TurnDay 為準，並另存
+      「Tourist／Mix／Non Tourist 加總 TurnDay (RF)」三欄供稽核
+      （原有全列「加總 TurnDay」三欄值完全不變，屬資料契約；Summary 與
+      店舖問題 SKU 的彙總亦維持全列口徑）。
+      **供給側（可轉出池級門檻）刻意維持計全部列（含 ND）**：ND 死庫存正是最該清走的貨，
+      「池看來健康」在此是正確訊號；若一併排除，ND 死庫存反而會把池判為不足而鎖死，
+      與「ND 優先轉出」的既有用意相反。
+      觸發面因此只會**擴大**不會收縮（原本被掩蓋的缺貨浮現），需求、分配、
+      Safety Review 與建議調整量的計算邏輯一律不變。
+      缺「RP Type」欄時全部列按 RF 處理、排除前後恆等，開關自動失效並列 warning。
+    - real_supply_gate=True（有貨可調改用實際可轉出量，預設 False 維持現行契約）：
+      現行「有貨可調」以 Nature 池加總 TurnDay 判定，但 (i) 池內可能沒有任何一列有 14 日超額；
+      (ii) 某 Nature 完全沒有列時其加總 TurnDay 為 inf 而令門檻**空過**（`_sku_nature_turnday`
+      以 0 月銷回傳 inf，RAW 顯示為空白，稽核軌跡看不出觸發原因）。兩者都會產生
+      「標示需要調貨、實際調入量 0、調入缺口＝全部需求」而無任何可調出貨的**假陽性事件列**，
+      與真正「部分補足」的需求列在下游完全無法區分。
+      開啟後「有貨可調」一律改以 SKU 級**實際可轉出量 > 0** 判定，與「以 RP Type 分類」維度
+      及銷量再平衡通道的既有寫法一致（七種維度同一口徑）。此條件**隱含**池級門檻
+      （可轉出量已按池門檻逐列歸零），故池門檻仍然生效，但不再單獨作為「有貨可調」的依據。
+      無需另行扣除需求列自身 Nature 的供給額度——可轉出量已按池門檻逐列歸零，而需求門檻
+      本身要求該列所屬 Nature 的池 TurnDay < 門檻（該池必被歸零、超額恆為 0），
+      故任一需求列的 SKU 供給額度天然只來自其他 Nature，與分配層「需求 Nature 自身除外」
+      契約一致（雙向模式亦同）。
+      觸發面因此**只收縮**（原本標示但實際無貨可調的列不再進入事件表，連帶其可轉出未使用
+      來源列亦不進 Review），總調入量不變、需求與分配演算法不變；
+      Safety Review 與建議調整量只隨事件列母體收縮而變動。
+      同時新增「調貨補足狀態」欄（已補足／部分補足／無貨可調，非需求列留空），
+      開啟後「無貨可調」只剩真實的供給競爭／守衛阻擋（同 SKU 多個需求列爭用同一批貨、
+      同OM 變體無同 OM 來源、自我調貨守衛）；stats 另記 `no_supply_need_rows`／
+      `no_supply_need_skus`，指標卡末尾加無貨可調需求列數／SKU 數兩卡。
     - 上下文欄位：調貨後庫存 = 原始 + 實際調入 − 轉出；
       調貨後 TurnDay = 調貨後庫存 ÷ 月銷 × 30.5（月銷 0 留空；月銷為回補後值，
       另存「Effective Shop Monthly Sold Qty (P90D)」稽核欄，原值保留於原欄）。
@@ -1399,7 +1498,9 @@ def transform_hybrid(
     stats["sales_overstock_rows"]／["sales_overstock_units"] 為積壓列數（低銷＋零銷）／
     積壓列庫存合計；stats["sales_need_rows"] 為僅由銷量再平衡通道新增的需求列數；
     stats["return_to_d001"] 為建議退D001 開關狀態，stats["return_rows"]／["return_skus"]／
-    ["return_units"] 為退D001 建議的列數／SKU 數／合計件數（關閉時為 0）。
+    ["return_units"] 為退D001 建議的列數／SKU 數／合計件數（關閉時為 0）；
+    stats["urgent_first"]／["pool_nd_exclude"] 為需求排序與池健康度口徑的開關狀態
+    （皆無法由 RAW 反推，故 _hybrid_stats_from_raw 回退路徑不列）。
     """
     missing = validate_hybrid_input(df_input)
     if missing:
@@ -1547,9 +1648,10 @@ def transform_hybrid(
         df[_HYBRID_SALES_BAND_COLUMN], _shop_turn_day, cm_stock_val, _sales_params,
     )
 
-    def _sku_nature_turnday(nature_mask):
-        s_stock = pd.Series(np.where(nature_mask, cm_stock_val, 0.0), index=idx)
-        s_msold = pd.Series(np.where(nature_mask, msold_val, 0.0), index=idx)
+    def _sku_nature_turnday(nature_mask, row_mask=None):
+        _m = nature_mask if row_mask is None else (nature_mask & row_mask)
+        s_stock = pd.Series(np.where(_m, cm_stock_val, 0.0), index=idx)
+        s_msold = pd.Series(np.where(_m, msold_val, 0.0), index=idx)
         agg_stock = s_stock.groupby(sku_key).transform("sum")
         agg_msold = s_msold.groupby(sku_key).transform("sum")
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -1561,7 +1663,45 @@ def transform_hybrid(
     for label, td in (("Tourist", sku_tourist_turnday), ("Mix", sku_mix_turnday), ("Non Tourist", sku_nt_turnday)):
         df[f"{label} 加總 TurnDay"] = np.round(np.where(np.isfinite(td), td, np.nan), 2)
 
+    # ── 池健康度排除 ND 死庫存（pool_nd_exclude，預設 False ＝現行規則）──
+    # ND 店舖永不補貨，其庫存不會再進來，卻會灌高該 Nature 的 SKU 級加總 TurnDay，
+    # 令該池真實缺貨的 RF 店舖因「池看來健康」而不被標示需要調貨。
+    # 開啟後**需求側門檻**（判定該 Nature 是否缺貨）改以只計 RF 列的加總 TurnDay 為準，
+    # 並另存「{Nature} 加總 TurnDay (RF)」供稽核（原有全列欄位值不變，為資料契約）。
+    #
+    # 供給側（可轉出池級門檻）維持計全部列，理由：ND 死庫存正是最該清走的貨，
+    # 「池看來健康」在此是正確訊號；若改為只計 RF，ND 死庫存反而會把池判為不足而鎖死，
+    # 與「ND 優先轉出」的既有用意相反。
+    # 缺「RP Type」欄時全部列按 RF 處理，兩者恆等，開關自動失效並列 warning。
+    if pool_nd_exclude and not rp_present:
+        warnings.append(
+            "來源檔案缺少「RP Type」欄位（全部列按可補貨 RF 處理），"
+            "「池健康度排除 ND 死庫存」無法套用（排除前後結果相同），已按現行規則計算。"
+        )
+    _pool_nd_exclude = bool(pool_nd_exclude and rp_present)
+    # 需求側門檻所用的 SKU 級加總 TurnDay（預設＝全列）
+    gate_tourist_turnday = sku_tourist_turnday
+    gate_mix_turnday = sku_mix_turnday
+    gate_nt_turnday = sku_nt_turnday
+    if _pool_nd_exclude:
+        gate_tourist_turnday = _sku_nature_turnday(is_tourist, is_rf)
+        gate_mix_turnday = _sku_nature_turnday(is_mix, is_rf)
+        gate_nt_turnday = _sku_nature_turnday(is_nt, is_rf)
+        for label, td in (("Tourist", gate_tourist_turnday), ("Mix", gate_mix_turnday),
+                          ("Non Tourist", gate_nt_turnday)):
+            df[f"{label}{_HYBRID_RF_TURND_SUFFIX}"] = np.round(np.where(np.isfinite(td), td, np.nan), 2)
+        _n_nd_rows = int((~is_rf).sum())
+        _n_nd_stock = int(cm_stock_val[~is_rf].sum())
+        if _n_nd_rows:
+            warnings.append(
+                f"🎯 池健康度排除 ND 死庫存：需求側門檻改以只計可補貨（RF）店舖的加總 TurnDay 判定"
+                f"（已排除 {_n_nd_rows} 列 ND 店舖、共 {_n_nd_stock:,} 件不可再補貨的庫存）；"
+                "供給側（可轉出池級門檻）維持計全部列，讓 ND 死庫存仍可清走。"
+                "門檻所用數值見「加總 TurnDay (RF)」欄；原有全列「加總 TurnDay」欄位值不變。"
+            )
+
     per_row_excess = np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d))
+    # 供給側池級門檻（可轉出池）：維持計全部列（含 ND），讓 ND 死庫存仍可清走
     mix_pool_ok = sku_mix_turnday >= turnday_threshold
     nt_pool_ok = sku_nt_turnday >= turnday_threshold
     if dim == "rp":
@@ -1582,53 +1722,88 @@ def transform_hybrid(
     # 每列所屬 Nature 的 SKU 級加總 TurnDay（rp 模式需求判定用；仍按 Shop Nature 準則）
     nature_td_np = np.select([is_tourist, is_mix], [ttd_np, mtd_np], default=ntd_np)
     tourist_pool_ok = sku_tourist_turnday >= turnday_threshold
+    # 需求側門檻陣列：預設＝全列；pool_nd_exclude 開啟時＝只計 RF 列（排除 ND 死庫存）
+    gate_ttd_np = pd.Series(gate_tourist_turnday, index=idx).to_numpy(dtype=float)
+    gate_mtd_np = pd.Series(gate_mix_turnday, index=idx).to_numpy(dtype=float)
+    gate_ntd_np = pd.Series(gate_nt_turnday, index=idx).to_numpy(dtype=float)
+    gate_nature_td_np = np.select([is_tourist, is_mix], [gate_ttd_np, gate_mtd_np], default=gate_ntd_np)
+    # 有貨可調（供給側維持計全部列，不受 pool_nd_exclude 影響）
+    supply_mix_ok = mix_pool_ok
+    supply_nt_ok = nt_pool_ok
+    supply_tourist_ok = tourist_pool_ok
+
+    # ── Tourist 可轉出量（各通道的供應來源之一；先於 need_mask 備妥）──
+    if dim == "rp":
+        # RP Type 模式：允許同 Nature 店間再平衡——不作池級歸零，可轉出量按逐列 14 日超額計
+        tourist_excess = (
+            np.where(is_tourist, per_row_excess, 0) if bidirectional else np.zeros(len(df))
+        )
+    elif bidirectional:
+        tourist_excess = np.where(supply_tourist_ok, np.where(is_tourist, per_row_excess, 0), 0)
+    else:
+        tourist_excess = np.zeros(len(df))
+    if bidirectional:
+        df["可轉出貨量 (Tourist)"] = tourist_excess.astype(int)
+
+    # ── 有貨可調（`real_supply_gate`，預設 False ＝現行規則）──
+    # 現行規則以 Nature 池加總 TurnDay 判定「有貨可調」，但池內可能沒有任何一列有 14 日超額；
+    # 且某 Nature 完全沒有列時其加總 TurnDay 為 inf 而令門檻**空過**。兩者都會產生
+    # 「標示需要調貨、實際調入量 0、調入缺口＝全部需求」而無任何可調出貨的假陽性事件列，
+    # 下游與真正「部分補足」的需求列完全無法區分。
+    # 開啟後一律改以 SKU 級**實際可轉出量 > 0** 判定，與「以 RP Type 分類」維度及
+    # 銷量再平衡通道的既有寫法一致（七種維度統一口徑）。
+    # 此條件**隱含**池級門檻——可轉出量已按池門檻逐列歸零，故池門檻仍然生效，
+    # 但不再單獨作為「有貨可調」的判斷依據（消除空池空過與池健康但零超額兩種誤判）。
+    #
+    # 「有貨可調」統一以 SKU 級實際可轉出量 > 0 判定，與「以 RP Type 分類」維度及
+    # 銷量再平衡通道的既有寫法一致（七種維度同一口徑）。
+    # 不需另行扣除需求列自身 Nature 的供給額度：可轉出量已按池門檻逐列歸零，而需求門檻
+    # 本身要求該列所屬 Nature 的池 TurnDay < 門檻（該池因此必被歸零、超額恆為 0），
+    # 故任一需求列的 SKU 供給額度天然只來自其他 Nature——與分配層「需求 Nature 自身除外」
+    # 契約一致，不會因同池超額而製造新的假陽性（雙向模式亦同）。
+    transferable_np = mix_excess + nt_excess + tourist_excess
+    real_supply_np = (
+        pd.Series(transferable_np, index=idx)
+        .groupby(sku_key).transform("sum").to_numpy(dtype=float) > 0
+    )
+    # 開關關閉時為全 True——各分支維持現行池門檻條件不動（零變動）
+    need_gate_np = real_supply_np if real_supply_gate else np.ones(len(df), dtype=bool)
     if dim == "rp":
         # 需求方＝任何 Nature 的 RF 列（ND 一律不作需求）；有貨可調＝同 SKU 任一列有超額
         # （含同 Nature 店間再平衡，故不以他 Nature 池級門檻為前提）；
         # 供應池維持 Mix／Non Tourist（雙向時另加 Tourist）
-        if bidirectional:
-            tourist_excess = np.where(is_tourist, per_row_excess, 0)
-            df["可轉出貨量 (Tourist)"] = tourist_excess.astype(int)
-        else:
-            tourist_excess = np.zeros(len(df))
-        supply_avail = mix_excess + nt_excess + tourist_excess
-        sku_supply = pd.Series(supply_avail, index=idx).groupby(sku_key).transform("sum").to_numpy(dtype=float)
         need_mask = (
             is_rf
-            & (nature_td_np < turnday_threshold)
+            & (gate_nature_td_np < turnday_threshold)
             & (d001_np < d001_threshold)
             & (demand > 0)
-            & (sku_supply > 0)
+            & real_supply_np
+            & need_gate_np
         )
     elif bidirectional:
         # 對稱三向：任何 Nature 缺貨（加總 TurnDay < 門檻）且其他任一 Nature 有貨即為需求方
         # （ND 列一律不作需求）；Tourist 亦可作轉出來源（來源池順序固定 NT → Mix → Tourist）
-        tourist_excess = np.where(
-            tourist_pool_ok,
-            np.where(is_tourist, per_row_excess, 0),
-            0,
-        )
-        df["可轉出貨量 (Tourist)"] = tourist_excess.astype(int)
         need_mask = (
             (
-                (is_tourist & (ttd_np < turnday_threshold) & (mix_pool_ok | nt_pool_ok))
-                | (is_mix & (mtd_np < turnday_threshold) & (nt_pool_ok | tourist_pool_ok))
-                | (is_nt & (ntd_np < turnday_threshold) & (mix_pool_ok | tourist_pool_ok))
+                (is_tourist & (gate_ttd_np < turnday_threshold) & (supply_mix_ok | supply_nt_ok))
+                | (is_mix & (gate_mtd_np < turnday_threshold) & (supply_nt_ok | supply_tourist_ok))
+                | (is_nt & (gate_ntd_np < turnday_threshold) & (supply_mix_ok | supply_tourist_ok))
             )
             & is_rf
             & (d001_np < d001_threshold)
             & (demand > 0)
+            & need_gate_np
         )
     else:
-        tourist_excess = np.zeros(len(df))
         # 需求方＝Tourist-RF（ND 列一律不作需求）；both 維度計算與本分支完全相同，僅分組顯示不同
         need_mask = (
             is_tourist
             & is_rf
-            & (ttd_np < turnday_threshold)
+            & (gate_ttd_np < turnday_threshold)
             & (d001_np < d001_threshold)
             & (demand > 0)
-            & (mix_pool_ok | nt_pool_ok)
+            & (supply_mix_ok | supply_nt_ok)
+            & need_gate_np
         )
     # ── 銷量再平衡通道（僅 sales_rebalance=True）：高銷缺貨列增列為需求方 ──
     # 豁免所屬 Nature 池加總 TurnDay 門檻（本通道存在目的），但仍須 RF、
@@ -1665,7 +1840,6 @@ def transform_hybrid(
 
     df["需要調貨"] = np.where(need_mask, "是", "")
     df["調入需求量 (補到14日)"] = np.where(need_mask, demand, 0).astype(int)
-
     site_arr = df.get("Site Code", _safe_default_series("", idx)).fillna("").astype(str).str.strip().to_numpy(dtype=object)
     sku_arr = df["SKU"].to_numpy(dtype=object)
     n_rows = len(df)
@@ -1712,13 +1886,24 @@ def transform_hybrid(
     mix_avail0 = df["可轉出貨量 (Mix)"].to_numpy(dtype=float)
     tourist_avail0 = df["可轉出貨量 (Tourist)"].to_numpy(dtype=float) if bidirectional else None
     _guard_nature = None if dim == "rp" else nature.to_numpy()
+    # 需求排序鍵（urgent_first）：各列所屬 Nature 的**該列自身**周轉日數（調貨前庫存 ÷ 生效月銷 × 30.5），
+    # 數值越低＝缺貨越深。月銷 0 的列不會成為需求方（需求 > 0 前提），此處仍以 inf 防呆。
+    with np.errstate(divide="ignore", invalid="ignore"):
+        _urgency_arr = (
+            np.where(msold_val > 0,
+                     cm_stock_val / np.where(msold_val > 0, msold_val, 1.0) * 30.5,
+                     np.inf)
+            if urgent_first else None
+        )
     actual_np, gap_np, donate_np, desc_np = _hybrid_allocate_transfers(
         n_rows, sku_arr, site_arr, need_mask, demand, nt_avail0, mix_avail0,
         tourist_avail0=tourist_avail0, nature_arr=_guard_nature, nd_priority=_src_nd,
+        urgency_arr=_urgency_arr,
     )
     actual_om, gap_om, donate_om, desc_om = _hybrid_allocate_transfers(
         n_rows, sku_arr, site_arr, need_mask, demand, nt_avail0, mix_avail0, om_arr=om_arr,
         tourist_avail0=tourist_avail0, nature_arr=_guard_nature, nd_priority=_src_nd,
+        urgency_arr=_urgency_arr,
     )
     df["實際調入量"] = actual_np
     df["調入缺口"] = gap_np
@@ -1728,6 +1913,31 @@ def transform_hybrid(
     df["調入缺口 (同OM)"] = gap_om
     df["轉出量 (同OM)"] = donate_om
     df["調貨來源 (同OM)"] = desc_om
+
+    # ── 調貨補足狀態（三態標示；僅 real_supply_gate 開啟時輸出）──
+    # 現行「調入缺口」只分「有缺口／無缺口」，無法分辨「完全調不到」與「部分補足」；
+    # 兩者在店舖問題 SKU、指標卡與 Excel 主表都混作同一類下游行動。
+    # 三態以不限OM 分配實績為準（非需求列留空）：
+    #   已補足＝缺口 0；部分補足＝0 < 實際調入量 < 需求量；無貨可調＝實際調入量 0。
+    # 開啟 real_supply_gate 後「無貨可調」只剩**真實的供給競爭／守衛阻擋**
+    # （同 SKU 多個需求列爭用同一批貨、同OM 變體無同 OM 來源、自我調貨守衛），
+    # SKU 級零供給的假陽性已於觸發階段排除。
+    _fulfill_state = np.full(n_rows, "", dtype=object)
+    _need_pos = need_mask
+    _fulfill_state[_need_pos] = np.where(
+        gap_np[_need_pos] == 0, _HYBRID_FULFILL_FULL,
+        np.where(actual_np[_need_pos] > 0, _HYBRID_FULFILL_PARTIAL, _HYBRID_FULFILL_NONE),
+    )
+    _no_supply_mask = _fulfill_state == _HYBRID_FULFILL_NONE
+    if real_supply_gate:
+        df[_HYBRID_FULFILL_COLUMN] = _fulfill_state
+        _n_none = int(_no_supply_mask.sum())
+        if _n_none:
+            warnings.append(
+                f"📦 調貨補足狀態：{_n_none} 列標示需要調貨但實際調入量為 0"
+                "（同 SKU 供給被其他需求列先用完、同OM 變體無同 OM 來源、或受自我調貨守衛阻擋），"
+                "已於「調貨補足狀態」欄標示「無貨可調」，與「部分補足」「已補足」分開。"
+            )
 
     if not need_mask.any():
         if dim == "rp":
@@ -1952,6 +2162,17 @@ def transform_hybrid(
             raw.loc[raw[_HYBRID_SALES_CLASS_COLUMN].isin(_HYBRID_SALES_CLASS_ORDER[1:3]), "Shop Stock Qty (CM)"].sum()
         ),
         "sales_need_rows": int(_sales_added_rows),
+        # 需求排序（需求列分配次序）與池健康度口徑的開關狀態；
+        # 兩者皆無法由 RAW 反推（欄位值相同時可能排序不同），故回退路徑不列
+        "urgent_first": bool(urgent_first),
+        "pool_nd_exclude": bool(pool_nd_exclude),
+        "real_supply_gate": bool(real_supply_gate),
+        # 無貨可調（標示需要調貨但實際調入量 0）的需求列數／SKU 數；
+        # 開關關閉時仍可由實際調入量反推，故兩種狀態皆記錄
+        "no_supply_need_rows": int(_no_supply_mask.sum()),
+        "no_supply_need_skus": int(raw.loc[_no_supply_mask, "SKU"].nunique()) if bool(_no_supply_mask.any()) else 0,
+        "fulfill_full_rows": int((_fulfill_state == _HYBRID_FULFILL_FULL).sum()),
+        "fulfill_partial_rows": int((_fulfill_state == _HYBRID_FULFILL_PARTIAL).sum()),
         "return_to_d001": bool(return_to_d001),
         "return_rows": int((df[_HYBRID_RETURN_D001_COLUMN] > 0).sum()) if return_to_d001 else 0,
         "return_skus": int(df.loc[df[_HYBRID_RETURN_D001_COLUMN] > 0, "SKU"].nunique()) if (return_to_d001 and (df[_HYBRID_RETURN_D001_COLUMN] > 0).any()) else 0,
@@ -2474,6 +2695,17 @@ def _write_hybrid_guide_sheet(ws, stats):
         f'保底 {st_.get("sales_overstock_min_units", 2)} 件（銷量存貨分類恆按此計算）')
     _kv("銷量再平衡", "開啟（高銷缺貨列豁免池門檻加入調貨需求方）" if st_.get("sales_rebalance")
         else "關閉（調貨需求判定按現行規則）")
+    _kv("需求排序（缺貨深度優先）",
+        "開啟（同 SKU 內需求列先補周轉日數最淺者，同深度再按需求量大→小）" if st_.get("urgent_first")
+        else "關閉（同 SKU 內需求列按需求量大→小）")
+    _kv("池健康度排除 ND 死庫存",
+        "開啟（需求側門檻只計 RF 店舖；供給側仍計全部列；門檻值見「加總 TurnDay (RF)」欄）"
+        if st_.get("pool_nd_exclude")
+        else "關閉（需求側門檻計全部列，含 ND 店舖庫存）")
+    _kv("有貨可調改用實際可轉出量",
+        "開啟（有貨可調＝SKU 級實際可轉出量 > 0；另附「調貨補足狀態」三態欄）"
+        if st_.get("real_supply_gate")
+        else "關閉（有貨可調＝Nature 池加總 TurnDay 達門檻）")
     _kv("建議退D001", "開啟（中銷／低銷／零銷列退回超出 Safety 的庫存；高銷列須庫存高於 Safety 200% 才退至 2 倍 Safety）" if st_.get("return_to_d001")
         else "關閉（不產生退倉建議）")
     _kv("參考日期", f'{st_.get("ref_date", "—")}（Past 90 Days 0 Sales 轉 ND 提示的新品判定基準，預設昨日）')
@@ -2499,6 +2731,35 @@ def _write_hybrid_guide_sheet(ws, stats):
             "低銷積壓；零銷且庫存不少於保底件數 → 零銷積壓；其餘 → 正常（門檻見上方 ①）。")
     _bullet("Past 90 Days 0 Sales 轉 ND：M-2／M-1／CM-MTD／P90D 皆零銷售且有庫存的列，於「店舖問題 SKU」"
             "標示 ND 退場建議（距參考日期 90 天內新品除外）。")
+    if st_.get("urgent_first"):
+        _bullet("需求排序（缺貨深度優先，本份已開啟）：同一 SKU 內需求列的分配次序為"
+                "**周轉日數由淺至深（缺貨最深者先補）→ 需求量由大→小 → 來源檔列序**。"
+                "周轉日數＝該列調貨前 Shop Stock Qty (CM) ÷ 生效月銷 × 30.5。"
+                "供給不足時，0 庫存的斷貨店舖不再被需求量較大的快滿店舖蓋過而分文未得；"
+                "同深度仍以需求量為次要鍵。只改變逐列「實際調入量／調入缺口／調貨來源／"
+                "調貨後庫存與 TurnDay」，觸發判定、轉出資格與 Safety Review 不變。")
+    if st_.get("pool_nd_exclude"):
+        _bullet("池健康度排除 ND 死庫存（本份已開啟）：ND 店舖永不補貨，其庫存不會再進來，"
+                "卻會灌高該 Nature 的加總 TurnDay，令該池真實缺貨的 RF 店舖因「池看來健康」而不被標示。"
+                "**需求側門檻**（判定該 Nature 是否缺貨）改以只計 RP Type＝RF 列的加總 TurnDay 為準，"
+                "門檻所用數值見「Tourist／Mix／Non Tourist 加總 TurnDay (RF)」欄；"
+                "原有全列「加總 TurnDay」欄位值不變（資料契約），Summary 與店舖問題 SKU 亦維持全列口徑。"
+                "**供給側（可轉出池級門檻）維持計全部列（含 ND）**——ND 死庫存正是最該清走的貨，"
+                "「池看來健康」在此是正確訊號。觸發面只會擴大不會收縮。")
+    if st_.get("real_supply_gate"):
+        _bullet("有貨可調改用實際可轉出量（本份已開啟）：現行規則以 Nature 池加總 TurnDay 判定「有貨可調」，"
+                "但池內可能沒有任何一列有 14 日超額，且某 Nature 完全沒有列時其加總 TurnDay 為無窮大而令門檻"
+                "**空過**——兩者都會產生「標示需要調貨、實際調入量 0、調入缺口＝全部需求」而無任何可調出貨的"
+                "假陽性事件列，與真正「部分補足」的需求列在下游完全無法區分。\n"
+                "開啟後「有貨可調」一律改以 **SKU 級實際可轉出量 > 0** 判定，與「以 RP Type 分類」維度及"
+                "銷量再平衡通道同一口徑（七種維度統一）；此條件隱含池級門檻（可轉出量已按池門檻逐列歸零），"
+                "故池門檻仍然生效，但不再單獨作為「有貨可調」的依據。\n"
+                "**觸發面只會收縮**（原本標示但實際無貨可調的列不再進入事件表，連帶其可轉出未使用來源列亦不進 "
+                "Review），總調入量與需求／分配演算法不變。另新增「**調貨補足狀態**」欄區分三態——"
+                "「已補足」（缺口 0）／「部分補足」（0 < 實際調入量 < 需求量）／「無貨可調」（實際調入量 0），"
+                "非需求列留空；開啟後「無貨可調」只剩真實的供給競爭／守衛阻擋（同 SKU 多個需求列爭用同一批貨、"
+                "同OM 變體無同 OM 來源、自我調貨守衛），「店舖問題 SKU」另列「無貨可調（無來源可調）」問題類型"
+                "並建議改由 D001／供應商補貨。")
     if st_.get("return_to_d001"):
         _bullet("建議退D001（本份已開啟）：接收目標 D001＝Warehouse，可無限接收，不跑分配。"
                 "退貨基準為 Safety Stock (現時)（非調貨段的 14 日線，與池級門檻脫鉤）：中銷／低銷／零銷列"

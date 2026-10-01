@@ -126,6 +126,23 @@ def main():
     print("OK Hybrid Return D001  | rows=%d return_rows=%d return_units=%d warnings=%d" % (
         len(r4), h_stats4["return_rows"], h_stats4["return_units"], len(h_w4)))
 
+    # ── Safety Stock x NetStock Review（缺貨深度優先＋池健康度排除 ND 死庫存）──
+    r5, h_sc5, h_diag5, h_diag5_om, h_cross5, h_stats5, h_w5 = transform_hybrid(
+        df, urgent_first=True, pool_nd_exclude=True)
+    assert h_stats5["urgent_first"] is True and h_stats5["pool_nd_exclude"] is True
+    generate_excel_hybrid(r5, h_sc5, h_diag5, h_diag5_om, h_cross5, h_stats5)
+    print("OK Hybrid Alloc Optim   | rows=%d need=%d actual=%d gap=%d warnings=%d" % (
+        len(r5), h_stats5["need_rows"], h_stats5["total_actual"], h_stats5["total_gap"], len(h_w5)))
+
+    # ── Safety Stock x NetStock Review（有貨可調改用實際可轉出量）──
+    r6, h_sc6, h_diag6, h_diag6_om, h_cross6, h_stats6, h_w6 = transform_hybrid(
+        df, real_supply_gate=True)
+    assert h_stats6["real_supply_gate"] is True
+    generate_excel_hybrid(r6, h_sc6, h_diag6, h_diag6_om, h_cross6, h_stats6)
+    print("OK Hybrid Real Supply  | rows=%d need=%d actual=%d none=%d warnings=%d" % (
+        len(r6), h_stats6["need_rows"], h_stats6["total_actual"],
+        h_stats6["no_supply_need_rows"], len(h_w6)))
+
     # ── Stock Impact Analysis ──
     _, si_brand, si_buyer, si_cat, _, si_alloc, si_diag, si_inv, si_mly, si_raw, si_warns = transform_stock_impact(
         df, warehouse_only=False, stock_threshold=300

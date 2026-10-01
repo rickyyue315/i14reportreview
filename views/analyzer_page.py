@@ -1080,6 +1080,54 @@ if uploaded_file is not None:
                 help="低銷／零銷積壓分類要求庫存不少於此件數，避免尾數庫存誤報積壓。"
                      + _sales_hint
             )
+        st.markdown("**🚚 調貨分配順序與池健康度口徑**")
+        urgent_first = st.checkbox(
+            "🆘 缺貨深度優先（供給不足時先補周轉日數最淺的店舖）",
+            value=False, key="hy_urgent_first",
+            help="預設關閉：同一 SKU 內需求列按需求量由大→小分配（現行規則）。"
+                 "開啟後改為按**店舖周轉日數由淺至深**分配——周轉日數＝該列調貨前 "
+                 "Shop Stock Qty (CM) ÷ 生效月銷 × 30.5，數值越低＝缺貨越深。\n"
+                 "解決的問題：供給不足時，0 庫存的斷貨店舖會被需求量較大的「快滿」店舖蓋過，"
+                 "結果分文未得仍舊斷貨；開啟後最深缺貨者先獲調入。\n"
+                 "同周轉日數時仍以需求量為次要鍵，故同深度行為與現行一致。\n"
+                 "只改變同 SKU 內需求列的分配次序（實際調入量／調入缺口／調貨來源／調貨後庫存與 TurnDay）；"
+                 "觸發判定、轉出資格、池門檻與 Safety Review、建議調整量全部不變。"
+        )
+        pool_nd_exclude = st.checkbox(
+            "🎯 池健康度排除 ND 死庫存（ND 店舖不會再補貨，其庫存不計入需求側門檻）",
+            value=False, key="hy_pool_nd_ex",
+            help="預設關閉：該 Nature 的 SKU 級加總 TurnDay 計全部列（含 ND）。\n"
+                 "問題：ND 店舖永不補貨，其庫存不會再進來，卻會灌高加總 TurnDay，"
+                 "令該池真實缺貨的 RF 店舖因「池看來健康」而不被標示需要調貨"
+                 "（例如 Tourist-ND 店持有 300 件 → Tourist 池 TurnDay 300 → "
+                 "同 SKU 的 0 庫存 RF 店舖連同可用的 Non Tourist 供應完全未被觸發）。\n"
+                 "開啟後**需求側門檻**（判定該 Nature 是否缺貨）只計 RP Type＝RF 列，"
+                 "門檻所用數值另存「加總 TurnDay (RF)」三欄供稽核；"
+                 "原有全列「加總 TurnDay」欄位值不變（資料契約），Summary 與店舖問題 SKU 亦維持全列口徑。\n"
+                 "**供給側（可轉出池級門檻）維持計全部列（含 ND）**——ND 死庫存正是最該清走的貨，"
+                 "「池看來健康」在此是正確訊號；若一併排除反而會把池判為不足而鎖死，"
+                 "與「ND 優先轉出」的用意相反。\n"
+                 "因此觸發面只會擴大不會收縮。缺「RP Type」欄時自動失效並列 warning。"
+        )
+        real_supply_gate = st.checkbox(
+            "📦 有貨可調改用實際可轉出量（消除「標示需要調貨但一件都調不到」的假陽性列）",
+            value=False, key="hy_real_supply",
+            help="預設關閉：該 Nature 池加總 TurnDay 達門檻即視為有貨可調。\n"
+                 "問題：池內可能沒有任何一列有 14 日超額；且某 Nature 完全沒有列時其加總 TurnDay "
+                 "為無窮大而令門檻**空過**。兩者都會產生「標示需要調貨、實際調入量 0、"
+                 "調入缺口＝全部需求」而無任何可調出貨的假陽性事件列，與真正「部分補足」的需求列"
+                 "在下游完全無法區分。\n"
+                 "開啟後「有貨可調」一律改以 **SKU 級實際可轉出量 > 0** 判定，與「以 RP Type 分類」"
+                 "維度及銷量再平衡通道同一口徑（七種維度統一）；此條件隱含池級門檻（可轉出量已按"
+                 "池門檻逐列歸零），故池門檻仍然生效。供給額度排除需求列自身所屬的 Nature，配合分配層"
+                 "「需求 Nature 自身除外」契約。\n"
+                 "**觸發面只會收縮**（原本標示但實際無貨可調的列不再進入事件表，連帶其可轉出未使用"
+                 "來源列亦不進 Review），總調入量與需求／分配演算法不變。\n"
+                 "同時新增「**調貨補足狀態**」欄區分三態：已補足（缺口 0）／部分補足／"
+                 "無貨可調（實際調入量 0），非需求列留空；開啟後「無貨可調」只剩真實的供給競爭／"
+                 "守衛阻擋（同 SKU 多個需求列爭用同一批貨、同OM 變體無同 OM 來源、自我調貨守衛），"
+                 "「店舖問題 SKU」另列「無貨可調（無來源可調）」問題類型，指標卡加無貨可調概況一排。"
+        )
         return_to_d001 = st.checkbox(
             "📤 建議退D001（中銷／低銷／零銷退回超出 Safety 的庫存；高銷須庫存高於 Safety 200%）",
             value=False, key="hy_return_d001",
@@ -1102,7 +1150,7 @@ if uploaded_file is not None:
             turnday_threshold, d001_threshold, _safety_days, bidirectional, _dimension,
             hy_ref_date, nd_priority,
             sales_rebalance, sales_oos_days, sales_overstock_days, sales_overstock_min_units,
-            return_to_d001,
+            return_to_d001, urgent_first, pool_nd_exclude, real_supply_gate,
         )
         if bidirectional:
             st.caption(
@@ -1240,6 +1288,9 @@ if uploaded_file is not None:
                     sales_overstock_days=int(sales_overstock_days),
                     sales_overstock_min_units=int(sales_overstock_min_units),
                     return_to_d001=bool(return_to_d001),
+                    urgent_first=bool(urgent_first),
+                    pool_nd_exclude=bool(pool_nd_exclude),
+                    real_supply_gate=bool(real_supply_gate),
                 )
                 buf = generate_excel_hybrid(
                     raw_df, sc_summary, diagnosis, diagnosis_om, diag_summary, _stats,
@@ -1296,6 +1347,9 @@ if uploaded_file is not None:
                 (stats or {}).get("sales_overstock_days", sales_overstock_days),
                 (stats or {}).get("sales_overstock_min_units", sales_overstock_min_units),
                 return_to_d001=(stats or {}).get("return_to_d001", return_to_d001),
+                urgent_first=(stats or {}).get("urgent_first", urgent_first),
+                pool_nd_exclude=(stats or {}).get("pool_nd_exclude", pool_nd_exclude),
+                real_supply_gate=(stats or {}).get("real_supply_gate", real_supply_gate),
             )
             hybrid_is_stale = hybrid_params_changed(applied_hybrid_params, _current_hybrid_params)
             if hybrid_is_stale:

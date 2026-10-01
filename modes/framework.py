@@ -46,6 +46,11 @@ __all__ = [
     "_HYBRID_RETURN_D001_GROSS_COLUMN",
     "_HYBRID_RETURN_D001_GROSS_INTERNAL",
     "_HYBRID_RETURN_D001_SHEET",
+    "_HYBRID_RF_TURND_SUFFIX",
+    "_HYBRID_FULFILL_COLUMN",
+    "_HYBRID_FULFILL_FULL",
+    "_HYBRID_FULFILL_PARTIAL",
+    "_HYBRID_FULFILL_NONE",
     "_HYBRID_RP_GROUPS",
     "_HYBRID_SAFETY_DAYS_COLUMN",
     "_HYBRID_SAFETY_DAYS_DEFAULT",
@@ -539,6 +544,26 @@ _HYBRID_SAFETY_MIN_KEEP = 3
 
 
 
+# 「可補貨（RF）店舖」加總 TurnDay 欄名後綴（RAW／主表顯示用；僅
+# `exclude_nd_pool` 開關啟用時輸出）。ND 店舖永不補貨，其庫存屬死貨，
+# 不得充當「該 Nature 的可補貨需求已被庫存抵銷」的依據；需求判定改以本欄
+# （只計 RF 列）為準，供給側池門檻則維持計全部列（ND 死貨清走不損補貨能力）。
+_HYBRID_RF_TURND_SUFFIX = " 加總 TurnDay (RF)"
+
+
+
+# 「調貨補足狀態」欄名與三態取值（RAW／主表；僅 `real_supply_gate` 開啟時輸出，
+# 非需求列留空）。以不限OM 分配實績為準：
+#   已補足＝調入缺口 0；部分補足＝0 < 實際調入量 < 需求量；無貨可調＝實際調入量 0。
+# 現行「調入缺口」只分有／無缺口，無法分辨「完全調不到」與「部分補足」，
+# 兩者在店舖問題 SKU、指標卡與 Excel 主表都混作同一類下游行動。
+_HYBRID_FULFILL_COLUMN = "調貨補足狀態"
+_HYBRID_FULFILL_FULL = "已補足"
+_HYBRID_FULFILL_PARTIAL = "部分補足"
+_HYBRID_FULFILL_NONE = "無貨可調"
+
+
+
 # 建議值周轉欄（RAW／主表；僅不足／過高列有值）：建議值 ÷ (P90D 月均 ÷ 30)，
 # 與來源「Turnday (P90D Qty)」及 SSR「Recommend Safety Stock Turnday」同一準則。
 _HYBRID_SUGGEST_TURNDAY_COLUMN = "建議 Safety 設定值 Turnday"
@@ -849,6 +874,8 @@ def _attach_sales_classification_columns(
 
 # 「調貨 Review Safety Stock」主表欄序（店舖×SKU 逐列；RAW 則輸出全部欄位 + Review 欄）
 # RP Type 為正規化後值（RF／ND），來源缺「RP Type」欄時該欄不出現（主表退回 28 欄）
+# 調貨補足狀態不在本契約內：僅 `real_supply_gate` 開啟時由 _build_hybrid_diagnosis
+# 插入於「調入需求量 (補到14日)」之後（主表 29→30 欄），故本清單恆為 29 欄基準契約。
 _HYBRID_DIAG_COLUMNS = [
     "Brand", "SKU", "SKU Desc", "Buyer", "Adj. SST", "Site Code", "OM", "Shop Nature", "RP Type",
     "事件類型", "Shop Stock Qty (CM)", "Shop Monthly Sold Qty (P90D)",
@@ -875,7 +902,8 @@ _HYBRID_RAW_DISPLAY_GROUPS = [
      "Effective Shop Monthly Sold Qty (P90D)",
      "D001 Net Stock Qty (CM)", "D001 Stock Qty (CM)", "D001 Effective Stock Qty (CM)"],
     ["Tourist 加總 TurnDay", "Mix 加總 TurnDay", "Non Tourist 加總 TurnDay",
-     "需要調貨", "調入需求量 (補到14日)"],
+     "Tourist 加總 TurnDay (RF)", "Mix 加總 TurnDay (RF)", "Non Tourist 加總 TurnDay (RF)",
+     "需要調貨", "調入需求量 (補到14日)", _HYBRID_FULFILL_COLUMN],
     ["事件類型", _HYBRID_SAFETY_DAYS_COLUMN, _HYBRID_SAFETY_LINE_COLUMN,
      "Safety Review", "建議 Safety 設定值", _HYBRID_SUGGEST_TURNDAY_COLUMN, "Safety 建議調整量",
      _HYBRID_FULL_SAFETY_LINE_COLUMN, _HYBRID_FULL_SAFETY_REVIEW_COLUMN,

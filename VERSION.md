@@ -1,5 +1,49 @@
 # 版本記錄
 
+## v1.76.0 (2026-10-01)
+
+Safety Stock x NetStock Review「有貨可調」判定改用實際可轉出量（新增開關 `real_supply_gate`，**預設關閉＝輸出零變動**）：
+
+- **New: `real_supply_gate`（UI 勾選，預設關閉）** — 消除「標示需要調貨、實際調入量 0、調入缺口＝全部需求」而無任何可調出貨的**假陽性事件列**
+  - **問題一：池內零超額仍過門檻** — 現行「有貨可調」以 Nature 池加總 TurnDay 判定，但池內可能沒有任何一列有 14 日超額（例：Non Tourist 池每店剛好 14 日 → 池 TurnDay 14 達門檻，逐列超額全為 0；同時段 Tourist 店 0 庫存、需求 14 件）
+  - **問題二：空 Nature 池令門檻空過** — `_sku_nature_turnday` 以 0 月銷回傳 `inf`，某 Nature 完全沒有列時其加總 TurnDay ≥ 門檻恆成立（「有貨可調」在完全無供給下通過）；該值於 RAW 寫為 `NaN`（顯示空白），稽核軌跡看不出觸發原因
+  - **計算** — 開啟後「有貨可調」一律改以 SKU 級 `sum(可轉出貨量) > 0` 判定，與「以 RP Type 分類」維度及銷量再平衡通道的既有寫法一致（七種維度同一口徑）。此條件**隱含**池級門檻（可轉出量已按池門檻逐列歸零），故池門檻仍然生效但不再單獨作為「有貨可調」的依據
+  - **不需扣除需求列自身 Nature 的供給額度** — 可轉出量已按池門檻逐列歸零，而需求門檻本身要求該列所屬 Nature 的池 TurnDay < 門檻（該池必被歸零、超額恆為 0），故任一需求列的 SKU 供給額度天然只來自其他 Nature，與分配層「需求 Nature 自身除外」契約一致（雙向模式亦同）
+  - **影響面** — 觸發面**只收縮不擴大**（測試逐列斷言）；總調入量與需求／分配演算法不變；連帶被移除 SKU 的「可轉出未使用」來源列亦不進 Review，Safety Review 與建議調整量只隨事件列母體收縮而變動。`rp` 維度本已採此口徑，故兩種開關狀態完全一致
+- **New: `調貨補足狀態` 欄（僅開啟時輸出）** — 三態區分「一件都調不到」與「部分補足」，兩者在現行「調入缺口」（只分有／無缺口）下無法區分：
+  - `已補足`＝調入缺口 0；`部分補足`＝0 < 實際調入量 < 需求量；`無貨可調`＝實際調入量 0；非需求列留空
+  - 以**不限OM 分配實績**為準（同OM 變體無同 OM 來源時仍為「已補足」）；月銷 0 的列不會成為需求方
+  - 開啟後「無貨可調」只剩**真實的供給競爭／守衛阻擋**：同 SKU 多個需求列爭用同一批貨、同OM 變體無同 OM 來源、自我調貨守衛
+  - 主表「調貨 Review Safety Stock」29→30 欄（插入於「調入需求量 (補到14日)」之後）；**該欄刻意不在 `_HYBRID_DIAG_COLUMNS` 契約內**（由 `_build_hybrid_diagnosis` 動態插入），故 29 欄基準契約與既有測試完全不動
+- **Change: `店舖問題 SKU` 缺口說明分流** — `_build_hybrid_shop_issues` 新增 `_gap_clause()`：補足狀態為「無貨可調」時改述「本次無任何店舖可調出貨品……無法以店舖間調貨解決，建議改由 D001 或供應商補貨，或依上方建議值調整 Safety Stock 以減少日後缺貨」，否則維持現行 `_d001_gap_advice` 文案；開關關閉時逐字一致
+- **Change: 指標卡** — 開啟時末尾加補足狀態概況一排（已補足列數／部分補足列數／無貨可調列數／無貨可調 SKU 數，4 卡）；關閉時版面零變動
+- **Change: `transform_hybrid()` 新增 `real_supply_gate` 關鍵字參數**（預設 False，置於 `pool_nd_exclude` 之後，全部呼叫端為關鍵字傳故位置相容）；`transferable_np` 提前至 need_mask 之前計算（原本於 Review 段重算），供「有貨可調」與 `donor_mask` 共用
+- **New: stats** `real_supply_gate`／`fulfill_full_rows`／`fulfill_partial_rows`／`no_supply_need_rows`／`no_supply_need_skus`；補足狀態可由 RAW 反推（`_hybrid_stats_from_raw()` 回退路徑補算四個計數），開關狀態不可反推故該路徑不列 `real_supply_gate`（與 `nd_priority` 準則一致）
+- **Update:** 說明工作表 ① 參數區新增一列、② 核心邏輯於開啟時加一條說明；UI 參數區新增 checkbox（附完整 help）；`build_hybrid_params()` 與 `hybrid_params_changed()` 補齊新鍵；`modes/framework.py` 新增 `_HYBRID_FULFILL_COLUMN`／`_HYBRID_FULFILL_FULL`／`_HYBRID_FULFILL_PARTIAL`／`_HYBRID_FULFILL_NONE` 契約常數與 RAW 顯示欄序；README／使用說明頁同步
+- **測試** — 新增 `tests/test_hybrid_real_supply_gate.py` ×22（關閉契約與預設值、零超額與空池兩類假陽性消除、真實供給不受影響、觸發面只收縮與總調入量守恆、rp 維度一致、雙向兩情境、三態逐列一致與非需求列留空、同OM 變體口徑、stats／指標卡／回退路徑、店舖問題分流、說明表）；`tests/_smoke_pipeline.py` 加「Hybrid Real Supply」情境；共 580 項測試與煙霧測試通過
+- Change: `version.py` → 1.76.0
+
+## v1.75.0 (2026-10-01)
+
+Safety Stock x NetStock Review 調貨邏輯優化（兩項新開關，**均預設關閉＝輸出零變動**）：
+
+- **New: `urgent_first`（缺貨深度優先，UI 勾選，預設關閉）** — 解決「供給不足時，0 庫存的斷貨店舖反被需求量較大的快滿店舖蓋過而分文未得」。同一 SKU 內需求列的分配次序由現行「需求量由大→小」改為 **「該列周轉日數由淺至深 → 需求量由大→小 → 來源檔列序」**，周轉日數＝該列調貨前 Shop Stock Qty (CM) ÷ 生效月銷 × 30.5（與店舖問題 SKU、銷量存貨分類同一準則）；月銷 0 的列不會成為需求方（需求 > 0 前提），非有限值視為最不急排最後
+  - 實測（NT 池健康、超額 6 件；總需求 8 > 供給 6）：關閉時 T_A（周轉 5.6 日、需求 6）全額滿足、T_B（周轉 0 日、需求 2）分文未得；開啟後 T_B 全額滿足、T_A 部分補足（4／缺口 2）
+  - **只改變同 SKU 內需求列的分配次序**：總調入量與各來源店轉出量守恆；可轉出量、觸發判定、轉出資格與 Safety Review／建議調整量逐列不變；被改變者為 `實際調入量` / `調入缺口` / `調貨來源 (Site Code)` / `調貨後庫存` / `調貨後 TurnDay` 及其同OM 對應欄；不限OM 與同OM 兩次分配使用同一排序鍵
+  - 同周轉日數時以需求量為次要鍵，故同深度行為與現行逐欄一致
+- **New: `pool_nd_exclude`（池健康度排除 ND 死庫存，UI 勾選，預設關閉）** — 解決「不可補貨（ND）店舖的死庫存灌高池 TurnDay，掩蓋該池真實缺貨的 RF 店舖」。ND 店舖永不補貨、庫存不會再進來，計入 SKU 級加總 TurnDay 會令池看來健康
+  - 實測（Tourist-ND 店持 300 件、90 日零銷售；同 SKU 另有 0 庫存 RF 店舖與 26 件可用 Non Tourist 供應）：關閉時 Tourist 池 TurnDay 300 → 真實缺貨的 RF 店舖完全未被觸發；開啟後被正確標示並實際調入 14 件
+  - **需求側門檻**（判定該 Nature 是否缺貨——單向的 Tourist 加總 TurnDay、雙向的各 Nature 加總 TurnDay、rp 維度的所屬 Nature 加總 TurnDay）改以**只計 RP Type＝RF 列**的加總 TurnDay 為準，並另存 `Tourist 加總 TurnDay (RF)` / `Mix 加總 TurnDay (RF)` / `Non Tourist 加總 TurnDay (RF)` 三欄供稽核
+  - **契約不動**：原有全列 `X 加總 TurnDay` 三欄值完全不變（Summary 由庫存／月銷另行彙總、店舖問題 SKU 說明亦維持全列口徑）
+  - **供給側（可轉出池級門檻）刻意維持計全部列（含 ND）**：ND 死庫存正是最該清走的貨，「池看來健康」在此是正確訊號；若一併排除反而會把池判為不足而鎖死，與「ND 優先轉出」的既有用意相反。故觸發面只會**擴大不會收縮**（已加測試斷言原本標示的列不會變成不標示）
+  - 缺「RP Type」欄時排除前後恆等，開關自動失效並列 warning
+- **Change: `_hybrid_allocate_transfers()` 新增 `urgency_arr` 關鍵字參數**（預設 None）— 非 None 時需求列改依缺貨深度排序（`np.lexsort`，末段以列序 tie-break 維持原 stable 契約）；None 時與現行 `np.argsort(-demand, kind="stable")` 完全等價
+- **Change: `transform_hybrid()` 新增 `urgent_first` / `pool_nd_exclude` 關鍵字參數**（置於 `return_to_d001` 之後，全部呼叫端為關鍵字傳故位置相容）；`_sku_nature_turnday()` 內部 helper 新增選擇性的列遮罩參數以支援 RF 準則
+- **New: stats** `urgent_first` / `pool_nd_exclude` 記錄兩項開關狀態（皆無法由 RAW 反推，`_hybrid_stats_from_raw()` 回退路徑不列，與 `nd_priority` 準則一致）
+- **Update:** 說明工作表 ① 參數區新增兩列、② 核心邏輯於開啟時各加一條說明（含供給側維持全列的理由）；UI 參數區新增「🚚 調貨分配順序與池健康度口徑」區塊（兩個 checkbox，各附完整 help）；`build_hybrid_params()` 與 `hybrid_params_changed()` 補齊新鍵（舊快照以預設值向後相容）；README／使用說明頁／RAW 顯示欄序分組同步
+- **測試** — 新增 `tests/test_hybrid_alloc_optim.py` ×26（關閉契約與預設值、開關守恆、同深度等價、同OM 同步、分配器層級 4 項含 inf 防呆與 tie-break、觸發擴大不收縮、雙向／rp 維度、缺 RP 欄自動失效、契約欄位不變、供給側仍可清走、RAW 欄序、說明表、stats 回退）；`tests/_smoke_pipeline.py` 加「Hybrid Alloc Optim」情境；共 558 項測試與煙霧測試通過
+- Change: `version.py` → 1.75.0
+
 ## v1.74.0 (2026-09-30)
 
 全模式執行速度優化，輸出零變動（報表轉換與 Excel 逐格內容、數字格式、對齊完全等價）：

@@ -37,6 +37,8 @@ from modes.common import (
 from modes.framework import (
     _HYBRID_DIAG_OVER,
     _HYBRID_DIAG_UNDER,
+    _HYBRID_FULFILL_COLUMN,
+    _HYBRID_FULFILL_NONE,
     _HYBRID_SAFETY_DAYS_COLUMN,
     _HYBRID_SAFETY_LINE_COLUMN,
     _HYBRID_SUGGEST_TURNDAY_COLUMN,
@@ -514,6 +516,27 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
     warehouse_w = _is_warehouse_supply(raw).loc[work.index]
     zero_w = zero_mask.reindex(work.index, fill_value=False).fillna(False).astype(bool)
     stock_cm_w = _safe_numeric(work.get("Shop Stock Qty (CM)", _safe_default_series(0, work.index))).astype(int)
+    # 補足狀態欄僅 `real_supply_gate` 開啟時存在——用於把「一件都調不到」與「部分補足」
+    # 在建議方法中分開說明，避免下游把兩種截然不同的行動混為一談
+    _HAS_FULFILL = _HYBRID_FULFILL_COLUMN in work.columns
+    ful_w = work[_HYBRID_FULFILL_COLUMN] if _HAS_FULFILL else _safe_default_series("", work.index)
+
+    def _gap_clause(i) -> str:
+        """缺口說明：無貨可調（實際調入 0）與部分補足分開表述。"""
+        gap_i = int(gap_w.iloc[i])
+        if gap_i <= 0:
+            return ""
+        if _HAS_FULFILL and str(ful_w.iloc[i]).strip() == _HYBRID_FULFILL_NONE:
+            return (
+                f"；惟本次無任何店舖可調出貨品（需要 {int(demand_w.iloc[i])} 件、實際調入 0 件，"
+                "同 SKU 供給已被其他需求列取用、或同 OM 變體無同 OM 來源），"
+                f"尚缺 {gap_i} 件，無法以店舖間調貨解決——建議改由 D001 或供應商補貨，"
+                "或依上方建議值調整 Safety Stock 以減少日後缺貨"
+            )
+        return (
+            f"；尚有缺口 {gap_i} 件，"
+            f"{_d001_gap_advice(float(d001_qty_w.iloc[i]), gap_i, bool(warehouse_w.iloc[i]))}"
+        )
 
     issue, desc, advice, sev = [], [], [], []
     for i in range(len(work)):
@@ -533,8 +556,7 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
                 src_n = _count_transfer_sources(str(src_w.iloc[i]))
                 text += f"；另需調入 {int(demand_w.iloc[i])} 件（實際可調入 {int(actual_w.iloc[i])} 件，涉及 {src_n} 間來源店舖）"
             if int(gap_w.iloc[i]) > 0:
-                text += (f"；尚有缺口 {int(gap_w.iloc[i])} 件，"
-                         f"{_d001_gap_advice(float(d001_qty_w.iloc[i]), int(gap_w.iloc[i]), bool(warehouse_w.iloc[i]))}")
+                text += _gap_clause(i)
             if is_zero:
                 text += f"；{_HYBRID_P90D_ZERO_SALES_ANNOTATION}"
             advice.append(text)
@@ -560,8 +582,7 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
             desc.append("過去 90 日（M-2／M-1／CM-MTD／P90D）皆零銷售，店舖仍有庫存，建議檢視是否轉 ND 停補貨")
             text = f"建議轉為 ND，現有庫存全數轉出或退倉（現時 Safety {adj_txt} 件；店舖庫存 {stock_txt} 件）"
             if int(gap_w.iloc[i]) > 0:
-                text += (f"；尚有缺口 {int(gap_w.iloc[i])} 件，"
-                         f"{_d001_gap_advice(float(d001_qty_w.iloc[i]), int(gap_w.iloc[i]), bool(warehouse_w.iloc[i]))}")
+                text += _gap_clause(i)
             advice.append(text)
             sev.append(_SHOP_ISSUE_SEVERITY["ND 退場"])
     work["問題類型"] = issue
