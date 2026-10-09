@@ -137,7 +137,7 @@ Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）�
 4. **Recommend Safety Stock Turnday** — 建議值的周轉日數 = 建議值 ÷ (P90D 月均 ÷ 30)，與來源「Turnday (P90D Qty)」同一準則；P90D 月均 = 0 時留空。店舖問題 SKU 的建議方法以「增加／減少 X 件」標明調整方向，並會顯示「建議周轉約 X 日」；當最終建議值 = 3 件且未套最低 3 件保底前 < 3（建議值由保底決定）時，建議方法加註「為保障自動補貨，最低建議設定為 3 件（最低 3 件保底）」
 5. **Safety Qty Change** = 建議值 − Z（正數=增加、負數=減少、零=不變）
 6. **New SKU 保護** — Launch Date 距今 90 天內的列排除「P90D 0 Sales → Safety=0/ND」override，改走正常基準計算，並在「Recommendation of new Safety Qty / ND」標記 New SKU (3 Month)（Launch Date 缺失或無法解析時視為非新品）
-7. **計算模式** — 「只可增加」：全表只有增加或保持原有 Safety，ND / P90D 0 Sales 的歸零+ND 退場建議不套用（ND 欄僅保留 New SKU 標記）；「可加可減」：允許減少並套用退場建議（ND 列 → 0；P90D 0 Sales 舊品 → ND 建議，並依 Adj. MCH1 / Adj. SST 加註：02 - MAKE UP → ND(02 - MAKE UP)、03 - Private Label 系 → ND(Private Label)、兩者皆是 → ND(Private Label - MAKE UP)）
+7. **計算模式** — 「只可增加」：全表只有增加或保持原有 Safety，且 RP Type＝ND 的列一律不作上調（ND＝不執行自動補貨，Safety 不能 > 0 件，建議值維持現有設定），ND / P90D 0 Sales 的歸零+ND 退場建議不套用（ND 欄僅保留 New SKU 標記）；「可加可減」：允許減少並套用退場建議（ND 列 → 0；P90D 0 Sales 舊品 → ND 建議，並依 Adj. MCH1 / Adj. SST 加註：02 - MAKE UP → ND(02 - MAKE UP)、03 - Private Label 系 → ND(Private Label)、兩者皆是 → ND(Private Label - MAKE UP)）
 
 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因。
 輸出包含 **說明（首頁導讀：Review 邏輯＋本次執行參數＋工作表導讀，開啟 Excel 時預設顯示本頁）**、RAW、Shop Stock Status、By Shop、店舖問題 SKU（每間店舖需行動列：Safety 需增加／減少、ND 退場，問題＋建議方法（調整量以「增加／減少 X 件」標明方向；附建議值周轉日數，受最低 3 件保底影響時加註保底原因）；表末另附「銷量帶」「銷量存貨分類」兩欄）、SUMMARY、Safety Stock 數據分析摘要共 **7 個工作表**。

@@ -1,5 +1,15 @@
 # 版本記錄
 
+## v1.78.0 (2026-10-09)
+
+Safety Stock Review「只可增加」模式下 RP Type＝ND 的列不再被建議增加 Safety Stock Qty（ND＝不執行自動補貨，Safety Qty 不能 > 0 件）；RF 列與「可加可減」模式輸出零變動：
+
+- **Fix: ND 列在「只可增加」模式下不作上調** — 一般 ND 列的現有 Safety 為 0，照 X/Y（或周轉天數）基準正常計算會得出「建議由 0 件增加至 3 件或以上」的相反建議，並令該店舖×SKU 以「Safety 設定不足」進入「店舖問題 SKU」（實測 `By SKUxShop_Stock Checking_03Sep2026.xlsx`：205 個 ND 列全部出現增加建議，問題列 3,511 列中 205 列屬 ND 列）。現於 `_add_combined_recommendation_columns()` 對 ND 列一律維持現有設定（`Recommend Safety Stock` = 現時 Safety、`Safety Qty Change` = 0、分類＝不變），既不出現增加建議，亦不在本模式歸零（退場決策仍留待「可加可減」模式：ND 列 → 0，ND 欄標記「0」）；與 Safety Stock x NetStock Review「ND 列不作上調（不可補貨）」及 OOS Review（`increase[is_nd] = 0`）同一準則
+- **驗證** — 同一實檔修正後兩種計算基準（月銷倍率／周轉天數）的 ND 列增加建議皆為 0 列、建議值沒有一列 > 0，問題列 3,511 → 3,306 列（差異恰為 205 列 ND）；「可加可減」模式 ND 列仍為建議 0／Change 0（與修正前逐列一致）
+- **Update: 說明文字** — 說明工作表①參數（計算模式）與②核心邏輯（計算模式條）、④實用提示（新增一條）、RAW 導讀，以及 UI「Safety Qty 計算模式」help、使用說明頁第 8 點與 README 同步標明「ND 列不作上調（ND＝不執行自動補貨，Safety 不能 > 0 件）」；`_build_combined_shop_issues()` docstring 補上同一準則
+- **測試** — `tests/test_safety_turnday.py` 原 `test_turnday_nd_no_override_increase_only`（斷言 ND 列照常上調至周轉所需量）改為 `test_turnday_nd_no_increase_increase_only`，並新增 ND 列現有 Safety 0 不上調（含空店舖問題表）；`tests/test_transformer.py` 新增 Fix #16 ×6（月銷倍率基準的 0 件與非 0 件情境、店舖問題 SKU 不含 ND 列、RF 列不受影響、大小寫／空白正規化為 ND、可加可減仍歸零、SUMMARY 分類計入「不變」）；共 681 項測試與 15 項煙霧情境通過
+- Change: `version.py` → 1.78.0
+
 ## v1.77.0 (2026-10-01)
 
 Safety Stock x NetStock Review 調貨建議的資料完整性與輸出正確性加固；既有調貨計算（14 日目標、來源優先次序、固定欄名與 Excel 表頭）零變動：

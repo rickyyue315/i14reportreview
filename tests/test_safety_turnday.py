@@ -143,14 +143,30 @@ def test_turnday_nd_override_allow_both():
     assert out["Recommendation of new Safety Qty / ND"].tolist() == ["0"]
 
 
-def test_turnday_nd_no_override_increase_only():
+def test_turnday_nd_no_increase_increase_only():
     df = _df([
         {"SKU": "1", "RP Type": "ND", "Sold Qty (P90D)": 90, "Adj. Safety Stock": 5},
     ])
     out = _turn(df, safety_mode="increase_only")
-    # 現有 5 < 周轉所需 7：照常上調；退場歸零不套用
-    assert out["Recommend Safety Stock"].tolist() == [7]
+    # ND 列一律不作上調（ND＝不執行自動補貨，Safety 不能 > 0 件）：
+    # 現有 5 < 周轉所需 7 亦不建議增加，亦不歸零（退場歸零留待可加可減）
+    assert out["Recommend Safety Stock"].tolist() == [5]
+    assert out["Safety Qty Change"].tolist() == [0]
+    assert out["Safety Qty Change 分類"].tolist() == ["不變"]
     assert out["Recommendation of new Safety Qty / ND"].tolist() == [""]
+
+
+def test_turnday_nd_zero_safety_no_increase_increase_only():
+    """實檔情境：ND 列現有 Safety 0、有銷量 → 不再被建議上調至周轉所需量."""
+    df = _df([
+        {"SKU": "1", "RP Type": "ND", "Sold Qty (P90D)": 90, "Adj. Safety Stock": 0},
+    ])
+    out = _turn(df, safety_mode="increase_only")
+    assert out["Safety 周轉所需量"].tolist() == [7]
+    assert out["Recommend Safety Stock"].tolist() == [0]
+    assert out["Safety Qty Change"].tolist() == [0]
+    issues = _build_combined_shop_issues(out)
+    assert issues.empty
 
 
 def test_turnday_p90d0_override_with_new_sku_protection():

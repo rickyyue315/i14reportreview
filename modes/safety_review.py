@@ -348,6 +348,14 @@ def _add_combined_recommendation_columns(
         if is_p90d_0_override.any():
             recommend_safety[is_p90d_0_override.values] = 0
             delta[is_p90d_0_override.values] = -z_values[is_p90d_0_override.values]
+    elif is_nd.any():
+        # 「只可增加」下 ND 列一律不作上調 — ND＝不執行自動補貨，Safety 不能 > 0 件，
+        # 故不給出增加建議（一般 ND 列現有設定為 0，維持 0＝不出現任何調整建議，
+        # 亦不會進入店舖問題 SKU）；ND 列亦不在此模式歸零，退場決策留待可加可減模式。
+        recommend_safety = recommend_safety.copy()
+        delta = delta.copy()
+        recommend_safety[is_nd.values] = z_values[is_nd.values]
+        delta[is_nd.values] = 0
 
     df["Recommend Safety Stock"] = recommend_safety
     df["Safety Qty Change"] = delta
@@ -1021,7 +1029,7 @@ def _write_combined_guide_sheet(ws, stats, dimension):
     oos_m = int(round(float(_oos.get("mix", 0.50)) * 100))
     oos_n = int(round(float(_oos.get("default", 0.50)) * 100))
     mode_txt = ("可加可減（允許減少並套用退場建議）" if st_.get("safety_mode") == "allow_both"
-                else "只可增加（Safety 只增不減，ND／P90D 0 Sales 退場建議不套用）")
+                else "只可增加（Safety 只增不減，ND 列不作上調、P90D 0 Sales 退場建議不套用）")
     _basis = _normalize_ssr_safety_basis(st_.get("safety_basis", "rate"))
     _sd = st_.get("safety_days") or dict(_HYBRID_SAFETY_DAYS_DEFAULT)
     _sd_label = _hybrid_safety_days_label({
@@ -1068,7 +1076,9 @@ def _write_combined_guide_sheet(ws, stats, dimension):
         "Safety Qty Change = 建議值 − Z（正=增加、負=減少、零=不變）。",
         "Recommend Safety Stock Turnday = 建議值 ÷ (P90D 月均 ÷ 30)（月均 0 留空；"
         "與來源「Turnday (P90D Qty)」同一準則）。",
-        "「只可增加」模式全表只增不減（ND／P90D 0 Sales 的歸零與 ND 退場建議不套用）；"
+        "「只可增加」模式全表只增不減，且 ND 列（RP Type＝ND）一律不作上調"
+        "（ND＝不執行自動補貨，Safety 不能 > 0 件，建議值維持現有設定）；"
+        "ND／P90D 0 Sales 的歸零與 ND 退場建議不套用；"
         "「可加可減」模式套用退場建議：ND 列 → 0；P90D 0 Sales 舊品 → ND"
         "（並依 Adj. MCH1／Adj. SST 加註 ND 類別）。",
         "New SKU 保護：Launch Date 距參考日期 90 天內的列排除「P90D 0 Sales → Safety=0/ND」override，"
@@ -1086,7 +1096,7 @@ def _write_combined_guide_sheet(ws, stats, dimension):
         ("說明（本頁）", "Review 邏輯、本次參數與導讀", "執行任何行動前，先核對上方 ① 的參數是否符合預期"),
         ("RAW", "全部店舖×SKU 逐列明細與判定欄",
          "留意「Shop Stock Status」「Safety Qty Change」「Recommend Safety Stock Turnday」「銷量帶」「銷量存貨分類」；"
-         "「只可增加」模式不會出現「減少」"),
+         "「只可增加」模式不會出現「減少」，且 RP Type＝ND 列不作上調"),
         ("Shop Stock Status", "採購人員×品牌之庫存異常交叉統計", "各 Buyer／品牌的分類分佈概覽"),
         ("By Shop", "各店舖層級彙總", "留意「安全庫存調整總量」與需增／需減 SKU 數較多的店舖"),
         ("店舖問題 SKU", "每間店舖需行動列（問題＋建議方法）",
@@ -1098,6 +1108,8 @@ def _write_combined_guide_sheet(ws, stats, dimension):
 
     tips = [
         "「Safety Qty Change」正數＝建議增加、負數＝建議減少、零＝不變；「只可增加」模式下不會出現負數。",
+        "RP Type＝ND 的列不會出現增加建議（ND 不執行自動補貨，Safety 不能 > 0 件），"
+        "「只可增加」模式下建議值維持現有設定；ND 歸零只出現在「可加可減」模式。",
         "「只可增加」模式下 Overstock Rate 不產生壓縮效果；要壓縮庫存請選「可加可減」。",
         "建議值最低 3 件為保障自動補貨的保底；受影響的店舖問題列會加註原因。",
         "分類維度只改變 SUMMARY 區塊 ③ 的分組顯示，不影響任何 Safety 建議計算。",

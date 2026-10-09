@@ -617,7 +617,7 @@ if uploaded_file is not None:
             index=0,
             horizontal=True,
             key="ss_safety_mode",
-            help="只可增加：Safety Qty 只增不減（ND / P90D 0 Sales 亦不歸零，全表無扣減）；可加可減：允許減少，並套用退場建議（ND → 0、P90D 0 Sales → 0+ND，Launch Date 90 天內新品除外）"
+            help="只可增加：Safety Qty 只增不減（ND 列不作上調、P90D 0 Sales 亦不歸零，全表無扣減）；可加可減：允許減少，並套用退場建議（ND → 0、P90D 0 Sales → 0+ND，Launch Date 90 天內新品除外）"
         )
         safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
 

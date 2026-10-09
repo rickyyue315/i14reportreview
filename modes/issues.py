@@ -381,7 +381,8 @@ def _build_stock_checking_shop_issues(
 def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
     """Safety Stock Review 店舖問題表：只收 Safety 需調整與 ND 退場列。
 
-    - Safety 需增加／減少：`Safety Qty Change != 0`。
+    - Safety 需增加／減少：`Safety Qty Change != 0`（RP Type＝ND 的列在「只可增加」模式下不作上調，
+      故不會以「Safety 設定不足」出現；「可加可減」模式下 ND 列以歸零建議列出）。
     - ND 退場：`Recommendation of new Safety Qty / ND` 為 ND 系列或 0（已是 ND）；
       `New SKU (3 Month)` 屬資訊標記，不收錄。
     - Overstock／OOS 只作問題說明上下文，不單獨成列。

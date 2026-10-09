@@ -822,6 +822,110 @@ def test_fix12_increase_only_global_no_negative_change():
     assert (out["Recommend Safety Stock"] >= out["Adj. Safety Stock"]).all()
 
 
+# ── Fix #16: 只可增加模式 — RP Type＝ND 列一律不作上調 ───────────────────────
+# ND＝不執行自動補貨，Safety Qty 不能 > 0 件；一般 ND 列現有 Safety 為 0，
+# 若照 X/Y 或周轉天數照常計算，會得出「建議由 0 增加至 3 件」的錯誤建議
+# （並令該店舖×SKU 以「Safety 設定不足」進入店舖問題 SKU）。
+# 只可增加模式下 ND 列一律維持現有設定（無增加建議）；可加可減模式維持 ND → 0。
+
+
+def test_fix16_increase_only_nd_zero_safety_not_increased():
+    """只可增加：ND 列（現有 0 件、有銷量）不建議增加，Change = 0、分類＝不變."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "ND",
+         "Adj. Safety Stock": 0, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    assert out["OOS Floor (Y)"].tolist() == [7]  # 月銷預估 8 + 0.5×10 = 13 → ceil(13×0.5) = 7
+    assert out["Recommend Safety Stock"].tolist() == [0]
+    assert out["Safety Qty Change"].tolist() == [0]
+    assert out["Safety Qty Change 分類"].tolist() == ["不變"]
+    assert out["Recommend Safety Stock Turnday"].tolist() == [0.0]
+
+
+def test_fix16_increase_only_nd_nonzero_safety_kept_not_raised():
+    """只可增加：ND 列現有 Safety 高於 0 時亦不作上調，維持現值、Change = 0."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "ND",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 40, "Sold Qty (CM - MTD)": 20.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    assert out["Recommend Safety Stock"].tolist() == [5]
+    assert out["Safety Qty Change"].tolist() == [0]
+    assert bool(out["_safety_floor3"].tolist()[0]) is False
+
+
+def test_fix16_increase_only_nd_rows_absent_from_shop_issues():
+    """只可增加：ND 列不再以「Safety 設定不足」進入店舖問題 SKU（RF 列照常）."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "ND",
+         "Adj. Safety Stock": 0, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+        {"SKU": "2", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 0, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    issues = _build_combined_shop_issues(out)
+    assert issues["SKU"].tolist() == ["2"]
+    assert issues["問題類型"].tolist() == ["Safety 設定不足"]
+
+
+def test_fix16_increase_only_rf_rows_unchanged():
+    """只可增加：RF 列不作上調規則以外的改動（ND 修正不影響 RF 建議值）."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+         "Adj. Safety Stock": 0, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+        {"SKU": "2", "Shop Stock Status": "Normal", "RP Type": "nd ",  # 大小寫／空白亦視為 ND
+         "Adj. Safety Stock": 0, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    assert out["Recommend Safety Stock"].tolist() == [7, 0]
+    assert out["Safety Qty Change"].tolist() == [7, 0]
+
+
+def test_fix16_allow_both_nd_still_zeroed():
+    """可加可減：ND 列仍歸零（ND → 0），ND 欄標記「0」不變."""
+    df = _df([
+        {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "ND",
+         "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+    ])
+    out = _add_combined_recommendation_columns(
+        df, _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="allow_both"
+    )
+    assert out["Recommend Safety Stock"].tolist() == [0]
+    assert out["Safety Qty Change"].tolist() == [-5]
+    assert out["Recommendation of new Safety Qty / ND"].tolist() == ["0"]
+
+
+def test_fix16_increase_only_summary_counts_nd_as_unchanged():
+    """只可增加：ND 列計入「不變」，SUMMARY 減少類仍恆為 0."""
+    from transformer import _build_combined_classification_summary
+
+    raw = _add_combined_recommendation_columns(
+        _df([
+            {"SKU": "1", "Shop Stock Status": "Normal", "RP Type": "RF",
+             "Adj. Safety Stock": 5, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+            {"SKU": "2", "Shop Stock Status": "Normal", "RP Type": "ND",
+             "Adj. Safety Stock": 0, "Shop Monthly Sold Qty (P90D)": 10, "Sold Qty (CM - MTD)": 8.0},
+        ]),
+        _RATES_O, _RATES_P, mtd_days=15, month_total_days=30, safety_mode="increase_only"
+    )
+    change_sum, _ = _build_combined_classification_summary(raw)
+
+    def _row(label):
+        return change_sum[change_sum["分類"] == label].iloc[0]
+
+    assert _row("不變")["行數"] == 1 and _row("不變")["SKU 數"] == 1
+    assert _row("減少")["行數"] == 0 and _row("減少")["Safety Qty Change 合計"] == 0
+
+
 # ── Fix #13: ND 建議加註 MAKE UP / Private Label + RAW 加回 Adj. MCH1 ──────
 # 「ND」轉換建議（P90D 0 Sales 舊品）依 Adj. MCH1 / Adj. SST 加註：
 # 02 - MAKE UP → ND(02 - MAKE UP)；03 - Private Label 系 → ND(Private Label)；
