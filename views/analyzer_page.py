@@ -192,6 +192,24 @@ def _style_inventory_skew(df: pd.DataFrame, zero_sales: bool = False, dimension:
 
     return df.style.apply(_row_styles, axis=1)
 
+
+def _render_summary_legend(dimension: str, zero_sales: bool = False, shortage: bool = True):
+    """Summary 表格上方的底色圖例（與 Excel Summary 第 1–2 列圖例同式，僅列出本次會啟用的顏色）。"""
+    _chip = "display:inline-block;padding:2px 10px;border-radius:4px;font-weight:700;margin-right:6px;"
+    chips = [f'<span style="{_chip}background-color:#FFC000;color:#000000;">存貨偏重</span>']
+    notes = [f"橘底＝存貨偏重（{_hybrid_skew_hint_text(dimension)}），留意積壓風險"]
+    if shortage:
+        chips.append(f'<span style="{_chip}background-color:#BDD7EE;color:#1F4E78;">存貨偏低</span>')
+        notes.append(f"淺藍底＝存貨偏低（{_hybrid_shortage_hint_text(dimension)}），留意缺貨風險")
+    if zero_sales:
+        chips.append(f'<span style="{_chip}background-color:#FFC7CE;color:#9C0006;">零銷仍有庫存</span>')
+        notes.append("紅底＝零銷組仍有庫存（零銷售而仍有存貨，理論上全屬 Overstock）")
+    st.markdown(
+        f'<div style="margin: 4px 0 8px 0;">{"".join(chips)}'
+        f'<div style="font-size: 0.85rem; color: #5a5a6e; margin-top: 4px;">顏色說明：{"；".join(notes)}</div></div>',
+        unsafe_allow_html=True,
+    )
+
 # 1. 側邊欄設計 (Sidebar)
 with st.sidebar:
     st.markdown("""
@@ -1438,6 +1456,7 @@ if uploaded_file is not None:
                 st.markdown(f"#### SKU 級彙總（按 {_dim_label_applied} 分組）：各組庫存/月銷加總、TurnDay、涉及店舖數、佔比 (%)、強制調貨提示、存貨偏重提示")
                 _hy_zero_on = applied_hybrid_dimension in ("sales", "sales_nature")
                 if sc_summary is not None and not sc_summary.empty:
+                    _render_summary_legend(applied_hybrid_dimension, zero_sales=_hy_zero_on)
                     _skewed = sc_summary[sc_summary["存貨偏重提示"].fillna("").astype(str) != ""] if "存貨偏重提示" in sc_summary.columns else sc_summary.iloc[0:0]
                     if not _skewed.empty:
                         st.markdown(f"**存貨偏重 SKU（{len(_skewed):,} 個）**")
@@ -4054,6 +4073,7 @@ if uploaded_file is not None:
                 st.markdown(f"#### SKU 級 Summary（按 {_sc_dim_txt} 分組）：各組庫存/月銷加總與 TurnDay、涉及店舖數、佔比 (%)、調貨提示與調出量")
                 st.markdown("即為 Excel 導出檔中「Summary」工作表之即時數據（加總/TurnDay 取整，TurnDay = 四捨五入到整數日；佔比 (%) = 該分組加總 ÷ 全部分組合計，頁面顯示小數、Excel 顯示為 %；調貨計算不隨維度改變）：")
                 if summary_df is not None and not summary_df.empty:
+                    _render_summary_legend(_sc_applied_dim)
                     st.dataframe(_style_inventory_skew(summary_df, dimension=_sc_applied_dim), width='stretch', hide_index=True)
                     st.caption(f"共 {len(summary_df):,} 個 SKU（按 Brand / SKU 排序）；存貨偏重提示 = {_hybrid_skew_hint_text(_sc_applied_dim)}；偏重數值以橘色底色加強顯示；存貨偏低（{_hybrid_shortage_hint_text(_sc_applied_dim)}）以淺藍底標示庫存佔比欄（Excel 同步）。")
                 else:

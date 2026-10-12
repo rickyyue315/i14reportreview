@@ -596,7 +596,7 @@ def test_summary_zero_sales_highlight_requires_stock():
         _df(_SCENARIO_SALES + [_no_stock]), dimension="sales")
     assert int(sc["零銷 加總 - Shop Stock Qty (CM)"].iloc[0]) == 0
     ws = load_workbook(generate_excel_hybrid(raw, sc, dg, dg_om, ds, stats))["Summary"]
-    for row_cells in ws.iter_rows():
+    for row_cells in ws.iter_rows(min_row=3):
         for cell in row_cells:
             assert not _fill_rgb(cell).endswith("FFC7CE")
 

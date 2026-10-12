@@ -52,6 +52,7 @@ from modes.framework import (
     _hybrid_sales_params,
     _hybrid_shortage_hint_text,
     _hybrid_shortage_thresholds,
+    _hybrid_skew_hint_text,
     _hybrid_skew_thresholds,
     _hybrid_zero_sales_groups,
     _transfer_input_consistency_warnings,
@@ -940,6 +941,34 @@ def _hybrid_om_groups_from_summary_columns(summary: pd.DataFrame, dimension: str
 
 
 
+def _write_summary_color_legend(ws, dimension, highlight_skew: bool = False, highlight_zero_sales: bool = False, highlight_shortage: bool = True):
+    """Summary 圖例：第 1 列為色塊名稱，第 2 列為各色判定規則；位於凍結表頭上方，隨捲動固定可見。
+    色塊與門檻與本工作表實際標示一致（僅列出本次輸出會啟用的顏色）。須於 _auto_width 之後呼叫，避免圖例文字撐寬欄位。"""
+    dim = _hybrid_dimension(dimension)
+    chips = []
+    notes = []
+    if highlight_skew:
+        chips.append(("存貨偏重", "FFC000", "000000"))
+        notes.append(f"橘底＝存貨偏重（{_hybrid_skew_hint_text(dim)}），留意積壓風險")
+    if highlight_shortage:
+        chips.append(("存貨偏低", "BDD7EE", "1F4E78"))
+        notes.append(f"淺藍底＝存貨偏低（{_hybrid_shortage_hint_text(dim)}），留意缺貨風險")
+    if highlight_zero_sales:
+        chips.append(("零銷仍有庫存", "FFC7CE", "9C0006"))
+        notes.append("紅底＝零銷組仍有庫存（零銷售而仍有存貨，理論上全屬 Overstock）")
+    if not chips:
+        return
+    for i, (text, fill, color) in enumerate(chips, 1):
+        cell = ws.cell(row=1, column=i, value=text)
+        cell.fill = PatternFill(start_color=fill, end_color=fill, fill_type="solid")
+        cell.font = Font(bold=True, size=10, color=color)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        _col = get_column_letter(i)
+        ws.column_dimensions[_col].width = max(ws.column_dimensions[_col].width or 0, 13)
+    ws.cell(row=2, column=1, value="顏色說明：" + "；".join(notes)).font = Font(size=9, color="374151")
+    ws.row_dimensions[1].height = 20
+
+
 def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, progress_start: float = 0.05, progress_end: float = 0.30, bidirectional: bool = False, highlight_skew: bool = False, dimension: str = "nature", om_groups=None, highlight_zero_sales: bool = False, highlight_shortage: bool = True):
     """Summary 工作表：SKU 級彙總（雙列表頭模仿 By SKUxShop_Stock Checking_Output 樞紐佈局）。
 
@@ -1054,6 +1083,7 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     if summary is None or summary.empty:
         ws.cell(row=6, column=1, value="無符合資料").font = Font(size=12)
         _auto_width(ws)
+        _write_summary_color_legend(ws, dimension, highlight_skew, bool(_zero_idx), highlight_shortage)
         return
 
     _text_keys = {"Brand", "SKU Desc", "Buyer", "Adj. SST"}
@@ -1223,3 +1253,4 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     ws.auto_filter.ref = f"A5:{get_column_letter(n_cols)}{last_row}"
     ws.freeze_panes = "A6"
     _auto_width(ws)
+    _write_summary_color_legend(ws, dimension, highlight_skew, bool(_zero_idx), highlight_shortage)

@@ -1,5 +1,9 @@
 # 版本記錄
 
+## v1.78.1 (2026-10-12)
+
+- 
+
 ## v1.78.0 (2026-10-09)
 
 Safety Stock Review「只可增加」模式下 RP Type＝ND 的列不再被建議增加 Safety Stock Qty（ND＝不執行自動補貨，Safety Qty 不能 > 0 件）；RF 列與「可加可減」模式輸出零變動：

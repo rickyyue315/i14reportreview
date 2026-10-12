@@ -120,7 +120,7 @@ def test_shortage_absent_when_no_sales():
     raw, summary, stats, _ = transform_stock_checking(_df(rows))
     buf = generate_excel_stock_checking(raw, summary, stats)
     ws = load_workbook(buf)["Summary"]
-    for row_cells in ws.iter_rows():
+    for row_cells in ws.iter_rows(min_row=3):
         for cell in row_cells:
             assert not _fill_rgb(cell).endswith("BDD7EE")
 
