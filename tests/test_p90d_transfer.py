@@ -5,7 +5,7 @@
 - 轉出：已選轉出店舖中符合上述條件的列，數量為 Shop Stock Qty (CM) 全數，不分 OM、不設上限
 - 接收：同 SKU、非轉出店舖、Sold Qty (P90D) > 0 的列，不論有無庫存
 - 分配：同 SKU 轉出總量按接收店 Sold Qty (P90D) 比例分配（最大餘數法取整數件、全數分完）
-- MCH 篩選（執行前）：可按 Adj. MCH1／MCH2 排除分類（預設全部包含），對轉出與接收兩側同時生效
+- MCH 篩選（執行前）：可按 Adj. MCH1 排除分類（預設全部包含），對轉出與接收兩側同時生效
 """
 import random
 import warnings
@@ -231,7 +231,7 @@ def test_missing_required_column_raises():
         raise AssertionError("expected ValueError for missing column")
 
 
-# 1. MCH 欄位與分類彙總
+# 1. MCH 欄位與分類彙總（只用 Adj. MCH1）
 
 def test_mch_columns_in_plan_and_sku():
     df = _df([
@@ -239,14 +239,14 @@ def test_mch_columns_in_plan_and_sku():
         _row("S02", sku=1, sales=3, stock=0),
     ])
     plan, _, _, sku_df, mch_df, _, _ = transform_p90d_transfer(df, ["S01"])
-    assert "Adj. MCH1" in plan.columns and "MCH2" in plan.columns
+    assert "Adj. MCH1" in plan.columns
     assert plan.iloc[0]["Adj. MCH1"] == "02 - MAKE UP"
-    assert plan.iloc[0]["MCH2"] == "0201 - FACE"
     body = sku_df[sku_df["Brand"] != "總計"]
     assert body.iloc[0]["Adj. MCH1"] == "02 - MAKE UP"
+    assert "MCH2" not in mch_df.columns
 
 
-def test_mch_summary_two_levels_with_total():
+def test_mch_summary_single_level_with_total():
     df = _df([
         _row("S01", sku=1, sales=0, stock=4, mch1="01 - SKIN CARE", mch2="0101 - FACE & NECK"),
         _row("S01", sku=2, sales=0, stock=6, mch1="02 - MAKE UP", mch2="0201 - FACE"),
@@ -255,18 +255,15 @@ def test_mch_summary_two_levels_with_total():
     ])
     plan, _, _, _, mch_df, stats, _ = transform_p90d_transfer(df, ["S01"])
     assert list(mch_df.columns) == [
-        "分類層級", "分類名稱", "轉出 SKU 數", "接收 SKU 數",
+        "Adj. MCH1", "轉出 SKU 數", "接收 SKU 數",
         "轉出總量 (件)", "接收總量 (件)", "未分配量 (件)",
     ]
-    mch1 = mch_df[mch_df["分類層級"] == "Adj. MCH1"]
-    assert set(mch1["分類名稱"]) == {"01 - SKIN CARE", "02 - MAKE UP"}
-    skin = mch1[mch1["分類名稱"] == "01 - SKIN CARE"].iloc[0]
+    assert set(mch_df["Adj. MCH1"]) == {"01 - SKIN CARE", "02 - MAKE UP", "總計"}
+    skin = mch_df[mch_df["Adj. MCH1"] == "01 - SKIN CARE"].iloc[0]
     assert int(skin["轉出 SKU 數"]) == 1 and int(skin["轉出總量 (件)"]) == 4
     assert int(skin["接收總量 (件)"]) == 4 and int(skin["未分配量 (件)"]) == 0
-    mch2 = mch_df[mch_df["分類層級"] == "MCH2"]
-    assert set(mch2["分類名稱"]) == {"0101 - FACE & NECK", "0201 - FACE"}
     total = mch_df.iloc[-1]
-    assert total["分類層級"] == "總計"
+    assert total["Adj. MCH1"] == "總計"
     assert int(total["轉出總量 (件)"]) == 10
     assert int(total["接收總量 (件)"]) == 10
     assert int(total["未分配量 (件)"]) == 0
@@ -278,9 +275,9 @@ def test_mch_blank_group():
         _row("S02", sku=1, sales=2, stock=0),
     ])
     _, _, _, _, mch_df, _, _ = transform_p90d_transfer(df, ["S01"])
-    mch1 = mch_df[(mch_df["分類層級"] == "Adj. MCH1") & (mch_df["分類名稱"] == "(空白)")]
-    assert len(mch1) == 1
-    assert int(mch1.iloc[0]["轉出總量 (件)"]) == 5
+    blank = mch_df[mch_df["Adj. MCH1"] == "(空白)"]
+    assert len(blank) == 1
+    assert int(blank.iloc[0]["轉出總量 (件)"]) == 5
 
 
 # 2. MCH 執行前篩選
@@ -310,20 +307,6 @@ def test_mch1_filter_keeps_selected_only():
     ])
     plan, _, _, _, _, stats, _ = transform_p90d_transfer(
         df, ["S01"], mch1_filter=["01 - SKIN CARE"]
-    )
-    assert _lines(plan) == {("S01", "1", "S02"): 5}
-    assert stats["out_qty"] == 5
-
-
-def test_mch2_filter_applies():
-    df = _df([
-        _row("S01", sku=1, sales=0, stock=5, mch1="01 - SKIN CARE", mch2="0101 - FACE & NECK"),
-        _row("S01", sku=2, sales=0, stock=7, mch1="01 - SKIN CARE", mch2="0102 - EYES"),
-        _row("S02", sku=1, sales=3, stock=0, mch2="0101 - FACE & NECK"),
-        _row("S02", sku=2, sales=3, stock=0, mch2="0102 - EYES"),
-    ])
-    plan, _, _, _, _, stats, _ = transform_p90d_transfer(
-        df, ["S01"], mch2_filter=["0101 - FACE & NECK"]
     )
     assert _lines(plan) == {("S01", "1", "S02"): 5}
     assert stats["out_qty"] == 5
@@ -361,9 +344,7 @@ def test_mch_filter_none_means_all():
         _row("S02", sku=1, sales=3, stock=0),
     ])
     plan_all, _, _, _, _, stats_all, warns_all = transform_p90d_transfer(df, ["S01"])
-    plan_none, _, _, _, _, stats_none, _ = transform_p90d_transfer(
-        df, ["S01"], mch1_filter=None, mch2_filter=None
-    )
+    plan_none, _, _, _, _, stats_none, _ = transform_p90d_transfer(df, ["S01"], mch1_filter=None)
     assert _lines(plan_all) == _lines(plan_none)
     assert stats_all == stats_none
     assert not any("MCH 篩選" in w for w in warns_all)
@@ -378,18 +359,14 @@ def test_candidates_respect_mch_filter():
     assert list(cand["Site Code"]) == ["S01"]
 
 
-def test_build_mch_options_and_dependency():
+def test_build_mch_options():
     df = _df([
         _row("S01", sku=1, sales=0, stock=5, mch1="01 - SKIN CARE", mch2="0101 - FACE & NECK"),
         _row("S01", sku=2, sales=0, stock=5, mch1="01 - SKIN CARE", mch2="0102 - EYES"),
         _row("S02", sku=3, sales=0, stock=5, mch1="02 - MAKE UP", mch2="0201 - FACE"),
         _row("S03", sku=4, sales=0, stock=5, mch1=""),
     ])
-    mch1, dep = build_mch_options(df)
-    assert mch1 == ["01 - SKIN CARE", "02 - MAKE UP", "__BLANK__"]
-    assert dep["01 - SKIN CARE"] == ["0101 - FACE & NECK", "0102 - EYES"]
-    assert dep["02 - MAKE UP"] == ["0201 - FACE"]
-    assert dep["__BLANK__"] == ["__BLANK__"]
+    assert build_mch_options(df) == ["01 - SKIN CARE", "02 - MAKE UP", "__BLANK__"]
 
 
 def test_allocate_proportional_sums_to_total():
@@ -432,7 +409,7 @@ def test_summary_totals_match_plan():
     assert int(in_total["接收後庫存 (件)"]) == 12
     assert int(sku_total["已分配總量 (件)"]) == 10
     assert int(sku_total["未分配量 (件)"]) == 3
-    mch_total = mch_df[mch_df["分類層級"] == "總計"].iloc[0]
+    mch_total = mch_df[mch_df["Adj. MCH1"] == "總計"].iloc[0]
     assert int(mch_total["轉出總量 (件)"]) == 13
     assert int(mch_total["接收總量 (件)"]) == 10
     assert int(mch_total["未分配量 (件)"]) == 3
@@ -450,7 +427,7 @@ def test_excel_structure_and_percent_format():
     )
     wb = load_workbook(buf)
     assert wb.sheetnames == [
-        "說明", "轉貨單", "轉出店舖彙總", "接收店舖彙總", "SKU 轉貨彙總", "MCH 分類彙總",
+        "說明", "轉貨單", "轉出店舖彙總", "接收店舖彙總", "SKU 轉貨彙總", "MCH1 分類彙總",
     ]
     ws = wb["轉貨單"]
     headers = [c.value for c in ws[1]]
@@ -467,7 +444,7 @@ def test_excel_empty_plan_writes_placeholder():
     buf = generate_excel_p90d_transfer(plan, out_df, in_df, sku_df, mch_df, stats)
     wb = load_workbook(buf)
     assert wb["轉貨單"].cell(row=2, column=1).value == "無符合資料"
-    assert wb["MCH 分類彙總"].cell(row=1, column=1).value == "分類層級"
+    assert wb["MCH1 分類彙總"].cell(row=1, column=1).value == "Adj. MCH1"
 
 
 def test_transformer_shim_and_registry():

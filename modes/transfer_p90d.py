@@ -11,8 +11,8 @@
 - 接收：同 SKU、非轉出店舖、Sold Qty (P90D) > 0 的列（有銷售記錄），不論有無庫存。
 - 分配：同 SKU 的轉出總量按接收店 Sold Qty (P90D) 比例分配，以最大餘數法取整數件、全數分完；
   只有一間接收店時全數給該店；無接收店時該 SKU 不轉出，列入未分配。
-- MCH 篩選（選填）：執行前可按 Adj. MCH1 與 MCH2 排除部分分類（傳 None 或包含全部值＝不排除），
-  對轉出與接收兩側同時生效；報表另附 MCH 分類彙總（按 Adj. MCH1 與 MCH2 兩層）。
+- MCH 篩選（選填）：執行前可按 Adj. MCH1 排除部分分類（傳 None 或包含全部值＝不排除），
+  對轉出與接收兩側同時生效；報表另附 MCH1 分類彙總（按 Adj. MCH1）。
 
 只引用 modes.common，不引用其他模式模組，避免循環引用。
 """
@@ -46,18 +46,15 @@ __all__ = [
 _TRANSFER_REQUIRED = ["Site Code", "SKU", "Sold Qty (P90D)", "Shop Stock Qty (CM)"]
 
 _TRANSFER_MCH1_COL = "Adj. MCH1"
-_TRANSFER_MCH2_COL = "MCH2"
 _TRANSFER_MCH_BLANK_LABEL = "(空白)"
-_TRANSFER_MCH_SHEET = "MCH 分類彙總"
-# 空白（含 NaN、空字串）MCH 值在介面與報表中的表示法
+_TRANSFER_MCH_SHEET = "MCH1 分類彙總"
+# 空白（含 NaN、空字串）MCH1 值在介面與報表中的表示法
 _TRANSFER_MCH_BLANK_TOKEN = "__BLANK__"
 
 _TRANSFER_MCH_SUMMARY_COLUMNS = [
-    "分類層級", "分類名稱", "轉出 SKU 數", "接收 SKU 數",
+    "Adj. MCH1", "轉出 SKU 數", "接收 SKU 數",
     "轉出總量 (件)", "接收總量 (件)", "未分配量 (件)",
 ]
-_TRANSFER_MCH_LEVEL_1 = "Adj. MCH1"
-_TRANSFER_MCH_LEVEL_2 = "MCH2"
 
 _TRANSFER_CANDIDATE_COLUMNS = [
     "Site Code", "Shop Name", "Shop Nature", "OM", "0 Sales SKU 數", "可轉出庫存 (件)",
@@ -82,7 +79,7 @@ _TRANSFER_IN_COLUMNS = [
 ]
 
 _TRANSFER_SKU_COLUMNS = [
-    "Brand", "SKU", "SKU Desc", "Buyer", "Adj. MCH1", "MCH2", "轉出店舖數", "轉出總量 (件)",
+    "Brand", "SKU", "SKU Desc", "Buyer", "Adj. MCH1", "轉出店舖數", "轉出總量 (件)",
     "可接收店舖數 (有銷售)", "實際接收店舖數", "接收店 Sold Qty (P90D) 合計",
     "已分配總量 (件)", "未分配量 (件)", "狀態",
 ]
@@ -141,7 +138,7 @@ def _prepare_transfer_base(df_input: pd.DataFrame, shop_natures: list[str] | Non
         "Buyer": _text_column(df, "Buyer"),
         "SKU Desc": _text_column(df, "SKU Desc"),
         "Adj. MCH1": _text_column(df, _TRANSFER_MCH1_COL),
-        "MCH2": _text_column(df, _TRANSFER_MCH2_COL),
+        "MCH2": _text_column(df, "MCH2"),
     })
     keep = (base["_site"] != "") & (base["_sku"] != "")
     skipped = int((~keep).sum())
@@ -170,26 +167,18 @@ def _mch_values(values: pd.Series) -> list[str]:
     return sorted(out)
 
 
-def _apply_mch_filter(base: pd.DataFrame, mch1_filter=None, mch2_filter=None) -> pd.DataFrame:
-    """排除指定 MCH 分類以外的列（None 或包含全部值＝不排除）。
+def _apply_mch_filter(base: pd.DataFrame, mch1_filter=None) -> pd.DataFrame:
+    """排除指定 MCH1 分類以外的列（None 或包含全部值＝不排除）。
 
-    mch1_filter／mch2_filter 為 None 或空集合時不作限制；'' 代表空白分類；
+    mch1_filter 為 None 或空集合時不作限制；'' 代表空白分類；
     只會收窄母體，不改變已選分類內的分配結果。
     """
-    if base.empty:
+    if base.empty or not mch1_filter:
         return base
-    out = base
-    if mch1_filter:
-        vals = {"" if v in ("", _TRANSFER_MCH_BLANK_TOKEN) else v for v in mch1_filter}
-        blank = _mch_blank_mask(out["Adj. MCH1"])
-        mask = (blank if "" in vals else pd.Series(False, index=out.index)) | out["Adj. MCH1"].isin(vals - {""})
-        out = out[mask]
-    if mch2_filter:
-        vals = {"" if v in ("", _TRANSFER_MCH_BLANK_TOKEN) else v for v in mch2_filter}
-        blank = _mch_blank_mask(out["MCH2"])
-        mask = (blank if "" in vals else pd.Series(False, index=out.index)) | out["MCH2"].isin(vals - {""})
-        out = out[mask]
-    return out.reset_index(drop=True)
+    vals = {"" if v in ("", _TRANSFER_MCH_BLANK_TOKEN) else v for v in mch1_filter}
+    blank = _mch_blank_mask(base["Adj. MCH1"])
+    mask = (blank if "" in vals else pd.Series(False, index=base.index)) | base["Adj. MCH1"].isin(vals - {""})
+    return base[mask].reset_index(drop=True)
 
 
 def _mch_excluded_warning(base: pd.DataFrame, filtered: pd.DataFrame) -> str | None:
@@ -204,69 +193,43 @@ def _mch_excluded_warning(base: pd.DataFrame, filtered: pd.DataFrame) -> str | N
     )
 
 
-def build_mch_options(df_input: pd.DataFrame, shop_natures: list[str] | None = None) -> tuple[list[str], dict[str, list[str]]]:
-    """執行前 MCH 篩選的選項清單（依 Shop Nature 篩選後的實際資料值）。
-
-    回傳 (MCH1 清單, MCH1 → MCH2 清單對照)；空白值以 ``__BLANK__`` 表示。
-    """
+def build_mch_options(df_input: pd.DataFrame, shop_natures: list[str] | None = None) -> list[str]:
+    """執行前 MCH 篩選的 Adj. MCH1 選項清單（依 Shop Nature 篩選後的實際資料值）；空白值以 ``__BLANK__`` 表示。"""
     base, _ = _prepare_transfer_base(df_input, shop_natures=shop_natures)
     if base.empty:
-        return [], {}
-    mch1 = _mch_values(base["Adj. MCH1"])
-    dep: dict[str, list[str]] = {}
-    for v in mch1:
-        mask = _mch_blank_mask(base["Adj. MCH1"]) if v == _TRANSFER_MCH_BLANK_TOKEN else base["Adj. MCH1"] == v
-        sub = base[mask]
-        dep[v] = [] if sub.empty else _mch_values(sub["MCH2"])
-    return mch1, dep
+        return []
+    return _mch_values(base["Adj. MCH1"])
 
 
 def _build_mch_summary(out_agg: pd.DataFrame, in_map: dict, plan_df: pd.DataFrame) -> pd.DataFrame:
-    """MCH 分類彙總：按 Adj. MCH1 與 MCH2 兩層，統計轉出／接收 SKU 數與件數、未分配件數。"""
-    def _agg(labels: pd.Series) -> list[dict]:
-        work = out_agg.copy()
-        work["_label"] = work["_sku"].map(labels).fillna("")
-        rows = []
-        for cat, grp in work.groupby("_label", sort=True, dropna=False):
-            name = str(cat) if str(cat).strip() else _TRANSFER_MCH_BLANK_LABEL
-            incoming = set()
-            for sku in grp["_sku"]:
-                incoming.update(site for site, _s, _b in in_map.get(sku, []))
-            rows.append({
-                "分類名稱": name,
-                "_skus": set(grp["_sku"]),
-                "_sites": set(grp["_site"]),
-                "_qty": int(grp["qty"].sum()),
-                "_in_skus": set(grp["_sku"]) & set(in_map),
-                "_in_sites": incoming,
-            })
-        return rows
-
+    """MCH1 分類彙總：按 Adj. MCH1，統計轉出／接收 SKU 數與件數、未分配件數。"""
     if out_agg.empty:
         return pd.DataFrame(columns=_TRANSFER_MCH_SUMMARY_COLUMNS)
-    sku_mch = out_agg.groupby("_sku", sort=True).agg(
-        mch1=("Adj. MCH1", _first_nonblank), mch2=("MCH2", _first_nonblank)
-    )
+    sku_mch = out_agg.groupby("_sku", sort=True).agg(mch1=("Adj. MCH1", _first_nonblank))
     alloc_map: dict[tuple, int] = {}
     if not plan_df.empty:
         for (sku, site), qty in plan_df.groupby(["SKU", "接收 Site Code"])["轉貨數量 (件)"].sum().items():
             alloc_map[(str(sku), site)] = int(qty)
+    work = out_agg.copy()
+    work["_label"] = work["_sku"].map(sku_mch["mch1"]).fillna("")
     rows: list[dict] = []
-    for level, series in ((_TRANSFER_MCH_LEVEL_1, sku_mch["mch1"]), (_TRANSFER_MCH_LEVEL_2, sku_mch["mch2"])):
-        for r in _agg(series):
-            alloc = 0
-            for sku in r["_skus"]:
-                for site, _sales_sub, _stock_sub in in_map.get(sku, []):
-                    alloc += alloc_map.get((sku, site), 0)
-            rows.append({
-                "分類層級": level,
-                "分類名稱": r["分類名稱"],
-                "轉出 SKU 數": len(r["_skus"]),
-                "接收 SKU 數": len(r["_in_skus"]),
-                "轉出總量 (件)": int(r["_qty"]),
-                "接收總量 (件)": int(alloc),
-                "未分配量 (件)": int(r["_qty"]) - int(alloc),
-            })
+    for cat, grp in work.groupby("_label", sort=True, dropna=False):
+        name = str(cat) if str(cat).strip() else _TRANSFER_MCH_BLANK_LABEL
+        skus = set(grp["_sku"])
+        in_skus = skus & set(in_map)
+        alloc = 0
+        for sku in skus:
+            for site, _sales_sub, _stock_sub in in_map.get(sku, []):
+                alloc += alloc_map.get((sku, site), 0)
+        qty = int(grp["qty"].sum())
+        rows.append({
+            "Adj. MCH1": name,
+            "轉出 SKU 數": len(skus),
+            "接收 SKU 數": len(in_skus),
+            "轉出總量 (件)": qty,
+            "接收總量 (件)": int(alloc),
+            "未分配量 (件)": qty - int(alloc),
+        })
     mch_df = pd.DataFrame(rows, columns=_TRANSFER_MCH_SUMMARY_COLUMNS)
     if mch_df.empty:
         return mch_df
@@ -362,13 +325,13 @@ def _with_total_row(df: pd.DataFrame, total: dict) -> pd.DataFrame:
 
 
 def build_transfer_candidates(df_input: pd.DataFrame, shop_natures: list[str] | None = None,
-                              mch1_filter=None, mch2_filter=None) -> pd.DataFrame:
+                              mch1_filter=None) -> pd.DataFrame:
     """候選轉出店舖一覽：Sold Qty (P90D) ≤ 0 且 Shop Stock Qty (CM) > 0 的列，依店舖彙總。
 
-    ``mch1_filter``／``mch2_filter`` 為執行前的 MCH 篩選（None 或包含全部值＝不排除）。
+    ``mch1_filter`` 為執行前的 MCH1 篩選（None 或包含全部值＝不排除）。
     """
     base, _ = _prepare_transfer_base(df_input, shop_natures=shop_natures)
-    base = _apply_mch_filter(base, mch1_filter=mch1_filter, mch2_filter=mch2_filter)
+    base = _apply_mch_filter(base, mch1_filter=mch1_filter)
     if base.empty:
         return pd.DataFrame(columns=_TRANSFER_CANDIDATE_COLUMNS)
     zero = base[(base["_sales"] <= 0) & (base["_stock"] > 0)]
@@ -392,11 +355,10 @@ def transform_p90d_transfer(
     progress_callback=None,
     shop_natures: list[str] | None = None,
     mch1_filter=None,
-    mch2_filter=None,
 ):
     """依指定轉出店舖產生轉貨計畫。
 
-    ``mch1_filter``／``mch2_filter`` 為執行前的 MCH 篩選（None 或包含全部值＝不排除），
+    ``mch1_filter`` 為執行前的 MCH1 篩選（None 或包含全部值＝不排除），
     對轉出與接收兩側同時生效。
 
     回傳 (plan_df, out_shop_df, in_shop_df, sku_df, mch_df, stats, warnings)。
@@ -410,7 +372,7 @@ def transform_p90d_transfer(
     if base.empty:
         warnings.append("過濾後無有效資料列，沒有可轉貨的記錄。")
         return _empty_transfer(warnings)
-    _filtered = _apply_mch_filter(base, mch1_filter=mch1_filter, mch2_filter=mch2_filter)
+    _filtered = _apply_mch_filter(base, mch1_filter=mch1_filter)
     _mch_note = _mch_excluded_warning(base, _filtered)
     if _mch_note:
         warnings.append(_mch_note)
@@ -497,7 +459,6 @@ def transform_p90d_transfer(
             "SKU Desc": info.get("SKU Desc", ""),
             "Buyer": info.get("Buyer", ""),
             "Adj. MCH1": info.get("Adj. MCH1", ""),
-            "MCH2": info.get("MCH2", ""),
             "轉出店舖數": len(sources),
             "轉出總量 (件)": int(total),
             "可接收店舖數 (有銷售)": len(pool),
@@ -584,7 +545,7 @@ def transform_p90d_transfer(
         in_shop_df = pd.DataFrame(columns=_TRANSFER_IN_COLUMNS)
 
     if progress_callback:
-        progress_callback(0.8, "建立 MCH 分類彙總...")
+        progress_callback(0.8, "建立 MCH1 分類彙總...")
     mch_df = _build_mch_summary(out_agg, in_map, plan_df)
 
     unalloc_skus = sum(1 for r in sku_rows if r["未分配量 (件)"] > 0)
@@ -662,7 +623,7 @@ def generate_excel_p90d_transfer(
     mch_filter_label: str = "全部（未排除）",
     progress_callback=None,
 ) -> BytesIO:
-    """產生六個工作表：說明、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH 分類彙總（無 RAW）。"""
+    """產生六個工作表：說明、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總（無 RAW）。"""
     stats = dict(stats or {})
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
@@ -692,7 +653,7 @@ def generate_excel_p90d_transfer(
             "轉貨單配對：同 SKU 內，轉出店依 Site Code 排序，接收店依分配量由大至小排序，依序配對成「轉出店 → 接收店」行，各行數量合計與分配一致。",
             "接收店不受庫存限制；接收後庫存＝調前庫存＋分配總量。",
             "同 SKU 沒有任何接收店（即沒有其他有銷售記錄的店舖）時不轉出，保留於原店舖，並列於「SKU 轉貨彙總」的未分配量。",
-            "MCH 篩選（執行前）：被排除的 MCH 分類不會轉出，亦不會作為接收店；篩選只收窄母體，不改變已選分類內的分配結果。",
+            "MCH 篩選（執行前）：按 Adj. MCH1 排除分類；被排除的分類不會轉出，亦不會作為接收店；篩選只收窄母體，不改變已選分類內的分配結果。",
             "本模式不做 Safety、周轉天數或調貨觸發判斷，只按上述規則計算。",
         ],
         sheet_rows=[
@@ -700,11 +661,11 @@ def generate_excel_p90d_transfer(
             ("轉出店舖彙總", "每間轉出店的轉出 SKU 數、轉出總量、已分配與未分配", "未分配 > 0 表示同 SKU 無接收店，需人工確認"),
             ("接收店舖彙總", "每間接收店的接收 SKU 數、接收總量與接收前後庫存", "接收後庫存明顯偏高者，可考慮改派"),
             ("SKU 轉貨彙總", "每個 SKU 的轉出店數、轉出總量、接收店數與分配結果", f"狀態為「{_TRANSFER_STATUS_NO_RECEIVER}」者不會轉出"),
-            ("MCH 分類彙總", "按 Adj. MCH1 與 MCH2 兩層的分類：轉出／接收 SKU 數與件數、未分配件數", "未分配 > 0 的分類表示同 SKU 無接收店舖；分類名稱「(空白)」表示來源檔該欄空白"),
+            ("MCH1 分類彙總", "按 Adj. MCH1 的分類：轉出／接收 SKU 數與件數、未分配件數", "未分配 > 0 的分類表示同 SKU 無接收店舖；「(空白)」表示來源檔該欄空白"),
         ],
         tips=[
             "轉出店舖須於網頁先勾選；只有勾選店舖中 0 Sales 且有庫存的列會轉出，其他列不會被轉出或作為接收店。",
-            "MCH 篩選於執行前設定（預設全部 MCH 都包含）；被排除分類的列既不轉出，也不接收，排除列數見警告。",
+            "MCH 篩選於執行前設定（預設全部 Adj. MCH1 都包含）；被排除分類的列既不轉出，也不接收，排除列數見警告。",
             "同店同 SKU 重複列已合併計算（轉出量與銷售分別加總），並於警告列明。",
             "分配以銷售比例為準；如需調整某店接收量，可於轉貨單直接修改數量，修改後請重新核對各 SKU 的轉出與接收總量。",
         ],

@@ -398,68 +398,51 @@ def _op90dt_site_selector(df_input, shop_natures):
 
 
 def _op90dt_mch_filter(df_input, shop_natures):
-    """轉貨模式步驟二：執行前的 MCH 篩選（Adj. MCH1 與 MCH2，預設全部包含）；回傳 (mch1_filter, mch2_filter)。"""
+    """轉貨模式步驟二：執行前的 MCH1 篩選（預設全部包含）；回傳 mch1_filter。"""
     _blank = "__BLANK__"
     _blank_label = "（空白）"
     if "Adj. MCH1" not in df_input.columns:
-        st.caption("ℹ️ 來源檔沒有「Adj. MCH1」欄位，MCH 篩選與 MCH 分類彙總自動略過。")
-        return None, None
+        st.caption("ℹ️ 來源檔沒有「Adj. MCH1」欄位，MCH 篩選與 MCH1 分類彙總自動略過。")
+        return None
     _natures_key = tuple(shop_natures) if shop_natures is not None else None
     if st.session_state.op90dt_mch_options is None or st.session_state.op90dt_mch_key != _natures_key:
         st.session_state.op90dt_mch_options = build_mch_options(df_input, shop_natures=shop_natures)
         st.session_state.op90dt_mch_key = _natures_key
-    _mch1_opts, _mch1_dep = st.session_state.op90dt_mch_options or ([], {})
+    _mch1_opts = st.session_state.op90dt_mch_options or []
     if not _mch1_opts:
-        st.caption("ℹ️ 沒有可用的 MCH 分類，MCH 篩選與 MCH 分類彙總自動略過。")
-        return None, None
+        st.caption("ℹ️ 沒有可用的 MCH 分類，MCH 篩選與 MCH1 分類彙總自動略過。")
+        return None
     st.markdown("#### 🏷️ 步驟二：MCH 篩選（執行前，預設全部包含）")
 
     def _label(v):
         return _blank_label if v == _blank else str(v)
 
-    _opts1 = [_label(v) for v in _mch1_opts]
-    _picked1 = st.multiselect(
+    _opts = [_label(v) for v in _mch1_opts]
+    _picked = st.multiselect(
         "🏷️ 包含的 Adj. MCH1 分類",
-        options=_opts1,
-        default=_opts1,
+        options=_opts,
+        default=_opts,
         key="op90dt_mch1",
         help="預設全部包含。移除任何分類即為「排除該分類」；被排除的分類不會轉出，亦不會作為接收店。",
     )
-    _sel1 = {v for v in _mch1_opts if _label(v) in _picked1}
-    _mch2_pool = sorted({v for s in _sel1 for v in _mch1_dep.get(s, [])})
-    if _mch2_pool:
-        _opts2 = [_label(v) for v in _mch2_pool]
-        _picked2 = st.multiselect(
-            "🔎 包含的 MCH2 分類（按已選 Adj. MCH1 過濾）",
-            options=_opts2,
-            default=_opts2,
-            key="op90dt_mch2",
-            help="預設全部包含。移除任何分類即為「排除該分類」；被排除的 MCH2 不會轉出，亦不會作為接收店。",
-        )
-        _sel2 = {v for v in _mch2_pool if _label(v) in _picked2}
+    _sel = {v for v in _mch1_opts if _label(v) in _picked}
+    if _sel == set(_mch1_opts):
+        st.caption("目前包含全部 Adj. MCH1 分類（未排除任何分類）。")
+        mch1_filter = None
     else:
-        _sel2 = set()
-    _all1 = set(_mch1_opts)
-    _all2 = set(_mch2_pool)
-    mch1_filter = None if _sel1 == _all1 else (list(_sel1) or ["__NO_MATCH__"])
-    mch2_filter = None if (_sel2 == _all2 and _all2) else (list(_sel2) or ["__NO_MATCH__"])
-    if mch1_filter is None and mch2_filter is None:
-        st.caption("目前包含全部 MCH 分類（未排除任何分類）。")
-    else:
-        _txt1 = f"Adj. MCH1：{', '.join(_label(v) for v in sorted(_sel1)) or '（無）'}"
-        _txt2 = f"MCH2：{', '.join(_label(v) for v in sorted(_sel2)) or '（無）'}" if _mch2_pool else ""
-        st.caption(f"⚠️ 目前篩選 → {_txt1}{'；' + _txt2 if _txt2 else ''}。")
-    with st.expander("📊 按 MCH 分類的 0 Sales 有庫存分佈（供選擇篩選參考）", expanded=False):
+        st.caption(f"⚠️ 目前篩選 → Adj. MCH1：{', '.join(_label(v) for v in sorted(_sel)) or '（無）'}。")
+        mch1_filter = list(_sel) or ["__NO_MATCH__"]
+    with st.expander("📊 按 Adj. MCH1 的 0 Sales 有庫存分佈（供選擇篩選參考）", expanded=False):
         _stats = st.session_state.op90dt_mch_breakdown
         if _stats is None or _stats.empty:
             st.info("無符合資料")
         else:
             st.dataframe(_stats, width='stretch', hide_index=True)
-    return mch1_filter, mch2_filter
+    return mch1_filter
 
 
 def _op90dt_mch_breakdown(df_input, shop_natures):
-    """候選轉出店舖中 0 Sales 有庫存列按 MCH 分類的分佈（兩層；供篩選參考）。"""
+    """候選轉出店舖中 0 Sales 有庫存列按 Adj. MCH1 的分佈（供篩選參考）。"""
     _blank = "__BLANK__"
     _blank_label = "（空白）"
 
@@ -478,21 +461,15 @@ def _op90dt_mch_breakdown(df_input, shop_natures):
         return pd.DataFrame()
     out = pd.DataFrame({
         "Adj. MCH1": _text(df, "Adj. MCH1")[mask].replace("", _blank),
-        "MCH2": _text(df, "MCH2")[mask].replace("", _blank),
         "SKU": sku[mask],
         "Stock": np.floor(stock[mask] + 1e-9),
     })
-    rows = []
-    for level, col in (("Adj. MCH1", "Adj. MCH1"), ("MCH2", "MCH2")):
-        g = out.groupby(col, sort=True)
-        part = pd.DataFrame({
-            "分類層級": level,
-            "分類名稱": [_blank_label if v == _blank else str(v) for v in g.size().index],
-            "0 Sales SKU 數": g["SKU"].nunique().astype(int).values,
-            "可轉出庫存 (件)": g["Stock"].sum().astype(int).values,
-        })
-        rows.append(part)
-    return pd.concat(rows, ignore_index=True)
+    g = out.groupby("Adj. MCH1", sort=True)
+    return pd.DataFrame({
+        "Adj. MCH1": [_blank_label if v == _blank else str(v) for v in g.size().index],
+        "0 Sales SKU 數": g["SKU"].nunique().astype(int).values,
+        "可轉出庫存 (件)": g["Stock"].sum().astype(int).values,
+    })
 
 
 # 4. 初始化 Session State (確保下載與重整時狀態持久化)
@@ -2751,13 +2728,12 @@ if uploaded_file is not None:
 
         _op90dt_sites = []
         _op90dt_mch1_filter = None
-        _op90dt_mch2_filter = None
         if mode == _OP90DT_MODE:
             _op90dt_sites = _op90dt_site_selector(
                 df_input,
                 selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
             )
-            _op90dt_mch1_filter, _op90dt_mch2_filter = _op90dt_mch_filter(
+            _op90dt_mch1_filter = _op90dt_mch_filter(
                 df_input,
                 selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
             )
@@ -2969,12 +2945,11 @@ if uploaded_file is not None:
                         progress_callback=_cb_transform,
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                         mch1_filter=_op90dt_mch1_filter,
-                        mch2_filter=_op90dt_mch2_filter,
                     )
                     buf = generate_excel_p90d_transfer(
                         _plan_df, _out_df, _in_df, _sku_df, _mch_df, _stats,
                         nature_label="全部" if set(selected_shop_natures) == set(SHOP_NATURE_OPTIONS) else "、".join(selected_shop_natures),
-                        mch_filter_label="全部（未排除）" if (_op90dt_mch1_filter is None and _op90dt_mch2_filter is None) else "已排除部分分類",
+                        mch_filter_label="全部（未排除）" if _op90dt_mch1_filter is None else "已排除部分分類",
                         progress_callback=_cb_excel,
                     )
                     st.session_state.op90dt_processed = True
@@ -4183,7 +4158,7 @@ if uploaded_file is not None:
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             tab_plan, tab_out, tab_in, tab_sku, tab_mch = st.tabs([
-                "🧾 轉貨單", "🏪 轉出店舖彙總", "🛒 接收店舖彙總", "🔢 SKU 轉貨彙總", "🏷️ MCH 分類彙總",
+                "🧾 轉貨單", "🏪 轉出店舖彙總", "🛒 接收店舖彙總", "🔢 SKU 轉貨彙總", "🏷️ MCH1 分類彙總",
             ])
             with tab_plan:
                 st.markdown("#### 轉出店 → 接收店 轉貨單（按轉出店、SKU 排序）")
@@ -4214,7 +4189,7 @@ if uploaded_file is not None:
                 else:
                     st.info("無符合資料")
             with tab_mch:
-                st.markdown("#### 按 Adj. MCH1 與 MCH2 兩層的分類結果（轉出、接收與未分配）")
+                st.markdown("#### 按 Adj. MCH1 的分類結果（轉出、接收與未分配）")
                 if _mch_df is not None and not _mch_df.empty:
                     st.dataframe(_mch_df, width='stretch', hide_index=True)
                 else:
