@@ -1,0 +1,304 @@
+"""Validation tests for P90D 0 Sales Review(轉貨模式).
+
+規則：
+- 候選轉出店舖：Sold Qty (P90D) ≤ 0 且 Shop Stock Qty (CM) > 0
+- 轉出：已選轉出店舖中符合上述條件的列，數量為 Shop Stock Qty (CM) 全數，不分 OM、不設上限
+- 接收：同 SKU、非轉出店舖、Sold Qty (P90D) > 0 的列，不論有無庫存
+- 分配：同 SKU 轉出總量按接收店 Sold Qty (P90D) 比例分配（最大餘數法取整數件、全數分完）
+"""
+import random
+import warnings
+
+warnings.filterwarnings("ignore")
+
+import pandas as pd
+from openpyxl import load_workbook
+
+from modes.transfer_p90d import (
+    _allocate_proportional,
+    build_transfer_candidates,
+    generate_excel_p90d_transfer,
+    transform_p90d_transfer,
+)
+import transformer as shim
+from modes import MODE_REGISTRY
+
+BASE = {
+    "Buyer": "B1", "Brand": "A", "SKU": 1,
+    "Item_Shop": "Prod-S01-ShopHK", "Site Code": "S01", "OM": "OM1",
+    "Shop Nature": "Mix", "RP Type": "RF",
+    "Shop Stock Status": "Overstock (P90D 0 Sales)",
+    "Adj. Safety Stock": 3.0, "Adj. MCH1": "01 - SKIN CARE",
+    "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0, "Sold Qty (CM - MTD)": 0.0,
+    "Sold Qty (P90D)": 0.0,
+    "Shop Stock Qty (CM)": 5.0, "Shop Stock Qty (LM)": 4.0,
+}
+
+
+def _row(site, sku=1, sales=0.0, stock=5.0, name=None, om="OM1", nature="Mix", brand="A", buyer="B1"):
+    r = dict(BASE)
+    r.update({
+        "Site Code": site,
+        "SKU": sku,
+        "Item_Shop": f"Prod-{site}-{name or 'Shop' + site}",
+        "Sold Qty (P90D)": float(sales),
+        "Sold Qty (CM - MTD)": float(sales),
+        "Shop Stock Qty (CM)": float(stock),
+        "OM": om,
+        "Shop Nature": nature,
+        "Brand": brand,
+        "Buyer": buyer,
+    })
+    return r
+
+
+def _df(rows):
+    return pd.DataFrame(rows)
+
+
+def _lines(plan):
+    return {
+        (r["轉出 Site Code"], str(r["SKU"]), r["接收 Site Code"]): int(r["轉貨數量 (件)"])
+        for _, r in plan.iterrows()
+    }
+
+
+def test_candidates_only_zero_sales_with_stock():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=3, stock=5),
+        _row("S03", sku=2, sales=0, stock=0),
+        _row("S01", sku=2, sales=0, stock=2),
+    ])
+    cand = build_transfer_candidates(df)
+    assert list(cand["Site Code"]) == ["S01"]
+    row = cand.iloc[0]
+    assert row["Shop Name"] == "ShopS01"
+    assert int(row["0 Sales SKU 數"]) == 2
+    assert int(row["可轉出庫存 (件)"]) == 7
+
+
+def test_single_receiver_gets_full_stock():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=4, stock=1),
+        _row("S03", sku=1, sales=0, stock=9),
+    ])
+    plan, out_df, in_df, sku_df, stats, warnings = transform_p90d_transfer(df, ["S01"])
+    assert _lines(plan) == {("S01", "1", "S02"): 5}
+    line = plan.iloc[0]
+    assert int(line["接收店 Shop Stock Qty (CM) 調前"]) == 1
+    assert int(line["接收店同 SKU 分配總量 (件)"]) == 5
+    assert float(line["接收店銷售佔比 (同 SKU)"]) == 1.0
+    assert stats["alloc_qty"] == 5 and stats["unalloc_qty"] == 0
+    assert stats["unalloc_skus"] == 0
+
+
+def test_multi_receiver_proportional_by_sales():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=10),
+        _row("S02", sku=1, sales=3, stock=0),
+        _row("S03", sku=1, sales=1, stock=0),
+    ])
+    plan, _, in_df, _, stats, _ = transform_p90d_transfer(df, ["S01"])
+    assert _lines(plan) == {("S01", "1", "S02"): 8, ("S01", "1", "S03"): 2}
+    assert stats["alloc_qty"] == 10 and stats["unalloc_qty"] == 0
+    shares = dict(zip(plan["接收 Site Code"], plan["接收店銷售佔比 (同 SKU)"]))
+    assert abs(shares["S02"] - 0.75) < 1e-9 and abs(shares["S03"] - 0.25) < 1e-9
+
+
+def test_multi_out_sites_pooled_and_paired():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=4),
+        _row("S05", sku=1, sales=0, stock=6),
+        _row("S02", sku=1, sales=3, stock=0),
+        _row("S03", sku=1, sales=1, stock=0),
+    ])
+    plan, _, _, _, stats, _ = transform_p90d_transfer(df, ["S01", "S05"])
+    assert _lines(plan) == {
+        ("S01", "1", "S02"): 4,
+        ("S05", "1", "S02"): 4,
+        ("S05", "1", "S03"): 2,
+    }
+    assert stats["out_qty"] == 10 and stats["alloc_qty"] == 10
+
+
+def test_no_receiver_stays_unallocated():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=0, stock=3),
+    ])
+    plan, out_df, in_df, sku_df, stats, warnings = transform_p90d_transfer(df, ["S01"])
+    assert plan.empty
+    assert stats["unalloc_qty"] == 5 and stats["unalloc_skus"] == 1
+    body = sku_df[sku_df["SKU"].astype(str) == "1"].iloc[0]
+    assert int(body["未分配量 (件)"]) == 5
+    assert body["狀態"] == "無接收店舖（保留原店）"
+    assert any("未能轉出" in w for w in warnings)
+
+
+def test_selected_site_sales_rows_are_neither_source_nor_receiver():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S01", sku=2, sales=2, stock=4),
+        _row("S02", sku=2, sales=1, stock=0),
+    ])
+    plan, _, _, sku_df, stats, _ = transform_p90d_transfer(df, ["S01"])
+    assert plan.empty
+    assert stats["out_skus"] == 1
+    body = sku_df[sku_df["Brand"] != "總計"]
+    assert set(body["SKU"].astype(str)) == {"1"}
+
+
+def test_om_ignored_for_transfer():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5, om="OM1"),
+        _row("S02", sku=1, sales=2, stock=0, om="OM2"),
+    ])
+    plan, _, _, _, stats, _ = transform_p90d_transfer(df, ["S01"])
+    assert _lines(plan) == {("S01", "1", "S02"): 5}
+    assert plan.iloc[0]["接收店 OM"] == "OM2"
+
+
+def test_shop_nature_filter_applies_to_both_sides():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=6, nature="Mix"),
+        _row("S02", sku=1, sales=5, stock=0, nature="Tourist"),
+        _row("S03", sku=1, sales=5, stock=0, nature="Non Tourist"),
+    ])
+    plan, _, _, _, _, _ = transform_p90d_transfer(
+        df, ["S01"], shop_natures=["Mix", "Non Tourist"]
+    )
+    assert _lines(plan) == {("S01", "1", "S03"): 6}
+
+
+def test_duplicate_site_sku_is_aggregated_with_warning():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=2),
+        _row("S01", sku=1, sales=0, stock=3),
+        _row("S02", sku=1, sales=1, stock=0),
+    ])
+    plan, _, _, _, stats, warnings = transform_p90d_transfer(df, ["S01"])
+    assert _lines(plan) == {("S01", "1", "S02"): 5}
+    assert any("重複" in w for w in warnings)
+
+
+def test_selected_site_without_zero_stock_is_reported():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S09", sku=1, sales=2, stock=3),
+        _row("S02", sku=1, sales=1, stock=0),
+    ])
+    plan, _, _, _, _, warnings = transform_p90d_transfer(df, ["S01", "S09"])
+    assert _lines(plan) == {("S01", "1", "S02"): 5}
+    assert any("未納入轉出" in w and "S09" in w for w in warnings)
+
+
+def test_no_zero_stock_rows_returns_empty_with_warning():
+    df = _df([
+        _row("S09", sku=1, sales=2, stock=3),
+        _row("S02", sku=1, sales=1, stock=0),
+    ])
+    plan, out_df, in_df, sku_df, stats, warnings = transform_p90d_transfer(df, ["S09"])
+    assert plan.empty and out_df.empty and in_df.empty and sku_df.empty
+    assert stats["out_qty"] == 0
+    assert any("沒有符合" in w for w in warnings)
+
+
+def test_empty_selection_raises():
+    df = _df([_row("S01", sku=1, sales=0, stock=5), _row("S02", sku=1, sales=1, stock=0)])
+    try:
+        transform_p90d_transfer(df, [])
+    except ValueError as exc:
+        assert "轉出店舖" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for empty selection")
+
+
+def test_missing_required_column_raises():
+    df = _df([_row("S01", sku=1, sales=0, stock=5)]).drop(columns=["Sold Qty (P90D)"])
+    try:
+        transform_p90d_transfer(df, ["S01"])
+    except ValueError as exc:
+        assert "Sold Qty (P90D)" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for missing column")
+
+
+def test_allocate_proportional_sums_to_total():
+    assert _allocate_proportional(10, [3, 1]) == [8, 2]
+    alloc = _allocate_proportional(7, [1, 1, 1])
+    assert sum(alloc) == 7 and max(alloc) - min(alloc) <= 1
+    assert _allocate_proportional(0, [1, 2]) == [0, 0]
+    assert _allocate_proportional(5, []) == []
+    rng = random.Random(20261014)
+    for _ in range(300):
+        total = rng.randint(1, 500)
+        weights = [float(rng.randint(1, 60)) for _ in range(rng.randint(1, 8))]
+        alloc = _allocate_proportional(total, weights)
+        assert sum(alloc) == total
+        wsum = sum(weights)
+        for a, w in zip(alloc, weights):
+            ideal = total * w / wsum
+            assert abs(a - ideal) < 1.0 + 1e-9
+
+
+def test_summary_totals_match_plan():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=4),
+        _row("S05", sku=1, sales=0, stock=6),
+        _row("S05", sku=2, sales=0, stock=3),
+        _row("S02", sku=1, sales=3, stock=2),
+        _row("S03", sku=1, sales=1, stock=0),
+        _row("S03", sku=2, sales=0, stock=0),
+    ])
+    plan, out_df, in_df, sku_df, stats, _ = transform_p90d_transfer(df, ["S01", "S05"])
+    out_total = out_df[out_df["Site Code"] == "總計"].iloc[0]
+    in_total = in_df[in_df["Site Code"] == "總計"].iloc[0]
+    sku_total = sku_df[sku_df["Brand"] == "總計"].iloc[0]
+    assert int(out_total["轉出總量 (件)"]) == 13
+    assert int(out_total["已分配 (件)"]) == 10
+    assert int(out_total["未分配 (件)"]) == 3
+    assert int(plan["轉貨數量 (件)"].sum()) == 10
+    assert int(in_total["接收總量 (件)"]) == 10
+    assert int(in_total["接收前庫存 (件)"]) == 2
+    assert int(in_total["接收後庫存 (件)"]) == 12
+    assert int(sku_total["已分配總量 (件)"]) == 10
+    assert int(sku_total["未分配量 (件)"]) == 3
+
+
+def test_excel_structure_and_percent_format():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=10),
+        _row("S02", sku=1, sales=3, stock=0),
+        _row("S03", sku=1, sales=1, stock=0),
+    ])
+    plan, out_df, in_df, sku_df, stats, _ = transform_p90d_transfer(df, ["S01"])
+    buf = generate_excel_p90d_transfer(plan, out_df, in_df, sku_df, stats, nature_label="全部")
+    wb = load_workbook(buf)
+    assert wb.sheetnames == ["說明", "轉貨單", "轉出店舖彙總", "接收店舖彙總", "SKU 轉貨彙總"]
+    ws = wb["轉貨單"]
+    headers = [c.value for c in ws[1]]
+    assert headers == list(plan.columns)
+    share_col = headers.index("接收店銷售佔比 (同 SKU)") + 1
+    assert ws.cell(row=2, column=share_col).number_format == "0.0%"
+    qty_col = headers.index("轉貨數量 (件)") + 1
+    assert ws.cell(row=2, column=qty_col).value == 8
+
+
+def test_excel_empty_plan_writes_placeholder():
+    df = _df([_row("S01", sku=1, sales=0, stock=5), _row("S02", sku=1, sales=0, stock=3)])
+    plan, out_df, in_df, sku_df, stats, _ = transform_p90d_transfer(df, ["S01"])
+    buf = generate_excel_p90d_transfer(plan, out_df, in_df, sku_df, stats)
+    wb = load_workbook(buf)
+    assert wb["轉貨單"].cell(row=2, column=1).value == "無符合資料"
+
+
+def test_transformer_shim_and_registry():
+    assert shim.build_transfer_candidates is build_transfer_candidates
+    assert shim.transform_p90d_transfer is transform_p90d_transfer
+    assert shim.generate_excel_p90d_transfer is generate_excel_p90d_transfer
+    entry = MODE_REGISTRY["P90D 0 Sales Review(轉貨模式)"]
+    assert entry["module"] == "modes.transfer_p90d"
+    assert entry["transform"] == "transform_p90d_transfer"
+    assert entry["generate_excel"] == "generate_excel_p90d_transfer"

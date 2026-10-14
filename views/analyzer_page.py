@@ -58,6 +58,7 @@ from transformer import (
     _optimize_input_dtypes,
     transform_overstock_p90d, generate_excel_overstock_p90d,
     transform_overstock_p90d_shop, generate_excel_overstock_p90d_shop,
+    transform_p90d_transfer, generate_excel_p90d_transfer, build_transfer_candidates,
     _build_op90d_by_sku, _build_op90d_by_buyer,
     _HYBRID_FULL_SAFETY_SHEET,
     transform_safety_monthly, generate_excel_safety_monthly,
@@ -283,8 +284,8 @@ st.markdown("""
     <div class="step"><span class="n">4</span><b>執行並下載</b><small>看板預覽＋一鍵導出</small></div>
 </div>
 """, unsafe_allow_html=True)
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review(Shop回覆)", "P90D 0 Sales Review(個別店舖)", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "Safety Stock 月度變化分析"]
-st.caption("🔄 調貨與補貨：Stock Checking · Safety Stock x NetStock Review　｜　🔒 安全庫存：Safety Stock Review · Forecast Review · Safety Stock 月度變化分析　｜　📦 庫存健康：Overstock · OOS · Stock Impact · 90 日零銷售 · P90D 0 Sales　｜　✂️ 商品與對比：Carry SKU · SKU 精簡 · NDRF 月份對比")
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review(Shop回覆)", "P90D 0 Sales Review(個別店舖)", "P90D 0 Sales Review(轉貨模式)", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "Safety Stock 月度變化分析"]
+st.caption("🔄 調貨與補貨：Stock Checking · Safety Stock x NetStock Review · P90D 0 Sales Review(轉貨模式)　｜　🔒 安全庫存：Safety Stock Review · Forecast Review · Safety Stock 月度變化分析　｜　📦 庫存健康：Overstock · OOS · Stock Impact · 90 日零銷售 · P90D 0 Sales　｜　✂️ 商品與對比：Carry SKU · SKU 精簡 · NDRF 月份對比")
 MODE_DESCRIPTIONS = {
     "Overstock Review": "篩選庫存過剩品項，計算建議安全庫存與可轉出貨量。",
     "OOS Review": "篩選缺貨與潛在缺貨品項，偵測安全庫存不足。",
@@ -297,6 +298,7 @@ MODE_DESCRIPTIONS = {
     "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
     "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 須大於 0），分類維度可切換 MAKE UP／Item Class／Adj. MCH1，或交叉維度 MAKE UP × Item Class／MAKE UP × Adj. MCH1（按主分類逐列交叉次分類）；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈，另按 SKU 及 Buyer 統計出現店舖數。",
     "P90D 0 Sales Review(個別店舖)": "供個別店舖查閱自身 P90D 0 Sales 情況（Shop Stock Qty (LM) 須大於 0），分類固定以 MAKE UP 分類統計；輸出各店全部 SKU 明細（ALL SKU，包括 MAKE UP 與 Non-MAKE UP，不設列數上限與店舖回覆欄，按庫存由大至小排序），以及 Shop Nature 與 OM 分佈，另按 SKU 及 Buyer 統計出現店舖數。",
+    "P90D 0 Sales Review(轉貨模式)": "先指定轉出店舖（0 Sales 且有庫存），其 0 Sales 有庫存列全數轉出，分配予同 SKU 有銷售記錄的店舖（不分 OM，接收多間時按銷售比例分配，力求全數接收）。",
     "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
     "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
@@ -357,6 +359,42 @@ def _sales_threshold_inputs(prefix: str):
         )
     return int(_oos), int(_over), int(_minu)
 
+_OP90DT_MODE = "P90D 0 Sales Review(轉貨模式)"
+
+
+def _op90dt_site_selector(df_input, shop_natures):
+    """轉貨模式步驟一：列出候選轉出店舖（0 Sales 且有庫存），由使用者勾選指定轉出店舖；回傳已選 Site Code。"""
+    _natures_key = tuple(shop_natures) if shop_natures is not None else None
+    if st.session_state.op90dt_candidates is None or st.session_state.op90dt_candidates_key != _natures_key:
+        st.session_state.op90dt_candidates = build_transfer_candidates(df_input, shop_natures=shop_natures)
+        st.session_state.op90dt_candidates_key = _natures_key
+    _cand = st.session_state.op90dt_candidates
+    st.markdown("#### 🚚 步驟一：指定轉出店舖（0 Sales 且有庫存）")
+    if _cand is None or _cand.empty:
+        st.warning("⚠️ 讀取後沒有符合「0 Sales（Sold Qty (P90D) ≤ 0）且有庫存（Shop Stock Qty (CM) > 0）」的店舖，無法轉貨。")
+        return []
+    _label_to_site = {}
+    for _site, _name in zip(_cand["Site Code"], _cand["Shop Name"]):
+        _label_to_site[f"{_site}｜{_name}" if _name else str(_site)] = _site
+    _prev = st.session_state.get("op90dt_sites", [])
+    _valid = [x for x in _prev if x in _label_to_site]
+    if _valid != _prev:
+        st.session_state["op90dt_sites"] = _valid
+    st.caption(
+        f"共 {len(_cand):,} 間店舖有 0 Sales 且有庫存的列。已選店舖只計入其 0 Sales 且有庫存的列，轉出數量為全數，不分 OM 群組；"
+        "接收店由系統自動判定（同 SKU、非轉出店舖、有銷售記錄）。"
+    )
+    _picked = st.multiselect(
+        "🏪 選擇轉出店舖（Site Code｜Shop Name，可輸入篩選）",
+        options=list(_label_to_site),
+        key="op90dt_sites",
+        help="未選取轉出店舖前不能執行。候選店舖的 0 Sales SKU 數與可轉出庫存可於下方一覽查看。",
+    )
+    with st.expander(f"📋 候選轉出店舖一覽（共 {len(_cand):,} 間）", expanded=False):
+        st.dataframe(_cand, width='stretch', hide_index=True)
+    return [_label_to_site[x] for x in _picked]
+
+
 # 4. 初始化 Session State (確保下載與重整時狀態持久化)
 MODE_KEYS = {
     "Overstock Review": {"prefix": "", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
@@ -370,6 +408,7 @@ MODE_KEYS = {
     "Past 90 Days 0 Sales": {"prefix": "p90ds_", "processed": False, "summary_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "P90D 0 Sales Review(Shop回覆)": {"prefix": "op90d_", "processed": False, "raw_df": None, "by_shop": None, "top10": None, "by_nature": None, "by_om": None, "by_sku": None, "by_buyer": None, "excel_data": None, "warnings": [], "include_makeup": False, "breakdown_value": "makeup"},
     "P90D 0 Sales Review(個別店舖)": {"prefix": "op90ds_", "processed": False, "raw_df": None, "by_shop": None, "top10": None, "by_nature": None, "by_om": None, "by_sku": None, "by_buyer": None, "excel_data": None, "warnings": []},
+    "P90D 0 Sales Review(轉貨模式)": {"prefix": "op90dt_", "processed": False, "candidates": None, "candidates_key": None, "plan_df": None, "out_shop_df": None, "in_shop_df": None, "sku_df": None, "stats": None, "excel_data": None, "warnings": []},
     "Stock Checking": {"prefix": "stock_chk_", "processed": False, "summary_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
     "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "sc_summary": None, "diagnosis": None, "diagnosis_om": None, "diag_summary": None, "stats": None, "excel_data": None, "params": None, "warnings": []},
     "Forecast Review": {"prefix": "fc_", "processed": False, "main_df": None, "coverage_df": None, "buyer_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
@@ -422,6 +461,7 @@ if uploaded_file is not None:
                 key = f"{cfg['prefix']}{attr}"
                 st.session_state[key] = [] if isinstance(default, list) else default
         st.session_state.pop("df_input", None)
+        st.session_state.pop("op90dt_sites", None)
 
     # 若尚未載入資料，則執行讀取
     if "df_input" not in st.session_state:
@@ -2609,11 +2649,18 @@ if uploaded_file is not None:
                 help="選擇要處理的店舖性質。預設全選所有類型。"
             )
 
+        _op90dt_sites = []
+        if mode == _OP90DT_MODE:
+            _op90dt_sites = _op90dt_site_selector(
+                df_input,
+                selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+            )
+
         _is_overstock_mode = (mode == "Overstock Review")
         _is_carry_mode = (mode == "Carry SKU Review")
         # Modes that don't use the Shop Nature Rate sliders (no Safety Qty calculation):
         # Carry SKU Review, SKU 精簡 Review, NDRF 月份對比 (pivot/comparison only).
-        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "P90D 0 Sales Review(Shop回覆)") or (mode == "P90D 0 Sales Review(個別店舖)") or (mode == "Safety Stock 月度變化分析")
+        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "P90D 0 Sales Review(Shop回覆)") or (mode == "P90D 0 Sales Review(個別店舖)") or (mode == _OP90DT_MODE) or (mode == "Safety Stock 月度變化分析")
 
         if not _skip_rates_mode:
             _tourist_default = 30 if _is_overstock_mode else 50
@@ -2659,7 +2706,8 @@ if uploaded_file is not None:
             safety_mode_value = "increase_only" if safety_mode == "只可增加" else "allow_both"
 
         # P0 全域選項已於檔案預覽後定義（_include_raw），此處直接沿用
-        if st.button("⚙️ 執行報表轉換與分析", type="primary", width='stretch'):
+        if st.button("⚙️ 執行報表轉換與分析", type="primary", width='stretch',
+                     disabled=(mode == _OP90DT_MODE and not _op90dt_sites)):
             _prog2 = st.progress(0, text="處理中... 0% | 開始處理...")
             _t0_2 = time.time()
 
@@ -2808,6 +2856,26 @@ if uploaded_file is not None:
                     st.session_state.op90ds_by_buyer = by_buyer_df
                     st.session_state.op90ds_excel_data = buf
                     st.session_state.op90ds_warnings = _warnings
+                elif mode == _OP90DT_MODE:
+                    _plan_df, _out_df, _in_df, _sku_df, _stats, _warnings = transform_p90d_transfer(
+                        df_input,
+                        transfer_out_sites=_op90dt_sites,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                    )
+                    buf = generate_excel_p90d_transfer(
+                        _plan_df, _out_df, _in_df, _sku_df, _stats,
+                        nature_label="全部" if set(selected_shop_natures) == set(SHOP_NATURE_OPTIONS) else "、".join(selected_shop_natures),
+                        progress_callback=_cb_excel,
+                    )
+                    st.session_state.op90dt_processed = True
+                    st.session_state.op90dt_plan_df = _plan_df
+                    st.session_state.op90dt_out_shop_df = _out_df
+                    st.session_state.op90dt_in_shop_df = _in_df
+                    st.session_state.op90dt_sku_df = _sku_df
+                    st.session_state.op90dt_stats = _stats
+                    st.session_state.op90dt_excel_data = buf
+                    st.session_state.op90dt_warnings = _warnings
                 elif mode == "Stock Checking":
                     raw_df, summary_df, _stats, _warnings = transform_stock_checking(
                         df_input,
@@ -3954,6 +4022,98 @@ if uploaded_file is not None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
                 width='stretch',
+            )
+
+        if mode == _OP90DT_MODE and st.session_state.op90dt_processed:
+            _plan_df = st.session_state.op90dt_plan_df
+            _out_df = st.session_state.op90dt_out_shop_df
+            _in_df = st.session_state.op90dt_in_shop_df
+            _sku_df = st.session_state.op90dt_sku_df
+            _stats = st.session_state.op90dt_stats or {}
+            _excel_data = st.session_state.op90dt_excel_data
+
+            def _op90dt_card(title, value, desc, color):
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: {color};">
+                    <div class="metric-title">{title}</div>
+                    <div class="metric-value" style="color: {color};">{value}</div>
+                    <div class="metric-desc">{desc}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
+            st.markdown("### 🚚 P90D 0 Sales 轉貨分析摘要")
+            _top_download_button(_excel_data, "I14 P90D 0 Sales Review(轉貨模式)", "dl_top_op90dt")
+
+            r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+            with r1_col1:
+                _op90dt_card("轉出店舖數", f"{int(_stats.get('out_sites', 0)):,}", "已選且有 0 Sales 有庫存列的店舖", "#ef4444")
+            with r1_col2:
+                _op90dt_card("轉出 SKU 數", f"{int(_stats.get('out_skus', 0)):,}", "轉出庫存的 SKU（已刪除重複）", "#f59e0b")
+            with r1_col3:
+                _op90dt_card("轉出總量（件）", f"{int(_stats.get('out_qty', 0)):,}", "0 Sales 有庫存列的 Shop Stock Qty (CM) 全數合計", "#3b82f6")
+            with r1_col4:
+                _op90dt_card("已分配總量（件）", f"{int(_stats.get('alloc_qty', 0)):,}", "全數分配予同 SKU 的接收店舖", "#10b981")
+
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+            r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
+            with r2_col1:
+                _op90dt_card("接收店舖數", f"{int(_stats.get('in_sites', 0)):,}", "同 SKU 有銷售記錄（Sold Qty (P90D) > 0）且獲分配的店舖", "#8b5cf6")
+            with r2_col2:
+                _op90dt_card("轉貨行數", f"{int(_stats.get('plan_lines', 0)):,}", "轉出店 → 接收店 的配對行數（見轉貨單）", "#06b6d4")
+            with r2_col3:
+                _op90dt_card("未分配 SKU 數", f"{int(_stats.get('unalloc_skus', 0)):,}", "同 SKU 無接收店舖，未能轉出", "#f97316")
+            with r2_col4:
+                _op90dt_card("未分配量（件）", f"{int(_stats.get('unalloc_qty', 0)):,}", "保留於原店舖", "#6b7280")
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            tab_plan, tab_out, tab_in, tab_sku = st.tabs(["🧾 轉貨單", "🏪 轉出店舖彙總", "🛒 接收店舖彙總", "🔢 SKU 轉貨彙總"])
+            with tab_plan:
+                st.markdown("#### 轉出店 → 接收店 轉貨單（按轉出店、SKU 排序）")
+                if _plan_df is not None and not _plan_df.empty:
+                    _plan_show = _plan_df.copy()
+                    _plan_show["接收店銷售佔比 (同 SKU)"] = (_plan_show["接收店銷售佔比 (同 SKU)"] * 100).round(1).astype(str) + "%"
+                    st.dataframe(_plan_show.head(2000), width='stretch', hide_index=True)
+                    if len(_plan_df) > 2000:
+                        st.caption(f"僅顯示前 2,000 行，完整 {len(_plan_df):,} 行將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料")
+            with tab_out:
+                st.markdown("#### 各轉出店舖的轉出、已分配與未分配數量")
+                if _out_df is not None and not _out_df.empty:
+                    st.dataframe(_out_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_in:
+                st.markdown("#### 各接收店舖的接收數量與接收前後庫存")
+                if _in_df is not None and not _in_df.empty:
+                    st.dataframe(_in_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+            with tab_sku:
+                st.markdown("#### 各 SKU 的轉出、接收與未分配結果（未分配量由大至小）")
+                if _sku_df is not None and not _sku_df.empty:
+                    st.dataframe(_sku_df, width='stretch', hide_index=True)
+                else:
+                    st.info("無符合資料")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            download_name = f"I14 P90D 0 Sales Review(轉貨模式)_{hk_time}.xlsx"
+
+            st.download_button(
+                label="📥 下載 P90D 0 Sales 轉貨報表 (.xlsx)",
+                data=_excel_data,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+                key="dl_bottom_op90dt",
             )
 
         if mode == "Stock Checking" and st.session_state.stock_chk_processed:

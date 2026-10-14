@@ -7,7 +7,7 @@
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / Stock Checking / Safety Stock x NetStock Review / Safety Stock 月度變化分析 / Forecast Review |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / P90D 0 Sales Review（轉貨模式） / Stock Checking / Safety Stock x NetStock Review / Safety Stock 月度變化分析 / Forecast Review |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
@@ -196,6 +196,18 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 8. **RAW 稽核欄位** — 新增 `D001 Effective Stock Qty (CM)`（實際採用的 D001 值）與原始 D001 Stock，以便核查 fallback
 
 輸出包含 **9 個工作表**：說明（首頁導讀——列出本次執行參數（分類維度／調貨門檻／D001 門檻／Safety 基準天數／雙向／ND 優先轉出／銷量分類門檻／銷量再平衡／參考日期）、核心邏輯（調貨段 14 日線、Review 段 Safety 基準天數、銷量帶與銷量存貨分類、Past 90 Days 0 Sales 轉 ND）與工作表導讀（每頁內容與建議留意的部分）＋實用提示；開啟 Excel 時預設顯示本頁）、RAW（按可讀性重排欄序——識別→品項屬性→庫存與銷售（含銷量帶／銷量存貨分類）→SKU 級判定→Review 結果→調貨 (不限OM)→調貨 (同OM)→其他原始欄；不顯示「Item_Shop」與所有含「Value」的金額欄；非事件列 Review 欄留空；雙向時另含「可轉出貨量 (Tourist)」）、Summary（SKU 級彙總，按所選分類維度分組——nature 三組與 Stock Checking 同格式同值（A–AC 契約欄序：各組加總庫存／加總月銷／TurnDay／涉及店舖數，店舖數為同 SKU 同組 Site Code 不重複計數，空白不計）、rp 兩組（RF／ND）、both 六組、om（動態 OM 名單）、nature_om（三 Nature × OM）、sales（高銷／中銷／低銷／零銷 四帶）、sales_nature（三 Nature × 四帶 12 組）：各組庫存/月銷加總、TurnDay、涉及店舖數、佔比、強制調貨提示、存貨偏重提示（門檻按維度切換：nature／rp／both 為庫存佔比 ≥40% 且差距 ≥20 個百分點，om 為 ≥25% 且差距 ≥12 個百分點，nature_om／sales_nature 為 ≥12% 且差距 ≥8 個百分點，sales 為 ≥30% 且差距 ≥15 個百分點），偏重提示欄與偏重分組的庫存佔比欄以醒目橘底加強顯示；以銷量／銷量＋Shop Nature 分類時，零銷組的「加總 - Shop Stock Qty (CM) %」大於 0%（即零銷組仍有庫存）另以醒目紅底標示——零銷售而仍有存貨，理論上全屬 Overstock，不設佔比門檻一律標示，同格與橘底重疊時以紅底優先；nature 雙向時末尾另加「由Tourist 店舖預計調出數量」欄）、調貨 Review Safety Stock (不限OM) 與 調貨 Review Safety Stock (同OM)（店舖×SKU 逐列主表，含 Site Code／OM／Shop Nature／RP Type、建議值 Turnday 欄與銷量帶／銷量存貨分類，按 Brand / SKU / 事件類型 / Site Code 排序；Safety Review 欄兩表相同）、店舖問題 SKU（每間店舖需行動列：Safety 設定不足／過高＋Past 90 Days 0 Sales 轉 ND 候選（M-2／M-1／CM-MTD／P90D 皆零銷售且有庫存，距參考日期 90 天內新品、需要調貨列與 ND 列除外；重疊列保留原問題類型並加註）；按店舖分組、店內按嚴重度排序；主表以不限OM為準，另附 Supply Source、D001 Net Stock Qty (CM) 與三個同OM對照欄；建議方法以「增加／減少 X 件」標明調整方向並附建議值周轉日數，調入缺口與受保底 3 件影響時加註，缺口跟進按供貨來源分支 — Warehouse＋D001 有貨由 D001 補貨、Warehouse＋D001 無貨寫 D001缺貨、Vendor 貨向供應商追貨；參考日期由「📅 參考日期」輸入決定，預設昨日）、Review 摘要（指標卡——第 4 排為同OM調貨對照、雙向時另加第 5 排 Tourist 轉出量、銷量再平衡開啟時末尾另加銷量分類概況一排 + Safety Review × 分類維度交叉表（欄位按維度切換：nature 三組／rp 兩組／both 六組／om 動態 OM 名單／nature_om 三 Nature × OM／sales 四銷量帶／sales_nature 12 組）：列數 / SKU 數 / 建議調整量合計，含總計列；其下另加 **Safety 調整方向分類**（增加 / 減少 / 不變 × 列數 / SKU 數 / Safety 建議調整量合計，含總計列）與 **Safety 調整明細（SKU 級彙總）**：Brand / SKU / SKU Desc / Buyer / Review 列數 / 需增加店舖數 / 需減少店舖數 / 設定正常店舖數 / 現有 Safety 設定合計（調整列）/ 建議 Safety 設定合計（調整列）/ 淨調整量，按 Brand / SKU 排序；兩個 Safety 統計區塊與交叉表同母體（事件類型非空的列），且不受 OM 限制、調貨方向與分類維度影響）；最後為 **銷量 × 存貨分類交叉表**（母體為全部店舖×SKU 列，有別於 ①–④ 的事件列母體：各分類 × Shop Nature 列數、總計列數／SKU 數／店舖數、庫存與 P90D 銷量合計，含總計列；無調貨事件時仍輸出）、簡易調貨明細 (不限OM) 與 簡易調貨明細 (同OM)（一列一筆「來源店舖 → 接收店舖」調貨：Brand / SKU / SKU Desc / Supply Site Code(調貨來源) / Supply Shop Name / Supply RP Type / Supply OM / 調貨數量 / Target Site Code(接收店舖) / Target Shop Name / Target RP Type / Target OM；RP Type 緊接對應 Shop Name，調貨數量置於接收欄前分隔 Supply 與 Target；調貨來源如「HB30:2; HB49:3」會拆成兩行；只收錄實際有調入的列）。
+
+### P90D 0 Sales Review（轉貨模式）
+
+由指定轉出店舖（0 Sales 且有庫存）轉貨至有銷售記錄的店舖；不分 OM 群組，轉貨數量不設上限：
+
+1. **候選轉出店舖** — 讀取檔案後列出 Sold Qty (P90D) ≤ 0 且 Shop Stock Qty (CM) > 0 的店舖（Site Code｜Shop Name），由使用者勾選指定轉出店舖；未勾選不能執行
+2. **轉出** — 已選店舖中 0 Sales 且有庫存的列，轉出數量為 Shop Stock Qty (CM) 全數
+3. **接收** — 同 SKU、非轉出店舖、Sold Qty (P90D) > 0 的店舖，不論有無庫存
+4. **分配** — 同 SKU 的轉出總量：只有一間接收店時全數給該店；有多間時按 Sold Qty (P90D) 銷售比例分配（最大餘數法取整數件，力求全數接收）；無接收店的 SKU 不轉出，列入未分配
+5. **轉貨單** — 同 SKU 內，轉出店依 Site Code、接收店依分配量由大至小依序配對，輸出「轉出店 → 接收店」行
+
+輸出五個工作表：說明、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總（無 RAW）。
 
 ### Safety Stock 月度變化分析
 

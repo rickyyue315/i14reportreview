@@ -96,3 +96,9 @@ MODE_REGISTRY["Safety Stock 月度變化分析"] = {
     "transform": "transform_safety_monthly",
     "generate_excel": "generate_excel_safety_monthly",
 }
+
+MODE_REGISTRY["P90D 0 Sales Review(轉貨模式)"] = {
+    "module": "modes.transfer_p90d",
+    "transform": "transform_p90d_transfer",
+    "generate_excel": "generate_excel_p90d_transfer",
+}

@@ -206,6 +206,22 @@ MODES = [
 3. SKU 數一律已刪除重複；庫存總數為 Shop Stock Qty (CM) 加總
      """),
 
+    ("🚚 P90D 0 Sales Review(轉貨模式)",
+     """
+- 讀取檔案後先列出候選轉出店舖（Sold Qty (P90D) ≤ 0 且 Shop Stock Qty (CM) > 0），由使用者勾選指定轉出店舖（Site Code｜Shop Name）；未勾選轉出店舖不能執行
+- 轉出：已選店舖中 0 Sales 且有庫存的列，轉出數量為 Shop Stock Qty (CM) 全數，不設上限，不分 OM 群組
+- 接收：同 SKU、非轉出店舖、Sold Qty (P90D) > 0 的店舖（有銷售記錄），不論有無庫存；接收後庫存＝調前庫存＋分配數量
+- 分配：只有一間接收店時全數給該店；有多間時按各店 Sold Qty (P90D) 的銷售比例分配（最大餘數法取整數件），力求轉出總量全數被接收
+- 同 SKU 沒有接收店舖時不轉出，保留於原店舖，列於「SKU 轉貨彙總」的未分配量
+- 輸出：說明、轉貨單（轉出店 → 接收店）、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總（無 RAW）
+     """,
+     """
+1. 0 Sales ＝ Sold Qty (P90D) ≤ 0；有庫存 ＝ Shop Stock Qty (CM) > 0；有銷售記錄 ＝ Sold Qty (P90D) > 0
+2. 轉出與接收均套用側邊欄的 Shop Nature 篩選；本模式不做 Safety、周轉天數或調貨觸發判斷
+3. 轉貨單配對：同 SKU 內，轉出店依 Site Code 排序，接收店依分配量由大至小排序，依序配對成「轉出店 → 接收店」行，各行數量合計與分配一致
+4. 同店同 SKU 重複列合併計算（轉出量與銷售分別加總），並列 warning
+     """),
+
     ("🔄 Stock Checking（調貨檢查）",
      """
 - 觸發條件：該 SKU 的 **Tourist 加總 TurnDay**（各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5，與 Summary 同一準則）< 14 日（UI 可調）**且** D001 Net Stock Qty (CM) < 100 件（UI 可調）**且** Mix / Non Tourist 至少一個 Nature 的加總 TurnDay ≥ 14 日（有貨可調）→ 標示「需要調貨」；加總 TurnDay ≥ 門檻一律無須調貨
@@ -349,6 +365,7 @@ st.markdown("""
         <li>✅ <b>Safety Stock x NetStock Review</b> <span style="color:#0077a3;font-size:0.8em">(Shop Nature／Site Code／Shop Stock Qty (CM)／Sold Qty (P90D)／Safety Stock (現時) 或 Adj. Safety Stock／Shop Monthly Sold Qty (P90D))</span></li>
         <li>✅ <b>NDRF 月份對比</b> <span style="color:#0077a3;font-size:0.8em">(Month／RP Type／Shop Stock Qty (CM)／Adj. SST／Site Code)</span></li>
         <li>✅ <b>Past 90 Days 0 Sales</b> <span style="color:#0077a3;font-size:0.8em">(Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Shop Stock Qty (LM)／Shop Stock Qty (CM)／Site Code)</span></li>
+        <li>✅ <b>P90D 0 Sales Review(轉貨模式)</b> <span style="color:#0077a3;font-size:0.8em">(Site Code／SKU／Sold Qty (P90D)／Shop Stock Qty (CM)；Item_Shop 缺欄時 Shop Name 留空並列 warning)</span></li>
         <li>✅ <b>Forecast Review</b> <span style="color:#0077a3;font-size:0.8em">(Site Code／Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Sold Qty (P90D)／Shop Stock Qty (CM))</span></li>
         <li>✅ <b>Safety Stock 月度變化分析</b> <span style="color:#0077a3;font-size:0.8em">(MONTH／YEAR（尾部欄位，恒為必要）／Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM))</span></li>
     </ul>
