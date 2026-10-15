@@ -102,3 +102,9 @@ MODE_REGISTRY["P90D 0 Sales Review(轉貨模式)"] = {
     "transform": "transform_p90d_transfer",
     "generate_excel": "generate_excel_p90d_transfer",
 }
+
+MODE_REGISTRY["ND SKU with Stock Review(轉貨模式)"] = {
+    "module": "modes.transfer_nd",
+    "transform": "transform_nd_transfer",
+    "generate_excel": "generate_excel_nd_transfer",
+}

@@ -1,5 +1,18 @@
 # 版本記錄
 
+## v1.80.0 (2026-10-15)
+
+新增 **ND SKU with Stock Review(轉貨模式)**：由指定轉出店舖（RP Type＝ND 且有庫存）轉貨至有銷售記錄的 RF 店舖。判定與輸出結構沿用 P90D 0 Sales Review(轉貨模式)，只把轉出條件由「0 Sales」換成「RP Type＝ND」、接收店收窄為 RP Type＝RF；既有模式輸出零變動：
+
+- **New: ND SKU with Stock Review(轉貨模式)** — 新模組 `modes/transfer_nd.py`（對外介面）＋ `modes/transfer_p90d.py` 內新增 `nd_mode=True` 共用引擎（分配、配對、彙總、Excel 產生全部共用），已登記於 `MODE_REGISTRY` 並由 `transformer.py` 墊片轉出。轉出為已選店舖中 RP Type＝ND 且 Shop Stock Qty (CM) > 0 的列，數量為全數（不看銷售記錄，即使該列仍有銷售亦照轉）；接收為同 SKU、非轉出店舖、RP Type＝RF 且 Sold Qty (P90D) > 0 的店舖（不論有無庫存）。同 SKU 轉出總量按接收店 Sold Qty (P90D) 比例以最大餘數法分配整數件，全數分完；只有一間接收店時全數給該店；無接收店的 SKU 不轉出，列為未分配。
+- **New: RP Type 檢核** — 去除前後空格、大小寫不敏感比對 ND／RF；`RP Type` 為必要欄位（缺失即停止計算，UI 另先顯示明確錯誤訊息）；空白或其他非 RF／ND 的值一律不納入轉出與接收，排除列數列 warning。`build_nd_transfer_candidates()` 的候選店舖一覽欄名為「ND SKU 數」（P90D 模式維持「0 Sales SKU 數」）。
+- **輸出** — 六個工作表：說明（ND 模式措辭：ND 定義＝RP Type＝ND、轉出數量全數不看銷售、接收店＝RF 且有銷售記錄）、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總（無 RAW）；轉貨單／彙總欄位與 MCH1 篩選行為與 P90D 模式完全一致。
+- **UI** — 「選擇分析模式」新增該模式（置於 P90D 0 Sales Review(轉貨模式) 之後，同屬「🔄 調貨與補貨」群組）；步驟一沿用候選轉出店舖勾選（ND 模式以 RP Type＝ND 且有庫存判定，MCH 分佈表同步改用「ND SKU 數」）、步驟二沿用 MCH 篩選；結果看板（摘要卡片、五個分頁、置頂與底部下載）由 P90D 模式抽出共用渲染器 `_render_transfer_results()`，兩模式僅文案不同，未選取轉出店舖不能執行。
+- **文件** — README 新增模式說明；使用說明頁新增模式條目與必要欄位（RP Type 缺失即停止）。
+- **測試** — 新增 `tests/test_transfer_nd.py`（25 項）：候選判定（RP＝ND 且有庫存、非 RF／ND 排除）、ND 有銷售仍轉出、RF 有庫存不轉出、接收店限 RF 且有銷售、多接收店比例分配、無接收店未分配、選定店舖自我排除、OM 忽略、Shop Nature 篩選、RP Type 缺欄即以 ValueError 停止、大小寫與前後空格正規化、非標準值排除與 warning、P90D 模式不要求 RP Type、重複列合併、未納入轉出與空結果、MCH1 篩選與候選清單收窄、彙總與轉貨計畫加總一致、Excel 結構與 ND 說明措辭、P90D 說明措辭零變動、墊片與登記；全數 736 項測試通過。
+- **維護** — `scripts/modtools/moved.json` 補登記轉貨模式兩模組的對外名稱（先前 P90D 轉貨模式建立時遺漏，`check_modes.py` 的 A／E 檢查因此對轉貨模組零錯誤零警告；其餘既有錯誤維持不變）。
+- Change: `version.py` 1.79.0 → 1.80.0
+
 ## v1.79.0 (2026-10-14)
 
 新增 **P90D 0 Sales Review(轉貨模式)**：由指定轉出店舖（0 Sales 且有庫存）轉貨至有銷售記錄的店舖。讀取檔案後先列出候選轉出店舖供勾選，不分 OM 群組，轉貨數量不設上限；接收多間時按銷售比例分配，力求全數接收。既有模式輸出零變動：

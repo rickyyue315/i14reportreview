@@ -14,6 +14,10 @@
 - MCH 篩選（選填）：執行前可按 Adj. MCH1 排除部分分類（傳 None 或包含全部值＝不排除），
   對轉出與接收兩側同時生效；報表另附 MCH1 分類彙總（按 Adj. MCH1）。
 
+``nd_mode=True`` 時改為 ND SKU with Stock Review(轉貨模式) 的判定（轉出＝RP Type＝ND 且有庫存、
+接收＝RP Type＝RF 且 Sold Qty (P90D) > 0），分配、配對與彙總沿用同一引擎；
+對外介面由 modes/transfer_nd.py 提供。
+
 只引用 modes.common，不引用其他模式模組，避免循環引用。
 """
 import math
@@ -44,12 +48,19 @@ __all__ = [
 ]
 
 _TRANSFER_REQUIRED = ["Site Code", "SKU", "Sold Qty (P90D)", "Shop Stock Qty (CM)"]
+# ND 模式（RP Type＝ND 轉出、RP Type＝RF 接收）另要求 RP Type：缺欄即停止（無法辨識轉出列與接收店）
+_TRANSFER_ND_REQUIRED = ["RP Type"]
 
 _TRANSFER_MCH1_COL = "Adj. MCH1"
 _TRANSFER_MCH_BLANK_LABEL = "(空白)"
 _TRANSFER_MCH_SHEET = "MCH1 分類彙總"
 # 空白（含 NaN、空字串）MCH1 值在介面與報表中的表示法
 _TRANSFER_MCH_BLANK_TOKEN = "__BLANK__"
+
+# RP Type 比對：去除前後空格、大小寫不敏感；非 RF／ND（空白或其他值）一律不納入轉出與接收
+_TRANSFER_RP_COL = "RP Type"
+_TRANSFER_RP_RF = "RF"
+_TRANSFER_RP_ND = "ND"
 
 _TRANSFER_MCH_SUMMARY_COLUMNS = [
     "Adj. MCH1", "轉出 SKU 數", "接收 SKU 數",
@@ -58,6 +69,10 @@ _TRANSFER_MCH_SUMMARY_COLUMNS = [
 
 _TRANSFER_CANDIDATE_COLUMNS = [
     "Site Code", "Shop Name", "Shop Nature", "OM", "0 Sales SKU 數", "可轉出庫存 (件)",
+]
+
+_TRANSFER_ND_CANDIDATE_COLUMNS = [
+    "Site Code", "Shop Name", "Shop Nature", "OM", "ND SKU 數", "可轉出庫存 (件)",
 ]
 
 _TRANSFER_PLAN_COLUMNS = [
@@ -105,19 +120,22 @@ def _text_column(df: pd.DataFrame, name: str) -> pd.Series:
     return df.get(name, _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
 
 
-def _check_transfer_columns(df_input: pd.DataFrame) -> None:
+def _check_transfer_columns(df_input: pd.DataFrame, require_rp: bool = False) -> None:
     missing = validate_input(df_input)
     if missing:
         raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
     avail = set(df_input.columns)
-    missing = [c for c in _TRANSFER_REQUIRED if _resolve_column_name(c, avail) is None]
+    required = list(_TRANSFER_REQUIRED)
+    if require_rp:
+        required += _TRANSFER_ND_REQUIRED
+    missing = [c for c in required if _resolve_column_name(c, avail) is None]
     if missing:
         raise ValueError(f"缺少必需欄位: {', '.join(missing)}")
 
 
 def _prepare_transfer_base(df_input: pd.DataFrame, shop_natures: list[str] | None = None,
-                           progress_callback=None) -> tuple[pd.DataFrame, list[str]]:
-    _check_transfer_columns(df_input)
+                           progress_callback=None, require_rp: bool = False) -> tuple[pd.DataFrame, list[str]]:
+    _check_transfer_columns(df_input, require_rp=require_rp)
     warnings: list[str] = []
     df = _clean_dataframe(df_input, shop_natures=shop_natures, progress_callback=progress_callback)
     df = df.reset_index(drop=True)
@@ -134,6 +152,7 @@ def _prepare_transfer_base(df_input: pd.DataFrame, shop_natures: list[str] | Non
         "_nature": _text_column(df, "Shop Nature"),
         "_om": _text_column(df, "OM"),
         "_name": _text_column(df, "Shop Name"),
+        "_rp": _text_column(df, _TRANSFER_RP_COL).str.upper(),
         "Brand": _text_column(df, "Brand"),
         "Buyer": _text_column(df, "Buyer"),
         "SKU Desc": _text_column(df, "SKU Desc"),
@@ -324,29 +343,41 @@ def _with_total_row(df: pd.DataFrame, total: dict) -> pd.DataFrame:
     return out
 
 
+def _source_pool(base: pd.DataFrame, nd_mode: bool) -> pd.DataFrame:
+    """可轉出母體（未套用已選店舖）：0 Sales 且有庫存（P90D）／RP Type＝ND 且有庫存（ND）。"""
+    if nd_mode:
+        return base[(base["_rp"] == _TRANSFER_RP_ND) & (base["_stock"] > 0)]
+    return base[(base["_sales"] <= 0) & (base["_stock"] > 0)]
+
+
 def build_transfer_candidates(df_input: pd.DataFrame, shop_natures: list[str] | None = None,
-                              mch1_filter=None) -> pd.DataFrame:
-    """候選轉出店舖一覽：Sold Qty (P90D) ≤ 0 且 Shop Stock Qty (CM) > 0 的列，依店舖彙總。
+                              mch1_filter=None, nd_mode: bool = False) -> pd.DataFrame:
+    """候選轉出店舖一覽，依店舖彙總。
+
+    預設（P90D 模式）：Sold Qty (P90D) ≤ 0 且 Shop Stock Qty (CM) > 0 的列；
+    ``nd_mode=True``（ND 模式）：RP Type＝ND 且 Shop Stock Qty (CM) > 0 的列。
 
     ``mch1_filter`` 為執行前的 MCH1 篩選（None 或包含全部值＝不排除）。
     """
-    base, _ = _prepare_transfer_base(df_input, shop_natures=shop_natures)
+    base, _ = _prepare_transfer_base(df_input, shop_natures=shop_natures, require_rp=nd_mode)
     base = _apply_mch_filter(base, mch1_filter=mch1_filter)
+    columns = _TRANSFER_ND_CANDIDATE_COLUMNS if nd_mode else _TRANSFER_CANDIDATE_COLUMNS
+    sku_col = "ND SKU 數" if nd_mode else "0 Sales SKU 數"
     if base.empty:
-        return pd.DataFrame(columns=_TRANSFER_CANDIDATE_COLUMNS)
-    zero = base[(base["_sales"] <= 0) & (base["_stock"] > 0)]
-    if zero.empty:
-        return pd.DataFrame(columns=_TRANSFER_CANDIDATE_COLUMNS)
-    g = zero.groupby("_site", sort=True)
+        return pd.DataFrame(columns=columns)
+    pool = _source_pool(base, nd_mode)
+    if pool.empty:
+        return pd.DataFrame(columns=columns)
+    g = pool.groupby("_site", sort=True)
     out = pd.DataFrame({
         "Site Code": g.size().index,
         "Shop Name": g["_name"].agg(_first_nonblank).values,
         "Shop Nature": g["_nature"].agg(_mode_nonblank).values,
         "OM": g["_om"].agg(_mode_nonblank).values,
-        "0 Sales SKU 數": g["_sku"].nunique().astype(int).values,
+        sku_col: g["_sku"].nunique().astype(int).values,
         "可轉出庫存 (件)": g["_stock"].sum().round().astype(int).values,
     })
-    return out[_TRANSFER_CANDIDATE_COLUMNS].reset_index(drop=True)
+    return out[columns].reset_index(drop=True)
 
 
 def transform_p90d_transfer(
@@ -355,11 +386,17 @@ def transform_p90d_transfer(
     progress_callback=None,
     shop_natures: list[str] | None = None,
     mch1_filter=None,
+    nd_mode: bool = False,
 ):
     """依指定轉出店舖產生轉貨計畫。
 
     ``mch1_filter`` 為執行前的 MCH1 篩選（None 或包含全部值＝不排除），
     對轉出與接收兩側同時生效。
+
+    ``nd_mode=True`` 時改用 ND SKU with Stock Review(轉貨模式) 的判定：
+    轉出＝已選店舖中 RP Type＝ND 且有庫存的列（不看銷售記錄）、
+    接收＝同 SKU、非轉出店舖、RP Type＝RF 且 Sold Qty (P90D) > 0 的列；
+    ``RP Type`` 為必要欄位，非 RF／ND 的值一律不納入轉出與接收。
 
     回傳 (plan_df, out_shop_df, in_shop_df, sku_df, mch_df, stats, warnings)。
     """
@@ -368,7 +405,9 @@ def transform_p90d_transfer(
     sites = _normalize_sites(transfer_out_sites)
     if not sites:
         raise ValueError("請至少選擇一間轉出店舖。")
-    base, warnings = _prepare_transfer_base(df_input, shop_natures=shop_natures, progress_callback=progress_callback)
+    base, warnings = _prepare_transfer_base(df_input, shop_natures=shop_natures,
+                                            progress_callback=progress_callback,
+                                            require_rp=nd_mode)
     if base.empty:
         warnings.append("過濾後無有效資料列，沒有可轉貨的記錄。")
         return _empty_transfer(warnings)
@@ -384,14 +423,31 @@ def transform_p90d_transfer(
     if progress_callback:
         progress_callback(0.25, "辨識轉出與接收店舖...")
     meta = _site_meta(base)
-    out_rows = base[base["_site"].isin(sites) & (base["_sales"] <= 0) & (base["_stock"] > 0)].copy()
-    in_rows = base[(~base["_site"].isin(sites)) & (base["_sales"] > 0)]
+    if nd_mode:
+        _nonstd = int((~base["_rp"].isin([_TRANSFER_RP_RF, _TRANSFER_RP_ND])).sum())
+        if _nonstd:
+            warnings.append(
+                f"有 {_nonstd:,} 列 RP Type 非 RF／ND（空白或其他值），一律不納入轉出與接收。"
+            )
+        _pool = _source_pool(base, True)
+        out_rows = _pool[_pool["_site"].isin(sites)].copy()
+        in_rows = base[(~base["_site"].isin(sites)) & (base["_rp"] == _TRANSFER_RP_RF) & (base["_sales"] > 0)]
+        _out_missing_txt = "以下已選轉出店舖沒有 RP Type＝ND 且有庫存的列，未納入轉出"
+        _out_empty_txt = "已選轉出店舖沒有符合「RP Type＝ND 且有庫存（Shop Stock Qty (CM) > 0）」的資料，本次沒有轉出。"
+        _in_unalloc_txt = "但同 SKU 沒有其他 RP Type＝RF 且有銷售記錄（Sold Qty (P90D) > 0）的店舖可接收"
+    else:
+        _pool = _source_pool(base, False)
+        out_rows = _pool[_pool["_site"].isin(sites)].copy()
+        in_rows = base[(~base["_site"].isin(sites)) & (base["_sales"] > 0)]
+        _out_missing_txt = "以下已選轉出店舖沒有 0 Sales 且有庫存的列，未納入轉出"
+        _out_empty_txt = "已選轉出店舖沒有符合「0 Sales（Sold Qty (P90D) ≤ 0）且有庫存（Shop Stock Qty (CM) > 0）」的資料，本次沒有轉出。"
+        _in_unalloc_txt = "但同 SKU 沒有其他有銷售記錄（Sold Qty (P90D) > 0）的店舖可接收"
 
     missing_sites = sorted(sites - set(out_rows["_site"]))
     if missing_sites:
-        warnings.append(f"以下已選轉出店舖沒有 0 Sales 且有庫存的列，未納入轉出：{'、'.join(missing_sites)}")
+        warnings.append(f"{_out_missing_txt}：{'、'.join(missing_sites)}")
     if out_rows.empty:
-        warnings.append("已選轉出店舖沒有符合「0 Sales（Sold Qty (P90D) ≤ 0）且有庫存（Shop Stock Qty (CM) > 0）」的資料，本次沒有轉出。")
+        warnings.append(_out_empty_txt)
         return _empty_transfer(warnings)
 
     out_agg = out_rows.groupby(["_sku", "_site"], sort=True).agg(
@@ -563,7 +619,7 @@ def transform_p90d_transfer(
     if unalloc_skus:
         warnings.append(
             f"有 {unalloc_skus:,} 個 SKU（共 {unalloc_qty:,} 件）在已選轉出店舖有可轉出庫存，"
-            "但同 SKU 沒有其他有銷售記錄（Sold Qty (P90D) > 0）的店舖可接收，本次未能轉出，保留於原店舖；詳見「SKU 轉貨彙總」。"
+            f"{_in_unalloc_txt}，本次未能轉出，保留於原店舖；詳見「SKU 轉貨彙總」。"
         )
 
     if progress_callback:
@@ -622,8 +678,13 @@ def generate_excel_p90d_transfer(
     nature_label: str = "全部",
     mch_filter_label: str = "全部（未排除）",
     progress_callback=None,
+    nd_mode: bool = False,
 ) -> BytesIO:
-    """產生六個工作表：說明、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總（無 RAW）。"""
+    """產生六個工作表：說明、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總（無 RAW）。
+
+    ``nd_mode=True`` 時說明頁改用 ND SKU with Stock Review(轉貨模式) 的措辭
+    （轉出＝RP Type＝ND 且有庫存、接收＝RP Type＝RF 且有銷售記錄）。
+    """
     stats = dict(stats or {})
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
@@ -631,23 +692,45 @@ def generate_excel_p90d_transfer(
 
     ws_guide = wb.active
     ws_guide.title = "說明"
-    _write_guide_sheet(
-        ws_guide,
-        title="P90D 0 Sales Review（轉貨模式）說明",
-        subtitle="由指定轉出店舖（0 Sales 且有庫存）轉貨至有銷售記錄的店舖；不分 OM 群組，轉貨數量不設上限",
-        params=[
+    if nd_mode:
+        _title = "ND SKU with Stock Review（轉貨模式）說明"
+        _subtitle = "由指定轉出店舖（RP Type＝ND 且有庫存）轉貨至有銷售記錄的 RF 店舖；不分 OM 群組，轉貨數量不設上限"
+        _params = [
+            ("轉出店舖", f"已選店舖中共 {int(stats.get('out_sites', 0)):,} 間有 ND 且有庫存的列（未納入者見警告）"),
+            ("Shop Nature 篩選", nature_label),
+            ("MCH 篩選（執行前）", mch_filter_label),
+            ("ND 定義", "RP Type＝ND（去除前後空格、大小寫不敏感）"),
+            ("轉出數量", "Shop Stock Qty (CM) 全數，不設上限（只計 RP Type＝ND 且有庫存的列，不看銷售記錄）"),
+            ("接收店定義", "同 SKU、非轉出店舖、RP Type＝RF 且 Sold Qty (P90D) > 0（有銷售記錄），不論有無庫存"),
+        ]
+        _logic = [
+            "同 SKU 的轉出總量＝所有已選轉出店舖的 RP Type＝ND 有庫存列 Shop Stock Qty (CM) 合計，全數轉出，不設上限（即使該列仍有銷售記錄亦照轉）。",
+            "只有一間接收店時，全數分配給該店；有多間接收店時，按各店 Sold Qty (P90D) 的銷售比例分配（最大餘數法取整數件），力求轉出總量全數被接收。",
+            "轉貨單配對：同 SKU 內，轉出店依 Site Code 排序，接收店依分配量由大至小排序，依序配對成「轉出店 → 接收店」行，各行數量合計與分配一致。",
+            "接收店不受庫存限制；接收後庫存＝調前庫存＋分配總量。",
+            "同 SKU 沒有任何接收店（即沒有其他 RP Type＝RF 且有銷售記錄的店舖）時不轉出，保留於原店舖，並列於「SKU 轉貨彙總」的未分配量。",
+            "RP Type 為必要欄位，來源檔缺少即停止計算；空白或其他非 RF／ND 的值一律不納入轉出與接收（列警告）。",
+            "MCH 篩選（執行前）：按 Adj. MCH1 排除分類；被排除的分類不會轉出，亦不會作為接收店；篩選只收窄母體，不改變已選分類內的分配結果。",
+            "本模式不做 Safety、周轉天數或調貨觸發判斷，只按上述規則計算。",
+        ]
+        _tips = [
+            "轉出店舖須於網頁先勾選；只有勾選店舖中 RP Type＝ND 且有庫存的列會轉出，其他列不會被轉出或作為接收店。",
+            "MCH 篩選於執行前設定（預設全部 Adj. MCH1 都包含）；被排除分類的列既不轉出，也不接收，排除列數見警告。",
+            "同店同 SKU 重複列已合併計算（轉出量與銷售分別加總），並於警告列明。",
+            "分配以銷售比例為準；如需調整某店接收量，可於轉貨單直接修改數量，修改後請重新核對各 SKU 的轉出與接收總量。",
+        ]
+    else:
+        _title = "P90D 0 Sales Review（轉貨模式）說明"
+        _subtitle = "由指定轉出店舖（0 Sales 且有庫存）轉貨至有銷售記錄的店舖；不分 OM 群組，轉貨數量不設上限"
+        _params = [
             ("轉出店舖", f"已選店舖中共 {int(stats.get('out_sites', 0)):,} 間有 0 Sales 且有庫存的列（未納入者見警告）"),
             ("Shop Nature 篩選", nature_label),
             ("MCH 篩選（執行前）", mch_filter_label),
             ("0 Sales 定義", "Sold Qty (P90D) ≤ 0"),
             ("轉出數量", "Shop Stock Qty (CM) 全數，不設上限（只計 0 Sales 且有庫存的列）"),
             ("接收店定義", "同 SKU、非轉出店舖、Sold Qty (P90D) > 0（有銷售記錄），不論有無庫存"),
-            ("本次結果", (
-                f"轉出 {int(stats.get('out_qty', 0)):,} 件｜已分配 {int(stats.get('alloc_qty', 0)):,} 件｜"
-                f"未分配 {int(stats.get('unalloc_qty', 0)):,} 件（{int(stats.get('unalloc_skus', 0)):,} 個 SKU）"
-            )),
-        ],
-        logic=[
+        ]
+        _logic = [
             "同 SKU 的轉出總量＝所有已選轉出店舖的 0 Sales 有庫存列 Shop Stock Qty (CM) 合計，全數轉出，不設上限。",
             "只有一間接收店時，全數分配給該店；有多間接收店時，按各店 Sold Qty (P90D) 的銷售比例分配（最大餘數法取整數件），力求轉出總量全數被接收。",
             "轉貨單配對：同 SKU 內，轉出店依 Site Code 排序，接收店依分配量由大至小排序，依序配對成「轉出店 → 接收店」行，各行數量合計與分配一致。",
@@ -655,7 +738,24 @@ def generate_excel_p90d_transfer(
             "同 SKU 沒有任何接收店（即沒有其他有銷售記錄的店舖）時不轉出，保留於原店舖，並列於「SKU 轉貨彙總」的未分配量。",
             "MCH 篩選（執行前）：按 Adj. MCH1 排除分類；被排除的分類不會轉出，亦不會作為接收店；篩選只收窄母體，不改變已選分類內的分配結果。",
             "本模式不做 Safety、周轉天數或調貨觸發判斷，只按上述規則計算。",
+        ]
+        _tips = [
+            "轉出店舖須於網頁先勾選；只有勾選店舖中 0 Sales 且有庫存的列會轉出，其他列不會被轉出或作為接收店。",
+            "MCH 篩選於執行前設定（預設全部 Adj. MCH1 都包含）；被排除分類的列既不轉出，也不接收，排除列數見警告。",
+            "同店同 SKU 重複列已合併計算（轉出量與銷售分別加總），並於警告列明。",
+            "分配以銷售比例為準；如需調整某店接收量，可於轉貨單直接修改數量，修改後請重新核對各 SKU 的轉出與接收總量。",
+        ]
+    _write_guide_sheet(
+        ws_guide,
+        title=_title,
+        subtitle=_subtitle,
+        params=_params + [
+            ("本次結果", (
+                f"轉出 {int(stats.get('out_qty', 0)):,} 件｜已分配 {int(stats.get('alloc_qty', 0)):,} 件｜"
+                f"未分配 {int(stats.get('unalloc_qty', 0)):,} 件（{int(stats.get('unalloc_skus', 0)):,} 個 SKU）"
+            )),
         ],
+        logic=_logic,
         sheet_rows=[
             ("轉貨單", "每行一筆：轉出店 → 接收店、SKU、轉貨數量、接收店銷售佔比與分配總量", "執行轉貨的依據；同一接收店若有多行，代表多間轉出店供貨"),
             ("轉出店舖彙總", "每間轉出店的轉出 SKU 數、轉出總量、已分配與未分配", "未分配 > 0 表示同 SKU 無接收店，需人工確認"),
@@ -663,12 +763,7 @@ def generate_excel_p90d_transfer(
             ("SKU 轉貨彙總", "每個 SKU 的轉出店數、轉出總量、接收店數與分配結果", f"狀態為「{_TRANSFER_STATUS_NO_RECEIVER}」者不會轉出"),
             ("MCH1 分類彙總", "按 Adj. MCH1 的分類：轉出／接收 SKU 數與件數、未分配件數", "未分配 > 0 的分類表示同 SKU 無接收店舖；「(空白)」表示來源檔該欄空白"),
         ],
-        tips=[
-            "轉出店舖須於網頁先勾選；只有勾選店舖中 0 Sales 且有庫存的列會轉出，其他列不會被轉出或作為接收店。",
-            "MCH 篩選於執行前設定（預設全部 Adj. MCH1 都包含）；被排除分類的列既不轉出，也不接收，排除列數見警告。",
-            "同店同 SKU 重複列已合併計算（轉出量與銷售分別加總），並於警告列明。",
-            "分配以銷售比例為準；如需調整某店接收量，可於轉貨單直接修改數量，修改後請重新核對各 SKU 的轉出與接收總量。",
-        ],
+        tips=_tips,
     )
 
     if progress_callback:

@@ -7,7 +7,7 @@
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / P90D 0 Sales Review（轉貨模式） / Stock Checking / Safety Stock x NetStock Review / Safety Stock 月度變化分析 / Forecast Review |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / P90D 0 Sales Review（轉貨模式） / ND SKU with Stock Review（轉貨模式） / Stock Checking / Safety Stock x NetStock Review / Safety Stock 月度變化分析 / Forecast Review |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
@@ -209,6 +209,20 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 6. **轉貨單** — 同 SKU 內，轉出店依 Site Code、接收店依分配量由大至小依序配對，輸出「轉出店 → 接收店」行
 
 輸出六個工作表：說明、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總（按 Adj. MCH1；無 RAW）。
+
+### ND SKU with Stock Review（轉貨模式）
+
+由指定轉出店舖（RP Type＝ND 且有庫存）轉貨至有銷售記錄的 RF 店舖；不分 OM 群組，轉貨數量不設上限。
+判定與輸出結構與 P90D 0 Sales Review（轉貨模式）相同，只把轉出條件由「0 Sales」換成「RP Type＝ND」，並把接收店收窄為 RP Type＝RF：
+
+1. **候選轉出店舖** — 讀取檔案後列出 RP Type＝ND 且 Shop Stock Qty (CM) > 0 的店舖（Site Code｜Shop Name），由使用者勾選指定轉出店舖；未勾選不能執行
+2. **MCH 篩選（執行前）** — 可選擇包含的 `Adj. MCH1` 分類（預設全部包含；移除任何分類即為排除該分類），被排除的分類不會轉出、亦不會作為接收店
+3. **轉出** — 已選店舖中 RP Type＝ND 且有庫存的列，轉出數量為 Shop Stock Qty (CM) 全數（不看銷售記錄，即使該列仍有銷售亦照轉）
+4. **接收** — 同 SKU、非轉出店舖、RP Type＝RF 且 Sold Qty (P90D) > 0 的店舖，不論有無庫存
+5. **分配** — 同 SKU 的轉出總量：只有一間接收店時全數給該店；有多間時按 Sold Qty (P90D) 銷售比例分配（最大餘數法取整數件，力求全數接收）；無接收店的 SKU 不轉出，列入未分配
+6. **RP Type 檢核** — 去除前後空格、大小寫不敏感比對 ND／RF；`RP Type` 為必要欄位，來源缺欄即停止計算；空白或其他非 RF／ND 的值一律不納入轉出與接收（列 warning）
+
+輸出六個工作表：說明（ND 模式措辭）、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總（按 Adj. MCH1；無 RAW）。
 
 ### Safety Stock 月度變化分析
 
