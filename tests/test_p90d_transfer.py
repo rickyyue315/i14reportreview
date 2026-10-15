@@ -31,6 +31,7 @@ BASE = {
     "Shop Nature": "Mix", "RP Type": "RF",
     "Shop Stock Status": "Overstock (P90D 0 Sales)",
     "Adj. Safety Stock": 3.0, "Adj. MCH1": "01 - SKIN CARE",
+    "Supply Source": "Warehouse",
     "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0, "Sold Qty (CM - MTD)": 0.0,
     "Sold Qty (P90D)": 0.0,
     "Shop Stock Qty (CM)": 5.0, "Shop Stock Qty (LM)": 4.0,
@@ -38,7 +39,7 @@ BASE = {
 
 
 def _row(site, sku=1, sales=0.0, stock=5.0, name=None, om="OM1", nature="Mix",
-         brand="A", buyer="B1", mch1="01 - SKIN CARE", mch2=None):
+         brand="A", buyer="B1", mch1="01 - SKIN CARE", mch2=None, supply_source=None):
     r = dict(BASE)
     r.update({
         "Site Code": site,
@@ -55,6 +56,8 @@ def _row(site, sku=1, sales=0.0, stock=5.0, name=None, om="OM1", nature="Mix",
     })
     if mch2 is not None:
         r["MCH2"] = mch2
+    if supply_source is not None:
+        r["Supply Source"] = supply_source
     return r
 
 
@@ -235,15 +238,33 @@ def test_missing_required_column_raises():
 
 def test_mch_columns_in_plan_and_sku():
     df = _df([
-        _row("S01", sku=1, sales=0, stock=5, mch1="02 - MAKE UP", mch2="0201 - FACE"),
+        _row("S01", sku=1, sales=0, stock=5, mch1="02 - MAKE UP", mch2="0201 - FACE",
+             supply_source="Vendor"),
         _row("S02", sku=1, sales=3, stock=0),
     ])
     plan, _, _, sku_df, mch_df, _, _ = transform_p90d_transfer(df, ["S01"])
     assert "Adj. MCH1" in plan.columns
     assert plan.iloc[0]["Adj. MCH1"] == "02 - MAKE UP"
+    # 轉貨單分類欄：MCH2 已由 Supply Source 取代（欄序不變，仍在 Adj. MCH1 之後）
+    assert "Supply Source" in plan.columns
+    assert "MCH2" not in plan.columns
+    assert plan.iloc[0]["Supply Source"] == "Vendor"
+    assert list(plan.columns).index("Supply Source") == list(plan.columns).index("Adj. MCH1") + 1
     body = sku_df[sku_df["Brand"] != "總計"]
     assert body.iloc[0]["Adj. MCH1"] == "02 - MAKE UP"
     assert "MCH2" not in mch_df.columns
+
+
+def test_plan_supply_source_blank_when_missing_column():
+    """來源檔缺 Supply Source 欄時，轉貨單該欄留空（不拋錯）。"""
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=3, stock=0),
+    ]).drop(columns=["Supply Source"])
+    plan, _, _, _, _, stats, _ = transform_p90d_transfer(df, ["S01"])
+    assert "Supply Source" in plan.columns
+    assert (plan["Supply Source"] == "").all()
+    assert stats["alloc_qty"] == 5
 
 
 def test_mch_summary_single_level_with_total():
@@ -457,7 +478,7 @@ def test_excel_plan_group_colors():
         "接收店 Sold Qty (P90D)", "接收店銷售佔比 (同 SKU)",
         "接收店同 SKU 分配總量 (件)", "接收店 Shop Stock Qty (CM) 調前",
     ]
-    plain_cols = ["Brand", "SKU", "SKU Desc", "Buyer", "Adj. MCH1", "MCH2"]
+    plain_cols = ["Brand", "SKU", "SKU Desc", "Buyer", "Adj. MCH1", "Supply Source"]
     for c in out_cols:
         i = headers.index(c) + 1
         assert ws.cell(row=1, column=i).fill.start_color.rgb.endswith("FFD966"), c

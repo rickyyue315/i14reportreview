@@ -77,7 +77,7 @@ _TRANSFER_ND_CANDIDATE_COLUMNS = [
 
 _TRANSFER_PLAN_COLUMNS = [
     "轉出 Site Code", "轉出 Shop Name", "接收 Site Code", "接收 Shop Name",
-    "Brand", "SKU", "SKU Desc", "Buyer", "Adj. MCH1", "MCH2", "轉貨數量 (件)",
+    "Brand", "SKU", "SKU Desc", "Buyer", "Adj. MCH1", "Supply Source", "轉貨數量 (件)",
     "接收店 Shop Nature", "接收店 OM", "接收店 Sold Qty (P90D)", "接收店銷售佔比 (同 SKU)",
     "接收店同 SKU 分配總量 (件)", "接收店 Shop Stock Qty (CM) 調前",
 ]
@@ -179,7 +179,7 @@ def _prepare_transfer_base(df_input: pd.DataFrame, shop_natures: list[str] | Non
         "Buyer": _text_column(df, "Buyer"),
         "SKU Desc": _text_column(df, "SKU Desc"),
         "Adj. MCH1": _text_column(df, _TRANSFER_MCH1_COL),
-        "MCH2": _text_column(df, "MCH2"),
+        "Supply Source": _text_column(df, "Supply Source"),
     })
     keep = (base["_site"] != "") & (base["_sku"] != "")
     skipped = int((~keep).sum())
@@ -474,7 +474,7 @@ def transform_p90d_transfer(
 
     out_agg = out_rows.groupby(["_sku", "_site"], sort=True).agg(
         qty=("_stock", "sum"),
-        **{"Adj. MCH1": ("Adj. MCH1", _first_nonblank), "MCH2": ("MCH2", _first_nonblank)},
+        **{"Adj. MCH1": ("Adj. MCH1", _first_nonblank), "Supply Source": ("Supply Source", _first_nonblank)},
     ).reset_index()
     in_agg = in_rows.groupby(["_sku", "_site"], sort=True).agg(
         sales=("_sales", "sum"), stock=("_stock", "sum")
@@ -485,7 +485,7 @@ def transform_p90d_transfer(
         **{
             "SKU Desc": ("SKU Desc", _first_nonblank),
             "Adj. MCH1": ("Adj. MCH1", _first_nonblank),
-            "MCH2": ("MCH2", _first_nonblank),
+            "Supply Source": ("Supply Source", _first_nonblank),
         },
     ).to_dict("index")
 
@@ -521,7 +521,7 @@ def transform_p90d_transfer(
                 "SKU Desc": info.get("SKU Desc", ""),
                 "Buyer": info.get("Buyer", ""),
                 "Adj. MCH1": info.get("Adj. MCH1", ""),
-                "MCH2": info.get("MCH2", ""),
+                "Supply Source": info.get("Supply Source", ""),
                 "轉貨數量 (件)": int(qty),
                 "接收店 Shop Nature": meta.get(to_site, {}).get("nature", ""),
                 "接收店 OM": meta.get(to_site, {}).get("om", ""),
@@ -807,7 +807,7 @@ def generate_excel_p90d_transfer(
         ],
         logic=_logic,
         sheet_rows=[
-            ("轉貨單", "每行一筆：轉出店 → 接收店、SKU、轉貨數量、接收店銷售佔比與分配總量（黃色＝轉出店與轉貨數量、淺藍色＝接收店相關欄位）", "執行轉貨的依據；同一接收店若有多行，代表多間轉出店供貨"),
+            ("轉貨單", "每行一筆：轉出店 → 接收店、SKU（含 Adj. MCH1 與 Supply Source）、轉貨數量、接收店銷售佔比與分配總量（黃色＝轉出店與轉貨數量、淺藍色＝接收店相關欄位）", "執行轉貨的依據；同一接收店若有多行，代表多間轉出店供貨"),
             ("轉出店舖彙總", "每間轉出店的轉出 SKU 數、轉出總量、已分配與未分配", "未分配 > 0 表示同 SKU 無接收店，需人工確認"),
             ("接收店舖彙總", "每間接收店的接收 SKU 數、接收總量與接收前後庫存", "接收後庫存明顯偏高者，可考慮改派"),
             ("SKU 轉貨彙總", "每個 SKU 的轉出店數、轉出總量、接收店數與分配結果", f"狀態為「{_TRANSFER_STATUS_NO_RECEIVER}」者不會轉出"),

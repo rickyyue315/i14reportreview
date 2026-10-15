@@ -1,5 +1,14 @@
 # 版本記錄
 
+## v1.82.0 (2026-10-15)
+
+轉貨模式（P90D 0 Sales／ND SKU with Stock）的「轉貨單」把 `MCH2` 欄改為 `Supply Source`（供貨來源），欄序、其餘欄位與所有數值零變動：
+
+- **Change: 轉貨單 `MCH2` → `Supply Source`** — 轉貨單（`_TRANSFER_PLAN_COLUMNS`）第 10 欄由 `MCH2` 改為 `Supply Source`（位置不變，緊接 `Adj. MCH1` 之後），取該 SKU 轉出列的來源檔 `Supply Source` 值（同 SKU 多列時取首個非空值）；來源檔缺 `Supply Source` 欄時該欄留空，不中斷計算。`MCH2` 不再出現在任何轉貨模式輸出（SKU 轉貨彙總與 MCH1 分類彙總本來就沒有此欄，格式不變）
+- **說明頁** — 轉貨單導讀列同步標明欄位內容（含 Adj. MCH1 與 Supply Source）
+- **測試** — `tests/test_p90d_transfer.py`：`test_mch_columns_in_plan_and_sku` 擴充為斷言 Supply Source 值、欄序與 MCH2 不再出現，新增 `test_plan_supply_source_blank_when_missing_column`（缺欄留空不拋錯）、著色測試的未著色欄清單改列 Supply Source；`tests/test_transfer_nd.py`：轉出情境加斷言 Supply Source 值與 MCH2 移除；全數 740 項測試通過
+- Change: `version.py` 1.81.0 → 1.82.0
+
 ## v1.81.0 (2026-10-15)
 
 轉貨模式（P90D 0 Sales／ND SKU with Stock）的 Excel「轉貨單」工作表加入欄位分組著色，配合首列篩選大幅提升可讀性；欄位名稱、欄序與所有數值零變動：

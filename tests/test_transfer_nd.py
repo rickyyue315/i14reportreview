@@ -30,6 +30,7 @@ BASE = {
     "Shop Nature": "Mix", "RP Type": "ND",
     "Shop Stock Status": "Overstock (P90D 0 Sales)",
     "Adj. Safety Stock": 3.0, "Adj. MCH1": "01 - SKIN CARE",
+    "Supply Source": "Warehouse",
     "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0, "Sold Qty (CM - MTD)": 0.0,
     "Sold Qty (P90D)": 0.0,
     "Shop Stock Qty (CM)": 5.0, "Shop Stock Qty (LM)": 4.0,
@@ -37,7 +38,7 @@ BASE = {
 
 
 def _row(site, sku=1, sales=0.0, stock=5.0, rp="ND", name=None, om="OM1", nature="Mix",
-         brand="A", buyer="B1", mch1="01 - SKIN CARE", mch2=None):
+         brand="A", buyer="B1", mch1="01 - SKIN CARE", mch2=None, supply_source=None):
     r = dict(BASE)
     r.update({
         "Site Code": site,
@@ -55,6 +56,8 @@ def _row(site, sku=1, sales=0.0, stock=5.0, rp="ND", name=None, om="OM1", nature
     })
     if mch2 is not None:
         r["MCH2"] = mch2
+    if supply_source is not None:
+        r["Supply Source"] = supply_source
     return r
 
 
@@ -103,12 +106,15 @@ def test_candidates_ignore_sales_and_rp_non_standard():
 
 def test_nd_with_sales_still_transferred():
     df = _df([
-        _row("S01", sku=1, sales=9, stock=5, rp="ND"),
+        _row("S01", sku=1, sales=9, stock=5, rp="ND", supply_source="Vendor"),
         _row("S02", sku=1, sales=2, stock=0, rp="RF"),
     ])
     plan, _, _, _, _, stats, _ = transform_nd_transfer(df, ["S01"])
     assert _lines(plan) == {("S01", "1", "S02"): 5}
     assert stats["out_qty"] == 5 and stats["alloc_qty"] == 5
+    # 轉貨單分類欄：Supply Source（MCH2 已移除）
+    assert plan.iloc[0]["Supply Source"] == "Vendor"
+    assert "MCH2" not in plan.columns
 
 
 def test_rf_stock_at_selected_site_is_not_transferred():
