@@ -1,5 +1,14 @@
 # 版本記錄
 
+## v1.82.1 (2026-10-15)
+
+美化系統介面（全域主題、互動元件、分析工具主頁與使用說明頁），計算邏輯、資料契約與匯出報表零變動：
+
+- **UI: 全域淺色專業主題與字型系統** — `.streamlit/config.toml` 與 `app.py` 升級為淺灰藍背景（`#f8fafc`）配純白卡片（`#ffffff`），引入 `Inter`、`Noto Sans TC` 與等寬數字字型 `JetBrains Mono`（`tabular-nums`）；頁首橫幅加入版本與系統標籤（`.header-badge`）與左側強調色條；修正橫向單選按鈕（`div[data-testid="stRadio"] > div[role="radiogroup"]`）膠囊化樣式與頁籤（`.stTabs`）分段膠囊列設計
+- **Fix: 消除看板上方空白卡片與螢光色低對比問題** — `views/analyzer_page.py` 原有 16 處跨 `st.markdown` 拆開的 `<div class="custom-card">...</div>` 改為獨立 `.section-banner` 標題橫幅；舊版螢光指標卡色碼（`#00ff88`、`#ff44ff`、`#00d4ff` 等）全面替換為高對比專業色系；新增 4 欄模式分類導覽網格（`.mode-category-grid`）、當前模式用途橫幅（`.mode-desc-banner`）及未上傳檔案引導卡片
+- **UI: 使用說明頁視覺升級** — `views/usage_page.py` 系統操作流程改為五欄步驟卡片網格（`.usage-steps-grid`），必要與建議欄位加上等寬代碼標籤（`.col-badge`）
+- Change: `version.py` 1.82.0 → 1.82.1
+
 ## v1.82.0 (2026-10-15)
 
 轉貨模式（P90D 0 Sales／ND SKU with Stock）的「轉貨單」把 `MCH2` 欄改為 `Supply Source`（供貨來源），欄序、其餘欄位與所有數值零變動：

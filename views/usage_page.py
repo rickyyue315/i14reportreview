@@ -3,8 +3,9 @@ import streamlit as st
 from version import __version__
 
 # 1. 頁首橫幅
-st.markdown("""
+st.markdown(f"""
 <div class="header-container">
+    <div class="header-badge">USER GUIDE &amp; CALCULATION RULES · v{__version__}</div>
     <h1 class="header-title">📖 使用說明</h1>
     <p class="header-subtitle">於「分析工具」頁頂端選擇分析模式後，系統將自動切換對應的計算流程與輸出。本頁彙整各模式的用途說明與核心計算規則。</p>
 </div>
@@ -13,14 +14,14 @@ st.markdown("""
 # 2. 系統操作流程（單一 HTML 區塊，避免跨 st.markdown 的 div 被隔離而產生空卡片）
 st.markdown("""
 <div class="custom-card">
-    <h3 style="margin-top: 0;">📋 系統操作流程</h3>
-    <ol>
-        <li>🎯 <b>選擇模式</b>：於「分析工具」頁主頁面頂端選擇要執行的分析模式。</li>
-        <li>📂 <b>上傳檔案</b>：將 Excel 拖曳至主頁面的上傳區域。</li>
-        <li>🔧 <b>設定參數</b>：根據模式需要，調整 MTD 日期、Shop Nature Rate 等進階選項。</li>
-        <li>⚙️ <b>執行轉換</b>：點擊「執行報表轉換與分析」，系統將自動過濾、計算並產生彙總表。</li>
-        <li>💾 <b>下載成果</b>：於視覺化看板中即時查閱統計資訊，並一鍵導出美化後的 Excel 報表。</li>
-    </ol>
+    <h3 style="margin-top: 0; margin-bottom: 0.25rem;">📋 系統操作流程</h3>
+    <div class="usage-steps-grid">
+        <div class="usage-step-card"><b>1. 🎯 選擇模式</b>於「分析工具」頁主頁面頂端選擇要執行的分析模式。</div>
+        <div class="usage-step-card"><b>2. 📂 上傳檔案</b>將 Excel 拖曳至主頁面的上傳區域（上限 200MB）。</div>
+        <div class="usage-step-card"><b>3. 🔧 設定參數</b>根據模式需要，調整 MTD 日期、Shop Nature Rate 等進階選項。</div>
+        <div class="usage-step-card"><b>4. ⚙️ 執行轉換</b>點擊「執行報表轉換與分析」，系統將自動過濾、計算並產生彙總表。</div>
+        <div class="usage-step-card"><b>5. 💾 下載成果</b>於視覺化看板中即時查閱統計資訊，並一鍵導出美化後的 Excel 報表。</div>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -375,31 +376,31 @@ for _label, _desc, _rules, *_extra in MODES:
 st.markdown("""
 <div class="custom-card">
     <h3 style="margin-top: 0;">🔍 必要欄位檢核標準</h3>
-    <p>共用必要欄位（依模式檢核，混合模式不要求未參與計算的 Shop Stock Status）：</p>
-    <ul>
-        <li>✅ <b>Buyer</b> <span style="color:#0077a3;font-size:0.8em">(採購人員，全部模式)</span></li>
-        <li>✅ <b>Brand</b> <span style="color:#0077a3;font-size:0.8em">(品牌名稱，全部模式)</span></li>
-        <li>✅ <b>SKU</b> <span style="color:#0077a3;font-size:0.8em">(品號編碼，全部模式)</span></li>
-        <li>✅ <b>Shop Stock Status</b> <span style="color:#0077a3;font-size:0.8em">(庫存狀態明細；除 Safety Stock x NetStock Review 外全部模式)</span></li>
+    <p style="font-weight: 600; color: #1e293b; margin-bottom: 0.4rem;">共用必要欄位（依模式檢核，混合模式不要求未參與計算的 Shop Stock Status）：</p>
+    <ul style="line-height: 1.8;">
+        <li>✅ <span class="col-badge">Buyer</span> <span style="color:#0369a1;font-size:0.84em">(採購人員，全部模式)</span></li>
+        <li>✅ <span class="col-badge">Brand</span> <span style="color:#0369a1;font-size:0.84em">(品牌名稱，全部模式)</span></li>
+        <li>✅ <span class="col-badge">SKU</span> <span style="color:#0369a1;font-size:0.84em">(品號編碼，全部模式)</span></li>
+        <li>✅ <span class="col-badge">Shop Stock Status</span> <span style="color:#0369a1;font-size:0.84em">(庫存狀態明細；除 Safety Stock x NetStock Review 外全部模式)</span></li>
     </ul>
-    <p>各模式額外必要欄位（缺少時停止並提示）：</p>
-    <ul>
-        <li>✅ <b>Stock Checking</b> <span style="color:#0077a3;font-size:0.8em">(Shop Nature／Sold Qty (P90D)／Shop Stock Qty (CM)／Site Code)</span></li>
-        <li>✅ <b>Safety Stock x NetStock Review</b> <span style="color:#0077a3;font-size:0.8em">(Shop Nature／Site Code／Shop Stock Qty (CM)／Sold Qty (P90D)／Safety Stock (現時) 或 Adj. Safety Stock／Shop Monthly Sold Qty (P90D))</span></li>
-        <li>✅ <b>NDRF 月份對比</b> <span style="color:#0077a3;font-size:0.8em">(Month／RP Type／Shop Stock Qty (CM)／Adj. SST／Site Code)</span></li>
-        <li>✅ <b>Past 90 Days 0 Sales</b> <span style="color:#0077a3;font-size:0.8em">(Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Shop Stock Qty (LM)／Shop Stock Qty (CM)／Site Code)</span></li>
-        <li>✅ <b>P90D 0 Sales Review(轉貨模式)</b> <span style="color:#0077a3;font-size:0.8em">(Site Code／SKU／Sold Qty (P90D)／Shop Stock Qty (CM)；Item_Shop 缺欄時 Shop Name 留空並列 warning)</span></li>
-        <li>✅ <b>ND SKU with Stock Review(轉貨模式)</b> <span style="color:#0077a3;font-size:0.8em">(Site Code／SKU／RP Type／Sold Qty (P90D)／Shop Stock Qty (CM)；RP Type 缺失即停止；Item_Shop 缺欄時 Shop Name 留空並列 warning)</span></li>
-        <li>✅ <b>Forecast Review</b> <span style="color:#0077a3;font-size:0.8em">(Site Code／Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Sold Qty (P90D)／Shop Stock Qty (CM))</span></li>
-        <li>✅ <b>Safety Stock 月度變化分析</b> <span style="color:#0077a3;font-size:0.8em">(MONTH／YEAR（尾部欄位，恒為必要）／Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM))</span></li>
+    <p style="font-weight: 600; color: #1e293b; margin-top: 1rem; margin-bottom: 0.4rem;">各模式額外必要欄位（缺少時停止並提示）：</p>
+    <ul style="line-height: 1.8;">
+        <li>✅ <b>Stock Checking</b> <span style="color:#0369a1;font-size:0.84em">(Shop Nature／Sold Qty (P90D)／Shop Stock Qty (CM)／Site Code)</span></li>
+        <li>✅ <b>Safety Stock x NetStock Review</b> <span style="color:#0369a1;font-size:0.84em">(Shop Nature／Site Code／Shop Stock Qty (CM)／Sold Qty (P90D)／Safety Stock (現時) 或 Adj. Safety Stock／Shop Monthly Sold Qty (P90D))</span></li>
+        <li>✅ <b>NDRF 月份對比</b> <span style="color:#0369a1;font-size:0.84em">(Month／RP Type／Shop Stock Qty (CM)／Adj. SST／Site Code)</span></li>
+        <li>✅ <b>Past 90 Days 0 Sales</b> <span style="color:#0369a1;font-size:0.84em">(Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Shop Stock Qty (LM)／Shop Stock Qty (CM)／Site Code)</span></li>
+        <li>✅ <b>P90D 0 Sales Review(轉貨模式)</b> <span style="color:#0369a1;font-size:0.84em">(Site Code／SKU／Sold Qty (P90D)／Shop Stock Qty (CM)；Item_Shop 缺欄時 Shop Name 留空並列 warning)</span></li>
+        <li>✅ <b>ND SKU with Stock Review(轉貨模式)</b> <span style="color:#0369a1;font-size:0.84em">(Site Code／SKU／RP Type／Sold Qty (P90D)／Shop Stock Qty (CM)；RP Type 缺失即停止；Item_Shop 缺欄時 Shop Name 留空並列 warning)</span></li>
+        <li>✅ <b>Forecast Review</b> <span style="color:#0369a1;font-size:0.84em">(Site Code／Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Sold Qty (P90D)／Shop Stock Qty (CM))</span></li>
+        <li>✅ <b>Safety Stock 月度變化分析</b> <span style="color:#0369a1;font-size:0.84em">(MONTH／YEAR（尾部欄位，恒為必要）／Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM))</span></li>
     </ul>
-    <p>OOS Review 額外建議欄位（非必要，缺少時將顯示提示）：</p>
-    <ul>
-        <li>📌 <b>Sold Qty (CM - MTD)</b> <span style="color:#f59e0b;font-size:0.8em">(月度銷售)</span></li>
-        <li>📌 <b>Adj. Safety Stock</b> <span style="color:#f59e0b;font-size:0.8em">(現有安全庫存；報表內顯示為 Safety Stock (現時)，並非系統建議值——系統建議值另見「建議 Safety 設定值」欄)</span></li>
-        <li>📌 <b>Shop Nature</b> <span style="color:#f59e0b;font-size:0.8em">(店舖性質)</span></li>
+    <p style="font-weight: 600; color: #1e293b; margin-top: 1rem; margin-bottom: 0.4rem;">OOS Review 額外建議欄位（非必要，缺少時將顯示提示）：</p>
+    <ul style="line-height: 1.8;">
+        <li>📌 <span class="col-badge">Sold Qty (CM - MTD)</span> <span style="color:#d97706;font-size:0.84em">(月度銷售)</span></li>
+        <li>📌 <span class="col-badge">Adj. Safety Stock</span> <span style="color:#d97706;font-size:0.84em">(現有安全庫存；報表內顯示為 Safety Stock (現時)，並非系統建議值——系統建議值另見「建議 Safety 設定值」欄)</span></li>
+        <li>📌 <span class="col-badge">Shop Nature</span> <span style="color:#d97706;font-size:0.84em">(店舖性質)</span></li>
     </ul>
-    <p>Safety Stock x NetStock Review 另建議包含 RP Type（RF＝可補貨／ND＝不可補貨）——ND 列不作調貨需求方；缺失時全部列按 RF 處理並退回 Shop Nature 維度（列 warning，不停止）。</p>
+    <p style="color: #475569; font-size: 0.88rem; margin-top: 0.8rem; margin-bottom: 0;">Safety Stock x NetStock Review 另建議包含 <span class="col-badge">RP Type</span>（RF＝可補貨／ND＝不可補貨）——ND 列不作調貨需求方；缺失時全部列按 RF 處理並退回 Shop Nature 維度（列 warning，不停止）。</p>
 </div>
 """, unsafe_allow_html=True)
 

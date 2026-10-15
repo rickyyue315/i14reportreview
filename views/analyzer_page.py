@@ -198,7 +198,7 @@ def _style_inventory_skew(df: pd.DataFrame, zero_sales: bool = False, dimension:
 
 def _render_summary_legend(dimension: str, zero_sales: bool = False, shortage: bool = True):
     """Summary 表格上方的底色圖例（與 Excel Summary 第 1–2 列圖例同式，僅列出本次會啟用的顏色）。"""
-    _chip = "display:inline-block;padding:2px 10px;border-radius:4px;font-weight:700;margin-right:6px;"
+    _chip = "display:inline-block;padding:3px 10px;border-radius:6px;font-weight:700;margin-right:8px;font-size:0.8rem;"
     chips = [f'<span style="{_chip}background-color:#FFC000;color:#000000;">存貨偏重</span>']
     notes = [f"橘底＝存貨偏重（{_hybrid_skew_hint_text(dimension)}），留意積壓風險"]
     if shortage:
@@ -208,17 +208,17 @@ def _render_summary_legend(dimension: str, zero_sales: bool = False, shortage: b
         chips.append(f'<span style="{_chip}background-color:#FFC7CE;color:#9C0006;">零銷仍有庫存</span>')
         notes.append("紅底＝零銷組仍有庫存（零銷售而仍有存貨，理論上全屬 Overstock）")
     st.markdown(
-        f'<div style="margin: 4px 0 8px 0;">{"".join(chips)}'
-        f'<div style="font-size: 0.85rem; color: #5a5a6e; margin-top: 4px;">顏色說明：{"；".join(notes)}</div></div>',
+        f'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;margin:6px 0 10px 0;">{"".join(chips)}'
+        f'<div style="font-size: 0.84rem; color: #475569; margin-top: 6px;">顏色說明：{"；".join(notes)}</div></div>',
         unsafe_allow_html=True,
     )
 
 # 1. 側邊欄設計 (Sidebar)
 with st.sidebar:
-    st.markdown("""
-    <div style="text-align: center; padding: 15px 0 5px 0;">
-        <h2 style="color: #0077a3; margin-bottom: 2px; font-weight: 700; font-size: 1.6rem;">I14 Analyzer</h2>
-        <p style="color: #5a5a6e; font-size: 0.85rem; margin-top: 0;">自動化報表與數據轉換引擎</p>
+    st.markdown(f"""
+    <div class="sidebar-brand-card">
+        <h2 class="sidebar-brand-title">📊 I14 Analyzer</h2>
+        <p class="sidebar-brand-sub">自動化報表與數據轉換引擎</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -258,20 +258,21 @@ with st.sidebar:
         st.rerun()
 
     _rss = _process_rss_mb()
-    _mem_line = f'Memory Usage: {_rss:.0f} MB<br>' if _rss is not None else ''
+    _mem_line = f'Memory Usage: <b>{_rss:.0f} MB</b><br>' if _rss is not None else ''
     st.markdown(
-        '<div style="color: #444455; font-size: 0.75rem; text-align: center; line-height: 1.5;">'
-        f'I14 報表計算工具 v{__version__}<br>'
+        '<div class="sidebar-footer-card">'
+        f'<b>I14 報表計算工具 v{__version__}</b><br>'
         f'{_mem_line}'
         'Developed by Ricky Yue<br>'
-        'Powered by Streamlit & Zeabur'
+        '<span style="color:#64748b;">Powered by Streamlit &amp; Zeabur</span>'
         '</div>',
         unsafe_allow_html=True
     )
 
 # 2. 主介面標頭 (Header)
-st.markdown("""
+st.markdown(f"""
 <div class="header-container">
+    <div class="header-badge">INVENTORY &amp; REPLENISHMENT ANALYTICS · v{__version__}</div>
     <h1 class="header-title">📊 I14 報表轉換與分析系統</h1>
     <p class="header-subtitle">上傳 By SKUxShop 來源檔案，一鍵完成庫存異常篩選、多維度統計，並導出 I14 by SKUxShop_To Buyer 格式報表。</p>
 </div>
@@ -287,7 +288,14 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review(Shop回覆)", "P90D 0 Sales Review(個別店舖)", "P90D 0 Sales Review(轉貨模式)", "ND SKU with Stock Review(轉貨模式)", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "Safety Stock 月度變化分析"]
-st.caption("🔄 調貨與補貨：Stock Checking · Safety Stock x NetStock Review · P90D 0 Sales Review(轉貨模式) · ND SKU with Stock Review(轉貨模式)　｜　🔒 安全庫存：Safety Stock Review · Forecast Review · Safety Stock 月度變化分析　｜　📦 庫存健康：Overstock · OOS · Stock Impact · 90 日零銷售 · P90D 0 Sales　｜　✂️ 商品與對比：Carry SKU · SKU 精簡 · NDRF 月份對比")
+st.markdown("""
+<div class="mode-category-grid">
+    <div class="mode-cat-chip"><b>🔄 調貨與補貨</b>Stock Checking · Safety Stock x NetStock Review · P90D 0 Sales Review(轉貨模式) · ND SKU with Stock Review(轉貨模式)</div>
+    <div class="mode-cat-chip"><b>🔒 安全庫存</b>Safety Stock Review · Forecast Review · Safety Stock 月度變化分析</div>
+    <div class="mode-cat-chip"><b>📦 庫存健康</b>Overstock · OOS · Stock Impact · 90 日零銷售 · P90D 0 Sales</div>
+    <div class="mode-cat-chip"><b>✂️ 商品與對比</b>Carry SKU · SKU 精簡 · NDRF 月份對比</div>
+</div>
+""", unsafe_allow_html=True)
 MODE_DESCRIPTIONS = {
     "Overstock Review": "篩選庫存過剩品項，計算建議安全庫存與可轉出貨量。",
     "OOS Review": "篩選缺貨與潛在缺貨品項，偵測安全庫存不足。",
@@ -307,8 +315,11 @@ MODE_DESCRIPTIONS = {
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
     "Safety Stock 月度變化分析": "追蹤店舖每月 Safety Stock 原始值變化對生意的影響（須含 MONTH／YEAR）。",
 }
-current_mode = st.radio("選擇分析模式", mode_options, horizontal=True, index=0, key="mode_selector")
-st.caption(f"用途：{MODE_DESCRIPTIONS.get(current_mode, '')}")
+current_mode = st.radio("🎯 選擇分析模式", mode_options, horizontal=True, index=0, key="mode_selector")
+st.markdown(
+    f'<div class="mode-desc-banner"><span class="mode-tag">{current_mode}</span><b>模式用途：</b>{MODE_DESCRIPTIONS.get(current_mode, "")}</div>',
+    unsafe_allow_html=True,
+)
 
 # 3a. 分類維度選項（Safety Stock x NetStock Review／Stock Checking／Safety Stock Review 共用）
 _DIMENSION_OPTIONS = {
@@ -559,8 +570,7 @@ def _render_transfer_results(mode_key: str) -> None:
         </div>
         """, unsafe_allow_html=True)
 
-    st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-    st.markdown(f"### {_cfg['title']}")
+    st.markdown(f'<div class="section-banner"><h3>{_cfg["title"]}</h3></div>', unsafe_allow_html=True)
     _top_download_button(_excel_data, _cfg["top_prefix"], f"dl_top_{_cfg['widget_key']}")
 
     for _row_i in range(0, len(_cfg["cards"]), 4):
@@ -572,7 +582,6 @@ def _render_transfer_results(mode_key: str) -> None:
         if _row_i + 4 < len(_cfg["cards"]):
             st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
 
-    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
@@ -776,15 +785,14 @@ if uploaded_file is not None:
         st.stop()
 
     # 顯示上傳檔案基本資訊與預覽卡片
-    st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-    st.markdown("### 📊 來源檔案成功載入")
+    st.markdown('<div class="section-banner"><h3>📊 來源檔案成功載入</h3></div>', unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown(f"""
-        <div class="metric-card" style="border-left-color: #00ff88;">
+        <div class="metric-card" style="border-left-color: #10b981;">
             <div class="metric-title">檔案解析狀態</div>
-            <div class="metric-value" style="color: #00ff88;">驗證通過</div>
+            <div class="metric-value" style="color: #10b981;">驗證通過</div>
             <div class="metric-desc">檔案格式符合解析標準</div>
         </div>
         """, unsafe_allow_html=True)
@@ -811,7 +819,6 @@ if uploaded_file is not None:
     with st.expander("🔍 預覽前 20 筆原始資料", expanded=False):
         st.dataframe(df_input.head(20), width='stretch')
         st.caption(f"目前顯示第 1 至第 20 筆明細（總共 {len(df_input):,} 筆原始資料）")
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # P0：全域匯出選項（各模式共用，略過 RAW 明細可省三至七成匯出時間）
     _skip_raw = st.checkbox(
@@ -1048,8 +1055,7 @@ if uploaded_file is not None:
             categories = st.session_state.combined_categories
             excel_data = st.session_state.combined_excel_data
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 📈 Safety Stock 數據分析摘要 (Safety Stock Analysis Dashboard)")
+            st.markdown('<div class="section-banner"><h3>📈 Safety Stock 數據分析摘要 (Safety Stock Analysis Dashboard)</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 Safety Stock Review", "dl_top_combined")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
@@ -1070,33 +1076,33 @@ if uploaded_file is not None:
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff5555;">
+                <div class="metric-card" style="border-left-color: #ef4444;">
                     <div class="metric-title">總 Safety Stock 審查行數</div>
-                    <div class="metric-value" style="color: #ff5555;">{total_combined:,}</div>
+                    <div class="metric-value" style="color: #ef4444;">{total_combined:,}</div>
                     <div class="metric-desc">所有 Safety Stock 審查之總計行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #5599ff;">
+                <div class="metric-card" style="border-left-color: #3b82f6;">
                     <div class="metric-title">影響採購人員數 (Buyers)</div>
-                    <div class="metric-value" style="color: #5599ff;">{total_buyers:,}</div>
+                    <div class="metric-value" style="color: #3b82f6;">{total_buyers:,}</div>
                     <div class="metric-desc">位採購人員名下有需審查品項</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col3:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #9944ff;">
+                <div class="metric-card" style="border-left-color: #8b5cf6;">
                     <div class="metric-title">影響品牌總數 (Brands)</div>
-                    <div class="metric-value" style="color: #9944ff;">{total_brands:,}</div>
+                    <div class="metric-value" style="color: #8b5cf6;">{total_brands:,}</div>
                     <div class="metric-desc">個品牌包含需審查商品</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col4:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #00ff88;">
+                <div class="metric-card" style="border-left-color: #10b981;">
                     <div class="metric-title">影響SKU總數</div>
-                    <div class="metric-value" style="color: #00ff88;">{total_skus:,}</div>
+                    <div class="metric-value" style="color: #10b981;">{total_skus:,}</div>
                     <div class="metric-desc">個包含需審查商品(SKUs)</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1106,17 +1112,17 @@ if uploaded_file is not None:
             r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
             with r2_col1:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff9944;">
+                <div class="metric-card" style="border-left-color: #f59e0b;">
                     <div class="metric-title">Overstock 分類行數</div>
-                    <div class="metric-value" style="color: #ff9944;">{int(cat_counts.get(categories[0], 0)):,}</div>
+                    <div class="metric-value" style="color: #f59e0b;">{int(cat_counts.get(categories[0], 0)):,}</div>
                     <div class="metric-desc">庫存過剩分類行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff44ff;">
+                <div class="metric-card" style="border-left-color: #db2777;">
                     <div class="metric-title">OOS 分類行數</div>
-                    <div class="metric-value" style="color: #ff44ff;">{int(cat_counts.get(categories[1], 0)):,}</div>
+                    <div class="metric-value" style="color: #db2777;">{int(cat_counts.get(categories[1], 0)):,}</div>
                     <div class="metric-desc">缺貨分類行數</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1137,8 +1143,7 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             selected_site_code = st.selectbox(
@@ -1649,8 +1654,7 @@ if uploaded_file is not None:
             if hybrid_is_stale:
                 st.warning("目前設定已與最後一次執行結果不同，請重新執行後再下載報表；以下結果仍為最後一次執行內容。")
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 🔀 Safety Stock x NetStock Review 分析摘要 (Hybrid Dashboard)")
+            st.markdown('<div class="section-banner"><h3>🔀 Safety Stock x NetStock Review 分析摘要 (Hybrid Dashboard)</h3></div>', unsafe_allow_html=True)
             _top_download_button(
                 excel_data, "I14 Safety Stock x NetStock Review", "dl_top_hybrid",
                 disabled=hybrid_is_stale,
@@ -1696,8 +1700,7 @@ if uploaded_file is not None:
                 )
                 st.caption(f"共 {len(_hyb_buyer_combined):,} 個 Buyer（已刪除重複；Buyer 取同 SKU 首個非空值，空白歸入「(未填 Buyer)」；需調整母體為 Safety 設定不足＋過高，貨量與調整量為淨額）。")
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             tab_diag, tab_diag_om, tab_sc, tab_issue, tab_return, tab_cross, tab_full, tab_detail, tab_raw = st.tabs([
@@ -2080,8 +2083,7 @@ if uploaded_file is not None:
                     top_buyer_name = str(_top["Buyer"])
                     top_buyer_loss = int(_top.get("Tourist 缺貨行數", 0))
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 📦 存貨分佈分析摘要 (Stock Impact Dashboard)")
+            st.markdown('<div class="section-banner"><h3>📦 存貨分佈分析摘要 (Stock Impact Dashboard)</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 Stock Impact Analysis", "dl_top_impact")
             st.caption("🎯 重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積｜Non Tourist/Mix 只需保留 7-14 日 Turnday")
 
@@ -2214,8 +2216,7 @@ if uploaded_file is not None:
                 st.markdown("#### 🔴 低存貨 SKU 按 Item Class 分類")
                 st.dataframe(low_stock_item_class, width='stretch', hide_index=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             impact_tabs = st.tabs(["📊 存貨分佈", "📦 SKU月銷量和存儲", "🏷️ By Brand", "👤 By Buyer", "📦 By Category", "🔍 SKU 缺貨 Review"])
@@ -2440,8 +2441,7 @@ if uploaded_file is not None:
                 nt_td = turnday_s[nature_s == "Non Tourist"]
                 nt_avg_td = round(float(nt_td.mean()), 1) if nt_td.notna().any() and len(nt_td) else 0
 
-                st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-                st.markdown("### 📦 存貨分佈分析摘要 (Stock Impact Dashboard - 簡化)")
+                st.markdown('<div class="section-banner"><h3>📦 存貨分佈分析摘要 (Stock Impact Dashboard - 簡化)</h3></div>', unsafe_allow_html=True)
                 _top_download_button(excel_data, "I14 Stock Impact Analysis (Simplified)", "dl_top_impact_simp")
                 st.caption("🎯 重點：高銷售 Tourist 店無貨 vs Non Tourist/Mix 大量囤積")
 
@@ -2579,7 +2579,6 @@ if uploaded_file is not None:
                     st.markdown("#### 🔴 低存貨 SKU 按 Item Class 分類")
                     st.dataframe(low_stock_item_class_s, width='stretch', hide_index=True)
 
-                st.markdown('</div>', unsafe_allow_html=True)
                 st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             if sku_monthly_simp is not None and not sku_monthly_simp.empty:
@@ -3262,8 +3261,7 @@ if uploaded_file is not None:
             categories = st.session_state.categories
             excel_data = st.session_state.excel_data
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 📈 異常庫存數據分析摘要 (Analysis Dashboard)")
+            st.markdown('<div class="section-banner"><h3>📈 異常庫存數據分析摘要 (Analysis Dashboard)</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 by SKUxShop_To Buyer", "dl_top_overstock")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
@@ -3282,33 +3280,33 @@ if uploaded_file is not None:
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff5555;">
+                <div class="metric-card" style="border-left-color: #ef4444;">
                     <div class="metric-title">總 Overstock 行數</div>
-                    <div class="metric-value" style="color: #ff5555;">{int(total_overstock):,}</div>
+                    <div class="metric-value" style="color: #ef4444;">{int(total_overstock):,}</div>
                     <div class="metric-desc">所有庫存異常之總計行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #5599ff;">
+                <div class="metric-card" style="border-left-color: #3b82f6;">
                     <div class="metric-title">影響採購人員數 (Buyers)</div>
-                    <div class="metric-value" style="color: #5599ff;">{total_buyers:,}</div>
+                    <div class="metric-value" style="color: #3b82f6;">{total_buyers:,}</div>
                     <div class="metric-desc">位採購人員名下有異常品項</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col3:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #9944ff;">
+                <div class="metric-card" style="border-left-color: #8b5cf6;">
                     <div class="metric-title">影響品牌總數 (Brands)</div>
-                    <div class="metric-value" style="color: #9944ff;">{total_brands:,}</div>
+                    <div class="metric-value" style="color: #8b5cf6;">{total_brands:,}</div>
                     <div class="metric-desc">個品牌包含異常庫存商品</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col4:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #00ff88;">
+                <div class="metric-card" style="border-left-color: #10b981;">
                     <div class="metric-title">影響SKU總數</div>
-                    <div class="metric-value" style="color: #00ff88;">{total_skus:,}</div>
+                    <div class="metric-value" style="color: #10b981;">{total_skus:,}</div>
                     <div class="metric-desc">個包含異常庫存商品(SKUs)</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -3327,31 +3325,30 @@ if uploaded_file is not None:
             r2_col1, r2_col2, r2_col3 = st.columns(3)
             with r2_col1:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff9944;">
+                <div class="metric-card" style="border-left-color: #f59e0b;">
                     <div class="metric-title">P90D 0 Sales</div>
-                    <div class="metric-value" style="color: #ff9944;">{int(cat_counts.get(categories[0], 0)):,}</div>
+                    <div class="metric-value" style="color: #f59e0b;">{int(cat_counts.get(categories[0], 0)):,}</div>
                     <div class="metric-desc">「過去 90 天內零銷售」之異常行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff44ff;">
+                <div class="metric-card" style="border-left-color: #db2777;">
                     <div class="metric-title">Overstock (>2*Monthly Sold Qty & >2pcs)</div>
-                    <div class="metric-value" style="color: #ff44ff;">{int(cat_counts.get(categories[1], 0)):,}</div>
+                    <div class="metric-value" style="color: #db2777;">{int(cat_counts.get(categories[1], 0)):,}</div>
                     <div class="metric-desc">「大於月均銷售量兩倍且庫存大於 2 件」之異常行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col3:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #00d4ff;">
+                <div class="metric-card" style="border-left-color: #0891b2;">
                     <div class="metric-title">調整後的預計可退倉總數</div>
-                    <div class="metric-value" style="color: #00d4ff;">{transfer_qty_total:,}</div>
+                    <div class="metric-value" style="color: #0891b2;">{transfer_qty_total:,}</div>
                     <div class="metric-desc">After new Safety Qty / ND can transfer out of TOTAL QTY</div>
                 </div>
                 """, unsafe_allow_html=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             tab1, tab2 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "📄 原始明細資料預覽 (RAW)"])
 
             with tab1:
@@ -3385,7 +3382,7 @@ if uploaded_file is not None:
             categories = st.session_state.oos_categories
             excel_data = st.session_state.oos_excel_data
 
-            st.markdown("### 📈 OOS 庫存數據分析摘要 (OOS Analysis Dashboard)")
+            st.markdown('<div class="section-banner"><h3>📈 OOS 庫存數據分析摘要 (OOS Analysis Dashboard)</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 OOS Review", "dl_top_oos")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
@@ -3406,33 +3403,33 @@ if uploaded_file is not None:
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff5555;">
+                <div class="metric-card" style="border-left-color: #ef4444;">
                     <div class="metric-title">總 OOS 行數</div>
-                    <div class="metric-value" style="color: #ff5555;">{total_oos:,}</div>
+                    <div class="metric-value" style="color: #ef4444;">{total_oos:,}</div>
                     <div class="metric-desc">所有 OOS 異常之總計行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #5599ff;">
+                <div class="metric-card" style="border-left-color: #3b82f6;">
                     <div class="metric-title">影響採購人員數 (Buyers)</div>
-                    <div class="metric-value" style="color: #5599ff;">{total_buyers:,}</div>
+                    <div class="metric-value" style="color: #3b82f6;">{total_buyers:,}</div>
                     <div class="metric-desc">位採購人員名下有 OOS 品項</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col3:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #9944ff;">
+                <div class="metric-card" style="border-left-color: #8b5cf6;">
                     <div class="metric-title">影響品牌總數 (Brands)</div>
-                    <div class="metric-value" style="color: #9944ff;">{total_brands:,}</div>
+                    <div class="metric-value" style="color: #8b5cf6;">{total_brands:,}</div>
                     <div class="metric-desc">個品牌包含 OOS 商品</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col4:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #00ff88;">
+                <div class="metric-card" style="border-left-color: #10b981;">
                     <div class="metric-title">影響SKU總數</div>
-                    <div class="metric-value" style="color: #00ff88;">{total_skus:,}</div>
+                    <div class="metric-value" style="color: #10b981;">{total_skus:,}</div>
                     <div class="metric-desc">個包含 OOS 商品(SKUs)</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -3442,17 +3439,17 @@ if uploaded_file is not None:
             r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
             with r2_col1:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff9944;">
+                <div class="metric-card" style="border-left-color: #f59e0b;">
                     <div class="metric-title">OOS (0 Stock)</div>
-                    <div class="metric-value" style="color: #ff9944;">{int(cat_counts.get(categories[0], 0)):,}</div>
+                    <div class="metric-value" style="color: #f59e0b;">{int(cat_counts.get(categories[0], 0)):,}</div>
                     <div class="metric-desc">現有庫存為 0 之 OOS 行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff44ff;">
+                <div class="metric-card" style="border-left-color: #db2777;">
                     <div class="metric-title">Potential OOS (<7 Turnday)</div>
-                    <div class="metric-value" style="color: #ff44ff;">{int(cat_counts.get(categories[1], 0)):,}</div>
+                    <div class="metric-value" style="color: #db2777;">{int(cat_counts.get(categories[1], 0)):,}</div>
                     <div class="metric-desc">Turnday 不足 7 之潛在 OOS 行數</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -3506,8 +3503,7 @@ if uploaded_file is not None:
             categories = st.session_state.nd_categories
             excel_data = st.session_state.nd_excel_data
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 📈 ND SKU 數據分析摘要 (ND SKU Analysis Dashboard)")
+            st.markdown('<div class="section-banner"><h3>📈 ND SKU 數據分析摘要 (ND SKU Analysis Dashboard)</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 SKU 精簡 Review", "dl_top_nd")
 
             _total_row = summary_df[summary_df["Buyer"] == "總計"]
@@ -3550,33 +3546,33 @@ if uploaded_file is not None:
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff5555;">
+                <div class="metric-card" style="border-left-color: #ef4444;">
                     <div class="metric-title">總 ND SKU 行數</div>
-                    <div class="metric-value" style="color: #ff5555;">{total_nd:,}</div>
+                    <div class="metric-value" style="color: #ef4444;">{total_nd:,}</div>
                     <div class="metric-desc">所有 ND SKU 總計行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #00ff88;">
+                <div class="metric-card" style="border-left-color: #10b981;">
                     <div class="metric-title">Warehouse 可退倉行數</div>
-                    <div class="metric-value" style="color: #00ff88;">{nd_warehouse_rows:,}</div>
+                    <div class="metric-value" style="color: #10b981;">{nd_warehouse_rows:,}</div>
                     <div class="metric-desc">Supply Source=Warehouse 可退倉之 ND 行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col3:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff9944;">
+                <div class="metric-card" style="border-left-color: #f59e0b;">
                     <div class="metric-title">Vendor 另有安排行數</div>
-                    <div class="metric-value" style="color: #ff9944;">{nd_vendor_rows:,}</div>
+                    <div class="metric-value" style="color: #f59e0b;">{nd_vendor_rows:,}</div>
                     <div class="metric-desc">Supply Source=Vendor 不可退倉、另有安排之 ND 行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col4:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #5599ff;">
+                <div class="metric-card" style="border-left-color: #3b82f6;">
                     <div class="metric-title">影響採購人員數 (Buyers)</div>
-                    <div class="metric-value" style="color: #5599ff;">{total_buyers:,}</div>
+                    <div class="metric-value" style="color: #3b82f6;">{total_buyers:,}</div>
                     <div class="metric-desc">位採購人員名下有 ND SKU</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -3586,9 +3582,9 @@ if uploaded_file is not None:
             r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
             with r2_col1:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #9944ff;">
+                <div class="metric-card" style="border-left-color: #8b5cf6;">
                     <div class="metric-title">影響品牌總數 (Brands)</div>
-                    <div class="metric-value" style="color: #9944ff;">{total_brands:,}</div>
+                    <div class="metric-value" style="color: #8b5cf6;">{total_brands:,}</div>
                     <div class="metric-desc">個品牌包含 ND SKU</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -3602,9 +3598,9 @@ if uploaded_file is not None:
                 """, unsafe_allow_html=True)
             with r2_col3:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #00d4ff;">
+                <div class="metric-card" style="border-left-color: #0891b2;">
                     <div class="metric-title">預計可退倉總數量</div>
-                    <div class="metric-value" style="color: #00d4ff;">{transfer_qty_total:,}</div>
+                    <div class="metric-value" style="color: #0891b2;">{transfer_qty_total:,}</div>
                     <div class="metric-desc">Warehouse 可退倉數量總和</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -3617,8 +3613,7 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             _all_site_codes = canonical_site_codes(df_input["Site Code"]) if "Site Code" in df_input.columns else []
             selected_site_code = st.selectbox(
                 "🏪 選擇 Site Code 檢視明細",
@@ -3665,8 +3660,7 @@ if uploaded_file is not None:
             raw_df = st.session_state.ndrf_comp_raw_df
             excel_data = st.session_state.ndrf_comp_excel_data
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 📊 NDRF 月份對比分析摘要")
+            st.markdown('<div class="section-banner"><h3>📊 NDRF 月份對比分析摘要</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 NDRF 月份對比", "dl_top_ndrf")
 
             _total_row = comparison_by_shop[comparison_by_shop["Site Code"] == "總計"]
@@ -3725,8 +3719,7 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             st.markdown("#### 店舖級月份對比總覽")
@@ -3770,8 +3763,7 @@ if uploaded_file is not None:
             raw_df = st.session_state.carry_raw_df
             excel_data = st.session_state.carry_excel_data
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 📈 Carry SKU 分析摘要 (Carry SKU Analysis Dashboard)")
+            st.markdown('<div class="section-banner"><h3>📈 Carry SKU 分析摘要 (Carry SKU Analysis Dashboard)</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 Carry SKU Review", "dl_top_carry")
 
             _total_row = dashboard_df[dashboard_df["Site Code"] == "總計"]
@@ -3794,33 +3786,33 @@ if uploaded_file is not None:
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
             with r1_col1:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff5555;">
+                <div class="metric-card" style="border-left-color: #ef4444;">
                     <div class="metric-title">影響店舖數</div>
-                    <div class="metric-value" style="color: #ff5555;">{shop_count:,}</div>
+                    <div class="metric-value" style="color: #ef4444;">{shop_count:,}</div>
                     <div class="metric-desc">個店舖含有 Carry SKU</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #5599ff;">
+                <div class="metric-card" style="border-left-color: #3b82f6;">
                     <div class="metric-title">Carry SKU 總數</div>
-                    <div class="metric-value" style="color: #5599ff;">{total_sku:,}</div>
+                    <div class="metric-value" style="color: #3b82f6;">{total_sku:,}</div>
                     <div class="metric-desc">所有店舖 Carry SKU 總列數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col3:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #9944ff;">
+                <div class="metric-card" style="border-left-color: #8b5cf6;">
                     <div class="metric-title">RF SKU 總數</div>
-                    <div class="metric-value" style="color: #9944ff;">{total_rf:,}</div>
+                    <div class="metric-value" style="color: #8b5cf6;">{total_rf:,}</div>
                     <div class="metric-desc">RP Type 為 RF 的 Carry SKU</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col4:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #00ff88;">
+                <div class="metric-card" style="border-left-color: #10b981;">
                     <div class="metric-title">ND SKU 總數</div>
-                    <div class="metric-value" style="color: #00ff88;">{total_nd:,}</div>
+                    <div class="metric-value" style="color: #10b981;">{total_nd:,}</div>
                     <div class="metric-desc">RP Type 為 ND 的 Carry SKU</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -3830,25 +3822,25 @@ if uploaded_file is not None:
             r2_col1, r2_col2, r2_col3 = st.columns(3)
             with r2_col1:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff9944;">
+                <div class="metric-card" style="border-left-color: #f59e0b;">
                     <div class="metric-title">P90D 0 Sales SKU 總數</div>
-                    <div class="metric-value" style="color: #ff9944;">{total_p90d0:,}</div>
+                    <div class="metric-value" style="color: #f59e0b;">{total_p90d0:,}</div>
                     <div class="metric-desc">「過去 90 天內零銷售」之 SKU 行數</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col2:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #ff44ff;">
+                <div class="metric-card" style="border-left-color: #db2777;">
                     <div class="metric-title">SKU Stock Value (CM)</div>
-                    <div class="metric-value" style="color: #ff44ff;">{total_stock_val:,.0f}</div>
+                    <div class="metric-value" style="color: #db2777;">{total_stock_val:,.0f}</div>
                     <div class="metric-desc">所有 Carry SKU 庫存金額總和</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r2_col3:
                 st.markdown(f"""
-                <div class="metric-card" style="border-left-color: #00d4ff;">
+                <div class="metric-card" style="border-left-color: #0891b2;">
                     <div class="metric-title">P90D 0 Sales Stock Value (CM)</div>
-                    <div class="metric-value" style="color: #00d4ff;">{total_p90d0_stock_val:,.0f}</div>
+                    <div class="metric-value" style="color: #0891b2;">{total_p90d0_stock_val:,.0f}</div>
                     <div class="metric-desc">P90D 0 Sales SKU 的庫存金額總和</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -3881,8 +3873,7 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             st.markdown("#### 各店舖 Carry SKU 指標總覽")
@@ -3918,8 +3909,7 @@ if uploaded_file is not None:
             raw_df = st.session_state.p90ds_raw_df
             excel_data = st.session_state.p90ds_excel_data
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 📉 Past 90 Days 0 Sales 分析摘要")
+            st.markdown('<div class="section-banner"><h3>📉 Past 90 Days 0 Sales 分析摘要</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 Past 90 Days 0 Sales", "dl_top_p90d")
 
             _total_row = summary_df[summary_df["Site Code"] == "總計"] if summary_df is not None and not summary_df.empty else None
@@ -3968,8 +3958,7 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             tab_raw, tab_shop = st.tabs(["RAW", "Summary by Shop"])
@@ -4021,8 +4010,7 @@ if uploaded_file is not None:
                     by_buyer_df = None
             excel_data = st.session_state.op90d_excel_data
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 📦 P90D 0 Sales 分析摘要")
+            st.markdown('<div class="section-banner"><h3>📦 P90D 0 Sales 分析摘要</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 P90D 0 Sales Review(Shop回覆)", "dl_top_op90d")
 
             total_rows = len(raw_df) if raw_df is not None else 0
@@ -4096,8 +4084,7 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             tab_shop, tab_top, tab_sku, tab_buyer, tab_nature, tab_om = st.tabs(["🏪 By Shop（店舖統計）", "📝 店舖90日零銷售Top 10 SKU回覆", "🔢 By SKU（出現店舖數）", "👤 By Buyer（出現店舖數）", "🏬 By Nature", "🗺️ By OM"])
@@ -4180,8 +4167,7 @@ if uploaded_file is not None:
                     by_buyer_df = None
             excel_data = st.session_state.op90ds_excel_data
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 📦 P90D 0 Sales 分析摘要（個別店舖）")
+            st.markdown('<div class="section-banner"><h3>📦 P90D 0 Sales 分析摘要（個別店舖）</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 P90D 0 Sales Review(個別店舖)", "dl_top_op90ds")
 
             total_rows = len(raw_df) if raw_df is not None else 0
@@ -4255,8 +4241,7 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             tab_shop, tab_top, tab_sku, tab_buyer, tab_nature, tab_om = st.tabs(["🏪 By Shop（店舖統計）", "📝 店舖90日零銷售ALL SKU", "🔢 By SKU（出現店舖數）", "👤 By Buyer（出現店舖數）", "🏬 By Nature", "🗺️ By OM"])
@@ -4325,8 +4310,7 @@ if uploaded_file is not None:
             stats = st.session_state.stock_chk_stats
             excel_data = st.session_state.stock_chk_excel_data
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 🔄 Stock Checking 調貨分析摘要 (Transfer Analysis Dashboard)")
+            st.markdown('<div class="section-banner"><h3>🔄 Stock Checking 調貨分析摘要 (Transfer Analysis Dashboard)</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 Stock Checking", "dl_top_stockchk")
             st.caption("SKU 級判定：Tourist 加總 TurnDay < 門檻 且 D001 < 門檻 且 Mix / NT 至少一個 Nature 加總 TurnDay ≥ 門檻（有貨可調）→ 標示需要調貨；調入需求補到 14 日周轉，來源優先 Non Tourist 店舖，再由 Mix 店舖補足。")
 
@@ -4425,8 +4409,7 @@ if uploaded_file is not None:
             else:
                 st.info("無符合調貨條件的 Buyer 統計")
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             tab_sum, tab_issue, tab_raw = st.tabs(["📊 Summary (SKU 彙總)", "🏪 店舖問題 SKU", "RAW 完整明細"])
@@ -4488,8 +4471,7 @@ if uploaded_file is not None:
             excel_data = st.session_state.fc_excel_data
             total_rows = int(stats.get("raw_rows", len(raw_df) if raw_df is not None else 0))
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 📈 Forecast 數據分析摘要 (Forecast Dashboard)")
+            st.markdown('<div class="section-banner"><h3>📈 Forecast 數據分析摘要 (Forecast Dashboard)</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 Forecast Review", "dl_top_fc")
 
             r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
@@ -4569,8 +4551,7 @@ if uploaded_file is not None:
             else:
                 st.info("無符合資料")
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             _surge_classes = {_FC_CLASS_NEW, _FC_CLASS_ACCEL, _FC_CLASS_SURGE}
@@ -4632,8 +4613,7 @@ if uploaded_file is not None:
             stats = st.session_state.safm_stats or {}
             excel_data = st.session_state.safm_excel_data
 
-            st.markdown('<div class="custom-card">', unsafe_allow_html=True)
-            st.markdown("### 📅 Safety Stock 月度變化分析摘要 (Monthly Safety Review Dashboard)")
+            st.markdown('<div class="section-banner"><h3>📅 Safety Stock 月度變化分析摘要 (Monthly Safety Review Dashboard)</h3></div>', unsafe_allow_html=True)
             _top_download_button(excel_data, "I14 Safety Stock 月度變化分析", "dl_top_safm")
 
             _safm_rows = safety_monthly_dashboard_metrics(change_df, stats)
@@ -4652,8 +4632,7 @@ if uploaded_file is not None:
             _ym_txt = "、".join(stats.get("ym_list", []))
             _factor_txt = stats.get("annual_factor", 1.0)
             st.caption(f"覆蓋月份：{_ym_txt}；最新月份 {stats.get('latest_ym', '')} 月化係數 {_factor_txt}（Sold Qty 與 Net Sales 同時月化；數據截止日 {stats.get('ref_date', '')}）。Safety Stock Qty 只看原始值增減；Sold Qty／Net Sales 變化以月化基準計算。")
-            st.markdown('</div>', unsafe_allow_html=True)
-
+        
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             tab_change, tab_mch1, tab_sst, tab_cross, tab_shop, tab_rp, tab_cohort, tab_effect, tab_t0, tab_raw = st.tabs([
@@ -4873,12 +4852,23 @@ if uploaded_file is not None:
                 type="primary",
                 width='stretch',
             )
+else:
+    st.markdown("""
+    <div class="custom-card" style="text-align: center; padding: 2rem 1.5rem; margin-top: 0.5rem;">
+        <div style="font-size: 2.2rem; margin-bottom: 0.4rem;">📂</div>
+        <h4 style="margin: 0 0 0.4rem 0; color: #0f172a; font-size: 1.05rem;">請先於上方上傳 By SKUxShop 原始 Excel 檔案 (.xlsx)</h4>
+        <p style="margin: 0; color: #64748b; font-size: 0.86rem; line-height: 1.6;">
+            上傳成功後，系統將自動檢核必要欄位、顯示對應模式的參數選項與即時分析看板。<br>
+            如需查閱各模式的核心計算規則與必要欄位清單，請點擊左側選單的「<b>📖 使用說明</b>」。
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
 # 8. 底部頁尾資訊
 st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 st.markdown(
-    '<div style="text-align: center; color: #444455; font-size: 0.8rem; padding: 10px 0;">'
-    'I14 報表轉換與分析系統 &nbsp;&nbsp;•&nbsp;&nbsp; Streamlit + Zeabur &nbsp;&nbsp;•&nbsp;&nbsp; '
+    '<div style="text-align: center; color: #64748b; font-size: 0.8rem; padding: 10px 0;">'
+    '<b>I14 報表轉換與分析系統</b> &nbsp;&nbsp;•&nbsp;&nbsp; Streamlit + Zeabur &nbsp;&nbsp;•&nbsp;&nbsp; '
     f'v{__version__} &nbsp;&nbsp;•&nbsp;&nbsp; Developed by Ricky Yue'
     '</div>',
     unsafe_allow_html=True,
