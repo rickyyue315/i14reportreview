@@ -1,5 +1,15 @@
 # 版本記錄
 
+## v1.81.0 (2026-10-15)
+
+轉貨模式（P90D 0 Sales／ND SKU with Stock）的 Excel「轉貨單」工作表加入欄位分組著色，配合首列篩選大幅提升可讀性；欄位名稱、欄序與所有數值零變動：
+
+- **New: 轉貨單欄位分組著色** — 轉出店欄位（轉出 Site Code／轉出 Shop Name）與轉貨數量 (件)＝黃色表頭 FFD966／黃色資料底色 FFF2CC（轉貨數量資料加粗）；接收店欄位（接收 Site Code／接收 Shop Name／接收店 Shop Nature／接收店 OM／接收店 Sold Qty (P90D)／接收店銷售佔比 (同 SKU)／接收店同 SKU 分配總量 (件)／接收店 Shop Stock Qty (CM) 調前）＝淺藍表頭 9DC3E6／淺藍資料底色 DDEBF7；著色欄的識別欄字色改黑字，其餘欄位（Brand／SKU／SKU Desc／Buyer／Adj. MCH1／MCH2）維持預設深藍表頭 4472C4 白字與無底色
+- **版面** — 轉貨單表頭列高固定 30（配合換行與篩選箭頭）、維持首列凍結與自動篩選；欄寬沿用原自動欄寬；其他四個工作表（轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總）格式完全不變
+- **實作** — `_write_transfer_table()` 新增 `column_styles`（欄名 → 表頭／資料底色）與 `bold_data_columns` 關鍵字參數；著色映射集中於 `_TRANSFER_PLAN_STYLES` / `_TRANSFER_PLAN_BOLD_DATA_COLUMNS`，兩個轉貨模式共用同一引擎（說明頁亦同步加入「轉貨單欄位分組著色」導讀提示）
+- **測試** — `tests/test_p90d_transfer.py` 新增 2 項（著色映射逐欄斷言：轉出／轉貨數量／接收店／未著色欄的表頭與資料底色、字色與加粗；空轉貨單仍保留著色表頭）、`tests/test_transfer_nd.py` 新增 1 項（ND 模式共用同一著色格式）；全數 739 項測試通過
+- Change: `version.py` 1.80.0 → 1.81.0
+
 ## v1.80.0 (2026-10-15)
 
 新增 **ND SKU with Stock Review(轉貨模式)**：由指定轉出店舖（RP Type＝ND 且有庫存）轉貨至有銷售記錄的 RF 店舖。判定與輸出結構沿用 P90D 0 Sales Review(轉貨模式)，只把轉出條件由「0 Sales」換成「RP Type＝ND」、接收店收窄為 RP Type＝RF；既有模式輸出零變動：

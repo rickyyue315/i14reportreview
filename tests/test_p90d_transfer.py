@@ -438,6 +438,64 @@ def test_excel_structure_and_percent_format():
     assert ws.cell(row=2, column=qty_col).value == 8
 
 
+def test_excel_plan_group_colors():
+    """轉貨單欄位分組著色：黃＝轉出店與轉貨數量（表頭 FFD966／資料 FFF2CC、數量加粗）、
+    淺藍＝接收店相關欄位（表頭 9DC3E6／資料 DDEBF7）；其餘欄位維持預設深藍表頭、無資料底色。"""
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=10),
+        _row("S02", sku=1, sales=3, stock=0),
+        _row("S03", sku=1, sales=1, stock=0),
+    ])
+    plan, out_df, in_df, sku_df, mch_df, stats, _ = transform_p90d_transfer(df, ["S01"])
+    buf = generate_excel_p90d_transfer(plan, out_df, in_df, sku_df, mch_df, stats)
+    wb = load_workbook(buf)
+    ws = wb["轉貨單"]
+    headers = [c.value for c in ws[1]]
+    out_cols = ["轉出 Site Code", "轉出 Shop Name", "轉貨數量 (件)"]
+    in_cols = [
+        "接收 Site Code", "接收 Shop Name", "接收店 Shop Nature", "接收店 OM",
+        "接收店 Sold Qty (P90D)", "接收店銷售佔比 (同 SKU)",
+        "接收店同 SKU 分配總量 (件)", "接收店 Shop Stock Qty (CM) 調前",
+    ]
+    plain_cols = ["Brand", "SKU", "SKU Desc", "Buyer", "Adj. MCH1", "MCH2"]
+    for c in out_cols:
+        i = headers.index(c) + 1
+        assert ws.cell(row=1, column=i).fill.start_color.rgb.endswith("FFD966"), c
+        assert ws.cell(row=1, column=i).font.color.rgb.endswith("000000"), c
+        assert ws.cell(row=2, column=i).fill.start_color.rgb.endswith("FFF2CC"), c
+    for c in in_cols:
+        i = headers.index(c) + 1
+        assert ws.cell(row=1, column=i).fill.start_color.rgb.endswith("9DC3E6"), c
+        assert ws.cell(row=1, column=i).font.color.rgb.endswith("000000"), c
+        assert ws.cell(row=2, column=i).fill.start_color.rgb.endswith("DDEBF7"), c
+    for c in plain_cols:
+        i = headers.index(c) + 1
+        assert ws.cell(row=1, column=i).fill.start_color.rgb.endswith("4472C4"), c
+        assert ws.cell(row=1, column=i).font.color.rgb.endswith("FFFFFF"), c
+        assert ws.cell(row=2, column=i).fill.fill_type is None, c
+    # 轉貨數量資料列加粗；其餘著色欄資料列不加粗
+    qty_i = headers.index("轉貨數量 (件)") + 1
+    assert ws.cell(row=2, column=qty_i).font.bold is True
+    assert ws.cell(row=2, column=headers.index("接收店 OM") + 1).font.bold is not True
+    # 其他工作表維持預設格式（不受分組著色影響）
+    for name in ["轉出店舖彙總", "接收店舖彙總", "SKU 轉貨彙總", "MCH1 分類彙總"]:
+        assert wb[name].cell(row=1, column=1).fill.start_color.rgb.endswith("4472C4"), name
+        assert wb[name].cell(row=2, column=1).fill.fill_type is None, name
+
+
+def test_excel_plan_group_colors_when_plan_empty():
+    """空轉貨單仍保留著色表頭與「無符合資料」提示，不應拋錯。"""
+    df = _df([_row("S01", sku=1, sales=0, stock=5), _row("S02", sku=1, sales=0, stock=3)])
+    plan, out_df, in_df, sku_df, mch_df, stats, _ = transform_p90d_transfer(df, ["S01"])
+    assert plan.empty
+    buf = generate_excel_p90d_transfer(plan, out_df, in_df, sku_df, mch_df, stats)
+    wb = load_workbook(buf)
+    ws = wb["轉貨單"]
+    headers = [c.value for c in ws[1]]
+    assert ws.cell(row=1, column=headers.index("轉出 Site Code") + 1).fill.start_color.rgb.endswith("FFD966")
+    assert ws.cell(row=2, column=1).value == "無符合資料"
+
+
 def test_excel_empty_plan_writes_placeholder():
     df = _df([_row("S01", sku=1, sales=0, stock=5), _row("S02", sku=1, sales=0, stock=3)])
     plan, out_df, in_df, sku_df, mch_df, stats, _ = transform_p90d_transfer(df, ["S01"])

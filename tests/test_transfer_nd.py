@@ -387,6 +387,31 @@ def test_excel_empty_plan_writes_placeholder():
     assert wb["MCH1 分類彙總"].cell(row=1, column=1).value == "Adj. MCH1"
 
 
+def test_excel_plan_group_colors_in_nd_mode():
+    """ND 模式共用同一引擎：轉貨單欄位分組著色與 P90D 模式一致。"""
+    df = _df([
+        _row("S01", sku=1, stock=10, rp="ND"),
+        _row("S02", sku=1, sales=3, stock=0, rp="RF"),
+    ])
+    plan, out_df, in_df, sku_df, mch_df, stats, _ = transform_nd_transfer(df, ["S01"])
+    buf = generate_excel_nd_transfer(plan, out_df, in_df, sku_df, mch_df, stats)
+    wb = load_workbook(buf)
+    ws = wb["轉貨單"]
+    headers = [c.value for c in ws[1]]
+    _out = headers.index("轉出 Site Code") + 1
+    _qty = headers.index("轉貨數量 (件)") + 1
+    _in = headers.index("接收店 OM") + 1
+    _plain = headers.index("Brand") + 1
+    assert ws.cell(row=1, column=_out).fill.start_color.rgb.endswith("FFD966")
+    assert ws.cell(row=2, column=_out).fill.start_color.rgb.endswith("FFF2CC")
+    assert ws.cell(row=1, column=_qty).fill.start_color.rgb.endswith("FFD966")
+    assert ws.cell(row=2, column=_qty).font.bold is True
+    assert ws.cell(row=1, column=_in).fill.start_color.rgb.endswith("9DC3E6")
+    assert ws.cell(row=2, column=_in).fill.start_color.rgb.endswith("DDEBF7")
+    assert ws.cell(row=1, column=_plain).fill.start_color.rgb.endswith("4472C4")
+    assert ws.cell(row=2, column=_plain).fill.fill_type is None
+
+
 def test_p90d_guide_wording_unchanged():
     """P90D 模式的說明頁措辭不因新增 ND 模式而改變（零變動）。"""
     from modes.transfer_p90d import generate_excel_p90d_transfer, transform_p90d_transfer

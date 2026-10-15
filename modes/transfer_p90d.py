@@ -103,6 +103,28 @@ _TRANSFER_PCT_COLUMNS = frozenset({"接收店銷售佔比 (同 SKU)"})
 _TRANSFER_STATUS_ALLOCATED = "已全數分配"
 _TRANSFER_STATUS_NO_RECEIVER = "無接收店舖（保留原店）"
 
+# 「轉貨單」欄位分組著色（表頭底色、資料底色）：黃＝轉出店與轉貨數量、淺藍＝接收店相關欄位。
+# 只影響轉貨單的顯示格式，不改任何欄位名稱、欄序或數值。
+_TRANSFER_PLAN_HEAD_OUT = "FFD966"
+_TRANSFER_PLAN_TINT_OUT = "FFF2CC"
+_TRANSFER_PLAN_HEAD_IN = "9DC3E6"
+_TRANSFER_PLAN_TINT_IN = "DDEBF7"
+_TRANSFER_PLAN_STYLES = {
+    "轉出 Site Code": (_TRANSFER_PLAN_HEAD_OUT, _TRANSFER_PLAN_TINT_OUT),
+    "轉出 Shop Name": (_TRANSFER_PLAN_HEAD_OUT, _TRANSFER_PLAN_TINT_OUT),
+    "轉貨數量 (件)": (_TRANSFER_PLAN_HEAD_OUT, _TRANSFER_PLAN_TINT_OUT),
+    "接收 Site Code": (_TRANSFER_PLAN_HEAD_IN, _TRANSFER_PLAN_TINT_IN),
+    "接收 Shop Name": (_TRANSFER_PLAN_HEAD_IN, _TRANSFER_PLAN_TINT_IN),
+    "接收店 Shop Nature": (_TRANSFER_PLAN_HEAD_IN, _TRANSFER_PLAN_TINT_IN),
+    "接收店 OM": (_TRANSFER_PLAN_HEAD_IN, _TRANSFER_PLAN_TINT_IN),
+    "接收店 Sold Qty (P90D)": (_TRANSFER_PLAN_HEAD_IN, _TRANSFER_PLAN_TINT_IN),
+    "接收店銷售佔比 (同 SKU)": (_TRANSFER_PLAN_HEAD_IN, _TRANSFER_PLAN_TINT_IN),
+    "接收店同 SKU 分配總量 (件)": (_TRANSFER_PLAN_HEAD_IN, _TRANSFER_PLAN_TINT_IN),
+    "接收店 Shop Stock Qty (CM) 調前": (_TRANSFER_PLAN_HEAD_IN, _TRANSFER_PLAN_TINT_IN),
+}
+_TRANSFER_PLAN_BOLD_DATA_COLUMNS = ("轉貨數量 (件)",)
+_TRANSFER_PLAN_HEADER_ROW_HEIGHT = 30
+
 
 def _first_nonblank(values: pd.Series) -> str:
     vals = values.fillna("").astype(str).str.strip()
@@ -627,22 +649,48 @@ def transform_p90d_transfer(
     return plan_df, out_shop_df, in_shop_df, sku_df, mch_df, stats, warnings
 
 
-def _write_transfer_table(ws, df: pd.DataFrame, auto_filter: bool = False) -> None:
+def _write_transfer_table(ws, df: pd.DataFrame, auto_filter: bool = False,
+                          column_styles: dict | None = None,
+                          bold_data_columns=()) -> None:
+    """寫入一張轉貨表（表頭＋資料列）。
+
+    ``column_styles``：{欄名: (表頭底色, 資料底色)}，只影響該欄的顯示底色與表頭字色
+    （著色欄的表頭改用黑字；未列出的欄位沿用預設深藍表頭）；欄名、欄序與數值一律不變。
+    ``bold_data_columns``：資料列需加粗的欄名。
+    """
+    styles = dict(column_styles or {})
+    bold_cols = set(bold_data_columns or ())
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
     )
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
+    tinted_header_font = Font(bold=True, color="000000", size=11)
     bold_font = Font(bold=True, size=11)
     center_align = Alignment(horizontal="center", vertical="center")
     headers = list(df.columns)
+    tinted_header_fills = {
+        h: PatternFill(start_color=styles[h][0], end_color=styles[h][0], fill_type="solid")
+        for h in headers if h in styles
+    }
+    tinted_data_fills = {
+        i: PatternFill(start_color=styles[h][1], end_color=styles[h][1], fill_type="solid")
+        for i, h in enumerate(headers, 1) if h in styles and styles[h][1]
+    }
+    bold_data_cols = {i for i, h in enumerate(headers, 1) if h in bold_cols}
     for col_idx, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col_idx, value=h)
-        cell.font = header_font
-        cell.fill = header_fill
+        if h in tinted_header_fills:
+            cell.font = tinted_header_font
+            cell.fill = tinted_header_fills[h]
+        else:
+            cell.font = header_font
+            cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = thin_border
+    if tinted_header_fills:
+        ws.row_dimensions[1].height = _TRANSFER_PLAN_HEADER_ROW_HEIGHT
     if df.empty:
         ws.cell(row=2, column=1, value="無符合資料").font = Font(size=12)
     else:
@@ -658,7 +706,9 @@ def _write_transfer_table(ws, df: pd.DataFrame, auto_filter: bool = False) -> No
                 cell = ws.cell(row=excel_row, column=col_idx, value=val)
                 cell.border = thin_border
                 cell.alignment = center_align
-                if is_total:
+                if col_idx in tinted_data_fills:
+                    cell.fill = tinted_data_fills[col_idx]
+                if is_total or col_idx in bold_data_cols:
                     cell.font = bold_font
                 if isinstance(val, (int, float)) and not isinstance(val, bool):
                     cell.number_format = "0.0%" if h in _TRANSFER_PCT_COLUMNS else "#,##0"
@@ -757,19 +807,25 @@ def generate_excel_p90d_transfer(
         ],
         logic=_logic,
         sheet_rows=[
-            ("轉貨單", "每行一筆：轉出店 → 接收店、SKU、轉貨數量、接收店銷售佔比與分配總量", "執行轉貨的依據；同一接收店若有多行，代表多間轉出店供貨"),
+            ("轉貨單", "每行一筆：轉出店 → 接收店、SKU、轉貨數量、接收店銷售佔比與分配總量（黃色＝轉出店與轉貨數量、淺藍色＝接收店相關欄位）", "執行轉貨的依據；同一接收店若有多行，代表多間轉出店供貨"),
             ("轉出店舖彙總", "每間轉出店的轉出 SKU 數、轉出總量、已分配與未分配", "未分配 > 0 表示同 SKU 無接收店，需人工確認"),
             ("接收店舖彙總", "每間接收店的接收 SKU 數、接收總量與接收前後庫存", "接收後庫存明顯偏高者，可考慮改派"),
             ("SKU 轉貨彙總", "每個 SKU 的轉出店數、轉出總量、接收店數與分配結果", f"狀態為「{_TRANSFER_STATUS_NO_RECEIVER}」者不會轉出"),
             ("MCH1 分類彙總", "按 Adj. MCH1 的分類：轉出／接收 SKU 數與件數、未分配件數", "未分配 > 0 的分類表示同 SKU 無接收店舖；「(空白)」表示來源檔該欄空白"),
         ],
-        tips=_tips,
+        tips=_tips + [
+            "轉貨單已按欄位分組著色：黃色＝轉出店與轉貨數量（轉貨數量加粗）、淺藍色＝接收店相關欄位；配合首列篩選，可快速檢視個別店舖或 SKU 的轉貨安排。",
+        ],
     )
 
     if progress_callback:
         progress_callback(0.3, "建立轉貨單...")
     ws_plan = wb.create_sheet(title="轉貨單")
-    _write_transfer_table(ws_plan, plan_df, auto_filter=True)
+    _write_transfer_table(
+        ws_plan, plan_df, auto_filter=True,
+        column_styles=_TRANSFER_PLAN_STYLES,
+        bold_data_columns=_TRANSFER_PLAN_BOLD_DATA_COLUMNS,
+    )
 
     if progress_callback:
         progress_callback(0.5, "建立轉出店舖彙總...")
