@@ -29,7 +29,6 @@
 ├── version.py          # 版本號
 ├── requirements.txt    # Python 依賴
 ├── Dockerfile          # Docker 容器映像
-├── zeabur.yaml         # Zeabur 部署配置
 └── .streamlit/
     └── config.toml     # Streamlit 設定
 ```
@@ -50,22 +49,22 @@ docker build -t i14-report-review .
 docker run -p 8080:8080 i14-report-review
 ```
 
-### 部署至 Zeabur
+### 部署至雲端平台
 
-專案已預設 `zeabur.yaml` 與 `Dockerfile`，連接 GitHub 倉庫後可直接自動部署。
+專案已預設 `Dockerfile`，任何支援 Docker 的平台（或 Streamlit Cloud 直連 GitHub 倉庫）皆可直接部署。
 
-**Zeabur 部署機制**：倉庫根目錄有 `Dockerfile` 時，Zeabur (zbpack) 會自動以 Docker 構建；`requirements.txt` 已固定版本（`==`），確保每次構建可重現、加快緩存命中。
+**容器部署機制**：倉庫根目錄有 `Dockerfile` 時，平台會自動以 Docker 構建；`requirements.txt` 已固定版本（`==`），確保每次構建可重現、加快緩存命中。
 
 **運行優化（已內建）**：
 
 | 項目 | 設定 | 說明 |
 |------|------|------|
-| PORT 綁定 | `--server.port=${PORT:-8080}` | 自動適配 Zeabur 注入的 PORT，監聽 0.0.0.0 |
+| PORT 綁定 | `--server.port=${PORT:-8080}` | 自動適配平台注入的 PORT，未注入時用 8080，監聽 0.0.0.0 |
 | 健康檢查 | `/_stcore/health` | Docker HEALTHCHECK 以 Python 內建模組檢查（無需 curl，映像更小） |
 | 檔案監視 | `--server.fileWatcherType=none` | 生產環境關閉代碼監視，節省記憶體與 CPU |
 | WebSocket 壓縮 | `--server.enableWebsocketCompression=false` | 大數據表傳輸時降低 CPU 負擔 |
 | 遙測 | `--browser.gatherUsageStats=false` | 停用對外統計請求，加快載入 |
-| 日誌 | `PYTHONUNBUFFERED=1` | 即時輸出到 Zeabur Logs |
+| 日誌 | `PYTHONUNBUFFERED=1` | 即時輸出到容器日誌 |
 
 **容量建議**：應用會將 DataFrame 與生成的 Excel 保存在 session 記憶體中，建議服務配置 **至少 1GB RAM**（多用戶同時處理大檔案時建議 2GB）。Sidebar 底部會顯示目前行程的 Memory Usage，方便監察容器資源。若服務無故重啟，通常是 OOM（記憶體不足），可升級 plan 或提醒用戶按「🧹 釋放記憶體」。
 
@@ -287,4 +286,4 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 - **前端/框架**: Streamlit
 - **資料處理**: Pandas, NumPy
 - **Excel 產生**: OpenPyXL（安裝 lxml 時改用 lxml 寫出器加速存檔）
-- **部署**: Docker, Zeabur
+- **部署**: Docker, Streamlit Cloud

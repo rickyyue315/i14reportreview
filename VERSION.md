@@ -1,5 +1,15 @@
 # 版本記錄
 
+## v1.82.2 (2026-10-20)
+
+移除所有部署平台相關字眼（該平台已停止服務），改為中性的容器／雲端平台描述；計算邏輯、資料契約與匯出報表零變動：
+
+- **UI: 頁尾與側邊欄署名** — `views/analyzer_page.py` 側邊欄底部的平台署名只保留「Powered by Streamlit」，頁尾亦只保留「Streamlit」
+- **註解與文件措辭** — `Dockerfile`、`requirements.txt`、`README.md` 及記憶體用量函式 docstring 內的平台名稱一律改為「容器」／「Docker」；README「部署」章節改為「部署至雲端平台」，說明 Docker 映像與 Streamlit Cloud 兩種方式，運行優化表與容量建議內容不變
+- **移除平台配置檔** — 刪除平台專用的 YAML 部署配置檔（平台已結業，配置失效）；`Dockerfile` 已完整涵蓋建置與運行命令，Docker／Streamlit Cloud 部署不受影響
+- **版本記錄** — `VERSION.md` 舊版本條目內的平台名稱同步改為中性描述，事件與數值不變
+- Change: `version.py` 1.82.1 → 1.82.2
+
 ## v1.82.1 (2026-10-15)
 
 美化系統介面（全域主題、互動元件、分析工具主頁與使用說明頁），計算邏輯、資料契約與匯出報表零變動：
@@ -448,11 +458,11 @@ Safety Stock x NetStock Review「Summary」新增**零銷有貨紅底標示**—
 
 ## v1.46.1 (2026-09-24)
 
-修復 Streamlit Cloud（`i14reportreview.streamlit.app`）依賴安裝失敗，同時保持 Zeabur 部署不受影響——兩個平台共用同一組 `requirements.txt` 版本：
+修復 Streamlit Cloud（`i14reportreview.streamlit.app`）依賴安裝失敗，同時保持 Docker 容器部署不受影響——兩個平台共用同一組 `requirements.txt` 版本：
 
 - **問題** — Streamlit Cloud 已改用 Python 3.14.7 建置環境，而 streamlit 1.51.0 限定 `pyarrow>=7.0,<22`；pyarrow 21.0.0 沒有 Python 3.14 的預建 wheel，雲端在無 cmake 的環境下嘗試以原始碼編譯失敗，依賴安裝中止、應用無法啟動
 - **修復** — `requirements.txt` 兩處：streamlit `1.51.0` → `1.52.0`（1.52.0 起解除 pyarrow 版本上限），並新增 `pyarrow==22.0.0` 鎖定版本（pyarrow 22.0.0 為首個提供 Python 3.14 wheel 的版本，同時保有 Python 3.13 wheel）
-- **兩平台共用** — Zeabur（`Dockerfile` 的 `python:3.13-slim`，安裝 cp313 wheel）與 Streamlit Cloud（Python 3.14.7，安裝 cp314 wheel）皆直接取用預建 wheel，無需編譯；Zeabur 的部署設定零變動
+- **兩平台共用** — Docker 容器（`Dockerfile` 的 `python:3.13-slim`，安裝 cp313 wheel）與 Streamlit Cloud（Python 3.14.7，安裝 cp314 wheel）皆直接取用預建 wheel，無需編譯；容器部署設定零變動
 - **不變** — 應用程式碼、Excel 輸出與 RAW 欄序契約零變動
 - **測試** — streamlit 1.52.0 + pyarrow 22.0.0 環境下共 439 項測試通過
 - Change: `version.py` → 1.46.1
@@ -1080,12 +1090,12 @@ Safety Stock x NetStock Review：**Safety 設定不再跟隨存貨（調貨）�
 
 ## v1.8.4 (2026-08-28)
 
-- New: Zeabur 執行優化 — Dockerfile 移除 curl/apt 層，健康檢查改用 Python 內建模組（映像更細、構建更快）
+- New: 容器執行優化 — Dockerfile 移除 curl/apt 層，健康檢查改用 Python 內建模組（映像更細、構建更快）
 - New: 生產環境運行旗標 — `--server.fileWatcherType=none`（節省記憶體）、`--server.enableWebsocketCompression=false`（降低大數據表傳輸 CPU）、`--browser.gatherUsageStats=false`（停用遙測）
-- New: `PYTHONUNBUFFERED=1` — 日誌即時輸出到 Zeabur Logs
-- New: requirements.txt 固定版本（streamlit==1.51.0 / pandas==2.3.3 / numpy==2.3.4 / openpyxl==3.1.5），確保 Zeabur 構建可重現
-- New: Sidebar 底部新增 Memory Usage 顯示（讀取 /proc/self/status，僅 Linux 容器生效），方便監察 Zeabur 容器資源
-- Update: zeabur.yaml 運行命令與 Dockerfile 同步；README 擴充 Zeabur 部署機制與容量建議（≥1GB RAM）
+- New: `PYTHONUNBUFFERED=1` — 日誌即時輸出到容器日誌
+- New: requirements.txt 固定版本（streamlit==1.51.0 / pandas==2.3.3 / numpy==2.3.4 / openpyxl==3.1.5），確保 Docker 構建可重現
+- New: Sidebar 底部新增 Memory Usage 顯示（讀取 /proc/self/status，僅 Linux 容器生效），方便監察容器資源
+- Update: 容器運行命令與 Dockerfile 同步；README 擴充容器部署機制與容量建議（≥1GB RAM）
 
 ## v1.8.3 (2026-08-28)
 
@@ -1323,11 +1333,11 @@ Safety Stock x NetStock Review：**Safety 設定不再跟隨存貨（調貨）�
 
 ## v1.1.2 (2026-05-23)
 
-- Fix: Streamlit deployment on Python 3.14 (use `>=` deps, update zeabur `python_version` to 3.14, upgrade Docker to 3.13-slim)
+- Fix: Streamlit deployment on Python 3.14 (use `>=` deps, update deploy `python_version` to 3.14, upgrade Docker to 3.13-slim)
 - Fix: File-switch upload does not reload data when same file name is re-uploaded
 - Fix: SKU float-string conversion retains decimal place (e.g. `"123.0"`)
 - Fix: Progress bar regression — `_cb_transform` no longer prints before transform
-- Fix: Align zeabur `python_version` with Dockerfile base image
+- Fix: Align deploy `python_version` with Dockerfile base image
 - Fix: numpy deprecation warning on `np.full` without explicit dtype
 - Fix: Missing optional column warning only shown in dashboard, not on initial transform
 - Fix: Empty filter result raises clear error instead of crashing

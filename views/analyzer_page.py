@@ -80,7 +80,7 @@ from views.analyzer_helpers import (
 )
 
 def _process_rss_mb():
-    """讀取目前行程的實體記憶體用量 (MB)。僅 Linux（如 Zeabur 容器）有效，其他平台回傳 None。"""
+    """讀取目前行程的實體記憶體用量 (MB)。僅 Linux（如 Docker 容器）有效，其他平台回傳 None。"""
     try:
         with open("/proc/self/status", "r") as f:
             for line in f:
@@ -264,7 +264,7 @@ with st.sidebar:
         f'<b>I14 報表計算工具 v{__version__}</b><br>'
         f'{_mem_line}'
         'Developed by Ricky Yue<br>'
-        '<span style="color:#64748b;">Powered by Streamlit &amp; Zeabur</span>'
+        '<span style="color:#64748b;">Powered by Streamlit</span>'
         '</div>',
         unsafe_allow_html=True
     )
@@ -4868,7 +4868,7 @@ else:
 st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 st.markdown(
     '<div style="text-align: center; color: #64748b; font-size: 0.8rem; padding: 10px 0;">'
-    '<b>I14 報表轉換與分析系統</b> &nbsp;&nbsp;•&nbsp;&nbsp; Streamlit + Zeabur &nbsp;&nbsp;•&nbsp;&nbsp; '
+    '<b>I14 報表轉換與分析系統</b> &nbsp;&nbsp;•&nbsp;&nbsp; Streamlit &nbsp;&nbsp;•&nbsp;&nbsp; '
     f'v{__version__} &nbsp;&nbsp;•&nbsp;&nbsp; Developed by Ricky Yue'
     '</div>',
     unsafe_allow_html=True,

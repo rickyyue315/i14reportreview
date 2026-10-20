@@ -1,6 +1,6 @@
 FROM python:3.13-slim
 
-# 即時輸出日誌到 Zeabur console；避免寫入 .pyc（節省容器磁碟與啟動時間）
+# 即時輸出日誌到容器 console；避免寫入 .pyc（節省容器磁碟與啟動時間）
 # *_NUM_THREADS=1：限制 BLAS 執行緒池，低配容器省記憶體、降 CPU 爭用
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -15,7 +15,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# 以 pip 安裝依賴（--quiet 只保留警告與錯誤，每行下載不刷進度條，Zeabur 構建日誌只留重點）
+# 以 pip 安裝依賴（--quiet 只保留警告與錯誤，每行下載不刷進度條，構建日誌只留重點）
 COPY requirements.txt .
 RUN pip install --no-cache-dir --quiet --no-input -r requirements.txt
 
