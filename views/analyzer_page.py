@@ -1249,7 +1249,7 @@ if uploaded_file is not None:
             )
     elif mode == "Safety Stock x NetStock Review":
         with st.expander("🔀 調貨事件 Review Safety 設定說明（點選展開）", expanded=False):
-            st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 7 / Mix 9 / Non Tourist 10 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。另附 **全列預防性 Safety 設定建議**（母體為全部店舖×SKU 列，不依賴調貨事件；ND 列不作上調）：RAW「全列」五欄與「🛡️ Safety 設定建議 (全列)」分頁供一次過設定適合的 Safety Stock，減少日後調貨次數。主表另附「建議 Safety 設定值 Turnday」（建議值 ÷ (P90D 月均 ÷ 30)，月均 0 留空），受保底影響的建議在店舖問題 SKU 建議方法加註保底原因。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM、Shop Nature＋OM、銷量（高銷／中銷／低銷／零銷 四帶）或 銷量＋Shop Nature（Nature×銷量帶 12 組）分類；其中 OM／銷量／銷量＋Shop Nature 維度計算與預設相同，僅 Summary／交叉表改按 OM、Nature×OM、銷量帶或 Nature×銷量帶分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。RAW／主表恆附 **銷量帶**（同 SKU 內按 Sold Qty (P90D) 排名分帶）與 **銷量存貨分類**（高銷缺貨／低銷積壓／零銷積壓／正常；店舖周轉日數門檻預設缺貨 7 日、積壓 30 日、保底 2 件，與調貨 14 日線及 Safety 基準天數互相獨立）；「Review 摘要」另附 **⑤ 銷量 × 存貨分類交叉表**（母體為全部店舖×SKU 列）與 **⑥ 全列 Safety 調整方向分類／明細**。可勾選 **啟用銷量再平衡**（預設關閉）：高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方（仍須 D001 低於門檻、補到 14 日需求 > 0 且同 SKU 有貨可調），積壓列經既有轉出判定提供來源；跟隨單向／雙向框架，自我調貨／同 Nature／同OM 守衛與池級歸零不放寬。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示，存貨偏低分組另以淺藍底標示庫存佔比欄；以銷量／銷量＋Shop Nature 分類時，零銷組「加總 - Shop Stock Qty (CM) %」大於 0% 另以醒目紅底標示——零銷售而仍有存貨，理論上全屬 Overstock）。")
+            st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 10 / Mix 9 / Non Tourist 7 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。另附 **全列預防性 Safety 設定建議**（母體為全部店舖×SKU 列，不依賴調貨事件；ND 列不作上調）：RAW「全列」五欄與「🛡️ Safety 設定建議 (全列)」分頁供一次過設定適合的 Safety Stock，減少日後調貨次數。主表另附「建議 Safety 設定值 Turnday」（建議值 ÷ (P90D 月均 ÷ 30)，月均 0 留空），受保底影響的建議在店舖問題 SKU 建議方法加註保底原因。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM、Shop Nature＋OM、銷量（高銷／中銷／低銷／零銷 四帶）或 銷量＋Shop Nature（Nature×銷量帶 12 組）分類；其中 OM／銷量／銷量＋Shop Nature 維度計算與預設相同，僅 Summary／交叉表改按 OM、Nature×OM、銷量帶或 Nature×銷量帶分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。RAW／主表恆附 **銷量帶**（同 SKU 內按 Sold Qty (P90D) 排名分帶）與 **銷量存貨分類**（高銷缺貨／低銷積壓／零銷積壓／正常；店舖周轉日數門檻預設缺貨 7 日、積壓 30 日、保底 2 件，與調貨 14 日線及 Safety 基準天數互相獨立）；「Review 摘要」另附 **⑤ 銷量 × 存貨分類交叉表**（母體為全部店舖×SKU 列）與 **⑥ 全列 Safety 調整方向分類／明細**。可勾選 **啟用銷量再平衡**（預設關閉）：高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方（仍須 D001 低於門檻、補到 14 日需求 > 0 且同 SKU 有貨可調），積壓列經既有轉出判定提供來源；跟隨單向／雙向框架，自我調貨／同 Nature／同OM 守衛與池級歸零不放寬。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示，存貨偏低分組另以淺藍底標示庫存佔比欄；以銷量／銷量＋Shop Nature 分類時，零銷組「加總 - Shop Stock Qty (CM) %」大於 0% 另以醒目紅底標示——零銷售而仍有存貨，理論上全屬 Overstock）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -1297,7 +1297,7 @@ if uploaded_file is not None:
             sd_tourist = st.number_input(
                 "🧳 Tourist (日)", min_value=_HYBRID_SAFETY_DAYS_MIN, max_value=_HYBRID_SAFETY_DAYS_MAX,
                 value=_HYBRID_SAFETY_DAYS_DEFAULT["Tourist"], step=1, key="hy_sd_tourist",
-                help=_sd_help + " 預設 7 日。",
+                help=_sd_help + " 預設 10 日。",
             )
         with _sd_cols[1]:
             sd_mix = st.number_input(
@@ -1309,7 +1309,7 @@ if uploaded_file is not None:
             sd_nt = st.number_input(
                 "🏪 Non Tourist (日)", min_value=_HYBRID_SAFETY_DAYS_MIN, max_value=_HYBRID_SAFETY_DAYS_MAX,
                 value=_HYBRID_SAFETY_DAYS_DEFAULT["Non Tourist"], step=1, key="hy_sd_nt",
-                help=_sd_help + " 預設 10 日。",
+                help=_sd_help + " 預設 7 日。",
             )
         _safety_days = {
             "Tourist": int(sd_tourist), "Mix": int(sd_mix), "Non Tourist": int(sd_nt),

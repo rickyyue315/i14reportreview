@@ -225,7 +225,7 @@ def test_transform_combined_backward_compat_and_clamp_warning():
     )
     assert "Safety 基準天數" in raw.columns
     assert "Safety 周轉所需量" in raw.columns
-    assert raw["Safety 周轉所需量"].tolist() == [7]
+    assert raw["Safety 周轉所需量"].tolist() == [10]  # 未傳 safety_days → 預設 Tourist 10 日
 
     # 超出範圍的基準天數箝制進 7–10 並列 warning
     _, raw2, _, warnings2 = transform_combined(

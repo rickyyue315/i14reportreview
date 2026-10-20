@@ -275,9 +275,9 @@ def _add_combined_recommendation_columns(
     # Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 基準天數)，含最低 3 件保底
     # （沿用現行 OOS 底線保底；負數 P90D 按 0 計算；其他 Nature 值歸 Non Tourist 天數）。
     _days_arr = np.where(
-        shop_nature.values == "tourist", _ssr_days.get("Tourist", 7),
+        shop_nature.values == "tourist", _ssr_days.get("Tourist", 10),
         np.where(shop_nature.values == "mix", _ssr_days.get("Mix", 9),
-                 _ssr_days.get("Non Tourist", 10)),
+                 _ssr_days.get("Non Tourist", 7)),
     ).astype(float)
     _sold_p90d = _safe_numeric(df.get("Sold Qty (P90D)", _safe_default_series(0, df.index))).values
     _sold_p90d = np.maximum(_sold_p90d, 0.0)
@@ -1033,9 +1033,9 @@ def _write_combined_guide_sheet(ws, stats, dimension):
     _basis = _normalize_ssr_safety_basis(st_.get("safety_basis", "rate"))
     _sd = st_.get("safety_days") or dict(_HYBRID_SAFETY_DAYS_DEFAULT)
     _sd_label = _hybrid_safety_days_label({
-        "Tourist": int(_sd.get("Tourist", 7)),
+        "Tourist": int(_sd.get("Tourist", 10)),
         "Mix": int(_sd.get("Mix", 9)),
-        "Non Tourist": int(_sd.get("Non Tourist", 10)),
+        "Non Tourist": int(_sd.get("Non Tourist", 7)),
     })
     basis_txt = ("周轉天數 (按 Nature) — 建議值取 Safety 周轉所需量（含最低 3 件保底）"
                  if _basis == _SSR_SAFETY_BASIS_TURNDAY

@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.83.0 (2026-10-20)
+
+調貨預設規則微調：Safety 基準天數按 Shop Nature 改為**本地舖 7 日／混合舖 9 日／遊客舖 10 日**（原為本地 10／混合 9／遊客 7，即本地舖與遊客舖對調），指引與系統預設值同步對齊；調貨段（14 日線、可轉出量、分配結果）零變動：
+
+- **Change: Safety 基準天數預設值** — `modes/framework.py` 的 `_HYBRID_SAFETY_DAYS_DEFAULT` 改為 `{"Tourist": 10, "Mix": 9, "Non Tourist": 7}`；可調範圍維持 7–10 日，超出範圍箝制與 warning 行為不變。Safety 周轉所需量、Safety Review、建議 Safety 設定值與調整量、全列預防性 Safety 建議、店舖問題 SKU 的數值隨之更新（下調補底 3 件規則不變）
+- **Fix: 逐 Nature fallback 天數** — `modes/safety_review.py` 兩處 `_ssr_days.get(...)` 的預設值同步改為 Tourist 10／Non Tourist 7，避免缺參數時退回舊天數而與介面預設不一致
+- **UI／文件文字** — `views/analyzer_page.py` 三個輸入的 `value` 直接取自常數（自動跟隨），只更新說明文字（Tourist 預設 10 日、Non Tourist 預設 7 日）；`views/usage_page.py` 與 `README.md` 的基準天數說明同步改為 Tourist 10／Mix 9／Non Tourist 7；`modes/hybrid.py` docstring 同步
+- **指引（md＋docx）** — `跨OM組別調貨指引.md` 第 2 節名詞定義、第 5 節七點速覽規則五至七、第 5.6 節對照表與第 6.4 節示例同步改為 7／9／10（示例所需量算式改為 9 ÷ 90 × 7，結果仍為 1 件），文件狀態、編訂日期與對應系統版本更新為 v1.83.0；以 `scripts/make_om_transfer_guide_docx.py` 重新產生 Word 檔（含七點速覽單頁版）
+- **測試** — `tests/test_hybrid_mode.py`（預設值與標籤、normalizer、Nature 天數情境、全列 Safety、補底 3 件邊界）與 `tests/test_safety_turnday.py`（未傳 `safety_days` 的 backward-compat 期望值）按新基準重算：T01 Tourist 10 日 → 所需 40 件、N01 Non Tourist 7 日 → 所需 7 件（調整 −23）、N07 所需 1 件（補底後等於現值 3 件 → 設定正常）；全數 740 項測試通過
+- Change: `version.py` 1.82.2 → 1.83.0
+
 ## v1.82.2 (2026-10-20)
 
 移除所有部署平台相關字眼（該平台已停止服務），改為中性的容器／雲端平台描述；計算邏輯、資料契約與匯出報表零變動：

@@ -515,7 +515,8 @@ def _hybrid_shortage_hint_text(dimension) -> str:
 
 
 # ── Safety 基準周轉天數（Review 線；與調貨段的 14 日線分開，Safety 不跟隨存貨周轉）──
-_HYBRID_SAFETY_DAYS_DEFAULT = {"Tourist": 7, "Mix": 9, "Non Tourist": 10}
+# 預設按 Shop Nature：本地舖 7 日／混合舖 9 日／遊客舖 10 日（可調範圍 7–10 日）。
+_HYBRID_SAFETY_DAYS_DEFAULT = {"Tourist": 10, "Mix": 9, "Non Tourist": 7}
 
 
 

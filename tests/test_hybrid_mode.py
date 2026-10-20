@@ -244,11 +244,11 @@ def test_donor_boundary_equal_is_normal():
 def test_tourist_normal_setting_when_covered():
     rows = [dict(r) for r in _SCENARIO_A]
     rows[0].update({"SKU": 500, "Site Code": "T03", "Adj. Safety Stock": 60})
-    rows[1].update({"SKU": 500, "Site Code": "N03", "Adj. Safety Stock": 10})
+    rows[1].update({"SKU": 500, "Site Code": "N03", "Adj. Safety Stock": 7})
     raw, sc_summary, _, _, _, _, _ = transform_hybrid(_df([rows[0], rows[1]]))
-    assert _get(raw, "T03", "Safety Review") == "設定正常—缺貨非設定因素"  # 預設 Tourist 7 日：60 ≥ 28
+    assert _get(raw, "T03", "Safety Review") == "設定正常—缺貨非設定因素"  # 預設 Tourist 10 日：60 ≥ 40
     assert pd.isna(_get(raw, "T03", "Safety 建議調整量"))
-    assert _get(raw, "N03", "Safety Review") == "設定正常—過剩非設定因素"  # 預設 Non Tourist 10 日：10 ≤ 10
+    assert _get(raw, "N03", "Safety Review") == "設定正常—過剩非設定因素"  # 預設 Non Tourist 7 日：7 ≤ 7
 
 
 def test_no_sale_donor_suggests_zero():
@@ -1483,17 +1483,17 @@ _TRANSFER_COLS = ["調入需求量 (補到14日)", "實際調入量", "調入缺
 
 
 def test_safety_days_defaults_and_range():
-    assert _HYBRID_SAFETY_DAYS_DEFAULT == {"Tourist": 7, "Mix": 9, "Non Tourist": 10}
+    assert _HYBRID_SAFETY_DAYS_DEFAULT == {"Tourist": 10, "Mix": 9, "Non Tourist": 7}
     assert (_HYBRID_SAFETY_DAYS_MIN, _HYBRID_SAFETY_DAYS_MAX) == (7, 10)
     assert _hybrid_safety_days_label(_HYBRID_SAFETY_DAYS_DEFAULT) == \
-        "Tourist 7 日 / Mix 9 日 / Non Tourist 10 日"
+        "Tourist 10 日 / Mix 9 日 / Non Tourist 7 日"
 
 
 def test_safety_days_normalizer_ignores_invalid():
     assert _hybrid_safety_days(None) == (_HYBRID_SAFETY_DAYS_DEFAULT, [])
     assert _hybrid_safety_days({}) == (_HYBRID_SAFETY_DAYS_DEFAULT, [])
-    assert _hybrid_safety_days({"Mix": 10}) == ({"Tourist": 7, "Mix": 10, "Non Tourist": 10}, [])
-    assert _hybrid_safety_days({" Tourist ": "8"}) == ({"Tourist": 8, "Mix": 9, "Non Tourist": 10}, [])
+    assert _hybrid_safety_days({"Mix": 10}) == ({"Tourist": 10, "Mix": 10, "Non Tourist": 7}, [])
+    assert _hybrid_safety_days({" Tourist ": "8"}) == ({"Tourist": 8, "Mix": 9, "Non Tourist": 7}, [])
     # 未知 Nature、非數值、非正數一律忽略（退回預設，不拋錯）
     assert _hybrid_safety_days({"VIP": 5, "Mix": None, "Tourist": 0, "Non Tourist": -3,
                                 "Bad": "x"}) == (_HYBRID_SAFETY_DAYS_DEFAULT, [])
@@ -1520,24 +1520,24 @@ def test_safety_days_non_integer_rejected():
 
 
 def test_safety_line_follows_nature_days():
-    raw, _, _, _, _, stats, _ = transform_hybrid(_df(_SCENARIO_A))  # 預設 7 / 9 / 10
-    assert stats["safety_days"] == {"Tourist": 7, "Mix": 9, "Non Tourist": 10}
-    # T01 Tourist：ceil(360/90 × 7) = 28，現有 30 → 不再判不足（14 日基準下會判不足）
-    assert int(_get(raw, "T01", _HYBRID_SAFETY_DAYS_COLUMN)) == 7
-    assert int(_get(raw, "T01", _HYBRID_SAFETY_LINE_COLUMN)) == 28
-    assert _get(raw, "T01", "Safety Review") == "設定正常—缺貨非設定因素"
-    assert pd.isna(_get(raw, "T01", "Safety 建議調整量"))
-    # N01 Non Tourist：ceil(90/90 × 10) = 10，現有 30 → 過高 −20
-    assert int(_get(raw, "N01", _HYBRID_SAFETY_DAYS_COLUMN)) == 10
-    assert int(_get(raw, "N01", _HYBRID_SAFETY_LINE_COLUMN)) == 10
-    assert int(_get(raw, "N01", "建議 Safety 設定值")) == 10
-    assert float(_get(raw, "N01", "Safety 建議調整量")) == -20
-    # M01 Mix：ceil(90/90 × 9) = 9，現有 14 → 原本「等於 14 邊界＝正常」，現改為過高 −5
+    raw, _, _, _, _, stats, _ = transform_hybrid(_df(_SCENARIO_A))  # 預設 10 / 9 / 7
+    assert stats["safety_days"] == {"Tourist": 10, "Mix": 9, "Non Tourist": 7}
+    # T01 Tourist：ceil(360/90 × 10) = 40，現有 30 → 判不足 +10
+    assert int(_get(raw, "T01", _HYBRID_SAFETY_DAYS_COLUMN)) == 10
+    assert int(_get(raw, "T01", _HYBRID_SAFETY_LINE_COLUMN)) == 40
+    assert _get(raw, "T01", "Safety Review") == "Safety 設定不足"
+    assert float(_get(raw, "T01", "Safety 建議調整量")) == 10
+    # N01 Non Tourist：ceil(90/90 × 7) = 7，現有 30 → 過高 −23
+    assert int(_get(raw, "N01", _HYBRID_SAFETY_DAYS_COLUMN)) == 7
+    assert int(_get(raw, "N01", _HYBRID_SAFETY_LINE_COLUMN)) == 7
+    assert int(_get(raw, "N01", "建議 Safety 設定值")) == 7
+    assert float(_get(raw, "N01", "Safety 建議調整量")) == -23
+    # M01 Mix：ceil(90/90 × 9) = 9，現有 14 → 過高 −5
     assert int(_get(raw, "M01", _HYBRID_SAFETY_DAYS_COLUMN)) == 9
     assert _get(raw, "M01", "Safety Review") == "Safety 設定過高"
     assert float(_get(raw, "M01", "Safety 建議調整量")) == -5
-    assert stats["under_rows"] == 0 and stats["over_rows"] == 2 and stats["normal_rows"] == 1
-    assert stats["over_dec_total"] == -25 and stats["under_inc_total"] == 0
+    assert stats["under_rows"] == 1 and stats["over_rows"] == 2 and stats["normal_rows"] == 0
+    assert stats["over_dec_total"] == -28 and stats["under_inc_total"] == 10
 
 
 def test_transfers_unchanged_by_safety_days():
@@ -1559,9 +1559,9 @@ def test_transfers_unchanged_by_safety_days():
 
 def test_safety_days_echoed_in_raw_and_recovered_by_fallback():
     raw, _, diagnosis, _, _, stats, _ = transform_hybrid(_df(_SCENARIO_A), safety_days={"Mix": 8})
-    assert stats["safety_days"] == {"Tourist": 7, "Mix": 8, "Non Tourist": 10}
+    assert stats["safety_days"] == {"Tourist": 10, "Mix": 8, "Non Tourist": 7}
     assert raw[_HYBRID_SAFETY_DAYS_COLUMN].dtype.kind in "iu"
-    for site, day in (("T01", 7), ("M01", 8), ("N01", 10)):
+    for site, day in (("T01", 10), ("M01", 8), ("N01", 7)):
         assert int(_get(raw, site, _HYBRID_SAFETY_DAYS_COLUMN)) == day
         assert int(_get(diagnosis, site, _HYBRID_SAFETY_DAYS_COLUMN)) == day
     assert _hybrid_stats_from_raw(raw)["safety_days"] == stats["safety_days"]
@@ -1931,7 +1931,7 @@ def test_excel_dimension_layouts():
 # 規則：過高列所需量 ≥ 1 且現有 ≥ 3 件 → 建議最低 3 件（現有 3 件補底後相等 → 設定正常）；
 #       現有 1–2 件 → 維持原所需量（不強制上調到 3）；所需量 = 0（零銷售歸零）不設保底；
 #       不足列（TurnDay 驅動上調）一律照原所需量；「Safety 周轉所需量」欄維持原值作稽核。
-# 預設基準天數：Tourist 7 / Mix 9 / Non Tourist 10。
+# 預設基準天數：Tourist 10 / Mix 9 / Non Tourist 7。
 # ──────────────────────────────────────────────────────────────────────────────
 _MIN3_ROWS = [
     {"SKU": 600, "Site Code": "T06", "Shop Nature": "Tourist",
@@ -1943,7 +1943,7 @@ _MIN3_ROWS = [
      "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 10},   # 所需 1 → 補底 3
     {"SKU": 600, "Site Code": "N07", "Shop Nature": "Non Tourist",
      "Sold Qty (P90D)": 10.0, "Shop Stock Qty (CM)": 30.0,
-     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 3},    # 所需 2 → 補底後 = 現值 → 正常
+     "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 3},    # 所需 1 → 補底後 = 現值 → 正常
     {"SKU": 600, "Site Code": "N08", "Shop Nature": "Non Tourist",
      "Sold Qty (P90D)": 9.0, "Shop Stock Qty (CM)": 30.0,
      "Shop Monthly Sold Qty (P90D)": 30.5, "Adj. Safety Stock": 2},    # 現有 1–2 件 → 維持所需 1
@@ -1965,7 +1965,7 @@ def test_min3_floor_applies_to_over_rows():
 
 def test_min3_floor_equal_current_becomes_normal():
     raw, stats = _min3_raw_and_stats()
-    assert int(_get(raw, "N07", "Safety 周轉所需量")) == 2
+    assert int(_get(raw, "N07", "Safety 周轉所需量")) == 1
     assert _get(raw, "N07", "Safety Review") == "設定正常—過剩非設定因素"  # 補底 3 = 現值，不出現 0 調整量假動作
     assert pd.isna(_get(raw, "N07", "建議 Safety 設定值"))
     assert pd.isna(_get(raw, "N07", "Safety 建議調整量"))
@@ -1981,7 +1981,7 @@ def test_min3_floor_never_forces_low_current_up():
 
 def test_min3_floor_not_applied_to_increase_rows():
     raw, _ = _min3_raw_and_stats()
-    assert int(_get(raw, "T06", "Safety 周轉所需量")) == 2  # ceil(18/90×7)
+    assert int(_get(raw, "T06", "Safety 周轉所需量")) == 2  # ceil(18/90×10)
     assert _get(raw, "T06", "Safety Review") == "Safety 設定不足"
     assert int(_get(raw, "T06", "建議 Safety 設定值")) == 2  # TurnDay 驅動上調照常（目標 1–2 件不合保底）
     assert float(_get(raw, "T06", "Safety 建議調整量")) == 2
@@ -2537,15 +2537,15 @@ def test_full_safety_covers_all_rows_with_same_basis():
                 "全列建議 Safety 設定值", "全列 Safety 建議調整量",
                 "全列建議 Safety 設定值 Turnday"]:
         assert col in raw.columns
-    # 全列所需量與事件版同口徑（預設 Tourist 7 / Mix 9 / Non Tourist 10）
-    assert int(_get(raw, "T01", "全列 Safety 周轉所需量")) == 28
-    assert int(_get(raw, "N01", "全列 Safety 周轉所需量")) == 10
-    # 全列不設調貨事件門檻：T01 現有 30 > 28 → 全列過高（事件版因屬需要調入列而判設定正常）；
-    # N01 現有 30 > 10 → 全列過高
-    assert _get(raw, "T01", "全列 Safety Review") == "Safety 設定過高"
-    assert float(_get(raw, "T01", "全列 Safety 建議調整量")) == -2
+    # 全列所需量與事件版同口徑（預設 Tourist 10 / Mix 9 / Non Tourist 7）
+    assert int(_get(raw, "T01", "全列 Safety 周轉所需量")) == 40
+    assert int(_get(raw, "N01", "全列 Safety 周轉所需量")) == 7
+    # 全列不設調貨事件門檻：T01 現有 30 < 40 → 全列不足（事件版因屬需要調入列亦判不足）；
+    # N01 現有 30 > 7 → 全列過高
+    assert _get(raw, "T01", "全列 Safety Review") == "Safety 設定不足"
+    assert float(_get(raw, "T01", "全列 Safety 建議調整量")) == 10
     assert _get(raw, "N01", "全列 Safety Review") == "Safety 設定過高"
-    assert float(_get(raw, "N01", "全列 Safety 建議調整量")) == -20
+    assert float(_get(raw, "N01", "全列 Safety 建議調整量")) == -23
     assert stats["full_action_rows"] == stats["full_under_rows"] + stats["full_over_rows"]
     assert stats["full_normal_rows"] == stats["total_raw_rows"] - stats["full_action_rows"]
 
@@ -2555,7 +2555,7 @@ def test_full_safety_nd_never_increases():
     rows[0]["RP Type"] = "ND"
     rows[0]["Adj. Safety Stock"] = 0
     raw, _, _, _, _, stats, _ = transform_hybrid(_df(rows))
-    # T01 ND 且現有 0 < 所需 28 → 仍不作上調（不可補貨）
+    # T01 ND 且現有 0 < 所需 40 → 仍不作上調（不可補貨）
     assert _get(raw, "T01", "全列 Safety Review") == "設定正常"
     assert pd.isna(_get(raw, "T01", "全列建議 Safety 設定值"))
 

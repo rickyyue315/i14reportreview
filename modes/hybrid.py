@@ -1371,7 +1371,7 @@ def transform_hybrid(
       **調貨段恆以 14 日為基準，不受 safety_days 影響。**
     - Review 段（Safety 基準周轉天數，按 Shop Nature 分別設定）：
       Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 的基準天數)；
-      safety_days 預設 {"Tourist": 7, "Mix": 9, "Non Tourist": 10}（UI 建議範圍 7–10 日）。
+      safety_days 預設 {"Tourist": 10, "Mix": 9, "Non Tourist": 7}（UI 建議範圍 7–10 日）。
       Safety 設定不跟隨存貨周轉（調貨）天數，兩段基準各自獨立。
       Tourist 需調入列：現有 Adj. Safety Stock < 所需量 → Safety 設定不足；
       已標示 SKU 的有貨列（實際轉出或可轉出未使用）：
