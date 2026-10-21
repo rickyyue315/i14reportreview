@@ -108,3 +108,9 @@ MODE_REGISTRY["ND SKU with Stock Review(轉貨模式)"] = {
     "transform": "transform_nd_transfer",
     "generate_excel": "generate_excel_nd_transfer",
 }
+
+MODE_REGISTRY["RAW 明細轉化"] = {
+    "module": "modes.raw_convert",
+    "transform": "transform_raw_convert",
+    "generate_excel": "generate_excel_raw_convert",
+}

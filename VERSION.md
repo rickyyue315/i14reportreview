@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.84.0 (2026-10-21)
+
+新增 **RAW 明細轉化** 模式：純粹把來源檔轉化為 RAW 明細工作表，不作任何 OOS／Overstock／P90D 0 Sales 統計，亦不依銷量、庫存或統計條件篩選列；既有模式輸出零變動：
+
+- **New: RAW 明細轉化** — 新模組 `modes/raw_convert.py`（`transform_raw_convert`／`generate_excel_raw_convert`），已登記於 `MODE_REGISTRY` 並由 `transformer.py` 墊片轉出。清理規則沿用 `_clean_dataframe`（剔除合計列與 117 - Marketing）；Shop Nature 篩選為選填（預設全選，即不篩選）
+- **輸出** — 單一工作表 `RAW`：保留來源檔全部欄位（欄序沿用 RAW 可讀性重排）；由 Item_Shop 以 Site Code 解析 **SKU Desc** 與 **Shop Name**（原 I14 沒有獨立的品項描述與店舖名稱欄位）；SKU 統一為文字格式；Item_Shop 缺欄時兩欄留空並列 warning
+- **UI** — 「選擇分析模式」末位新增該模式，並列入「✂️ 商品與對比」分類提示；結果頁顯示轉化列數與欄數、RAW 前 200 筆預覽、置頂與底部下載；本模式不提供「略過 RAW 明細」選項（產出即為 RAW）
+- **文件** — README 新增模式說明；使用說明頁新增模式條目與必要欄位說明
+- **測試** — `tests/test_raw_convert.py` 新增 14 項（註冊、不篩選列、保留欄位、Item_Shop 解析、合計列剔除、SKU 文字化、Shop Nature 篩選、必要欄位與缺欄警告、空結果、Excel 單一工作表與儲存格值）；全數 754 項測試通過
+- Change: `version.py` 1.83.0 → 1.84.0
+
 ## v1.83.0 (2026-10-20)
 
 調貨預設規則微調：Safety 基準天數按 Shop Nature 改為**本地舖 7 日／混合舖 9 日／遊客舖 10 日**（原為本地 10／混合 9／遊客 7，即本地舖與遊客舖對調），指引與系統預設值同步對齊；調貨段（14 日線、可轉出量、分配結果）零變動：

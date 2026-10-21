@@ -552,3 +552,7 @@ from modes.transfer_p90d import *  # noqa: F401,F403
 
 # ─── ND SKU with Stock Review(轉貨模式)：介面位於 modes/transfer_nd.py，引擎與 P90D 模式共用（墊片 re-export）───
 from modes.transfer_nd import *  # noqa: F401,F403
+
+
+# ─── RAW 明細轉化：實作已遷至 modes/raw_convert.py（墊片 re-export）───
+from modes.raw_convert import *  # noqa: F401,F403

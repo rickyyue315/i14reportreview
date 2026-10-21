@@ -358,6 +358,22 @@ Safety Stock 月度變化計算：
 8. **轉變前後追蹤(T0)** = 只收 RF→ND 與 ND→RF 事件，以轉變本月為 T0 列示 T-1／T0／T+1；T+1 取資料內下一個月份，缺資料者標示未有次月資料
      """),
 
+    ("🧾 RAW 明細轉化",
+     """
+- 純粹把 By SKUxShop 來源檔轉化為 RAW 明細工作表，不作任何 OOS／Overstock／P90D 0 Sales 等統計或判定，亦不篩選列
+- 保留來源檔案全部欄位（欄序依可讀性重排：識別→品項屬性→庫存與銷售→其他），並另加 **SKU Desc** 與 **Shop Name**（由 Item_Shop 解析；原 I14 沒有獨立的品項描述與店舖名稱欄位）
+- 清理規則與其他模式一致：剔除合計列（Total／Applied filters）與 117 - Marketing 行
+- 輸出：RAW（單一工作表）
+     """,
+     """
+1. **SKU Desc／Shop Name** = 由 `Item_Shop`（格式為「品名…{Site Code}-{店名}」）以 Site Code 解析：Shop Name 取 Site Code 之後的文字；SKU Desc 取 Site Code 之前的文字（去除前導編號與括號）；Item_Shop 缺欄時兩欄留空並列 warning
+2. **SKU** 統一為文字格式（數值如 1.0 轉為 1）
+3. 不作 Safety、周轉、銷量帶或調貨計算；數值沿用其他模式 RAW 的寫入規則（浮點數保留至小數一位）
+4. Shop Nature 篩選沿用側邊欄設定（預設全選，即不篩選）
+5. 不提供「略過 RAW 明細」選項（本模式的產出即為 RAW）
+     """,
+     None),
+
 ]
 
 for _label, _desc, _rules, *_extra in MODES:
@@ -393,6 +409,7 @@ st.markdown("""
         <li>✅ <b>ND SKU with Stock Review(轉貨模式)</b> <span style="color:#0369a1;font-size:0.84em">(Site Code／SKU／RP Type／Sold Qty (P90D)／Shop Stock Qty (CM)；RP Type 缺失即停止；Item_Shop 缺欄時 Shop Name 留空並列 warning)</span></li>
         <li>✅ <b>Forecast Review</b> <span style="color:#0369a1;font-size:0.84em">(Site Code／Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Sold Qty (P90D)／Shop Stock Qty (CM))</span></li>
         <li>✅ <b>Safety Stock 月度變化分析</b> <span style="color:#0369a1;font-size:0.84em">(MONTH／YEAR（尾部欄位，恒為必要）／Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM))</span></li>
+        <li>✅ <b>RAW 明細轉化</b> <span style="color:#0369a1;font-size:0.84em">(無額外必要欄位，沿用共用必要欄位；Item_Shop 缺欄時 SKU Desc／Shop Name 留空並列 warning)</span></li>
     </ul>
     <p style="font-weight: 600; color: #1e293b; margin-top: 1rem; margin-bottom: 0.4rem;">OOS Review 額外建議欄位（非必要，缺少時將顯示提示）：</p>
     <ul style="line-height: 1.8;">
