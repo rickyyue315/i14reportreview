@@ -1,13 +1,13 @@
 # I14 報表轉換與分析系統
 
-自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）、**Safety Stock 月度變化分析**（每月 Safety 變化對生意影響）與 **Forecast Review**（SKU 級建議訂貨量）、**RAW 明細轉化**（純粹轉化 RAW 明細）等多種模式。
+自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）、**Safety Stock 月度變化分析**（每月 Safety 變化對生意影響）與 **Forecast Review**（SKU 級建議訂貨量）、**RAW 明細轉化**（純粹轉化 RAW 明細，分「含 Value」與「不含 Value」兩個變體）等多種模式。
 
 ## 功能概述
 
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / P90D 0 Sales Review（轉貨模式） / ND SKU with Stock Review（轉貨模式） / Stock Checking / Safety Stock x NetStock Review / Safety Stock 月度變化分析 / Forecast Review / RAW 明細轉化 |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / P90D 0 Sales Review（轉貨模式） / ND SKU with Stock Review（轉貨模式） / Stock Checking / Safety Stock x NetStock Review / Safety Stock 月度變化分析 / Forecast Review / RAW 明細轉化 / RAW 明細轉化 (不含 Value) |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
@@ -253,12 +253,13 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 
 ### RAW 明細轉化
 
-純粹把來源 By SKUxShop 轉化為 RAW 明細，不作任何 OOS／Overstock／P90D 0 Sales 等統計或判定，亦不篩選列：
+純粹把來源 By SKUxShop 轉化為 RAW 明細，不作任何 OOS／Overstock／P90D 0 Sales 等統計或判定，亦不篩選列。分兩個變體，計算與清理規則完全相同，只差在 Value 欄：
 
 1. **保留欄位** — 保留來源檔案全部欄位（欄序依可讀性重排），並另加 **SKU Desc** 與 **Shop Name**（由 Item_Shop 以 Site Code 解析；原 I14 沒有獨立的品項描述與店舖名稱欄位）
 2. **清理** — 與其他模式一致，剔除合計列（Total／Applied filters）與 117 - Marketing 行；SKU 統一為文字格式
 3. **篩選** — 只沿用側邊欄 Shop Nature 篩選（預設全選，即不篩選）
-4. 輸出：單一工作表 **RAW**（不含說明、統計或摘要工作表）
+4. **兩個變體** — `RAW 明細轉化` 保留全部欄位；`RAW 明細轉化 (不含 Value)` 刪除所有欄名含「Value」的欄位（金額欄，例如 Shop Stock Value (LM)／(CM)、Excess Stock Value）。判定為大小寫敏感的「含 Value」字串比對，與其他模式 RAW 隱藏金額欄的規則一致，故 `Valuation Class` 不會被刪除；來源檔沒有此類欄位時列 warning
+5. 輸出：單一工作表 **RAW**（不含說明、統計或摘要工作表）
 
 ## Excel 輸出結構
 

@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.85.0 (2026-10-22)
+
+**RAW 明細轉化** 拆分為「含 Value」與「不含 Value」兩個模式，計算與清理規則完全相同，只差在是否刪除金額欄；既有模式（包括 v1.84.0 的 RAW 明細轉化）輸出零變動：
+
+- **New: RAW 明細轉化 (不含 Value)** — 與 RAW 明細轉化相同（不作任何統計或判定、不篩選列、保留全部欄位並另加 SKU Desc 與 Shop Name），額外刪除所有欄名含「Value」的欄位；判定為**大小寫敏感**的「含 Value」字串比對（與其他模式 RAW 隱藏金額欄的規則一致），故「Valuation Class」不會被刪除；來源檔沒有此類欄位時列 warning。以 `By SKUxShop_Stock Checking_03Sep2026.xlsx` 實測：含 Value 47 欄（3 個 Value 欄）／不含 Value 44 欄
+- **實作** — `modes/raw_convert.py` 的 `transform_raw_convert` 新增 `include_value=True` 參數（預設 True，v1.84.0 行為不變），另新增 `_is_raw_convert_value_column()` 與 `_RAW_CONVERT_NO_VALUE_SUFFIX` 並列入 `__all__`；`MODE_REGISTRY` 新增第二個變體條目（同一模組與函數）
+- **UI** — 「選擇分析模式」新增第二個模式（置於 RAW 明細轉化之後，分類提示同步標示「含／不含 Value」）；兩變體共用同一 session 狀態前綴 `rawc_`（切換模式不重算已產生的結果），結果頁標題、置頂與底部下載檔名／按鈕文字按模式名稱動態顯示，說明文字標明是否已刪除 Value 欄；兩者同樣不提供「略過 RAW 明細」選項
+- **文件** — README 的 RAW 明細轉化章節改為兩個變體（新增第 4 點 Value 欄規則）；使用說明頁新增「RAW 明細轉化 (不含 Value)」條目，必要欄位說明同步標示兩變體差異
+- **測試** — `tests/test_raw_convert.py` 新增 6 項（Value 欄判定含大小寫敏感與 Valuation Class、預設保留全部欄位、只刪 Value 欄、列與值不受影響、缺 Value 欄警告、Excel 無 Value 表頭），另註冊測試改為覆蓋兩個變體；全數 760 項測試通過
+- Change: `version.py` 1.84.0 → 1.85.0
+
 ## v1.84.0 (2026-10-21)
 
 新增 **RAW 明細轉化** 模式：純粹把來源檔轉化為 RAW 明細工作表，不作任何 OOS／Overstock／P90D 0 Sales 統計，亦不依銷量、庫存或統計條件篩選列；既有模式輸出零變動：

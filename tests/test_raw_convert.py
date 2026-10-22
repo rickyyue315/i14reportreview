@@ -1,8 +1,8 @@
-"""RAW 明細轉化模式（v1.84.0）驗證測試。
+"""RAW 明細轉化模式（v1.84.0；v1.85.0 加入「不含 Value」變體）驗證測試。
 
 純粹轉化：只做清理（剔除合計列、117 - Marketing）與解析 SKU Desc／Shop Name，
 不作任何統計或篩選（OOS／Overstock／P90D 0 Sales 皆不判定、不過濾列）；
-輸出單一工作表 RAW，保留來源檔全部欄位。
+輸出單一工作表 RAW。「含 Value」保留來源檔全部欄位；「不含 Value」刪除欄名含「Value」的欄位。
 """
 import warnings
 warnings.filterwarnings("ignore")
@@ -14,7 +14,12 @@ import pytest
 from openpyxl import load_workbook
 
 from modes import MODE_REGISTRY
-from transformer import transform_raw_convert, generate_excel_raw_convert
+from transformer import (
+    transform_raw_convert,
+    generate_excel_raw_convert,
+    _is_raw_convert_value_column,
+    _RAW_CONVERT_NO_VALUE_SUFFIX,
+)
 
 BASE = {
     "Buyer": "126 - Mona Chan", "Brand": "A", "SKU": 111186903002.0,
@@ -22,8 +27,11 @@ BASE = {
     "Site Code": "HB97", "OM": "OM1", "Shop Nature": "Tourist", "RP Type": "RF",
     "Shop Stock Status": "Normal", "Adj. Safety Stock": 3.0,
     "Sold Qty (P90D)": 0.0, "Shop Monthly Sold Qty (P90D)": 0.0,
-    "Shop Stock Qty (CM)": 0.0, "Valuation Class": "V1", "Shop Stock Value (CM)": 0.0,
+    "Shop Stock Qty (CM)": 0.0, "Valuation Class": "V1",
+    "Shop Stock Value (LM)": 10.0, "Shop Stock Value (CM)": 0.0, "Excess Stock Value": 0.0,
 }
+
+VALUE_COLUMNS = ["Shop Stock Value (LM)", "Shop Stock Value (CM)", "Excess Stock Value"]
 
 
 def _row(**kw):
@@ -40,10 +48,11 @@ def _df(rows):
 # 1. 註冊與介面
 # ──────────────────────────────────────────────────────────────────────────────
 def test_registry_entry_resolves_to_functions():
-    entry = MODE_REGISTRY["RAW 明細轉化"]
-    mod = importlib.import_module(entry["module"])
-    assert callable(getattr(mod, entry["transform"]))
-    assert callable(getattr(mod, entry["generate_excel"]))
+    for mode_name in ("RAW 明細轉化", "RAW 明細轉化" + _RAW_CONVERT_NO_VALUE_SUFFIX):
+        entry = MODE_REGISTRY[mode_name]
+        mod = importlib.import_module(entry["module"])
+        assert callable(getattr(mod, entry["transform"]))
+        assert callable(getattr(mod, entry["generate_excel"]))
 
 
 def test_input_dataframe_not_mutated():
@@ -163,7 +172,70 @@ def test_empty_after_filter_warns_and_excel_keeps_header():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 5. Excel 輸出結構
+# 5. 含／不含 Value 兩個變體
+# ──────────────────────────────────────────────────────────────────────────────
+def test_value_column_rule_is_case_sensitive_and_ignores_valuation_class():
+    for col in VALUE_COLUMNS:
+        assert _is_raw_convert_value_column(col)
+    assert "Shop Stock Value (LM)" in VALUE_COLUMNS
+    # 大小寫敏感：小寫 value 與「Valuation Class」皆不算 Value 欄
+    assert not _is_raw_convert_value_column("Valuation Class")
+    assert not _is_raw_convert_value_column("value")
+    assert not _is_raw_convert_value_column(123)
+
+
+def test_include_value_default_keeps_everything():
+    df = _df([{"SKU": 1}])
+    raw, _ = transform_raw_convert(df)
+    for col in df.columns:
+        assert col in raw.columns
+
+
+def test_exclude_value_drops_only_value_columns():
+    df = _df([{"SKU": 1}])
+    raw, _ = transform_raw_convert(df, include_value=False)
+    for col in VALUE_COLUMNS:
+        assert col not in raw.columns
+    # 非 Value 欄位全部保留（包括 Item_Shop 與 Valuation Class）
+    assert "Item_Shop" in raw.columns
+    assert "Valuation Class" in raw.columns
+    assert "Shop Stock Qty (CM)" in raw.columns
+    assert "SKU Desc" in raw.columns and "Shop Name" in raw.columns
+    expected = [c for c in raw.columns if c not in VALUE_COLUMNS]
+    assert list(raw.columns) == expected
+
+
+def test_exclude_value_keeps_rows_and_values():
+    df = _df([
+        {"SKU": 1, "Shop Stock Value (CM)": 999.0},
+        {"SKU": 2, "Shop Stock Status": "OOS", "Shop Stock Value (CM)": 0.0, "Site Code": "HB29"},
+    ])
+    raw, _ = transform_raw_convert(df, include_value=False)
+    assert len(raw) == 2
+    assert "Shop Stock Value (CM)" not in raw.columns
+    assert sorted(raw["SKU"]) == ["1", "2"]
+
+
+def test_exclude_value_warns_when_no_value_column():
+    df = _df([{"SKU": 1}]).drop(columns=VALUE_COLUMNS)
+    raw, w = transform_raw_convert(df, include_value=False)
+    assert len(raw) == 1
+    assert any("Value" in x for x in w)
+
+
+def test_excel_exclude_value_has_no_value_header():
+    df = _df([{"SKU": 1}])
+    raw, _ = transform_raw_convert(df, include_value=False)
+    buf = generate_excel_raw_convert(raw)
+    ws = load_workbook(BytesIO(buf.getvalue()))["RAW"]
+    headers = [c.value for c in ws[1]]
+    assert "Valuation Class" in headers
+    assert not any(h and "Value" in str(h) for h in headers)
+    assert ws.max_column == len(raw.columns)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 6. Excel 輸出結構
 # ──────────────────────────────────────────────────────────────────────────────
 def test_excel_has_only_raw_sheet_with_all_columns():
     df = _df([

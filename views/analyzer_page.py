@@ -288,13 +288,13 @@ st.markdown("""
     <div class="step"><span class="n">4</span><b>執行並下載</b><small>看板預覽＋一鍵導出</small></div>
 </div>
 """, unsafe_allow_html=True)
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review(Shop回覆)", "P90D 0 Sales Review(個別店舖)", "P90D 0 Sales Review(轉貨模式)", "ND SKU with Stock Review(轉貨模式)", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "Safety Stock 月度變化分析", "RAW 明細轉化"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review(Shop回覆)", "P90D 0 Sales Review(個別店舖)", "P90D 0 Sales Review(轉貨模式)", "ND SKU with Stock Review(轉貨模式)", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "Safety Stock 月度變化分析", "RAW 明細轉化", "RAW 明細轉化 (不含 Value)"]
 st.markdown("""
 <div class="mode-category-grid">
     <div class="mode-cat-chip"><b>🔄 調貨與補貨</b>Stock Checking · Safety Stock x NetStock Review · P90D 0 Sales Review(轉貨模式) · ND SKU with Stock Review(轉貨模式)</div>
     <div class="mode-cat-chip"><b>🔒 安全庫存</b>Safety Stock Review · Forecast Review · Safety Stock 月度變化分析</div>
     <div class="mode-cat-chip"><b>📦 庫存健康</b>Overstock · OOS · Stock Impact · 90 日零銷售 · P90D 0 Sales</div>
-    <div class="mode-cat-chip"><b>✂️ 商品與對比</b>Carry SKU · SKU 精簡 · NDRF 月份對比 · RAW 明細轉化</div>
+    <div class="mode-cat-chip"><b>✂️ 商品與對比</b>Carry SKU · SKU 精簡 · NDRF 月份對比 · RAW 明細轉化（含／不含 Value）</div>
 </div>
 """, unsafe_allow_html=True)
 MODE_DESCRIPTIONS = {
@@ -316,6 +316,7 @@ MODE_DESCRIPTIONS = {
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
     "Safety Stock 月度變化分析": "追蹤店舖每月 Safety Stock 原始值變化對生意的影響（須含 MONTH／YEAR）。",
     "RAW 明細轉化": "純粹把來源檔轉化為 RAW 明細，保留全部欄位並由 Item_Shop 解析 SKU Desc 與 Shop Name，不作 OOS／Overstock／P90D 0 Sales 等統計或篩選。",
+    "RAW 明細轉化 (不含 Value)": "與 RAW 明細轉化相同，但刪除所有欄名含「Value」的欄位（金額欄），輸出不含 Value 的 RAW 明細。",
 }
 current_mode = st.radio("🎯 選擇分析模式", mode_options, horizontal=True, index=0, key="mode_selector")
 st.markdown(
@@ -378,6 +379,8 @@ def _sales_threshold_inputs(prefix: str):
 _OP90DT_MODE = "P90D 0 Sales Review(轉貨模式)"
 _NDTR_MODE = "ND SKU with Stock Review(轉貨模式)"
 _RAW_CONVERT_MODE = "RAW 明細轉化"
+_RAW_CONVERT_NO_VALUE_MODE = "RAW 明細轉化 (不含 Value)"
+_RAW_CONVERT_MODES = (_RAW_CONVERT_MODE, _RAW_CONVERT_NO_VALUE_MODE)
 
 
 def _transfer_site_selector(df_input, shop_natures, *, prefix, nd_mode):
@@ -659,7 +662,8 @@ MODE_KEYS = {
     "Safety Stock x NetStock Review": {"prefix": "hybrid_", "processed": False, "raw_df": None, "sc_summary": None, "diagnosis": None, "diagnosis_om": None, "diag_summary": None, "stats": None, "excel_data": None, "params": None, "warnings": []},
     "Forecast Review": {"prefix": "fc_", "processed": False, "main_df": None, "coverage_df": None, "buyer_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
     "Safety Stock 月度變化分析": {"prefix": "safm_", "processed": False, "change_df": None, "mch1_df": None, "sst_df": None, "cross_df": None, "shop_df": None, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
-    "RAW 明細轉化": {"prefix": "rawc_", "processed": False, "raw_df": None, "excel_data": None, "warnings": []},
+    "RAW 明細轉化": {"prefix": "rawc_", "processed": False, "output_mode": None, "raw_df": None, "excel_data": None, "warnings": []},
+    "RAW 明細轉化 (不含 Value)": {"prefix": "rawc_", "processed": False, "output_mode": None, "raw_df": None, "excel_data": None, "warnings": []},
 }
 
 for cfg in MODE_KEYS.values():
@@ -825,8 +829,8 @@ if uploaded_file is not None:
         st.caption(f"目前顯示第 1 至第 20 筆明細（總共 {len(df_input):,} 筆原始資料）")
 
     # P0：全域匯出選項（各模式共用，略過 RAW 明細可省三至七成匯出時間）
-    # RAW 明細轉化的產出即為 RAW 工作表，不提供略過選項
-    if mode == _RAW_CONVERT_MODE:
+    # RAW 明細轉化（含／不含 Value）的產出即為 RAW 工作表，不提供略過選項
+    if mode in _RAW_CONVERT_MODES:
         _include_raw = True
     else:
         _skip_raw = st.checkbox(
@@ -2930,7 +2934,7 @@ if uploaded_file is not None:
         _is_carry_mode = (mode == "Carry SKU Review")
         # Modes that don't use the Shop Nature Rate sliders (no Safety Qty calculation):
         # Carry SKU Review, SKU 精簡 Review, NDRF 月份對比 (pivot/comparison only).
-        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "P90D 0 Sales Review(Shop回覆)") or (mode == "P90D 0 Sales Review(個別店舖)") or (mode == _OP90DT_MODE) or (mode == _NDTR_MODE) or (mode == "Safety Stock 月度變化分析") or (mode == _RAW_CONVERT_MODE)
+        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "P90D 0 Sales Review(Shop回覆)") or (mode == "P90D 0 Sales Review(個別店舖)") or (mode == _OP90DT_MODE) or (mode == _NDTR_MODE) or (mode == "Safety Stock 月度變化分析") or (mode in _RAW_CONVERT_MODES)
 
         if not _skip_rates_mode:
             _tourist_default = 30 if _is_overstock_mode else 50
@@ -3243,14 +3247,16 @@ if uploaded_file is not None:
                     st.session_state.safm_stats = _safm_stats
                     st.session_state.safm_excel_data = buf
                     st.session_state.safm_warnings = _warnings
-                elif mode == _RAW_CONVERT_MODE:
+                elif mode in _RAW_CONVERT_MODES:
                     raw_df, _warnings = transform_raw_convert(
                         df_input,
                         progress_callback=_cb_transform,
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                        include_value=(mode != _RAW_CONVERT_NO_VALUE_MODE),
                     )
                     buf = generate_excel_raw_convert(raw_df, progress_callback=_cb_excel)
                     st.session_state.rawc_processed = True
+                    st.session_state.rawc_output_mode = mode
                     st.session_state.rawc_raw_df = raw_df
                     st.session_state.rawc_excel_data = buf
                     st.session_state.rawc_warnings = _warnings
@@ -4872,18 +4878,33 @@ if uploaded_file is not None:
                 width='stretch',
             )
 
-        if mode == _RAW_CONVERT_MODE and st.session_state.rawc_processed:
+        # 兩變體共用同一份結果；輸出模式須與當前模式一致，避免切換模式後顯示另一變體的舊結果
+        if (
+            mode in _RAW_CONVERT_MODES
+            and st.session_state.rawc_processed
+            and st.session_state.get("rawc_output_mode") == mode
+        ):
             raw_df = st.session_state.rawc_raw_df
             excel_data = st.session_state.rawc_excel_data
 
-            st.markdown('<div class="section-banner"><h3>🧾 RAW 明細轉化結果</h3></div>', unsafe_allow_html=True)
-            _top_download_button(excel_data, "I14 RAW 明細轉化", "dl_top_rawc")
+            st.markdown(f'<div class="section-banner"><h3>🧾 {mode}結果</h3></div>', unsafe_allow_html=True)
+            _top_prefix = (
+                "I14 RAW 明細轉化 (不含 Value)"
+                if mode == _RAW_CONVERT_NO_VALUE_MODE
+                else "I14 RAW 明細轉化"
+            )
+            _top_download_button(excel_data, _top_prefix, "dl_top_rawc")
 
             _rawc_rows = len(raw_df) if raw_df is not None else 0
             _rawc_cols = len(raw_df.columns) if raw_df is not None else 0
+            _rawc_value_txt = (
+                "已刪除所有欄名含「Value」的欄位（金額欄）；"
+                if mode == _RAW_CONVERT_NO_VALUE_MODE
+                else "欄位保留來源檔全部欄位；"
+            )
             st.caption(
                 f"轉化結果：{_rawc_rows:,} 列 × {_rawc_cols} 欄。本模式不作 OOS／Overstock／P90D 0 Sales 統計，"
-                "不篩選列；欄位保留來源檔全部欄位，另由 Item_Shop 解析 SKU Desc 與 Shop Name。"
+                f"不篩選列；{_rawc_value_txt}另由 Item_Shop 解析 SKU Desc 與 Shop Name。"
             )
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -4898,10 +4919,10 @@ if uploaded_file is not None:
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             hk_time = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
-            download_name = f"I14 RAW 明細轉化_{hk_time}.xlsx"
+            download_name = f"{_top_prefix}_{hk_time}.xlsx"
 
             st.download_button(
-                label="📥 下載 RAW 明細轉化報表 (.xlsx)",
+                label=f"📥 下載{mode}報表 (.xlsx)",
                 data=excel_data,
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -114,3 +114,9 @@ MODE_REGISTRY["RAW 明細轉化"] = {
     "transform": "transform_raw_convert",
     "generate_excel": "generate_excel_raw_convert",
 }
+
+MODE_REGISTRY["RAW 明細轉化 (不含 Value)"] = {
+    "module": "modes.raw_convert",
+    "transform": "transform_raw_convert",
+    "generate_excel": "generate_excel_raw_convert",
+}

@@ -374,6 +374,19 @@ Safety Stock 月度變化計算：
      """,
      None),
 
+    ("🧾 RAW 明細轉化 (不含 Value)",
+     """
+- 與「RAW 明細轉化」完全相同（不作任何統計或判定、不篩選列、保留全部欄位並另加 SKU Desc 與 Shop Name）
+- 唯一差別：**刪除所有欄名含「Value」的欄位**（金額欄），輸出不含 Value 的 RAW 明細
+- 輸出：RAW（單一工作表）
+     """,
+     """
+1. Value 欄判定 = 欄名含「Value」（大小寫敏感，與其他模式 RAW 隱藏金額欄的規則一致）；「Valuation Class」不含「Value」，**不會**被刪除
+2. 其餘規則（SKU Desc／Shop Name 解析、清理、SKU 文字化、Shop Nature 篩選、不提供「略過 RAW 明細」）與「RAW 明細轉化」完全相同
+3. 來源檔沒有欄名含「Value」的欄位時，刪除步驟沒有實際作用並列 warning，輸出與「RAW 明細轉化」相同
+     """,
+     None),
+
 ]
 
 for _label, _desc, _rules, *_extra in MODES:
@@ -409,7 +422,7 @@ st.markdown("""
         <li>✅ <b>ND SKU with Stock Review(轉貨模式)</b> <span style="color:#0369a1;font-size:0.84em">(Site Code／SKU／RP Type／Sold Qty (P90D)／Shop Stock Qty (CM)；RP Type 缺失即停止；Item_Shop 缺欄時 Shop Name 留空並列 warning)</span></li>
         <li>✅ <b>Forecast Review</b> <span style="color:#0369a1;font-size:0.84em">(Site Code／Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Sold Qty (P90D)／Shop Stock Qty (CM))</span></li>
         <li>✅ <b>Safety Stock 月度變化分析</b> <span style="color:#0369a1;font-size:0.84em">(MONTH／YEAR（尾部欄位，恒為必要）／Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM))</span></li>
-        <li>✅ <b>RAW 明細轉化</b> <span style="color:#0369a1;font-size:0.84em">(無額外必要欄位，沿用共用必要欄位；Item_Shop 缺欄時 SKU Desc／Shop Name 留空並列 warning)</span></li>
+        <li>✅ <b>RAW 明細轉化</b>／<b>RAW 明細轉化 (不含 Value)</b> <span style="color:#0369a1;font-size:0.84em">(無額外必要欄位，沿用共用必要欄位；Item_Shop 缺欄時 SKU Desc／Shop Name 留空並列 warning；兩變體只差在是否刪除欄名含「Value」的欄位)</span></li>
     </ul>
     <p style="font-weight: 600; color: #1e293b; margin-top: 1rem; margin-bottom: 0.4rem;">OOS Review 額外建議欄位（非必要，缺少時將顯示提示）：</p>
     <ul style="line-height: 1.8;">
