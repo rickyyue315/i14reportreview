@@ -93,6 +93,8 @@ MODES = [
     ("✂️ 店舖精簡SKU模式",
      """
 - 按店舖×SKU 列出精簡回覆表，保留來源檔全部欄位
+- 由 Item_Shop 解析 SKU Desc 與 Shop Name（SKU Desc 排於 Brand 之後、Shop Name 排於 Site Code 之後）
+- 刪除欄名含 Value 的欄位（Valuation Class 不受影響）
 - 自動判定過去90日有無賣過（Sold Qty (P90D) > 0＝有，否則無賣）
 - 自動判定過去60日有無存貨（Shop Stock Qty (LM) 或 (CM) > 0＝有存貨，兩者同時為 0＝無存貨）
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 三欄留空，供 SCT 與店舖填寫
@@ -103,6 +105,8 @@ MODES = [
 2. **過去60日有無存貨** = Shop Stock Qty (LM) > 0 或 Shop Stock Qty (CM) > 0 →「有存貨」；兩者同時為 0（或空白／負數）→「無存貨」
 3. **回覆欄留空** — SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 一律留空；來源檔已有這些欄位時以本次結果覆蓋，舊回覆不會保留
 4. **不篩選列** — 全店全 SKU 輸出，清理規則與其他模式一致（剔除合計列與 117 - Marketing）；Shop Nature 篩選為選填
+5. **SKU Desc／Shop Name** — 由 Item_Shop 以 Site Code 解析；SKU Desc 排於 Brand 之後、Shop Name 排於 Site Code 之後；Item_Shop 缺欄時兩欄留空並列 warning
+6. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄）一律刪除；大小寫敏感，Valuation Class 不會被刪除
      """),
 
     ("📊 NDRF 月份對比",

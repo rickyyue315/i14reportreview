@@ -135,8 +135,10 @@ Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）�
 2. **過去60日有無存貨** — `Shop Stock Qty (LM) > 0` 或 `Shop Stock Qty (CM) > 0` →「有存貨」；兩者同時為 0（或空白／負數）→「無存貨」
 3. **SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty** — 一律留空；來源檔已有這些欄位時以本次結果覆蓋，舊回覆不會保留
 4. **不篩選列** — 全店全 SKU 輸出；清理規則與其他模式一致（剔除合計列與 117 - Marketing），Shop Nature 篩選為選填
-5. 輸出：單一工作表 **Export**（欄序與來源檔一致，五個欄位固定排最後；凍結窗格設於回覆欄之前）
-6. **來源工作表** — 多工作表檔案優先讀取 `Export`；沒有 Export 時沿用第一個工作表（例如手動另加樞紐的 HA20 工作檔可直接上傳）
+5. **SKU Desc／Shop Name** — 由 `Item_Shop` 以 `Site Code` 解析；`SKU Desc` 排於 `Brand` 之後、`Shop Name` 排於 `Site Code` 之後，`Item_Shop` 缺欄時兩欄留空並列 warning
+6. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄，如 `Shop Stock Value (LM)`／`(CM)`、`Excess Stock Value`）一律刪除；判定為大小寫敏感的「含 Value」字串比對，故 `Valuation Class` 不會被刪除
+7. 輸出：單一工作表 **Export**（欄序與來源檔一致，五個欄位固定排最後；凍結窗格設於回覆欄之前）
+8. **來源工作表** — 多工作表檔案優先讀取 `Export`；沒有 Export 時沿用第一個工作表（例如手動另加樞紐的 HA20 工作檔可直接上傳）
 
 ### Safety Stock Review
 
@@ -280,7 +282,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 |--------|------|
 | 說明 | 首頁導讀（混合模式、Safety Stock Review、Stock Checking 與 Forecast Review）— 列出本次執行參數、講解模式核心邏輯（如調貨段 14 日線／Review 段 Safety 基準／銷量帶與銷量存貨分類／0 Sales 轉 ND），並逐頁說明各工作表內容與建議留意的部分；開啟 Excel 時預設顯示本頁 |
 | RAW | 完整明細資料（含所有原始及計算欄位；Stock Checking 與混合模式另重排欄序，不顯示 Item_Shop 與 Value 金額欄） |
-| Export | 店舖精簡SKU模式 — 店舖×SKU 明細（來源欄位＋五個固定欄位：過去90日有無賣過／過去60日有無存貨／SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty；欄序與來源檔一致） |
+| Export | 店舖精簡SKU模式 — 店舖×SKU 明細（已刪除含 Value 的欄位；來源欄位＋SKU Desc／Shop Name（由 Item_Shop 解析）＋五個固定欄位：過去90日有無賣過／過去60日有無存貨／SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty；五個固定欄位排最後） |
 | 店舖問題 SKU | 每間店舖需行動列（問題＋建議方法；Stock Checking／Safety Stock Review／混合模式；Safety Stock Review 與混合模式的建議方法附建議值周轉日數，建議值受最低 3 件保底影響時另加註保底原因；Stock Checking 與 Safety Stock Review 表末另附「銷量帶」「銷量存貨分類」兩欄） |
 | Shop Stock Status | 採購人員 x 品牌之庫存異常交叉統計表 |
 | By Shop | 各店舖層級之彙總分析 |

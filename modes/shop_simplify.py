@@ -10,6 +10,9 @@
 
 本模式不作調貨、Safety 或退倉建議，亦不篩選列（全店全 SKU 輸出）；清理規則沿用
 `_clean_dataframe`（剔除合計列與 117 - Marketing），Shop Nature 篩選為選填。
+另由 Item_Shop 以 Site Code 解析 SKU Desc 與 Shop Name（SKU Desc 排於 Brand 之後、
+Shop Name 排於 Site Code 之後），其餘來源欄序不變；欄名含「Value」的欄位一律刪除
+（大小寫敏感，與「RAW 明細轉化 (不含 Value)」同一判定，故 Valuation Class 不受影響）。
 輸出單一工作表 Export，欄序與來源檔一致，五個回覆欄固定排最後。
 """
 import gc
@@ -25,10 +28,12 @@ from modes.common import (
     _auto_width,
     _cached_safe_sku_series,
     _clean_dataframe,
+    _compute_raw_extra_columns,
     _resolve_column_name,
     _safe_numeric,
     validate_input,
 )
+from modes.raw_convert import _is_raw_convert_value_column
 
 __all__ = [
     "_SHOP_SIMPLIFY_SOLD_COLUMN",
@@ -88,6 +93,29 @@ def shop_simplify_stats(df: pd.DataFrame) -> dict:
         skus = df["SKU"].dropna().astype(str).str.strip()
         stats["skus"] = int(skus[skus != ""].nunique())
     return stats
+
+
+def _shop_simplify_place_derived_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """把解析出的 SKU Desc／Shop Name 移到慣用位置，其餘來源欄序不變。
+
+    SKU Desc 排於 Brand 之後（缺 Brand 時依序退回 SKU／Item_Shop）；
+    Shop Name 排於 Site Code 之後（缺 Site Code 時依序退回 OM／Shop Nature／SKU Desc）。
+    """
+    def _move(frame: pd.DataFrame, column: str, anchors: tuple[str, ...]) -> pd.DataFrame:
+        if column not in frame.columns:
+            return frame
+        cols = [c for c in frame.columns if c != column]
+        for anchor in anchors:
+            if anchor in cols:
+                cols.insert(cols.index(anchor) + 1, column)
+                break
+        else:
+            cols.append(column)
+        return frame[cols]
+
+    out = _move(df, "SKU Desc", ("Brand", "SKU", "Item_Shop"))
+    out = _move(out, "Shop Name", ("Site Code", "OM", "Shop Nature", "SKU Desc"))
+    return out
 
 
 def _shop_simplify_drop_existing_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -154,6 +182,15 @@ def transform_shop_simplify(
     if progress_callback:
         progress_callback(0.35, "判定過去90日有無賣過...")
     df = _shop_simplify_drop_existing_columns(df)
+
+    if "Item_Shop" not in df.columns:
+        warnings.append("來源檔案缺少「Item_Shop」，SKU Desc 與 Shop Name 留空。")
+    df = _compute_raw_extra_columns(df)
+    df = _shop_simplify_place_derived_columns(df)
+
+    value_columns = [c for c in df.columns if _is_raw_convert_value_column(c)]
+    if value_columns:
+        df = df.drop(columns=value_columns)
 
     sold = _safe_numeric(df[sold_col]) if sold_col in df.columns else pd.Series(0.0, index=df.index)
     sold_status = np.where(

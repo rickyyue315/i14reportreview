@@ -1,5 +1,26 @@
 # 版本記錄
 
+## v1.88.0 (2026-10-22)
+
+店舖精簡SKU模式改為同時刪除欄名含「Value」的欄位（金額欄），與「RAW 明細轉化 (不含 Value)」同一判定；其餘欄序、解析欄、兩個判定規則與三個留空回覆欄不變：
+
+- **刪除 Value 欄** — 所有欄名含「Value」的欄位（如 `Shop Stock Value (LM)`／`(CM)`、`Excess Stock Value`）一律刪除；判定為大小寫敏感的「含 Value」字串比對（沿用 `_is_raw_convert_value_column`），故 `Valuation Class` 不會被刪除
+- **輸出** — 以 `By SKUxShop_JDU_12Oct2026.xlsx` 實測：來源 45 欄 → 刪 3 個 Value 欄（42）＋SKU Desc／Shop Name（44）＋五個固定欄位＝**49 欄**；`HA20_21Oct2026.xlsx` 本身已無 Value 欄，維持 47 欄
+- **文件** — README 與使用說明頁加入 Value 欄刪除規則；結果頁說明文字同步標示
+- **測試** — `tests/test_shop_simplify.py` 新增 1 項（刪除三個 Value 欄、保留 Valuation Class、Excel 表頭無 Value）；全數 790 項測試通過
+- Change: `version.py` 1.87.0 → 1.88.0
+
+## v1.87.0 (2026-10-22)
+
+店舖精簡SKU模式加入 `Item_Shop` 解析欄：由 `Item_Shop` 以 `Site Code` 拆出 **SKU Desc** 與 **Shop Name**，插入慣用位置；其餘欄序、兩個判定規則與三個留空回覆欄不變：
+
+- **解析欄** — `SKU Desc` 排於 `Brand` 之後（缺 Brand 時依序退回 SKU／Item_Shop），`Shop Name` 排於 `Site Code` 之後（缺 Site Code 時依序退回 OM／Shop Nature／SKU Desc）；沿用共用 `_compute_raw_extra_columns`，與其他模式同一解析準則
+- **缺欄處理** — 來源缺 `Item_Shop` 時兩欄留空並列 warning，其餘輸出不受影響
+- **輸出** — 仍為單一工作表 `Export`；五個固定欄位（過去90日有無賣過／過去60日有無存貨／SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty）維持排最後，凍結窗格同步改設於回覆欄之前
+- **文件** — README 與使用說明頁的模式章節加入解析欄說明
+- **測試** — `tests/test_shop_simplify.py` 新增 2 項（Item_Shop 解析、缺 Item_Shop 警告）並更新欄序與凍結窗格測試；全數 789 項測試通過
+- Change: `version.py` 1.86.0 → 1.87.0
+
 ## v1.86.0 (2026-10-22)
 
 新增 **店舖精簡SKU模式**：把 By SKUxShop 明細轉化為店舖×SKU 精簡回覆表，自動判定兩個狀態並留空三個回覆欄；既有模式輸出零變動：

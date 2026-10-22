@@ -307,7 +307,7 @@ MODE_DESCRIPTIONS = {
     "OOS Review": "篩選缺貨與潛在缺貨品項，偵測安全庫存不足。",
     "Carry SKU Review": "統計各店舖實際經營品項數量與結構。",
     "SKU 精簡 Review": "針對不可補貨品項，建議退倉安排。",
-    "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去60日有無存貨，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
+    "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去60日有無存貨，並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
     "NDRF 月份對比": "對比兩個月份各店舖經營與不可補貨品項變化。",
     "Safety Stock Review": "全面審查安全庫存設定，計算平衡建議值。",
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
@@ -4923,6 +4923,7 @@ if uploaded_file is not None:
 
             st.caption(
                 f"共 {int(_stats.get('sites', 0)):,} 間店舖、{int(_stats.get('skus', 0)):,} 個 SKU。"
+                "已由 Item_Shop 解析 SKU Desc 與 Shop Name，並刪除欄名含 Value 的欄位。"
                 "「SCT建議」「Shop 回覆新的NDRF」「如果RF的Safety Qty」三欄一律留空，供 SCT／店舖填寫。"
             )
 
