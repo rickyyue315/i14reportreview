@@ -25,6 +25,12 @@ MODE_REGISTRY["SKU 精簡 Review"] = {
     "generate_excel": "generate_excel_nd",
 }
 
+MODE_REGISTRY["店舖精簡SKU模式"] = {
+    "module": "modes.shop_simplify",
+    "transform": "transform_shop_simplify",
+    "generate_excel": "generate_excel_shop_simplify",
+}
+
 MODE_REGISTRY["Overstock Review"] = {
     "module": "modes.overstock",
     "transform": "transform",

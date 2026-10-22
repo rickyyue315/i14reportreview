@@ -1,17 +1,61 @@
 import ast
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+from openpyxl import Workbook
 
 from views.analyzer_helpers import (
     build_hybrid_params,
     canonical_site_codes,
     filter_by_site_code,
     hybrid_params_changed,
+    pick_source_sheet,
+    read_source_excel,
 )
+
+
+def test_pick_source_sheet_prefers_export():
+    assert pick_source_sheet(["工作表1", "Export"]) == "Export"
+    assert pick_source_sheet(["Export"]) == "Export"
+    assert pick_source_sheet([" Export "]) == " Export "
+    assert pick_source_sheet(["工作表1", "工作表2"]) == "工作表1"
+    assert pick_source_sheet([]) == 0
+    assert pick_source_sheet(None) == 0
+
+
+def _workbook_bytes(named_sheets):
+    wb = Workbook()
+    first = True
+    for name, rows in named_sheets:
+        ws = wb.active if first else wb.create_sheet()
+        ws.title = name
+        first = False
+        for row in rows:
+            ws.append(row)
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_read_source_excel_reads_export_sheet_when_not_first():
+    data = _workbook_bytes([
+        ("工作表1", [["樞紐"], [1]]),
+        ("Export", [["SKU", "Sold Qty (P90D)"], ["A1", 0]]),
+    ])
+    df = read_source_excel(data)
+    assert list(df.columns) == ["SKU", "Sold Qty (P90D)"]
+    assert str(df.iloc[0]["SKU"]) == "A1"
+
+
+def test_read_source_excel_falls_back_to_first_sheet():
+    data = _workbook_bytes([("Summary", [["Market"], ["HK"]])])
+    df = read_source_excel(data)
+    assert list(df.columns) == ["Market"]
+    assert df.iloc[0]["Market"] == "HK"
 
 
 def test_hybrid_params_snapshot_and_stale_detection():

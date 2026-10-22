@@ -66,6 +66,9 @@ from transformer import (
     transform_safety_monthly, generate_excel_safety_monthly,
     safety_monthly_dashboard_metrics, _SAFM_PIVOT_METRICS,
     transform_raw_convert, generate_excel_raw_convert,
+    transform_shop_simplify, generate_excel_shop_simplify, shop_simplify_stats,
+    _SHOP_SIMPLIFY_SOLD_COLUMN, _SHOP_SIMPLIFY_STOCK_COLUMN,
+    _SHOP_SIMPLIFY_SOLD_NO, _SHOP_SIMPLIFY_STOCK_NO,
 )
 import time
 import traceback
@@ -78,6 +81,8 @@ from views.analyzer_helpers import (
     canonical_site_codes,
     filter_by_site_code,
     hybrid_params_changed,
+    pick_source_sheet,
+    read_source_excel,
 )
 
 def _process_rss_mb():
@@ -288,13 +293,13 @@ st.markdown("""
     <div class="step"><span class="n">4</span><b>執行並下載</b><small>看板預覽＋一鍵導出</small></div>
 </div>
 """, unsafe_allow_html=True)
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review(Shop回覆)", "P90D 0 Sales Review(個別店舖)", "P90D 0 Sales Review(轉貨模式)", "ND SKU with Stock Review(轉貨模式)", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "Safety Stock 月度變化分析", "RAW 明細轉化", "RAW 明細轉化 (不含 Value)"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "店舖精簡SKU模式", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review(Shop回覆)", "P90D 0 Sales Review(個別店舖)", "P90D 0 Sales Review(轉貨模式)", "ND SKU with Stock Review(轉貨模式)", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "Safety Stock 月度變化分析", "RAW 明細轉化", "RAW 明細轉化 (不含 Value)"]
 st.markdown("""
 <div class="mode-category-grid">
     <div class="mode-cat-chip"><b>🔄 調貨與補貨</b>Stock Checking · Safety Stock x NetStock Review · P90D 0 Sales Review(轉貨模式) · ND SKU with Stock Review(轉貨模式)</div>
     <div class="mode-cat-chip"><b>🔒 安全庫存</b>Safety Stock Review · Forecast Review · Safety Stock 月度變化分析</div>
     <div class="mode-cat-chip"><b>📦 庫存健康</b>Overstock · OOS · Stock Impact · 90 日零銷售 · P90D 0 Sales</div>
-    <div class="mode-cat-chip"><b>✂️ 商品與對比</b>Carry SKU · SKU 精簡 · NDRF 月份對比 · RAW 明細轉化（含／不含 Value）</div>
+    <div class="mode-cat-chip"><b>✂️ 商品與對比</b>Carry SKU · SKU 精簡 · 店舖精簡 · NDRF 月份對比 · RAW 明細轉化（含／不含 Value）</div>
 </div>
 """, unsafe_allow_html=True)
 MODE_DESCRIPTIONS = {
@@ -302,6 +307,7 @@ MODE_DESCRIPTIONS = {
     "OOS Review": "篩選缺貨與潛在缺貨品項，偵測安全庫存不足。",
     "Carry SKU Review": "統計各店舖實際經營品項數量與結構。",
     "SKU 精簡 Review": "針對不可補貨品項，建議退倉安排。",
+    "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去60日有無存貨，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
     "NDRF 月份對比": "對比兩個月份各店舖經營與不可補貨品項變化。",
     "Safety Stock Review": "全面審查安全庫存設定，計算平衡建議值。",
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
@@ -381,6 +387,7 @@ _NDTR_MODE = "ND SKU with Stock Review(轉貨模式)"
 _RAW_CONVERT_MODE = "RAW 明細轉化"
 _RAW_CONVERT_NO_VALUE_MODE = "RAW 明細轉化 (不含 Value)"
 _RAW_CONVERT_MODES = (_RAW_CONVERT_MODE, _RAW_CONVERT_NO_VALUE_MODE)
+_SHOP_SIMPLIFY_MODE = "店舖精簡SKU模式"
 
 
 def _transfer_site_selector(df_input, shop_natures, *, prefix, nd_mode):
@@ -649,6 +656,7 @@ MODE_KEYS = {
     "OOS Review": {"prefix": "oos_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
+    "店舖精簡SKU模式": {"prefix": "shopslim_", "processed": False, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
     "NDRF 月份對比": {"prefix": "ndrf_comp_", "processed": False, "comparison_by_shop": None, "adj_sst_pivot": None, "mch2_pivot": None, "raw_df": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": [], "dimension": "nature", "sales_oos_days": _HYBRID_SALES_OOS_DAYS_DEFAULT, "sales_overstock_days": _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT, "sales_overstock_min_units": _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT},
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
@@ -727,16 +735,14 @@ if uploaded_file is not None:
             # 未安裝或解析失敗時退回 pandas＋openpyxl，最後才用逐列 iter_rows 相容特殊格式
             try:
                 _prog.progress(0.3, text="讀取檔案中... 30% | 向量化解析中...")
-                try:
-                    df_input = pd.read_excel(BytesIO(_raw), engine="calamine")
-                except Exception:
-                    df_input = pd.read_excel(BytesIO(_raw), engine="openpyxl")
+                df_input = read_source_excel(_raw)
             except Exception:
                 df_input = None
             if df_input is None:
                 # 後備：逐列讀取（相容特殊格式）
                 _wb = load_workbook(BytesIO(_raw), data_only=True, read_only=True)
-                _ws = _wb.active
+                _sheet_pick = pick_source_sheet(_wb.sheetnames)
+                _ws = _wb[_sheet_pick] if isinstance(_sheet_pick, str) else _wb.active
                 _hdr = list(next(_ws.iter_rows(min_row=1, max_row=1, values_only=True)))
                 _rows = []
                 _i = 0
@@ -829,8 +835,8 @@ if uploaded_file is not None:
         st.caption(f"目前顯示第 1 至第 20 筆明細（總共 {len(df_input):,} 筆原始資料）")
 
     # P0：全域匯出選項（各模式共用，略過 RAW 明細可省三至七成匯出時間）
-    # RAW 明細轉化（含／不含 Value）的產出即為 RAW 工作表，不提供略過選項
-    if mode in _RAW_CONVERT_MODES:
+    # RAW 明細轉化（含／不含 Value）的產出即為 RAW 工作表、店舖精簡SKU模式的產出即為 Export 明細，不提供略過選項
+    if mode in _RAW_CONVERT_MODES or mode == _SHOP_SIMPLIFY_MODE:
         _include_raw = True
     else:
         _skip_raw = st.checkbox(
@@ -2934,7 +2940,7 @@ if uploaded_file is not None:
         _is_carry_mode = (mode == "Carry SKU Review")
         # Modes that don't use the Shop Nature Rate sliders (no Safety Qty calculation):
         # Carry SKU Review, SKU 精簡 Review, NDRF 月份對比 (pivot/comparison only).
-        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "P90D 0 Sales Review(Shop回覆)") or (mode == "P90D 0 Sales Review(個別店舖)") or (mode == _OP90DT_MODE) or (mode == _NDTR_MODE) or (mode == "Safety Stock 月度變化分析") or (mode in _RAW_CONVERT_MODES)
+        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == _SHOP_SIMPLIFY_MODE) or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "P90D 0 Sales Review(Shop回覆)") or (mode == "P90D 0 Sales Review(個別店舖)") or (mode == _OP90DT_MODE) or (mode == _NDTR_MODE) or (mode == "Safety Stock 月度變化分析") or (mode in _RAW_CONVERT_MODES)
 
         if not _skip_rates_mode:
             _tourist_default = 30 if _is_overstock_mode else 50
@@ -3260,6 +3266,18 @@ if uploaded_file is not None:
                     st.session_state.rawc_raw_df = raw_df
                     st.session_state.rawc_excel_data = buf
                     st.session_state.rawc_warnings = _warnings
+                elif mode == _SHOP_SIMPLIFY_MODE:
+                    raw_df, _warnings = transform_shop_simplify(
+                        df_input,
+                        progress_callback=_cb_transform,
+                        shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
+                    )
+                    buf = generate_excel_shop_simplify(raw_df, progress_callback=_cb_excel)
+                    st.session_state.shopslim_processed = True
+                    st.session_state.shopslim_raw_df = raw_df
+                    st.session_state.shopslim_stats = shop_simplify_stats(raw_df)
+                    st.session_state.shopslim_excel_data = buf
+                    st.session_state.shopslim_warnings = _warnings
             except Exception as e:
                 _prog2.empty()
                 _tb = traceback.format_exc()
@@ -4876,6 +4894,73 @@ if uploaded_file is not None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
                 width='stretch',
+            )
+
+        if mode == _SHOP_SIMPLIFY_MODE and st.session_state.shopslim_processed:
+            raw_df = st.session_state.shopslim_raw_df
+            _stats = st.session_state.shopslim_stats or {}
+            excel_data = st.session_state.shopslim_excel_data
+
+            st.markdown('<div class="section-banner"><h3>✂️ 店舖精簡 SKU 分析摘要</h3></div>', unsafe_allow_html=True)
+            _top_download_button(excel_data, "I14 店舖精簡SKU模式", "dl_top_shopslim")
+
+            _shop_cards = [
+                ("總明細行數", _stats.get("rows", 0), "店舖 × SKU 列數（全數輸出，不篩選）", "#3b82f6"),
+                ("過去90日無賣", _stats.get("sold_no", 0), "Sold Qty (P90D) 等於 0 或少於 0", "#ef4444"),
+                ("過去60日無存貨", _stats.get("stock_no", 0), "Shop Stock Qty (LM) 與 (CM) 同時為 0", "#f59e0b"),
+                ("同時無賣且無存貨", _stats.get("both_no", 0), "精簡候選（兩個條件同時成立）", "#8b5cf6"),
+            ]
+            _shop_cols = st.columns(4)
+            for _col, (_title, _value, _desc, _color) in zip(_shop_cols, _shop_cards):
+                with _col:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: {_color};">
+                        <div class="metric-title">{_title}</div>
+                        <div class="metric-value" style="color: {_color};">{int(_value):,}</div>
+                        <div class="metric-desc">{_desc}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            st.caption(
+                f"共 {int(_stats.get('sites', 0)):,} 間店舖、{int(_stats.get('skus', 0)):,} 個 SKU。"
+                "「SCT建議」「Shop 回覆新的NDRF」「如果RF的Safety Qty」三欄一律留空，供 SCT／店舖填寫。"
+            )
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            _tab_all, _tab_candidate = st.tabs([
+                "📄 全部明細（前 200 筆）", "🎯 同時無賣且無存貨（前 200 筆）",
+            ])
+            with _tab_all:
+                if raw_df is not None and not raw_df.empty:
+                    st.dataframe(raw_df.head(200), width='stretch', hide_index=True)
+                    st.caption(f"僅顯示前 200 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料")
+            with _tab_candidate:
+                _cand_df = raw_df
+                if raw_df is not None and _SHOP_SIMPLIFY_SOLD_COLUMN in raw_df.columns:
+                    _cand_df = raw_df[
+                        (raw_df[_SHOP_SIMPLIFY_SOLD_COLUMN].astype(str) == _SHOP_SIMPLIFY_SOLD_NO)
+                        & (raw_df[_SHOP_SIMPLIFY_STOCK_COLUMN].astype(str) == _SHOP_SIMPLIFY_STOCK_NO)
+                    ]
+                if _cand_df is not None and not _cand_df.empty:
+                    st.dataframe(_cand_df.head(200), width='stretch', hide_index=True)
+                    st.caption(f"共 {len(_cand_df):,} 筆精簡候選；僅顯示前 200 筆，完整資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料（沒有同時「無賣」且「無存貨」的列）")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            _hk_time_slim = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            st.download_button(
+                label="📥 下載店舖精簡SKU報表 (.xlsx)",
+                data=excel_data,
+                file_name=f"I14 店舖精簡SKU模式_{_hk_time_slim}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+                key="dl_bottom_shopslim",
             )
 
         # 兩變體共用同一份結果；輸出模式須與當前模式一致，避免切換模式後顯示另一變體的舊結果

@@ -1,13 +1,13 @@
 # I14 報表轉換與分析系統
 
-自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）、**Safety Stock 月度變化分析**（每月 Safety 變化對生意影響）與 **Forecast Review**（SKU 級建議訂貨量）、**RAW 明細轉化**（純粹轉化 RAW 明細，分「含 Value」與「不含 Value」兩個變體）等多種模式。
+自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**店舖精簡SKU模式**（店舖×SKU 精簡回覆表）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）、**Safety Stock 月度變化分析**（每月 Safety 變化對生意影響）與 **Forecast Review**（SKU 級建議訂貨量）、**RAW 明細轉化**（純粹轉化 RAW 明細，分「含 Value」與「不含 Value」兩個變體）等多種模式。
 
 ## 功能概述
 
 | 功能 | 說明 |
 |------|------|
 | 檔案上傳與驗證 | 上傳 By SKUxShop Excel (.xlsx)，自動檢核必要欄位 |
-| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / P90D 0 Sales Review（轉貨模式） / ND SKU with Stock Review（轉貨模式） / Stock Checking / Safety Stock x NetStock Review / Safety Stock 月度變化分析 / Forecast Review / RAW 明細轉化 / RAW 明細轉化 (不含 Value) |
+| 模式選擇 | Overstock Review / OOS Review / Carry SKU Review / SKU 精簡 Review / 店舖精簡SKU模式 / NDRF 月份對比 / Safety Stock Review / Stock Impact Analysis / Stock Impact Analysis（簡化）/ Past 90 Days 0 Sales / P90D 0 Sales Review（轉貨模式） / ND SKU with Stock Review（轉貨模式） / Stock Checking / Safety Stock x NetStock Review / Safety Stock 月度變化分析 / Forecast Review / RAW 明細轉化 / RAW 明細轉化 (不含 Value) |
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
@@ -91,6 +91,8 @@ Safety Stock x NetStock Review 另建議包含 `RP Type`（RF＝可補貨／ND�
 
 Forecast Review 額外必要欄位（缺少時停止並提示）：`Site Code／Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Sold Qty (P90D)／Shop Stock Qty (CM)`；`Shop Stock Qty (M-2)／Shop Stock Qty (M-1)` 為選填（缺欄時該期缺貨還原略過並列 warning）；`D001 On Order PO Qty (CM)／Shop On Order PO Qty (CM)／Shop Pending Receive (±7 days)` 缺欄時計 0 並列 warning。
 
+店舖精簡SKU模式額外必要欄位（缺少時停止並提示）：`Sold Qty (P90D)`、`Shop Stock Qty (LM)` 或 `Shop Stock Qty (CM)`（其中一個庫存欄存在即可，兩個同時缺失才停止）。
+
 Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）：`MONTH／YEAR`（位於來源檔案尾部，日後此模式恒為必要欄位）`／Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM)`；`Adj. MCH1／Adj. SST` 為選填（缺欄時對應樞紐以「空白」列示並列 warning）。
 
 ## 分析模式
@@ -124,6 +126,17 @@ Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）�
 4. ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（如 Warehouse - Overstock、Vendor - Normal）
 
 輸出包含 RAW、Shop Stock Status、By Shop、ND SKU數據分析摘要共 4 個工作表。
+
+### 店舖精簡SKU模式
+
+按店舖×SKU 列出精簡回覆表，保留來源檔全部欄位，並在最後附加五個固定欄位，供 SCT 與店舖填寫：
+
+1. **過去90日有無賣過** — `Sold Qty (P90D) > 0` →「有」；等於 0、負數或空白 →「無賣」
+2. **過去60日有無存貨** — `Shop Stock Qty (LM) > 0` 或 `Shop Stock Qty (CM) > 0` →「有存貨」；兩者同時為 0（或空白／負數）→「無存貨」
+3. **SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty** — 一律留空；來源檔已有這些欄位時以本次結果覆蓋，舊回覆不會保留
+4. **不篩選列** — 全店全 SKU 輸出；清理規則與其他模式一致（剔除合計列與 117 - Marketing），Shop Nature 篩選為選填
+5. 輸出：單一工作表 **Export**（欄序與來源檔一致，五個欄位固定排最後；凍結窗格設於回覆欄之前）
+6. **來源工作表** — 多工作表檔案優先讀取 `Export`；沒有 Export 時沿用第一個工作表（例如手動另加樞紐的 HA20 工作檔可直接上傳）
 
 ### Safety Stock Review
 
@@ -267,6 +280,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 |--------|------|
 | 說明 | 首頁導讀（混合模式、Safety Stock Review、Stock Checking 與 Forecast Review）— 列出本次執行參數、講解模式核心邏輯（如調貨段 14 日線／Review 段 Safety 基準／銷量帶與銷量存貨分類／0 Sales 轉 ND），並逐頁說明各工作表內容與建議留意的部分；開啟 Excel 時預設顯示本頁 |
 | RAW | 完整明細資料（含所有原始及計算欄位；Stock Checking 與混合模式另重排欄序，不顯示 Item_Shop 與 Value 金額欄） |
+| Export | 店舖精簡SKU模式 — 店舖×SKU 明細（來源欄位＋五個固定欄位：過去90日有無賣過／過去60日有無存貨／SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty；欄序與來源檔一致） |
 | 店舖問題 SKU | 每間店舖需行動列（問題＋建議方法；Stock Checking／Safety Stock Review／混合模式；Safety Stock Review 與混合模式的建議方法附建議值周轉日數，建議值受最低 3 件保底影響時另加註保底原因；Stock Checking 與 Safety Stock Review 表末另附「銷量帶」「銷量存貨分類」兩欄） |
 | Shop Stock Status | 採購人員 x 品牌之庫存異常交叉統計表 |
 | By Shop | 各店舖層級之彙總分析 |

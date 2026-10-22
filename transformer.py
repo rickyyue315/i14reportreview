@@ -556,3 +556,7 @@ from modes.transfer_nd import *  # noqa: F401,F403
 
 # ─── RAW 明細轉化：實作已遷至 modes/raw_convert.py（墊片 re-export）───
 from modes.raw_convert import *  # noqa: F401,F403
+
+
+# ─── 店舖精簡SKU模式：實作位於 modes/shop_simplify.py（墊片 re-export）───
+from modes.shop_simplify import *  # noqa: F401,F403

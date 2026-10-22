@@ -90,6 +90,21 @@ MODES = [
 4. ND SKU 依 Supply Source × Shop Stock Status 雙層動態分類（如 Warehouse - Overstock、Vendor - Normal）
      """),
 
+    ("✂️ 店舖精簡SKU模式",
+     """
+- 按店舖×SKU 列出精簡回覆表，保留來源檔全部欄位
+- 自動判定過去90日有無賣過（Sold Qty (P90D) > 0＝有，否則無賣）
+- 自動判定過去60日有無存貨（Shop Stock Qty (LM) 或 (CM) > 0＝有存貨，兩者同時為 0＝無存貨）
+- SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 三欄留空，供 SCT 與店舖填寫
+- 輸出：單一工作表 Export（欄序與來源檔一致，五個欄位固定排最後）
+     """,
+     """
+1. **過去90日有無賣過** = Sold Qty (P90D) > 0 →「有」；等於 0、負數或空白 →「無賣」
+2. **過去60日有無存貨** = Shop Stock Qty (LM) > 0 或 Shop Stock Qty (CM) > 0 →「有存貨」；兩者同時為 0（或空白／負數）→「無存貨」
+3. **回覆欄留空** — SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 一律留空；來源檔已有這些欄位時以本次結果覆蓋，舊回覆不會保留
+4. **不篩選列** — 全店全 SKU 輸出，清理規則與其他模式一致（剔除合計列與 117 - Marketing）；Shop Nature 篩選為選填
+     """),
+
     ("📊 NDRF 月份對比",
      """
 - 對比兩個月份（如 Mar2026 vs Jul2026）各店舖的 Carry SKU、RF SKU、ND With Stock SKU 數量
@@ -422,6 +437,7 @@ st.markdown("""
         <li>✅ <b>ND SKU with Stock Review(轉貨模式)</b> <span style="color:#0369a1;font-size:0.84em">(Site Code／SKU／RP Type／Sold Qty (P90D)／Shop Stock Qty (CM)；RP Type 缺失即停止；Item_Shop 缺欄時 Shop Name 留空並列 warning)</span></li>
         <li>✅ <b>Forecast Review</b> <span style="color:#0369a1;font-size:0.84em">(Site Code／Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Sold Qty (P90D)／Shop Stock Qty (CM))</span></li>
         <li>✅ <b>Safety Stock 月度變化分析</b> <span style="color:#0369a1;font-size:0.84em">(MONTH／YEAR（尾部欄位，恒為必要）／Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM))</span></li>
+        <li>✅ <b>店舖精簡SKU模式</b> <span style="color:#0369a1;font-size:0.84em">(Sold Qty (P90D)／Shop Stock Qty (LM) 或 (CM)；兩個庫存欄同時缺失即停止)</span></li>
         <li>✅ <b>RAW 明細轉化</b>／<b>RAW 明細轉化 (不含 Value)</b> <span style="color:#0369a1;font-size:0.84em">(無額外必要欄位，沿用共用必要欄位；Item_Shop 缺欄時 SKU Desc／Shop Name 留空並列 warning；兩變體只差在是否刪除欄名含「Value」的欄位)</span></li>
     </ul>
     <p style="font-weight: 600; color: #1e293b; margin-top: 1rem; margin-bottom: 0.4rem;">OOS Review 額外建議欄位（非必要，缺少時將顯示提示）：</p>

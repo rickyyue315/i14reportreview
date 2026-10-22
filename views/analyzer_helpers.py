@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from io import BytesIO
+
 import pandas as pd
 
 
@@ -82,3 +84,32 @@ def filter_by_site_code(df: pd.DataFrame, site_code: str) -> pd.DataFrame:
         return df.copy()
     codes = df["Site Code"].fillna("").astype(str).str.strip()
     return df.loc[codes == str(site_code).strip()].copy()
+
+
+def pick_source_sheet(sheet_names):
+    """選擇來源資料工作表：By SKUxShop 匯出檔的資料表恆為 Export；
+    多工作表檔案（例如另加樞紐／摘要的版本）優先讀 Export，避免誤讀第一個工作表。
+    沒有 Export 時沿用第一個工作表（與原有行為一致）；空清單回傳 0。"""
+    names = list(sheet_names) if sheet_names is not None else []
+    if not names:
+        return 0
+    for name in names:
+        if isinstance(name, str) and name.strip() == "Export":
+            return name
+    return names[0]
+
+
+def read_source_excel(raw_bytes):
+    """讀取來源 Excel：優先 calamine（快 6 至 10 倍），失敗退回 openpyxl；
+    工作表按 `pick_source_sheet` 選擇（多工作表時優先 Export）。"""
+    last_error = None
+    for engine in ("calamine", "openpyxl"):
+        try:
+            book = pd.ExcelFile(BytesIO(raw_bytes), engine=engine)
+            try:
+                return book.parse(pick_source_sheet(book.sheet_names))
+            finally:
+                book.close()
+        except Exception as exc:
+            last_error = exc
+    raise last_error
