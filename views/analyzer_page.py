@@ -4923,7 +4923,8 @@ if uploaded_file is not None:
 
             st.caption(
                 f"共 {int(_stats.get('sites', 0)):,} 間店舖、{int(_stats.get('skus', 0)):,} 個 SKU。"
-                "已由 Item_Shop 解析 SKU Desc 與 Shop Name，並刪除欄名含 Value 的欄位。"
+                "已由 Item_Shop 解析 SKU Desc 與 Shop Name，並刪除欄名含 Value 的欄位；"
+                "輸出 Summary＋Export 兩個工作表（依 Brand／SKU 排序）。"
                 "「SCT建議」「Shop 回覆新的NDRF」「如果RF的Safety Qty」三欄一律留空，供 SCT／店舖填寫。"
             )
 

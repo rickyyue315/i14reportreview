@@ -4,13 +4,15 @@
 - 過去90日有無賣過：Sold Qty (P90D) > 0 →「有」，其餘（0／負數／空白）→「無賣」；
 - 過去60日有無存貨：Shop Stock Qty (LM) 或 (CM) > 0 →「有存貨」，兩者同時為 0 →「無存貨」；
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 一律留空；
-- 不篩選列，保留來源欄序，五個輸出欄固定排最後，Excel 單一工作表 Export。
+- 不篩選列，保留來源欄序，五個輸出欄固定排最後；輸出 Summary＋Export 兩個工作表，
+  並依 Brand／SKU（文字）排序、套用範本欄寬／隱藏欄／數字格式與顏色標示。
 """
 import warnings
 warnings.filterwarnings("ignore")
 import importlib
 from io import BytesIO
 
+import numpy as np
 import pandas as pd
 import pytest
 from openpyxl import load_workbook
@@ -312,12 +314,18 @@ def test_stats_counts_sold_stock_both():
     assert stats["skus"] == 4
 
 
-def test_excel_single_export_sheet_with_all_columns():
-    df = _df([{"SKU": 1}, {"SKU": 2, "Site Code": "HB29", "Shop Stock Status": "OOS"}])
+def test_excel_has_summary_and_export_sheets():
+    df = _df([
+        {"SKU": 1, "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active"},
+        {"SKU": 2, "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Discontinued"},
+        {"SKU": 3, "Adj. MCH1": "02 - MAKE UP", "Item Status": "Active"},
+    ])
     raw, _ = transform_shop_simplify(df)
     buf = generate_excel_shop_simplify(raw)
     wb = load_workbook(BytesIO(buf.getvalue()))
-    assert wb.sheetnames == ["Export"]
+    assert wb.sheetnames == ["Summary", "Export"]
+    assert wb.active.title == "Export"
+
     ws = wb["Export"]
     headers = [c.value for c in ws[1]]
     assert headers == list(raw.columns)
@@ -329,6 +337,82 @@ def test_excel_single_export_sheet_with_all_columns():
     assert ws.max_row == 1 + len(raw)
     # 來源表頭不改名（Adj. Safety Stock 不轉成 Safety Stock (現時)）
     assert "Adj. Safety Stock" in headers
+
+    summary = wb["Summary"]
+    assert summary["A3"].value == "計數 - SKU"
+    assert summary["B3"].value == "欄標籤"
+    assert summary["A4"].value == "列標籤"
+    assert [summary.cell(row=4, column=c).value for c in range(2, 5)] == [
+        "Active", "Discontinued", "總計",
+    ]
+    assert summary["A5"].value == "01 - SKIN CARE"
+    assert [summary.cell(row=5, column=c).value for c in range(2, 5)] == [1, 1, 2]
+    assert summary["A6"].value == "02 - MAKE UP"
+    assert [summary.cell(row=6, column=c).value for c in range(2, 5)] == [1, None, 1]
+    assert summary["A7"].value == "總計"
+    assert [summary.cell(row=7, column=c).value for c in range(2, 5)] == [2, 1, 3]
+
+
+def test_summary_blank_groups_sorted_last():
+    df = _df([
+        {"SKU": 1, "Adj. MCH1": None, "Item Status": "Active"},
+        {"SKU": 2, "Adj. MCH1": "01 - SKIN CARE", "Item Status": ""},
+        {"SKU": 3, "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active"},
+    ])
+    raw, _ = transform_shop_simplify(df)
+    summary = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Summary"]
+    assert summary["A5"].value == "01 - SKIN CARE"
+    assert [summary.cell(row=5, column=c).value for c in range(2, 5)] == [1, 1, 2]
+    assert summary["A6"].value == "(空白)"
+    assert [summary.cell(row=6, column=c).value for c in range(2, 5)] == [1, None, 1]
+    assert summary["A7"].value == "總計"
+    assert [summary.cell(row=7, column=c).value for c in range(2, 5)] == [2, 1, 3]
+
+
+def test_output_sorted_by_brand_then_sku_text():
+    df = _df([
+        {"Brand": "B - B", "SKU": 200},
+        {"Brand": "A - A", "SKU": 1000},
+        {"Brand": "A - A", "SKU": 999},
+    ])
+    raw, _ = transform_shop_simplify(df)
+    # SKU 以文字排序："1000" < "999"
+    assert list(zip(raw["Brand"], raw["SKU"])) == [
+        ("A - A", "1000"), ("A - A", "999"), ("B - B", "200"),
+    ]
+
+
+def test_launch_date_converted_to_int():
+    raw, _ = transform_shop_simplify(_df([
+        {"Launch Date": 20120520.0},
+        {"Launch Date": "2020-08-28"},
+        {"Launch Date": None},
+    ]))
+    values = list(raw["Launch Date"])
+    assert values[0] == 20120520 and isinstance(values[0], int)
+    assert values[1] == 20200828 and isinstance(values[1], int)
+    assert pd.isna(values[2])
+
+
+def test_infinite_turnday_becomes_blank_in_excel():
+    raw, _ = transform_shop_simplify(_df([
+        {"Turnday (P90D Qty)": np.inf},
+        {"Turnday (P90D Qty)": 12.5},
+    ]))
+    assert pd.isna(raw["Turnday (P90D Qty)"].iloc[0])
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
+    headers = [c.value for c in ws[1]]
+    col = headers.index("Turnday (P90D Qty)") + 1
+    assert ws.cell(row=2, column=col).value is None
+
+
+def test_numeric_values_keep_full_precision():
+    value = 7.455555555555556
+    raw, _ = transform_shop_simplify(_df([{"Shop Monthly Sold Qty (P90D)": value}]))
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
+    headers = [c.value for c in ws[1]]
+    written = ws.cell(row=2, column=headers.index("Shop Monthly Sold Qty (P90D)") + 1).value
+    assert abs(float(written) - value) < 1e-12
 
 
 def test_excel_cell_values_and_blank_reply_cells():
@@ -346,13 +430,73 @@ def test_excel_cell_values_and_blank_reply_cells():
         assert row[headers.index(col)] is None
 
 
-def test_excel_freeze_panes_before_reply_columns():
+def test_excel_format_matches_template():
+    df = pd.DataFrame([{
+        "Item_Shop": "(SUI) 1103775-CAV PRE LIFT ESSENCE WATERHA20-新香港仔",
+        "SKU": 1103775, "Valuation Class": "Normal Trade Item",
+        "Brand": "SUI - SUISSE PROGRAMME", "Buyer": "127 - Grace Wong",
+        "Shop Stock Status": "Normal", "Site Code": "HA20", "Shop Nature": "Tourist",
+        "RP Type": "RF", "Adj. Safety Stock": 6,
+        "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+        "Shop Monthly Sold Qty (P90D)": 7.455555555555556,
+        "Safety VS Monthly Sold Qty": 0.94,
+        "Sold Qty (P90D)": 40, "Shop Stock Qty (LM)": 28, "Shop Stock Qty (CM)": 18,
+    }, {
+        "Item_Shop": "(SUI) 1106553-THE RICH SERUM 50MLHA20-新香港仔",
+        "SKU": 1106553, "Valuation Class": "Normal Trade Item",
+        "Brand": "SUI - SUISSE PROGRAMME", "Buyer": "127 - Grace Wong",
+        "Shop Stock Status": "Normal", "Site Code": "HA20", "Shop Nature": "Tourist",
+        "RP Type": "RF", "Adj. Safety Stock": 6,
+        "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+        "Shop Monthly Sold Qty (P90D)": 1.0, "Safety VS Monthly Sold Qty": 0.0,
+        "Sold Qty (P90D)": 0, "Shop Stock Qty (LM)": 0, "Shop Stock Qty (CM)": 0,
+    }])
+    raw, _ = transform_shop_simplify(df)
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
+    headers = [c.value for c in ws[1]]
+    col = {name: i + 1 for i, name in enumerate(headers)}
+
+    # 表頭：列高、換行、凍結 F2、縮放 85%
+    assert ws.row_dimensions[1].height == 70.5
+    assert ws.freeze_panes == "F2"
+    assert ws.sheet_view.zoomScale == 85
+    header = ws.cell(row=1, column=col["Item_Shop"])
+    assert header.alignment.wrap_text is True
+    assert header.alignment.horizontal == "center"
+    assert header.alignment.vertical == "top"
+    assert header.fill.fgColor.rgb[-6:] == "D9E2F3"
+    assert ws.cell(row=1, column=col["RP Type"]).fill.fgColor.rgb[-6:] == "CCFF99"
+    assert ws.cell(row=1, column=col["Sold Qty (P90D)"]).fill.fgColor.rgb[-6:] == "E4DFEC"
+    assert ws.cell(row=1, column=col["Shop 回覆新的NDRF"]).fill.fgColor.rgb[-6:] == "CCFF99"
+
+    # 資料格重點色
+    assert ws.cell(row=2, column=col["RP Type"]).fill.fgColor.rgb[-6:] == "CCFF99"
+    assert ws.cell(row=2, column=col["Shop Stock Qty (CM)"]).fill.fgColor.rgb[-6:] == "CCFF99"
+    assert ws.cell(row=2, column=col["Sold Qty (P90D)"]).fill.fgColor.rgb[-6:] == "E4DFEC"
+    # 第二列 Sold Qty = 0 → 無賣 → 淡紅
+    sold_cell = ws.cell(row=3, column=col[_SHOP_SIMPLIFY_SOLD_COLUMN])
+    assert sold_cell.value == "無賣"
+    assert sold_cell.fill.fgColor.rgb[-6:] == "F2DCDB"
+
+    # 欄寬與隱藏欄
+    assert ws.column_dimensions["A"].hidden is True
+    assert ws.column_dimensions["C"].hidden is True
+    assert round(ws.column_dimensions["A"].width, 2) == 79.71
+    assert round(ws.column_dimensions["E"].width, 2) == 46.43
+
+    # 數字格式
+    assert ws.cell(row=2, column=col["Shop Monthly Sold Qty (P90D)"]).number_format.startswith("_(* #,##0")
+    assert ws.cell(row=2, column=col["Safety VS Monthly Sold Qty"]).number_format == "0%"
+
+
+def test_excel_freeze_panes_after_sku_desc():
     df = _df([{"SKU": 1}])
     raw, _ = transform_shop_simplify(df)
     buf = generate_excel_shop_simplify(raw)
     ws = load_workbook(BytesIO(buf.getvalue()))["Export"]
     from openpyxl.utils import get_column_letter
-    expected = f"{get_column_letter(len(raw.columns) - 5 + 1)}2"
+    headers = [c.value for c in ws[1]]
+    expected = f"{get_column_letter(headers.index('SKU Desc') + 2)}2"
     assert ws.freeze_panes == expected
     assert ws.auto_filter.ref == ws.dimensions
 
@@ -362,6 +506,7 @@ def test_empty_dataframe_still_writes_header():
         _SHOP_SIMPLIFY_SOLD_COLUMN, _SHOP_SIMPLIFY_STOCK_COLUMN, *_SHOP_SIMPLIFY_REPLY_COLUMNS,
     ])
     buf = generate_excel_shop_simplify(raw)
-    ws = load_workbook(BytesIO(buf.getvalue()))["Export"]
+    wb = load_workbook(BytesIO(buf.getvalue()))
+    ws = wb["Export"]
     assert ws.max_row == 1
     assert [c.value for c in ws[1]][-5] == _SHOP_SIMPLIFY_SOLD_COLUMN

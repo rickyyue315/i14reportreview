@@ -98,7 +98,7 @@ MODES = [
 - 自動判定過去90日有無賣過（Sold Qty (P90D) > 0＝有，否則無賣）
 - 自動判定過去60日有無存貨（Shop Stock Qty (LM) 或 (CM) > 0＝有存貨，兩者同時為 0＝無存貨）
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 三欄留空，供 SCT 與店舖填寫
-- 輸出：單一工作表 Export（欄序與來源檔一致，五個欄位固定排最後）
+- 輸出：Summary（Adj. MCH1 × Item Status 計數）＋ Export（依 Brand／SKU 排序，套用範本欄寬、隱藏欄與顏色標示）
      """,
      """
 1. **過去90日有無賣過** = Sold Qty (P90D) > 0 →「有」；等於 0、負數或空白 →「無賣」
@@ -107,6 +107,7 @@ MODES = [
 4. **不篩選列** — 全店全 SKU 輸出，清理規則與其他模式一致（剔除合計列與 117 - Marketing）；Shop Nature 篩選為選填
 5. **SKU Desc／Shop Name** — 由 Item_Shop 以 Site Code 解析；SKU Desc 排於 Brand 之後、Shop Name 排於 Site Code 之後；Item_Shop 缺欄時兩欄留空並列 warning
 6. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄）一律刪除；大小寫敏感，Valuation Class 不會被刪除
+7. **排序與格式** — 依 Brand、SKU（文字）升序；Summary 為 Adj. MCH1 × Item Status 的 SKU 列數；Export 凍結 F2、縮放 85%，套用範本欄寬、隱藏欄、數字格式與顏色（RP Type／Shop Stock Qty (CM) 綠色、Sold Qty (P90D) 紫色、「無賣」列淡紅）
      """),
 
     ("📊 NDRF 月份對比",

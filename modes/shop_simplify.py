@@ -13,9 +13,13 @@
 另由 Item_Shop 以 Site Code 解析 SKU Desc 與 Shop Name（SKU Desc 排於 Brand 之後、
 Shop Name 排於 Site Code 之後），其餘來源欄序不變；欄名含「Value」的欄位一律刪除
 （大小寫敏感，與「RAW 明細轉化 (不含 Value)」同一判定，故 Valuation Class 不受影響）。
-輸出單一工作表 Export，欄序與來源檔一致，五個回覆欄固定排最後。
+輸出經 Brand／SKU（文字）排序，並產生 Summary（Adj. MCH1 × Item Status 計數）與
+Export（回覆明細）兩個工作表；Export 套用店舖精簡回覆表範本的欄寬、隱藏欄、
+數字格式、凍結窗格與顏色標示。
 """
+import datetime
 import gc
+import re
 from io import BytesIO
 
 import numpy as np
@@ -25,7 +29,6 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from modes.common import (
-    _auto_width,
     _cached_safe_sku_series,
     _clean_dataframe,
     _compute_raw_extra_columns,
@@ -46,6 +49,8 @@ __all__ = [
     "_SHOP_SIMPLIFY_SOLD_NO",
     "_SHOP_SIMPLIFY_STOCK_YES",
     "_SHOP_SIMPLIFY_STOCK_NO",
+    "_SHOP_SIMPLIFY_EXPORT_SHEET",
+    "_SHOP_SIMPLIFY_SUMMARY_SHEET",
     "shop_simplify_stats",
     "transform_shop_simplify",
     "generate_excel_shop_simplify",
@@ -71,6 +76,96 @@ _SHOP_SIMPLIFY_SOLD_YES = "有"
 _SHOP_SIMPLIFY_SOLD_NO = "無賣"
 _SHOP_SIMPLIFY_STOCK_YES = "有存貨"
 _SHOP_SIMPLIFY_STOCK_NO = "無存貨"
+
+
+# ── Excel 輸出格式（對齊店舖精簡回覆表範本）──
+_SHOP_SIMPLIFY_EXPORT_SHEET = "Export"
+_SHOP_SIMPLIFY_SUMMARY_SHEET = "Summary"
+
+# 固定表頭顏色（使用者範本）
+_SHOP_SIMPLIFY_HEADER_BLUE = "D9E2F3"
+_SHOP_SIMPLIFY_GREEN = "CCFF99"
+_SHOP_SIMPLIFY_PURPLE = "E4DFEC"
+_SHOP_SIMPLIFY_NO_SALE_PINK = "F2DCDB"
+
+# 綠色表頭（另加綠色資料格：RP Type／Shop Stock Qty (CM)）
+_SHOP_SIMPLIFY_GREEN_HEADERS = {
+    "RP Type", "Shop Stock Qty (CM)", _SHOP_SIMPLIFY_NDRF_COLUMN, _SHOP_SIMPLIFY_SAFETY_COLUMN,
+}
+_SHOP_SIMPLIFY_GREEN_DATA_COLUMNS = {"RP Type", "Shop Stock Qty (CM)"}
+# 紫色表頭與資料格（Sold Qty (P90D)）
+_SHOP_SIMPLIFY_PURPLE_COLUMNS = {"Sold Qty (P90D)"}
+
+# 隱藏欄（使用者範本；按欄名對應，來源缺欄時自動略過）
+_SHOP_SIMPLIFY_HIDDEN_COLUMNS = {
+    "Item_Shop", "Valuation Class", "MCH2", "MC", "Shop Nature", "Shop Type",
+    "D001 Stock Qty (LM)", "D001 Blocked Qty (CM)", "D001 QI Qty (CM)",
+    "Turnday (P90D Qty)", "Net Sales (M-2)", "Excess Stock Qty",
+    "D001 On Order PO Qty (CM)", "Shop On Order PO Qty (CM)", "Shop Pending Receive (±7 days)",
+}
+
+# 欄寬（使用者範本；未列出的欄沿用 Excel 預設寬度）
+_SHOP_SIMPLIFY_COLUMN_WIDTHS = {
+    "Item_Shop": 79.7109375,
+    "SKU": 13.140625,
+    "Valuation Class": 25.0,
+    "Brand": 8.7109375,
+    "SKU Desc": 46.42578125,
+    "Buyer": 18.85546875,
+    "Adj. SST": 29.42578125,
+    "Vendor MC": 23.140625,
+    "Adj. MCH1": 17.28515625,
+    "MCH2": 48.28515625,
+    "MC": 56.140625,
+    "Item Status": 12.7109375,
+    "Launch Date": 10.5703125,
+    "Item Class": 10.0,
+    "Supply Source": 11.140625,
+    "Site Code": 10.140625,
+    "Shop Name": 10.85546875,
+    "OM": 8.85546875,
+    "Shop Nature": 11.28515625,
+    "Shop Type": 10.0,
+    "RP Type": 9.85546875,
+    "Adj. Safety Stock": 10.28515625,
+    "Shop Monthly Sold Qty (P90D)": 13.140625,
+    "Safety VS Monthly Sold Qty": 10.0,
+    "D001 Stock Qty (LM)": 10.28515625,
+    "D001 Net Stock Qty (CM)": 9.7109375,
+    "D001 Blocked Qty (CM)": 11.42578125,
+    "D001 QI Qty (CM)": 10.0,
+    "Shop Stock Qty (LM)": 9.0,
+    "Shop Stock Qty (CM)": 9.0,
+    "Sold Qty (P90D)": 10.7109375,
+    "Turnday (P90D Qty)": 12.0,
+    "Sold Qty (M-2)": 10.5703125,
+    "Sold Qty (M-1)": 10.5703125,
+    "Sold Qty (CM - MTD)": 10.42578125,
+    "Net Sales (M-2)": 11.0,
+    "Net Sales (CM - MTD)": 10.42578125,
+    "Shop Stock Status": 56.85546875,
+    "Excess Stock Qty": 10.42578125,
+    "D001 On Order PO Qty (CM)": 12.85546875,
+    "Shop On Order PO Qty (CM)": 13.0,
+    "Shop Pending Receive (±7 days)": 13.42578125,
+    _SHOP_SIMPLIFY_SOLD_COLUMN: 10.85546875,
+    _SHOP_SIMPLIFY_STOCK_COLUMN: 10.85546875,
+    _SHOP_SIMPLIFY_NDRF_COLUMN: 8.42578125,
+    _SHOP_SIMPLIFY_SAFETY_COLUMN: 9.7109375,
+}
+
+# 數字格式（使用者範本）
+_SHOP_SIMPLIFY_NUMBER_FORMATS = {
+    "Shop Monthly Sold Qty (P90D)": '_(* #,##0_);_(* \\(#,##0\\);_(* "-"??_);_(@_)',
+    "Safety VS Monthly Sold Qty": "0%",
+    "Turnday (P90D Qty)": "#,##0_);[Red](#,##0)",
+    "Sold Qty (M-2)": "#,##0_);[Red](#,##0)",
+    "Sold Qty (M-1)": "#,##0_);[Red](#,##0)",
+    "Sold Qty (CM - MTD)": "#,##0_);[Red](#,##0)",
+    "Net Sales (M-2)": "#,##0_);[Red](#,##0)",
+    "Net Sales (M-1)": "#,##0_);[Red](#,##0)",
+    "Net Sales (CM - MTD)": "#,##0_);[Red](#,##0)",
+}
 
 
 def shop_simplify_stats(df: pd.DataFrame) -> dict:
@@ -116,6 +211,25 @@ def _shop_simplify_place_derived_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = _move(df, "SKU Desc", ("Brand", "SKU", "Item_Shop"))
     out = _move(out, "Shop Name", ("Site Code", "OM", "Shop Nature", "SKU Desc"))
     return out
+
+
+def _shop_simplify_launch_int(value):
+    """Launch Date 統一為 YYYYMMDD 整數（來源多為 float 如 20120520.0）；
+    日期物件、YYYY-MM-DD、YYYY/MM/DD 皆可解析；無法解析或空白回傳 NaN。"""
+    if value is None:
+        return np.nan
+    try:
+        if pd.isna(value):
+            return np.nan
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (pd.Timestamp, datetime.datetime, datetime.date)):
+        return int(value.strftime("%Y%m%d"))
+    text = re.sub(r"\.0+$", "", str(value).strip())
+    text = text.replace("-", "").replace("/", "")
+    if len(text) == 8 and text.isdigit():
+        return int(text)
+    return np.nan
 
 
 def _shop_simplify_drop_existing_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -219,6 +333,29 @@ def transform_shop_simplify(
     if "SKU" in df.columns:
         df["SKU"] = _cached_safe_sku_series(df["SKU"])
 
+    # Launch Date 統一為 YYYYMMDD 整數（Excel 顯示為數字，與範本一致）
+    if "Launch Date" in df.columns:
+        df["Launch Date"] = pd.Series(
+            [_shop_simplify_launch_int(v) for v in df["Launch Date"]],
+            index=df.index,
+            dtype=object,
+        )
+
+    # 非有限數值（如 0 銷售時 Turnday 的 inf）一律留空，避免 Excel 出現 inf
+    for col in df.columns:
+        if pd.api.types.is_float_dtype(df[col]):
+            arr = df[col].to_numpy(dtype=float)
+            if np.isinf(arr).any():
+                df[col] = df[col].where(np.isfinite(arr))
+
+    # 排序：Brand、SKU（文字升序），與店舖精簡回覆表範本一致
+    if "Brand" in df.columns and "SKU" in df.columns:
+        df = df.sort_values(
+            ["Brand", "SKU"],
+            key=lambda s: s.astype(str).str.strip(),
+            kind="stable",
+        ).reset_index(drop=True)
+
     if df.empty:
         warnings.append("清理後沒有可輸出的資料列，請確認來源檔案與 Shop Nature 篩選。")
 
@@ -228,7 +365,8 @@ def transform_shop_simplify(
 
 
 def _shop_simplify_cell(value):
-    """Excel 儲存格值正規化：空白字串與各類缺值一律寫成 None（真正空白）。"""
+    """Excel 儲存格值正規化：空白字串與各類缺值一律寫成 None（真正空白）；
+    浮點數保留完整精度（不四捨五入），inf／-inf 視為空白。"""
     if value is None:
         return None
     try:
@@ -242,50 +380,164 @@ def _shop_simplify_cell(value):
         return bool(value)
     if isinstance(value, np.integer):
         return int(value)
-    if isinstance(value, np.floating):
-        return round(float(value), 1)
+    if isinstance(value, (float, np.floating)):
+        number = float(value)
+        return number if np.isfinite(number) else None
     return value
 
 
+def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
+    """Summary 工作表：Adj. MCH1 × Item Status 的 SKU 列數樞紐（含總計；零值留空）。"""
+    ws["A3"] = "計數 - SKU"
+    ws["B3"] = "欄標籤"
+
+    index_col = "Adj. MCH1" if "Adj. MCH1" in df.columns else (
+        "Item Class" if "Item Class" in df.columns else None
+    )
+    status_col = "Item Status" if "Item Status" in df.columns else None
+    if df is None or df.empty or index_col is None or status_col is None or "SKU" not in df.columns:
+        return
+
+    summary_df = df.copy()
+    index_values = summary_df[index_col].fillna("").astype(str).str.strip()
+    status_values = summary_df[status_col].fillna("").astype(str).str.strip()
+    summary_df[index_col] = index_values.mask(index_values == "", "(空白)")
+    summary_df[status_col] = status_values.mask(status_values == "", "(空白)")
+
+    table = summary_df.pivot_table(
+        index=index_col,
+        columns=status_col,
+        values="SKU",
+        aggfunc="count",
+        margins=True,
+        margins_name="總計",
+        fill_value=0,
+    )
+    # 空白組排在最後（Excel 樞紐慣例），總計列／欄置末
+    statuses = [c for c in table.columns if c != "總計"]
+    statuses = [c for c in statuses if c != "(空白)"] + [c for c in statuses if c == "(空白)"]
+    total_col = 2 + len(statuses)
+    row_order = [v for v in table.index if v not in ("總計", "(空白)")]
+    if "(空白)" in table.index:
+        row_order.append("(空白)")
+    if "總計" in table.index:
+        row_order.append("總計")
+    table = table.reindex(
+        index=row_order,
+        columns=statuses + (["總計"] if "總計" in table.columns else []),
+    )
+
+    ws.cell(row=4, column=1, value="列標籤")
+    for j, status in enumerate(statuses, start=2):
+        ws.cell(row=4, column=j, value=str(status))
+    ws.cell(row=4, column=total_col, value="總計")
+
+    for i, (idx, row) in enumerate(table.iterrows(), start=5):
+        cell = ws.cell(row=i, column=1, value=str(idx))
+        cell.alignment = Alignment(horizontal="left")
+        for j, status in enumerate(statuses, start=2):
+            count = int(row[status])
+            if count:
+                ws.cell(row=i, column=j, value=count)
+        total = int(row["總計"])
+        if total:
+            ws.cell(row=i, column=total_col, value=total)
+
+    # 欄寬（對齊範本；狀態欄多於 4 個時其餘沿用預設）
+    widths = [35.28515625, 9.7109375, 12.7109375, 8.28515625, 10.0, 5.28515625]
+    for j, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(j)].width = width
+
+
 def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> BytesIO:
-    """產生單一工作表 Export：來源欄序不變，五個輸出欄固定排最後。"""
+    """產生兩個工作表：Summary（Adj. MCH1 × Item Status 計數）與 Export（回覆明細）。
+
+    Export 沿用店舖精簡回覆表範本的格式：Brand／SKU 排序、凍結 F2、指定欄寬與隱藏欄、
+    數字格式、綠色／紫色重點欄，以及「無賣」列的淡紅標示。
+    """
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Export"
+    ws_summary = wb.active
+    ws_summary.title = _SHOP_SIMPLIFY_SUMMARY_SHEET
+    ws = wb.create_sheet(title=_SHOP_SIMPLIFY_EXPORT_SHEET)
 
     if progress_callback:
         progress_callback(0.0, "建立 Excel 結構...")
 
     df = raw if raw is not None else pd.DataFrame()
-    raw_cols = list(df.columns)
-    ws.append([_shop_simplify_cell(c) for c in raw_cols])
+    headers = list(df.columns)
+    ws.append([_shop_simplify_cell(c) for c in headers])
 
     total = len(df)
     for i, row in enumerate(df.itertuples(index=False, name=None)):
         ws.append([_shop_simplify_cell(v) for v in row])
         if progress_callback and (i % 2000 == 0 or i == total - 1):
-            progress_callback(0.05 + 0.85 * ((i + 1) / total), f"寫入 Export ({i+1}/{total})...")
+            progress_callback(0.05 + 0.75 * ((i + 1) / total), f"寫入 Export ({i+1}/{total})...")
 
-    ncols = len(raw_cols)
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
     )
-    header_fill = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
-    for col_idx in range(1, ncols + 1):
+    fill_blue = PatternFill(start_color=_SHOP_SIMPLIFY_HEADER_BLUE, end_color=_SHOP_SIMPLIFY_HEADER_BLUE, fill_type="solid")
+    fill_green = PatternFill(start_color=_SHOP_SIMPLIFY_GREEN, end_color=_SHOP_SIMPLIFY_GREEN, fill_type="solid")
+    fill_purple = PatternFill(start_color=_SHOP_SIMPLIFY_PURPLE, end_color=_SHOP_SIMPLIFY_PURPLE, fill_type="solid")
+    fill_pink = PatternFill(start_color=_SHOP_SIMPLIFY_NO_SALE_PINK, end_color=_SHOP_SIMPLIFY_NO_SALE_PINK, fill_type="solid")
+
+    # 表頭：粗體、指定底色、細框、置中置頂、自動換行；列高 70.5
+    ws.row_dimensions[1].height = 70.5
+    for col_idx, name in enumerate(headers, start=1):
         cell = ws.cell(row=1, column=col_idx)
         cell.font = Font(bold=True)
-        cell.fill = header_fill
+        if name in _SHOP_SIMPLIFY_GREEN_HEADERS:
+            cell.fill = fill_green
+        elif name in _SHOP_SIMPLIFY_PURPLE_COLUMNS:
+            cell.fill = fill_purple
+        else:
+            cell.fill = fill_blue
         cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center")
+        cell.alignment = Alignment(horizontal="center", vertical="top", wrap_text=True)
 
-    # 凍結窗格設於第一個回覆欄之前：向右捲動時其餘欄位保持可見（與目標檔一致）
-    n_source_cols = max(ncols - 5, 0)
-    if n_source_cols > 0:
-        ws.freeze_panes = f"{get_column_letter(n_source_cols + 1)}2"
+        letter = get_column_letter(col_idx)
+        width = _SHOP_SIMPLIFY_COLUMN_WIDTHS.get(name)
+        if width is not None:
+            ws.column_dimensions[letter].width = width
+        if name in _SHOP_SIMPLIFY_HIDDEN_COLUMNS:
+            ws.column_dimensions[letter].hidden = True
 
+    # 資料格：綠色重點欄、紫色 Sold Qty (P90D)、「無賣」淡紅標示
+    green_cols = [i for i, name in enumerate(headers, start=1) if name in _SHOP_SIMPLIFY_GREEN_DATA_COLUMNS]
+    purple_cols = [i for i, name in enumerate(headers, start=1) if name in _SHOP_SIMPLIFY_PURPLE_COLUMNS]
+    sold_col_idx = headers.index(_SHOP_SIMPLIFY_SOLD_COLUMN) + 1 if _SHOP_SIMPLIFY_SOLD_COLUMN in headers else None
+    number_formats = [
+        (i, _SHOP_SIMPLIFY_NUMBER_FORMATS[name])
+        for i, name in enumerate(headers, start=1)
+        if name in _SHOP_SIMPLIFY_NUMBER_FORMATS
+    ]
+    for row_idx in range(2, total + 2):
+        for col_idx in green_cols:
+            ws.cell(row=row_idx, column=col_idx).fill = fill_green
+        for col_idx in purple_cols:
+            ws.cell(row=row_idx, column=col_idx).fill = fill_purple
+        if sold_col_idx is not None:
+            sold_cell = ws.cell(row=row_idx, column=sold_col_idx)
+            if sold_cell.value == _SHOP_SIMPLIFY_SOLD_NO:
+                sold_cell.fill = fill_pink
+        for col_idx, fmt in number_formats:
+            ws.cell(row=row_idx, column=col_idx).number_format = fmt
+
+    # 凍結於 SKU Desc 之後（範本為 F2）；縮放 85%
+    if "SKU Desc" in headers:
+        ws.freeze_panes = f"{get_column_letter(headers.index('SKU Desc') + 2)}2"
+    elif headers:
+        ws.freeze_panes = "A2"
+    ws.sheet_view.zoomScale = 85
     ws.auto_filter.ref = ws.dimensions
-    _auto_width(ws)
+
+    if progress_callback:
+        progress_callback(0.85, "建立 Summary 工作表...")
+    _write_shop_simplify_summary(ws_summary, df)
+
+    # 開啟檔案時預設顯示 Export（範本行為）
+    wb.active = wb.sheetnames.index(_SHOP_SIMPLIFY_EXPORT_SHEET)
 
     if progress_callback:
         progress_callback(0.95, "正在儲存 Excel 檔案...")

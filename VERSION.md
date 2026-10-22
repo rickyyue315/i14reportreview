@@ -1,5 +1,18 @@
 # 版本記錄
 
+## v1.89.0 (2026-10-22)
+
+店舖精簡SKU模式輸出格式全面對齊店舖精簡回覆表範本（`I14 店舖精簡SKU模式_20261022_1136.xlsx`）：新增 Summary 工作表、Brand／SKU 排序與範本樣式，計算規則與三個留空回覆欄不變：
+
+- **排序** — Export 依 `Brand`、`SKU`（文字）升序（SKU 以字串排序，故 "1000" 排在 "999" 前，與範本一致）
+- **工作表** — `Summary`（`Adj. MCH1` × `Item Status` 的 SKU 列數，含總計；零值留空）＋ `Export`（回覆明細）；開啟檔案預設顯示 Export
+- **Export 格式** — 表頭列高 70.5、自動換行、粗體、細框、置中置頂；凍結 F2、縮放 85%；套用範本欄寬與 15 個隱藏欄；`RP Type`／`Shop Stock Qty (CM)` 綠色（表頭＋資料）、`Sold Qty (P90D)` 紫色、`Shop 回覆新的NDRF`／`如果RF的Safety Qty` 綠色表頭、「無賣」列淡紅（F2DCDB）；指定數字格式（Shop Monthly Sold Qty (P90D)、Safety VS Monthly Sold Qty、Turnday (P90D Qty)、Sold Qty (M-2／M-1／CM - MTD)、Net Sales (M-2／M-1／CM - MTD)）
+- **資料整理** — Launch Date 統一為 YYYYMMDD 整數（與範本 Excel 儲存格型別一致）；Turnday 的 inf 一律留空；浮點數保留完整精度（不再四捨五入）
+- **驗證** — 以 `By SKUxShop_HA21_22Oct2026.xlsx`（4,706 列 → 清理後 4,703 列）實測：與範本 49 欄完全相同、逐欄資料 0 差異（SCT建議 依規格留空）、Summary 數值完全相同，凍結／縮放／列高／欄寬／隱藏欄／數字格式／顏色（Excel 實際渲染）全部一致
+- **文件** — README 與使用說明頁更新輸出格式說明
+- **測試** — `tests/test_shop_simplify.py` 新增 6 項並更新 Excel 相關測試（Summary、空白組排序、Brand／SKU 文字排序、Launch Date 整數、inf 留空、不四捨五入、範本樣式、凍結位置、雙工作表）；全數 796 項測試通過
+- Change: `version.py` 1.88.0 → 1.89.0
+
 ## v1.88.0 (2026-10-22)
 
 店舖精簡SKU模式改為同時刪除欄名含「Value」的欄位（金額欄），與「RAW 明細轉化 (不含 Value)」同一判定；其餘欄序、解析欄、兩個判定規則與三個留空回覆欄不變：
