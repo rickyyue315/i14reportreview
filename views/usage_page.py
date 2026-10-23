@@ -195,10 +195,11 @@ MODES = [
 - 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列（預設只限 Non-MAKE UP；勾選「包括 MAKE UP SKU」後一併計算），附店內庫存排名及空白「店舖回覆」欄供店舖填寫
 - Top 10 欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
 - 按 Shop Nature 及 OM 統計分佈（涉及店舖數、SKU 數、行數、分類分項 SKU 數、庫存總數，分組欄隨分類維度變動）
-- 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序，方便識別最多店舖積壓的 SKU
+- 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），另計算「店舖總數 (分母)」（本次上載資料經 Shop Nature 篩選後的店舖總數）、「無銷售店舖佔比」（無銷售店舖數 ÷ 店舖總數）及排名，按無銷售店舖數由大至小排序，方便識別最多店舖積壓的 SKU
+- 另設「最多店舖無銷售SKU」摘要工作表：按無銷售店舖數取前 20 個 SKU，附 SKU 屬性、無銷售店舖數、店舖總數 (分母)、無銷售店舖佔比及庫存總數；完整清單仍保留於 By SKU
 - 按 Buyer 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序，方便識別最多店舖積壓的採購負責人
-- 六個工作表均不含 Value／COGS／GP 欄位
-- 輸出：By Shop、店舖90日零銷售Top 10 SKU回覆、By SKU、By Buyer、By Nature、By OM
+- 七個工作表均不含 Value／COGS／GP 欄位
+- 輸出：By Shop、店舖90日零銷售Top 10 SKU回覆、最多店舖無銷售SKU、By Nature、By OM、By SKU、By Buyer
      """,
      """
 針對 `Shop Stock Status` 去除前後空格後完全相符者收錄：
@@ -206,6 +207,7 @@ MODES = [
 2. MAKE UP 分類＝Adj. MCH1 去除前後空格後等於 02 - MAKE UP，其餘（含空白）為 Non-MAKE UP
 3. SKU 數一律已刪除重複；庫存總數為 Shop Stock Qty (CM) 加總
 4. 以 Item Class 或 Adj. MCH1 分類時，分組欄按固定順序排列（Item Class：A1→D；MCH1：編號排序），空白值歸入「空白」組
+5. 店舖總數（分母）＝清理及 Shop Nature 篩選後的上載資料店舖數（Site Code 已刪除重複、空白不計），不是只有 P90D 0 Sales 的店舖數；無銷售店舖佔比＝出現店舖數 ÷ 店舖總數，Excel 以 0.0% 顯示
      """),
 
     ("📦 P90D 0 Sales Review(個別店舖)",
@@ -215,7 +217,7 @@ MODES = [
 - 各店舖全部列按 Shop Stock Qty (CM) 由大至小排序，包括 MAKE UP 與 Non-MAKE UP 全部 SKU，不設「店舖回覆」欄，供店舖查閱自身其他零銷售 SKU 情況
 - ALL SKU 明細欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
 - 按 Shop Nature 及 OM 統計分佈（涉及店舖數、SKU 數、行數、分類分項 SKU 數、庫存總數）
-- 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序
+- 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），另計算店舖總數（分母）及無銷售店舖佔比，按出現店舖數由大至小排序
 - 按 Buyer 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序
 - 六個工作表均不含 Value／COGS／GP 欄位
 - 輸出：By Shop、店舖90日零銷售ALL SKU、By SKU、By Buyer、By Nature、By OM
@@ -252,7 +254,8 @@ MODES = [
 - **MCH 篩選（執行前）**：可選擇包含的 `Adj. MCH1` 分類（預設全部包含；移除任何分類即為排除該分類），被排除的分類不會轉出，亦不會作為接收店；篩選只收窄母體，不改變已選分類內的分配結果，排除列數會列 warning；來源缺 `Adj. MCH1` 時自動略過並顯示提示
 - 轉出：已選店舖中 RP Type＝ND 且有庫存的列，轉出數量為 Shop Stock Qty (CM) 全數，不設上限，不分 OM 群組（即使該列仍有銷售記錄亦照轉——ND 店不補貨，庫存最終只會積壓在該店舖）
 - 接收：同 SKU、非轉出店舖、RP Type＝RF 且 Sold Qty (P90D) > 0 的店舖（有銷售記錄），不論有無庫存；接收後庫存＝調前庫存＋分配數量
-- 分配：只有一間接收店時全數給該店；有多間時按各店 Sold Qty (P90D) 的銷售比例分配（最大餘數法取整數件），力求轉出總量全數被接收
+- **接收店舖集中模式（可選，預設不限）**：可選擇每個 SKU 只集中分配予 Sold Qty (P90D) 最高的 **1–2 間** 或 **3–4 間** RF 接收店（同銷量以 Site Code 排序），其餘有銷售店舖不獲分配，以減少每店只收到 1 件的情況；轉出總量仍力求全數接收
+- 分配：只有一間接收店時全數給該店；有多間時按各店 Sold Qty (P90D) 的銷售比例分配（最大餘數法取整數件），力求轉出總量全數被接收；集中模式下按獲選店舖的銷售比例重新分配
 - 同 SKU 沒有接收店舖時不轉出，保留於原店舖，列於「SKU 轉貨彙總」的未分配量
 - 轉貨單另附 `Adj. MCH1` 與 `Supply Source`（供貨來源，取自來源檔；缺欄時留空）欄，SKU 轉貨彙總附 `Adj. MCH1` 欄；轉貨單欄位按分組著色（黃色＝轉出店與轉貨數量（加粗）、淺藍色＝接收店相關欄位，表頭附篩選）
 - 輸出：說明、轉貨單（轉出店 → 接收店）、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總（按 Adj. MCH1；無 RAW）
@@ -264,6 +267,7 @@ MODES = [
 4. MCH 篩選於執行前設定（預設全部 Adj. MCH1 都包含）；被排除分類的列既不轉出，也不接收，排除列數見 warning
 5. 轉貨單配對：同 SKU 內，轉出店依 Site Code 排序，接收店依分配量由大至小排序，依序配對成「轉出店 → 接收店」行，各行數量合計與分配一致
 6. 同店同 SKU 重複列合併計算（轉出量與銷售分別加總），並列 warning
+7. 接收店舖集中模式只影響每個 SKU 的接收店數目與分配，不改變轉出總量；被排除的有銷售店舖不會收到該 SKU 的轉貨，警告訊息會列出未納入的「SKU × 有銷售接收店」組合數
      """),
 
     ("🔄 Stock Checking（調貨檢查）",

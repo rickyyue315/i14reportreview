@@ -12,8 +12,12 @@ from transformer import (
     transform_overstock_p90d,
     generate_excel_overstock_p90d,
     _build_op90d_by_sku,
+    _build_op90d_top_no_sales_sku,
     _build_op90d_by_buyer,
     _OP90D_BY_BUYER_COLUMNS,
+    _OP90D_BY_SKU_COLUMNS,
+    _OP90D_TOP_NO_SALES_COLUMNS,
+    _OP90D_TOP_NO_SALES_SHEET,
 )
 
 BASE = {
@@ -549,6 +553,111 @@ def test_by_buyer_empty():
     by_buyer = _build_op90d_by_buyer(raw)
     assert by_buyer.empty
     assert list(by_buyer.columns) == list(_OP90D_BY_BUYER_COLUMNS)
+
+
+def test_by_sku_total_shops_denominator_and_pct():
+    df = _df([
+        {"SKU": 1, "Site Code": "S01"},
+        {"SKU": 1, "Site Code": "S02", "Item_Shop": "P-S02-KL"},
+        {"SKU": 2, "Site Code": "S01"},
+        {"SKU": 3, "Site Code": "S03", "Item_Shop": "P-S03-NT", "Shop Stock Status": "Normal"},
+    ])
+    raw, _, _, _, _, _ = transform_overstock_p90d(df)
+    by_sku = _build_op90d_by_sku(raw)
+    assert list(by_sku.columns) == list(_OP90D_BY_SKU_COLUMNS)
+    assert list(by_sku["排名"])[:2] == [1, 2]
+    top = by_sku[by_sku["SKU"] == "1"].iloc[0]
+    assert int(top["出現店舖數"]) == 2
+    assert int(top["店舖總數 (分母)"]) == 3  # S03 為 Normal，仍計入公司店舖總數
+    assert abs(float(top["無銷售店舖佔比"]) - 2 / 3) < 1e-9
+    second = by_sku[by_sku["SKU"] == "2"].iloc[0]
+    assert abs(float(second["無銷售店舖佔比"]) - 1 / 3) < 1e-9
+    total = by_sku[by_sku["SKU"] == "總計"].iloc[0]
+    assert int(total["店舖總數 (分母)"]) == 3
+    assert pd.isna(total["無銷售店舖佔比"])
+    assert pd.isna(total["排名"])
+    _no_banned(by_sku)
+
+
+def test_by_sku_denominator_respects_shop_nature_filter():
+    df = _df([
+        {"SKU": 1, "Site Code": "S01", "Shop Nature": "Mix"},
+        {"SKU": 2, "Site Code": "S02", "Item_Shop": "P-S02-KL", "Shop Nature": "Tourist"},
+        {"SKU": 3, "Site Code": "S03", "Item_Shop": "P-S03-NT", "Shop Nature": "Mix",
+         "Shop Stock Status": "Normal"},
+    ])
+    raw, _, _, _, _, _ = transform_overstock_p90d(df, shop_natures=["Mix"])
+    by_sku = _build_op90d_by_sku(raw)
+    top = by_sku[by_sku["SKU"] == "1"].iloc[0]
+    assert int(top["店舖總數 (分母)"]) == 2  # S01、S03（S02 Tourist 被篩走）
+    assert abs(float(top["無銷售店舖佔比"]) - 1 / 2) < 1e-9
+
+
+def test_by_sku_total_shops_override():
+    df = _df([
+        {"SKU": 1, "Site Code": "S01"},
+        {"SKU": 2, "Site Code": "S02", "Item_Shop": "P-S02-KL"},
+    ])
+    raw, _, _, _, _, _ = transform_overstock_p90d(df)
+    by_sku = _build_op90d_by_sku(raw, total_shops=90)
+    assert int(by_sku.iloc[0]["店舖總數 (分母)"]) == 90
+    assert abs(float(by_sku.iloc[0]["無銷售店舖佔比"]) - 1 / 90) < 1e-9
+
+
+def test_top_no_sales_sku_rank_and_columns():
+    df = _df([
+        {"SKU": 1, "Site Code": "S01"},
+        {"SKU": 1, "Site Code": "S02", "Item_Shop": "P-S02-KL"},
+        {"SKU": 2, "Site Code": "S01"},
+        {"SKU": 3, "Site Code": "S03", "Item_Shop": "P-S03-NT", "Shop Stock Status": "Normal"},
+    ])
+    raw, _, _, _, _, _ = transform_overstock_p90d(df)
+    by_sku = _build_op90d_by_sku(raw)
+    top = _build_op90d_top_no_sales_sku(by_sku=by_sku, top_n=1)
+    assert list(top.columns) == list(_OP90D_TOP_NO_SALES_COLUMNS)
+    assert len(top) == 1
+    row = top.iloc[0]
+    assert int(row["排名"]) == 1
+    assert row["SKU"] == "1"
+    assert int(row["無銷售店舖數"]) == 2
+    assert int(row["店舖總數 (分母)"]) == 3
+    assert abs(float(row["無銷售店舖佔比"]) - 2 / 3) < 1e-9
+    assert "出現店舖數" not in top.columns
+    _no_banned(top)
+
+
+def test_top_no_sales_sku_empty_columns():
+    df = _df([{"SKU": 1, "Shop Stock Status": "Normal"}])
+    raw, _, _, _, _, _ = transform_overstock_p90d(df)
+    by_sku = _build_op90d_by_sku(raw)
+    top = _build_op90d_top_no_sales_sku(by_sku=by_sku)
+    assert top.empty
+    assert list(top.columns) == list(_OP90D_TOP_NO_SALES_COLUMNS)
+
+
+def test_excel_top_no_sales_sku_sheet_and_pct_format():
+    df = _df([
+        {"SKU": 1, "Site Code": "S01"},
+        {"SKU": 1, "Site Code": "S02", "Item_Shop": "P-S02-KL"},
+        {"SKU": 2, "Site Code": "S01"},
+        {"SKU": 3, "Site Code": "S03", "Item_Shop": "P-S03-NT", "Shop Stock Status": "Normal"},
+    ])
+    raw, by_shop, top10, by_nature, by_om, _ = transform_overstock_p90d(df)
+    by_sku = _build_op90d_by_sku(raw)
+    top = _build_op90d_top_no_sales_sku(by_sku=by_sku)
+    buf = generate_excel_overstock_p90d(
+        by_shop, top10, by_nature, by_om, by_sku=by_sku, top_no_sales_sku=top,
+    )
+    wb = load_workbook(BytesIO(buf.getvalue()), data_only=True)
+    assert wb.sheetnames == [
+        "By Shop", "店舖90日零銷售Top 10 SKU回覆", _OP90D_TOP_NO_SALES_SHEET,
+        "By Nature", "By OM", "By SKU",
+    ]
+    ws = wb[_OP90D_TOP_NO_SALES_SHEET]
+    assert [c.value for c in ws[1]] == list(_OP90D_TOP_NO_SALES_COLUMNS)
+    pct_col = list(_OP90D_TOP_NO_SALES_COLUMNS).index("無銷售店舖佔比") + 1
+    assert ws.cell(row=2, column=pct_col).number_format == "0.0%"
+    assert ws.cell(row=2, column=pct_col).value == 2 / 3
 
 
 def test_by_sku_launch_date_no_thousand_separator():

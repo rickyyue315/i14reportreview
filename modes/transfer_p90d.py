@@ -43,6 +43,7 @@ from modes.common import (
 __all__ = [
     "build_transfer_candidates",
     "build_mch_options",
+    "receiver_limit_label",
     "transform_p90d_transfer",
     "generate_excel_p90d_transfer",
 ]
@@ -102,6 +103,36 @@ _TRANSFER_SKU_COLUMNS = [
 _TRANSFER_PCT_COLUMNS = frozenset({"接收店銷售佔比 (同 SKU)"})
 _TRANSFER_STATUS_ALLOCATED = "已全數分配"
 _TRANSFER_STATUS_NO_RECEIVER = "無接收店舖（保留原店）"
+
+# 接收店集中模式：None＝不限（原有行為）；2／4＝每個 SKU 只取銷量最高的 1–2／3–4 間接收店
+_TRANSFER_RECEIVER_LIMIT_NONE = "不限（原有：全數有銷售的接收店舖）"
+_TRANSFER_RECEIVER_LIMIT_LABELS = {
+    2: "集中 1–2 間（同 SKU 銷量最高的接收店）",
+    4: "集中 3–4 間（同 SKU 銷量最高的接收店）",
+}
+
+
+def receiver_limit_label(receiver_limit: int | None = None) -> str:
+    """接收店集中模式的顯示文字（None＝不限）。"""
+    if receiver_limit is None:
+        return _TRANSFER_RECEIVER_LIMIT_NONE
+    limit = int(receiver_limit)
+    return _TRANSFER_RECEIVER_LIMIT_LABELS.get(
+        limit, f"集中最多 {limit} 間（同 SKU 銷量最高的接收店）"
+    )
+
+
+def _validate_receiver_limit(receiver_limit: int | None) -> int | None:
+    if receiver_limit is None:
+        return None
+    try:
+        limit = int(receiver_limit)
+    except (TypeError, ValueError):
+        raise ValueError("接收店舖集中上限必須為正整數或「不限」。") from None
+    if limit <= 0:
+        raise ValueError("接收店舖集中上限必須為正整數或「不限」。")
+    return limit
+
 
 # 「轉貨單」欄位分組著色（表頭底色、資料底色）：黃＝轉出店與轉貨數量、淺藍＝接收店相關欄位。
 # 只影響轉貨單的顯示格式，不改任何欄位名稱、欄序或數值。
@@ -339,10 +370,11 @@ def _normalize_sites(values) -> set[str]:
     return out
 
 
-def _empty_transfer(warnings: list[str]):
+def _empty_transfer(warnings: list[str], receiver_limit: int | None = None):
     stats = {
         "out_sites": 0, "out_skus": 0, "out_qty": 0, "in_sites": 0,
         "plan_lines": 0, "alloc_qty": 0, "unalloc_qty": 0, "unalloc_skus": 0,
+        "receiver_limit": receiver_limit,
     }
     return (
         pd.DataFrame(columns=_TRANSFER_PLAN_COLUMNS),
@@ -409,11 +441,16 @@ def transform_p90d_transfer(
     shop_natures: list[str] | None = None,
     mch1_filter=None,
     nd_mode: bool = False,
+    receiver_limit: int | None = None,
 ):
     """依指定轉出店舖產生轉貨計畫。
 
     ``mch1_filter`` 為執行前的 MCH1 篩選（None 或包含全部值＝不排除），
     對轉出與接收兩側同時生效。
+
+    ``receiver_limit`` 為每個 SKU 的接收店舖上限（None＝不限，原有行為）：
+    指定 2／4 時，按 Sold Qty (P90D) 由高至低只取最多 2／4 間接收店
+    （同銷量以 Site Code 排序），再按這批店舖的銷售比例分配，轉出總量仍力求全數接收。
 
     ``nd_mode=True`` 時改用 ND SKU with Stock Review(轉貨模式) 的判定：
     轉出＝已選店舖中 RP Type＝ND 且有庫存的列（不看銷售記錄）、
@@ -427,12 +464,13 @@ def transform_p90d_transfer(
     sites = _normalize_sites(transfer_out_sites)
     if not sites:
         raise ValueError("請至少選擇一間轉出店舖。")
+    receiver_limit = _validate_receiver_limit(receiver_limit)
     base, warnings = _prepare_transfer_base(df_input, shop_natures=shop_natures,
                                             progress_callback=progress_callback,
                                             require_rp=nd_mode)
     if base.empty:
         warnings.append("過濾後無有效資料列，沒有可轉貨的記錄。")
-        return _empty_transfer(warnings)
+        return _empty_transfer(warnings, receiver_limit=receiver_limit)
     _filtered = _apply_mch_filter(base, mch1_filter=mch1_filter)
     _mch_note = _mch_excluded_warning(base, _filtered)
     if _mch_note:
@@ -440,7 +478,7 @@ def transform_p90d_transfer(
     base = _filtered
     if base.empty:
         warnings.append("MCH 篩選後無有效資料列，本次沒有轉出。")
-        return _empty_transfer(warnings)
+        return _empty_transfer(warnings, receiver_limit=receiver_limit)
 
     if progress_callback:
         progress_callback(0.25, "辨識轉出與接收店舖...")
@@ -470,7 +508,7 @@ def transform_p90d_transfer(
         warnings.append(f"{_out_missing_txt}：{'、'.join(missing_sites)}")
     if out_rows.empty:
         warnings.append(_out_empty_txt)
-        return _empty_transfer(warnings)
+        return _empty_transfer(warnings, receiver_limit=receiver_limit)
 
     out_agg = out_rows.groupby(["_sku", "_site"], sort=True).agg(
         qty=("_stock", "sum"),
@@ -498,10 +536,17 @@ def transform_p90d_transfer(
     plan_rows: list[dict] = []
     sku_rows: list[dict] = []
     pool_rows: list[dict] = []
+    capped_out_pairs = 0
     for sku, sku_out in out_agg.groupby("_sku", sort=True):
         sources = [(site, int(round(q))) for site, q in zip(sku_out["_site"], sku_out["qty"])]
         total = sum(q for _, q in sources)
-        pool = sorted(in_map.get(sku, []))
+        all_pool = sorted(in_map.get(sku, []))
+        if receiver_limit is None:
+            pool = all_pool
+        else:
+            # 集中模式：只取 Sold Qty (P90D) 最高的 N 間接收店（同銷量以 Site Code 排序）
+            pool = sorted(all_pool, key=lambda r: (-r[1], r[0]))[:receiver_limit]
+            capped_out_pairs += max(len(all_pool) - len(pool), 0)
         alloc = _allocate_proportional(total, [sales for _, sales, _ in pool])
         recv = [(site, sales, stock, a) for (site, sales, stock), a in zip(pool, alloc)]
         recv_map = {site: (sales, stock, a) for site, sales, stock, a in recv}
@@ -637,11 +682,18 @@ def transform_p90d_transfer(
         "alloc_qty": alloc_qty,
         "unalloc_qty": unalloc_qty,
         "unalloc_skus": unalloc_skus,
+        "receiver_limit": receiver_limit,
     }
     if unalloc_skus:
         warnings.append(
             f"有 {unalloc_skus:,} 個 SKU（共 {unalloc_qty:,} 件）在已選轉出店舖有可轉出庫存，"
             f"{_in_unalloc_txt}，本次未能轉出，保留於原店舖；詳見「SKU 轉貨彙總」。"
+        )
+    if receiver_limit is not None and capped_out_pairs:
+        warnings.append(
+            f"已啟用接收店集中模式（{receiver_limit_label(receiver_limit)}）："
+            f"共 {capped_out_pairs:,} 個「SKU × 有銷售接收店」組合超出上限，未納入分配；"
+            "如需全數有銷售店舖接收，請將接收店舖數量改為「不限」。"
         )
 
     if progress_callback:
@@ -729,11 +781,15 @@ def generate_excel_p90d_transfer(
     mch_filter_label: str = "全部（未排除）",
     progress_callback=None,
     nd_mode: bool = False,
+    receiver_limit: int | None = None,
 ) -> BytesIO:
     """產生六個工作表：說明、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總（無 RAW）。
 
     ``nd_mode=True`` 時說明頁改用 ND SKU with Stock Review(轉貨模式) 的措辭
     （轉出＝RP Type＝ND 且有庫存、接收＝RP Type＝RF 且有銷售記錄）。
+
+    ``receiver_limit`` 只影響 ND 模式說明頁的「接收店舖集中模式」參數
+    （None＝不限、2／4＝每個 SKU 最多 2／4 間接收店）。
     """
     stats = dict(stats or {})
     if progress_callback:
@@ -752,10 +808,12 @@ def generate_excel_p90d_transfer(
             ("ND 定義", "RP Type＝ND（去除前後空格、大小寫不敏感）"),
             ("轉出數量", "Shop Stock Qty (CM) 全數，不設上限（只計 RP Type＝ND 且有庫存的列，不看銷售記錄）"),
             ("接收店定義", "同 SKU、非轉出店舖、RP Type＝RF 且 Sold Qty (P90D) > 0（有銷售記錄），不論有無庫存"),
+            ("接收店舖集中模式", receiver_limit_label(receiver_limit)),
         ]
         _logic = [
             "同 SKU 的轉出總量＝所有已選轉出店舖的 RP Type＝ND 有庫存列 Shop Stock Qty (CM) 合計，全數轉出，不設上限（即使該列仍有銷售記錄亦照轉）。",
             "只有一間接收店時，全數分配給該店；有多間接收店時，按各店 Sold Qty (P90D) 的銷售比例分配（最大餘數法取整數件），力求轉出總量全數被接收。",
+            "接收店舖集中模式（可選）：「不限」時全數有銷售記錄的 RF 接收店舖按銷售比例分配；「集中 1–2 間」或「集中 3–4 間」時，每個 SKU 只取 Sold Qty (P90D) 最高的 2 間或 4 間接收店（同銷量以 Site Code 排序），再按這批店舖的銷售比例分配，轉出總量仍力求全數接收；未納入的店舖不會收到該 SKU 的轉貨。",
             "轉貨單配對：同 SKU 內，轉出店依 Site Code 排序，接收店依分配量由大至小排序，依序配對成「轉出店 → 接收店」行，各行數量合計與分配一致。",
             "接收店不受庫存限制；接收後庫存＝調前庫存＋分配總量。",
             "同 SKU 沒有任何接收店（即沒有其他 RP Type＝RF 且有銷售記錄的店舖）時不轉出，保留於原店舖，並列於「SKU 轉貨彙總」的未分配量。",
@@ -769,6 +827,11 @@ def generate_excel_p90d_transfer(
             "同店同 SKU 重複列已合併計算（轉出量與銷售分別加總），並於警告列明。",
             "分配以銷售比例為準；如需調整某店接收量，可於轉貨單直接修改數量，修改後請重新核對各 SKU 的轉出與接收總量。",
         ]
+        if receiver_limit is not None:
+            _tips.append(
+                "已啟用接收店集中模式：集中後個別接收店的數量會相應增加，請按店舖陳列能力於轉貨單核對；"
+                "如需全數有銷售店舖接收，請將接收店舖數量改為「不限」。"
+            )
     else:
         _title = "P90D 0 Sales Review（轉貨模式）說明"
         _subtitle = "由指定轉出店舖（0 Sales 且有庫存）轉貨至有銷售記錄的店舖；不分 OM 群組，轉貨數量不設上限"

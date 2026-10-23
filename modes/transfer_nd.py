@@ -15,6 +15,8 @@
 - 接收：同 SKU、非轉出店舖、RP Type＝RF 且 Sold Qty (P90D) > 0 的列（有銷售記錄），不論有無庫存。
 - 分配：同 SKU 的轉出總量按接收店 Sold Qty (P90D) 比例分配，以最大餘數法取整數件、全數分完；
   只有一間接收店時全數給該店；無接收店時該 SKU 不轉出，列入未分配。
+- 接收店舖集中模式（可選，預設不限）：每個 SKU 可只分配給 Sold Qty (P90D) 最高的
+  1–2 間或 3–4 間 RF 接收店，減少每店只收到 1 件的分散情況；轉出總量仍力求全數接收。
 - RP Type 比對為去除前後空格、大小寫不敏感；``RP Type`` 為必要欄位，缺欄即停止計算，
   空白或其他非 RF／ND 的值一律不納入轉出與接收（列 warning）。
 - MCH 篩選（選填）：執行前可按 Adj. MCH1 排除部分分類（傳 None 或包含全部值＝不排除），
@@ -26,12 +28,14 @@ from modes.transfer_p90d import (
     build_mch_options,
     build_transfer_candidates,
     generate_excel_p90d_transfer,
+    receiver_limit_label,
     transform_p90d_transfer,
 )
 
 __all__ = [
     "build_nd_transfer_candidates",
     "build_mch_options",
+    "receiver_limit_label",
     "transform_nd_transfer",
     "generate_excel_nd_transfer",
 ]
@@ -53,11 +57,16 @@ def transform_nd_transfer(
     progress_callback=None,
     shop_natures: list[str] | None = None,
     mch1_filter=None,
+    receiver_limit: int | None = None,
 ):
     """依指定轉出店舖產生轉貨計畫（RP Type＝ND 且有庫存 → RP Type＝RF 且有銷售記錄的店舖）。
 
     ``mch1_filter`` 為執行前的 MCH1 篩選（None 或包含全部值＝不排除），
     對轉出與接收兩側同時生效。
+
+    ``receiver_limit`` 為每個 SKU 的接收店舖上限（None＝不限，原有行為）：
+    2／4 時只取 Sold Qty (P90D) 最高的 1–2／3–4 間 RF 接收店，再按這批店舖的
+    銷售比例分配，轉出總量仍力求全數接收。
 
     回傳 (plan_df, out_shop_df, in_shop_df, sku_df, mch_df, stats, warnings)。
     """
@@ -68,6 +77,7 @@ def transform_nd_transfer(
         shop_natures=shop_natures,
         mch1_filter=mch1_filter,
         nd_mode=True,
+        receiver_limit=receiver_limit,
     )
 
 
@@ -81,8 +91,12 @@ def generate_excel_nd_transfer(
     nature_label: str = "全部",
     mch_filter_label: str = "全部（未排除）",
     progress_callback=None,
+    receiver_limit: int | None = None,
 ):
-    """產生六個工作表：說明、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總（無 RAW）。"""
+    """產生六個工作表：說明、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總（無 RAW）。
+
+    ``receiver_limit`` 只影響說明頁的「接收店舖集中模式」參數（None＝不限、2／4＝集中）。
+    """
     return generate_excel_p90d_transfer(
         plan_df,
         out_shop_df,
@@ -94,4 +108,5 @@ def generate_excel_nd_transfer(
         mch_filter_label=mch_filter_label,
         progress_callback=progress_callback,
         nd_mode=True,
+        receiver_limit=receiver_limit,
     )

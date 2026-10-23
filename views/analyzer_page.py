@@ -59,9 +59,10 @@ from transformer import (
     transform_overstock_p90d, generate_excel_overstock_p90d,
     transform_overstock_p90d_shop, generate_excel_overstock_p90d_shop,
     transform_p90d_transfer, generate_excel_p90d_transfer, build_transfer_candidates, build_mch_options,
-    transform_nd_transfer, generate_excel_nd_transfer, build_nd_transfer_candidates,
+    transform_nd_transfer, generate_excel_nd_transfer, build_nd_transfer_candidates, receiver_limit_label,
     _clean_dataframe, _cached_safe_sku_series, _safe_numeric,
     _build_op90d_by_sku, _build_op90d_by_buyer,
+    _build_op90d_top_no_sales_sku,
     _HYBRID_FULL_SAFETY_SHEET,
     transform_safety_monthly, generate_excel_safety_monthly,
     safety_monthly_dashboard_metrics, _SAFM_PIVOT_METRICS,
@@ -313,10 +314,10 @@ MODE_DESCRIPTIONS = {
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
     "Stock Impact Analysis (簡化)": "快速檢視各品項三期存貨與銷售趨勢。",
     "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
-    "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 須大於 0），分類維度可切換 MAKE UP／Item Class／Adj. MCH1，或交叉維度 MAKE UP × Item Class／MAKE UP × Adj. MCH1（按主分類逐列交叉次分類）；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈，另按 SKU 及 Buyer 統計出現店舖數。",
-    "P90D 0 Sales Review(個別店舖)": "供個別店舖查閱自身 P90D 0 Sales 情況（Shop Stock Qty (LM) 須大於 0），分類固定以 MAKE UP 分類統計；輸出各店全部 SKU 明細（ALL SKU，包括 MAKE UP 與 Non-MAKE UP，不設列數上限與店舖回覆欄，按庫存由大至小排序），以及 Shop Nature 與 OM 分佈，另按 SKU 及 Buyer 統計出現店舖數。",
+    "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 須大於 0），分類維度可切換 MAKE UP／Item Class／Adj. MCH1，或交叉維度 MAKE UP × Item Class／MAKE UP × Adj. MCH1（按主分類逐列交叉次分類）；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈，另按 SKU 統計無銷售店舖數、店舖總數（分母）及佔比，並列出最多店舖無銷售的 Top 20 SKU；另按 Buyer 統計出現店舖數。",
+    "P90D 0 Sales Review(個別店舖)": "供個別店舖查閱自身 P90D 0 Sales 情況（Shop Stock Qty (LM) 須大於 0），分類固定以 MAKE UP 分類統計；輸出各店全部 SKU 明細（ALL SKU，包括 MAKE UP 與 Non-MAKE UP，不設列數上限與店舖回覆欄，按庫存由大至小排序），以及 Shop Nature 與 OM 分佈，另按 SKU 統計出現店舖數、店舖總數（分母）及佔比，並按 Buyer 統計出現店舖數。",
     "P90D 0 Sales Review(轉貨模式)": "先指定轉出店舖（0 Sales 且有庫存），其 0 Sales 有庫存列全數轉出，分配予同 SKU 有銷售記錄的店舖（不分 OM，接收多間時按銷售比例分配，力求全數接收）。",
-    "ND SKU with Stock Review(轉貨模式)": "先指定轉出店舖（RP Type＝ND 且有庫存），其 ND 有庫存列全數轉出，分配予同 SKU 有銷售記錄（Sold Qty (P90D) > 0）的 RF 店舖（不分 OM，接收多間時按銷售比例分配，力求全數接收）。",
+    "ND SKU with Stock Review(轉貨模式)": "先指定轉出店舖（RP Type＝ND 且有庫存），其 ND 有庫存列全數轉出，分配予同 SKU 有銷售記錄（Sold Qty (P90D) > 0）的 RF 店舖（不分 OM，接收多間時按銷售比例分配，力求全數接收）；可選擇每個 SKU 集中於銷量最高的 1–2 間或 3–4 間接收店，或維持不限。",
     "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
     "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
@@ -585,6 +586,9 @@ def _render_transfer_results(mode_key: str) -> None:
 
     st.markdown(f'<div class="section-banner"><h3>{_cfg["title"]}</h3></div>', unsafe_allow_html=True)
     _top_download_button(_excel_data, _cfg["top_prefix"], f"dl_top_{_cfg['widget_key']}")
+    if mode_key == _NDTR_MODE:
+        _receiver_limit = _stats.get("receiver_limit")
+        st.caption(f"🎯 每個 SKU 接收店舖：{receiver_limit_label(_receiver_limit)}。")
 
     for _row_i in range(0, len(_cfg["cards"]), 4):
         _row = _cfg["cards"][_row_i:_row_i + 4]
@@ -662,7 +666,7 @@ MODE_KEYS = {
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
     "Stock Impact Analysis (簡化)": {"prefix": "stock_impact_simp_", "processed": False, "raw_df": None, "sku_monthly_analysis": None, "sku_soh_summary": None, "excel_data": None, "warnings": []},
     "Past 90 Days 0 Sales": {"prefix": "p90ds_", "processed": False, "summary_df": None, "raw_df": None, "excel_data": None, "warnings": []},
-    "P90D 0 Sales Review(Shop回覆)": {"prefix": "op90d_", "processed": False, "raw_df": None, "by_shop": None, "top10": None, "by_nature": None, "by_om": None, "by_sku": None, "by_buyer": None, "excel_data": None, "warnings": [], "include_makeup": False, "breakdown_value": "makeup"},
+    "P90D 0 Sales Review(Shop回覆)": {"prefix": "op90d_", "processed": False, "raw_df": None, "by_shop": None, "top10": None, "by_nature": None, "by_om": None, "by_sku": None, "top_no_sales_sku": None, "by_buyer": None, "excel_data": None, "warnings": [], "include_makeup": False, "breakdown_value": "makeup"},
     "P90D 0 Sales Review(個別店舖)": {"prefix": "op90ds_", "processed": False, "raw_df": None, "by_shop": None, "top10": None, "by_nature": None, "by_om": None, "by_sku": None, "by_buyer": None, "excel_data": None, "warnings": []},
     "P90D 0 Sales Review(轉貨模式)": {"prefix": "op90dt_", "processed": False, "candidates": None, "candidates_key": None, "mch_options": None, "mch_key": None, "mch_breakdown": None, "plan_df": None, "out_shop_df": None, "in_shop_df": None, "sku_df": None, "mch_df": None, "stats": None, "excel_data": None, "warnings": []},
     "ND SKU with Stock Review(轉貨模式)": {"prefix": "ndtr_", "processed": False, "candidates": None, "candidates_key": None, "mch_options": None, "mch_key": None, "mch_breakdown": None, "plan_df": None, "out_shop_df": None, "in_shop_df": None, "sku_df": None, "mch_df": None, "stats": None, "excel_data": None, "warnings": []},
@@ -2905,6 +2909,7 @@ if uploaded_file is not None:
         _op90dt_mch1_filter = None
         _ndtr_sites = []
         _ndtr_mch1_filter = None
+        _ndtr_receiver_limit = None
         if mode == _OP90DT_MODE:
             _op90dt_sites = _transfer_site_selector(
                 df_input,
@@ -2935,6 +2940,30 @@ if uploaded_file is not None:
                 selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                 prefix="ndtr_",
             )
+            st.markdown("#### 🎯 步驟三：接收店舖集中模式（減少每店只收到 1 件）")
+            _ndtr_receiver_options = {
+                "不限（原有：全數有銷售的 RF 店舖）": None,
+                "集中 1–2 間（同 SKU 銷量最高）": 2,
+                "集中 3–4 間（同 SKU 銷量最高）": 4,
+            }
+            _ndtr_receiver_choice = st.radio(
+                "🎯 每個 SKU 的接收店舖數量",
+                options=list(_ndtr_receiver_options),
+                index=0,
+                horizontal=True,
+                key="ndtr_receiver_limit_mode",
+                help="「不限」沿用原有分配：同 SKU 全數有銷售記錄的 RF 店舖按 Sold Qty (P90D) 比例分配。"
+                     "選擇集中模式後，每個 SKU 只分配給 Sold Qty (P90D) 最高的 1–2 間或 3–4 間 RF 店舖"
+                     "（同銷量以 Site Code 排序），其餘有銷售店舖不獲分配；轉出總量仍力求全數接收。",
+            )
+            _ndtr_receiver_limit = _ndtr_receiver_options[_ndtr_receiver_choice]
+            _ndtr_receiver_caption = (
+                "目前設定 → 每個 SKU 只集中分配予銷量最高的 1–2 間或 3–4 間 RF 接收店；"
+                "其餘有銷售店舖不會收到該 SKU 的轉貨。"
+                if _ndtr_receiver_limit is not None
+                else "目前設定 → 不限接收店數目，全數有銷售記錄的 RF 店舖按 Sold Qty (P90D) 比例分配。"
+            )
+            st.caption(_ndtr_receiver_caption)
 
         _is_overstock_mode = (mode == "Overstock Review")
         _is_carry_mode = (mode == "Carry SKU Review")
@@ -3104,8 +3133,9 @@ if uploaded_file is not None:
                         breakdown=_op90d_breakdown,
                     )
                     by_sku_df = _build_op90d_by_sku(raw_df)
+                    top_no_sales_df = _build_op90d_top_no_sales_sku(by_sku=by_sku_df)
                     by_buyer_df = _build_op90d_by_buyer(raw_df)
-                    buf = generate_excel_overstock_p90d(by_shop_df, top10_df, by_nature_df, by_om_df, progress_callback=_cb_excel, include_raw=_include_raw, by_sku=by_sku_df, by_buyer=by_buyer_df)
+                    buf = generate_excel_overstock_p90d(by_shop_df, top10_df, by_nature_df, by_om_df, progress_callback=_cb_excel, include_raw=_include_raw, by_sku=by_sku_df, by_buyer=by_buyer_df, top_no_sales_sku=top_no_sales_df)
                     st.session_state.op90d_processed = True
                     st.session_state.op90d_raw_df = raw_df
                     st.session_state.op90d_by_shop = by_shop_df
@@ -3113,6 +3143,7 @@ if uploaded_file is not None:
                     st.session_state.op90d_by_nature = by_nature_df
                     st.session_state.op90d_by_om = by_om_df
                     st.session_state.op90d_by_sku = by_sku_df
+                    st.session_state.op90d_top_no_sales_sku = top_no_sales_df
                     st.session_state.op90d_by_buyer = by_buyer_df
                     st.session_state.op90d_excel_data = buf
                     st.session_state.op90d_warnings = _warnings
@@ -3166,12 +3197,14 @@ if uploaded_file is not None:
                         progress_callback=_cb_transform,
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                         mch1_filter=_ndtr_mch1_filter,
+                        receiver_limit=_ndtr_receiver_limit,
                     )
                     buf = generate_excel_nd_transfer(
                         _plan_df, _out_df, _in_df, _sku_df, _mch_df, _stats,
                         nature_label="全部" if set(selected_shop_natures) == set(SHOP_NATURE_OPTIONS) else "、".join(selected_shop_natures),
                         mch_filter_label="全部（未排除）" if _ndtr_mch1_filter is None else "已排除部分分類",
                         progress_callback=_cb_excel,
+                        receiver_limit=_ndtr_receiver_limit,
                     )
                     st.session_state.ndtr_processed = True
                     st.session_state.ndtr_plan_df = _plan_df
@@ -4040,11 +4073,19 @@ if uploaded_file is not None:
             by_nature_df = st.session_state.op90d_by_nature
             by_om_df = st.session_state.op90d_by_om
             by_sku_df = st.session_state.get("op90d_by_sku")
-            if by_sku_df is None and raw_df is not None and not raw_df.empty:
+            _by_sku_cols = getattr(by_sku_df, "columns", [])
+            if (by_sku_df is None or "店舖總數 (分母)" not in _by_sku_cols) and raw_df is not None and not raw_df.empty:
                 try:
                     by_sku_df = _build_op90d_by_sku(raw_df)
                 except Exception:
                     by_sku_df = None
+            top_no_sales_df = st.session_state.get("op90d_top_no_sales_sku")
+            _top_ns_cols = getattr(top_no_sales_df, "columns", [])
+            if (top_no_sales_df is None or "無銷售店舖數" not in _top_ns_cols) and by_sku_df is not None and not by_sku_df.empty:
+                try:
+                    top_no_sales_df = _build_op90d_top_no_sales_sku(by_sku=by_sku_df)
+                except Exception:
+                    top_no_sales_df = None
             by_buyer_df = st.session_state.get("op90d_by_buyer")
             if by_buyer_df is None and raw_df is not None and not raw_df.empty:
                 try:
@@ -4109,7 +4150,7 @@ if uploaded_file is not None:
 
             st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
 
-            r2_col1, r2_col2 = st.columns(2)
+            r2_col1, r2_col2, r2_col3 = st.columns(3)
             with r2_col1:
                 st.markdown(f"""
                 <div class="metric-card" style="border-left-color: #8b5cf6;">
@@ -4126,11 +4167,30 @@ if uploaded_file is not None:
                     <div class="metric-desc">各店舖最高庫存 Top 10 合計列數</div>
                 </div>
                 """, unsafe_allow_html=True)
+            with r2_col3:
+                _top_ns = top_no_sales_df.iloc[0] if top_no_sales_df is not None and not top_no_sales_df.empty else None
+                if _top_ns is not None:
+                    _top_ns_count = int(_top_ns.get("無銷售店舖數")) if pd.notna(_top_ns.get("無銷售店舖數")) else 0
+                    _top_ns_denom = int(_top_ns.get("店舖總數 (分母)")) if pd.notna(_top_ns.get("店舖總數 (分母)")) else 0
+                    _top_ns_pct = _top_ns.get("無銷售店舖佔比")
+                    _top_ns_pct_txt = f"{float(_top_ns_pct):.1%}" if pd.notna(_top_ns_pct) else "—"
+                    _top_ns_value = f"{_top_ns_count:,} / {_top_ns_denom:,}" if _top_ns_denom > 0 else f"{_top_ns_count:,}"
+                    _top_ns_desc = f"SKU {_top_ns.get('SKU', '')}（{_top_ns_pct_txt}）"
+                else:
+                    _top_ns_value = "—"
+                    _top_ns_desc = "無符合資料"
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #f97316;">
+                    <div class="metric-title">最多店舖無銷售 SKU</div>
+                    <div class="metric-value" style="color: #f97316;">{_top_ns_value}</div>
+                    <div class="metric-desc">{_top_ns_desc}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
         
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            tab_shop, tab_top, tab_sku, tab_buyer, tab_nature, tab_om = st.tabs(["🏪 By Shop（店舖統計）", "📝 店舖90日零銷售Top 10 SKU回覆", "🔢 By SKU（出現店舖數）", "👤 By Buyer（出現店舖數）", "🏬 By Nature", "🗺️ By OM"])
+            tab_shop, tab_top, tab_sku, tab_buyer, tab_nature, tab_om = st.tabs(["🏪 By Shop（店舖統計）", "📝 店舖90日零銷售Top 10 SKU回覆", "🏆 最多店舖無銷售 SKU", "👤 By Buyer（出現店舖數）", "🏬 By Nature", "🗺️ By OM"])
             _op90d_bd_name = {"makeup": "MAKE UP 分類", "item_class": "Item Class", "mch1": "Adj. MCH1",
                               "makeup_item": "MAKE UP × Item Class", "makeup_mch1": "MAKE UP × Adj. MCH1"}.get(
                 st.session_state.get("op90d_breakdown_value", "makeup"), "MAKE UP 分類")
@@ -4145,6 +4205,7 @@ if uploaded_file is not None:
                     st.markdown("#### 各店舖最高庫存 SKU（Top 10 Shop Stock Qty (CM)，包括 MAKE UP，供店舖回覆）")
                 else:
                     st.markdown("#### 各店舖最高庫存 SKU（Top 10 Shop Stock Qty (CM)，只限 Non-MAKE UP，供店舖回覆）")
+                st.caption("此分頁按店舖列出最高庫存 Top 10；如要查看全公司最多店舖無銷售的 SKU，請切換至「🏆 最多店舖無銷售 SKU」分頁。")
                 if top10_df is not None and not top10_df.empty:
                     st.dataframe(top10_df.head(100).rename(columns=_display_safety_header), width='stretch', hide_index=True)
                     st.caption(f"僅顯示前 100 筆，完整 {len(top10_df):,} 筆資料將包含在下載的 Excel 報表中。")
@@ -4163,10 +4224,48 @@ if uploaded_file is not None:
                 else:
                     st.info("無符合資料")
             with tab_sku:
-                st.markdown("#### 各 SKU 出現 P90D 0 Sales 的店舖數（按出現店舖數由大至小排序）")
-                if by_sku_df is not None and not by_sku_df.empty:
-                    st.dataframe(by_sku_df.head(200), width='stretch', hide_index=True)
-                    st.caption(f"僅顯示前 200 筆，完整 {len(by_sku_df):,} 筆資料將包含在下載的 Excel 報表中。")
+                st.markdown("#### 最多店舖無銷售的 SKU（按無銷售店舖數由大至小排序）")
+                st.caption(
+                    "無銷售店舖數＝該 SKU 在多少間店舖出現 P90D 0 Sales（且 Shop Stock Qty (LM) 大於 0）；"
+                    "分母＝本次上載資料經 Shop Nature 篩選後的店舖總數；"
+                    "無銷售店舖佔比＝無銷售店舖數 ÷ 店舖總數。"
+                )
+                if top_no_sales_df is not None and not top_no_sales_df.empty:
+                    _top_ns_display = top_no_sales_df.copy()
+                    _top_ns_display["無銷售店舖佔比"] = (
+                        pd.to_numeric(_top_ns_display["無銷售店舖佔比"], errors="coerce") * 100
+                    ).round(1)
+                    st.dataframe(
+                        _top_ns_display, width='stretch', hide_index=True,
+                        column_config={
+                            "無銷售店舖佔比": st.column_config.NumberColumn(
+                                "無銷售店舖佔比", format="%.1f%%"
+                            ),
+                        },
+                    )
+                    st.caption(
+                        f"顯示前 {len(_top_ns_display):,} 個 SKU；完整清單見下方「By SKU 完整清單（預覽）」或 Excel 報表的「By SKU」工作表。"
+                    )
+                    with st.expander("查看 By SKU 完整清單（預覽）", expanded=False):
+                        if by_sku_df is not None and not by_sku_df.empty:
+                            _by_sku_display = by_sku_df.head(500).copy()
+                            _by_sku_display["無銷售店舖佔比"] = (
+                                pd.to_numeric(_by_sku_display["無銷售店舖佔比"], errors="coerce") * 100
+                            ).round(1)
+                            st.dataframe(
+                                _by_sku_display, width='stretch', hide_index=True,
+                                column_config={
+                                    "無銷售店舖佔比": st.column_config.NumberColumn(
+                                        "無銷售店舖佔比", format="%.1f%%"
+                                    ),
+                                },
+                            )
+                            if len(by_sku_df) > 500:
+                                st.caption(
+                                    f"僅預覽前 500 筆；完整 {len(by_sku_df):,} 筆請見下載 Excel 的「By SKU」工作表。"
+                                )
+                        else:
+                            st.info("無符合資料")
                 else:
                     st.info("無符合資料")
             with tab_buyer:
