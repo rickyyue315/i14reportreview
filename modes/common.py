@@ -64,8 +64,13 @@ REQUIRED_COLUMNS = ["Buyer", "Brand", "SKU", "Shop Stock Status"]
 # 2026-10-26 起來源報表（By SKUxShop）新增的 M-2 庫存欄位（LLM = Last Last Month，上上月），
 # 語意對照既有欄位：LLM = M-2（上上月）、LM = M-1（上月）、CM = 當月。
 # 舊月份檔案沒有這些欄位，故一律為「選用欄位」：任何模式皆不檢核、不要求；
-# 存在時完整保留（清理、RAW 欄序重排、無欄位過濾的模式輸出一概帶出），
-# 缺失時所有行為與舊檔完全相同。後續各模式如需以 M-2 店舖庫存調整計算，
+# 存在時完整保留（清理、RAW 欄序重排、無欄位過濾的模式輸出一概帶出）。
+# 自 v1.93.0 起已納入相關計算（欄存在時生效，缺失時沿用 LM／CM 準則）：
+# - P90D 0 Sales 相關篩選（p90d／overstock_p90d／framework 轉 ND 判定）另須
+#   Shop Stock Qty (LLM) > 0——M-2 無貨者 90 日窗口內非全程有貨，不算真坐貨；
+# - Forecast Review 缺 Shop Stock Qty (M-2) 欄時以 LLM 代理 M-2 期缺貨還原；
+# - 店舖精簡SKU模式存貨判定擴為「過去90日有無存貨」＝ LLM／LM／CM 任一 > 0。
+# 後續各模式如需以 M-2 店舖庫存調整計算，
 # 欄名一律經此定義取用，不得在各模式內重複寫死。
 # 註：Shop Stock Value (LLM) 屬金額欄——「不含 Value」類輸出（RAW 明細轉化 (不含 Value)、
 # 店舖精簡SKU模式、hybrid RAW 隱藏金額欄）依既有規則刪除／隱藏，與其他 Value 欄一致。

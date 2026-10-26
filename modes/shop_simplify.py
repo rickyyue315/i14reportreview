@@ -4,8 +4,9 @@
 每列一店×一 SKU，保留來源檔全部欄位，並在最後附加五個固定欄位：
 
 - 過去90日有無賣過：Sold Qty (P90D) > 0 → 「有」，否則（等於 0、負數或空白）→「無賣」；
-- 過去60日有無存貨：Shop Stock Qty (LM) 或 Shop Stock Qty (CM) > 0 →「有存貨」，
-  兩者同時為 0（或空白／負數）→「無存貨」；
+- 過去90日有無存貨：Shop Stock Qty (LLM)、(LM) 或 (CM) 任一 > 0 →「有存貨」
+  （LLM 欄自 2026-10-26 起來源報表提供；缺欄時以其餘庫存欄判定），
+  三者同時為 0（或空白／負數）→「無存貨」；
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty：一律留空，供 SCT／店舖填寫。
 
 本模式不作調貨、Safety 或退倉建議，亦不篩選列（全店全 SKU 輸出）；清理規則沿用
@@ -59,7 +60,7 @@ __all__ = [
 
 # ── 輸出欄位契約（欄名固定，測試與導出檔依賴，未經明確要求不得改動）──
 _SHOP_SIMPLIFY_SOLD_COLUMN = "過去90日有無賣過"
-_SHOP_SIMPLIFY_STOCK_COLUMN = "過去60日有無存貨"
+_SHOP_SIMPLIFY_STOCK_COLUMN = "過去90日有無存貨"
 _SHOP_SIMPLIFY_SCT_COLUMN = "SCT建議"
 _SHOP_SIMPLIFY_NDRF_COLUMN = "Shop 回覆新的NDRF"
 _SHOP_SIMPLIFY_SAFETY_COLUMN = "如果RF的Safety Qty"
@@ -251,10 +252,10 @@ def transform_shop_simplify(
     progress_callback=None,
     shop_natures: list[str] | None = None,
 ):
-    """清理來源資料並附加「過去90日有無賣過／過去60日有無存貨」與三個空白回覆欄。
+    """清理來源資料並附加「過去90日有無賣過／過去90日有無存貨」與三個空白回覆欄。
 
-    回傳 (raw_df, warnings)。缺少 Sold Qty (P90D)，或 Shop Stock Qty (LM) 與
-    Shop Stock Qty (CM) 同時缺失時拋出 ValueError（無法判定，不應靜默輸出）。
+    回傳 (raw_df, warnings)。缺少 Sold Qty (P90D)，或 Shop Stock Qty (LLM)／(LM)／(CM)
+    三個庫存欄同時缺失時拋出 ValueError（無法判定，不應靜默輸出）。
     """
     if progress_callback:
         progress_callback(0.0, "驗證輸入資料...")
@@ -264,13 +265,20 @@ def transform_shop_simplify(
 
     avail = set(df_input.columns)
     sold_col = _resolve_column_name("Sold Qty (P90D)", avail)
+    llm_col = _resolve_column_name("Shop Stock Qty (LLM)", avail)
     lm_col = _resolve_column_name("Shop Stock Qty (LM)", avail)
     cm_col = _resolve_column_name("Shop Stock Qty (CM)", avail)
     if sold_col is None:
         raise ValueError("來源檔案缺少「Sold Qty (P90D)」，無法判定過去90日有無賣過。")
-    if lm_col is None and cm_col is None:
+    _stock_pairs = [
+        ("Shop Stock Qty (LLM)", llm_col),
+        ("Shop Stock Qty (LM)", lm_col),
+        ("Shop Stock Qty (CM)", cm_col),
+    ]
+    if all(c is None for _, c in _stock_pairs):
         raise ValueError(
-            "來源檔案同時缺少「Shop Stock Qty (LM)」與「Shop Stock Qty (CM)」，無法判定過去60日有無存貨。"
+            "來源檔案同時缺少「Shop Stock Qty (LLM)」「Shop Stock Qty (LM)」「Shop Stock Qty (CM)」，"
+            "無法判定過去90日有無存貨。"
         )
 
     if progress_callback:
@@ -278,10 +286,12 @@ def transform_shop_simplify(
     df = _clean_dataframe(df_input, shop_natures=shop_natures, progress_callback=progress_callback).copy()
 
     warnings: list[str] = []
-    if lm_col is None:
-        warnings.append("來源檔案缺少「Shop Stock Qty (LM)」，過去60日有無存貨只以 Shop Stock Qty (CM) 判定。")
-    if cm_col is None:
-        warnings.append("來源檔案缺少「Shop Stock Qty (CM)」，過去60日有無存貨只以 Shop Stock Qty (LM) 判定。")
+    _used_stock_names = [n for n, c in _stock_pairs if c is not None]
+    for _name, _col in _stock_pairs:
+        if _col is None:
+            warnings.append(
+                f"來源檔案缺少「{_name}」，過去90日有無存貨以「{'」、「'.join(_used_stock_names)}」判定。"
+            )
 
     had_output_columns = any(
         _resolve_column_name(name, avail) is not None
@@ -289,7 +299,7 @@ def transform_shop_simplify(
     )
     if had_output_columns:
         warnings.append(
-            "來源檔已含本模式的輸出欄（過去90日有無賣過／過去60日有無存貨／SCT建議／"
+            "來源檔已含本模式的輸出欄（過去90日有無賣過／過去90日有無存貨／SCT建議／"
             "Shop 回覆新的NDRF／如果RF的Safety Qty），將以本次計算結果覆蓋，三個回覆欄一律留空。"
         )
 
@@ -314,14 +324,21 @@ def transform_shop_simplify(
     )
 
     if progress_callback:
-        progress_callback(0.55, "判定過去60日有無存貨...")
+        progress_callback(0.55, "判定過去90日有無存貨...")
+    llm_stock = (
+        _safe_numeric(df[llm_col]) if llm_col is not None and llm_col in df.columns else pd.Series(0.0, index=df.index)
+    )
     lm_stock = (
         _safe_numeric(df[lm_col]) if lm_col is not None and lm_col in df.columns else pd.Series(0.0, index=df.index)
     )
     cm_stock = (
         _safe_numeric(df[cm_col]) if cm_col is not None and cm_col in df.columns else pd.Series(0.0, index=df.index)
     )
-    has_stock = (lm_stock.to_numpy(dtype=float) > 0) | (cm_stock.to_numpy(dtype=float) > 0)
+    has_stock = (
+        (llm_stock.to_numpy(dtype=float) > 0)
+        | (lm_stock.to_numpy(dtype=float) > 0)
+        | (cm_stock.to_numpy(dtype=float) > 0)
+    )
     stock_status = np.where(has_stock, _SHOP_SIMPLIFY_STOCK_YES, _SHOP_SIMPLIFY_STOCK_NO)
 
     df[_SHOP_SIMPLIFY_SOLD_COLUMN] = sold_status

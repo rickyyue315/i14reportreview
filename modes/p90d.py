@@ -158,6 +158,16 @@ def transform_p90d_zero_sales(
         & (stock_lm > 0) & (stock_cm > 0)
     ).fillna(False)
 
+    # LLM 欄存在時（2026-10-26 起來源報表）另須 LLM > 0：M-2 無貨的列 90 日窗口
+    # 內非全程有貨，不算真坐貨；來源 Shop Stock Status 不改邏輯仍標 P90D 0 Sales，
+    # 排除列數列 warning。
+    llm_col = _resolve_column_name("Shop Stock Qty (LLM)", set(df.columns))
+    llm_excluded = 0
+    if llm_col is not None:
+        stock_llm = _safe_numeric(df[llm_col])
+        llm_excluded = int((mask & ~(stock_llm > 0)).sum())
+        mask = mask & (stock_llm > 0)
+
     raw = df[mask].copy()
     if not raw.empty and "SKU" in raw.columns:
         raw["SKU"] = raw["SKU"].apply(_safe_sku)
@@ -168,7 +178,12 @@ def transform_p90d_zero_sales(
 
     warnings = []
     if raw.empty:
-        warnings.append("沒有符合「Past 90 Days 0 Sales（Sold Qty M-2/M-1/CM-MTD 與 Sold Qty (P90D) 皆 ≤ 0，且 Shop Stock Qty LM/CM 皆 > 0）」的資料。")
+        warnings.append("沒有符合「Past 90 Days 0 Sales（Sold Qty M-2/M-1/CM-MTD 與 Sold Qty (P90D) 皆 ≤ 0，且 Shop Stock Qty LM/CM 皆 > 0，LLM 欄存在時 (LLM) 亦須 > 0）」的資料。")
+    if llm_excluded:
+        warnings.append(
+            f"有 {llm_excluded} 列符合四期零銷售且 Shop Stock Qty LM/CM 皆 > 0，"
+            "但 Shop Stock Qty (LLM) 為 0（M-2 無貨，90 日內非全程有貨），已按 90 日有貨準則排除。"
+        )
 
     if progress_callback:
         progress_callback(0.4, "完成資料轉換...")

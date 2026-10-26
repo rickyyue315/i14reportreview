@@ -1,5 +1,19 @@
 # 版本記錄
 
+## v1.93.0 (2026-10-26)
+
+LLM（M-2 上上月庫存）納入 90 日有貨準則：來源檔含 `Shop Stock Qty (LLM)` 欄時，P90D 0 Sales 相關篩選另須 LLM 大於 0——M-2 無貨的列 90 日窗口內非全程有貨，不算真坐貨（解決過往只有 LM／CM 快照、60 日證據強當 90 日判斷的問題）。欄位仍屬選用：舊月份檔案（無 LLM 欄）所有行為不變：
+
+- **過往背景** — 來源檔 `Shop Stock Status` 不改自身邏輯：LLM＝0、LM＞0、CM＞0 又無賣過的列仍標 P90D 0 Sales，由本系統篩選層按 LLM 準則排除並列 warning，對應模式如下
+- **Past 90 Days 0 Sales** — 篩選由「四期銷售 ≤ 0 且 LM／CM 皆 > 0」增為 LLM 欄存在時 LLM 亦須 > 0；被排除列數列 warning
+- **P90D 0 Sales Review(Shop回覆／個別店舖)** — 篩選增為「狀態＋LM > 0＋**CM > 0**（本次新增，過往只查 LM）」，LLM 欄存在時 LLM 亦須 > 0；三個月快照任何一個為 0 都代表期間曾有調貨／派貨移動（LM 或 LLM 為 0＝曾調走後再派貨；CM 為 0＝現時已無貨，可能已調離），不算真坐貨；排除列數按 CM／LLM 原因分別列 warning；模式說明、指標卡與使用說明文字同步更新
+- **Safety Stock x NetStock Review／Stock Checking 的「Past 90 Days 0 Sales 轉 ND」判定** — `_hybrid_p90d_zero_sales_mask` 同步增為 LLM 欄存在時 LLM 亦須 > 0
+- **Forecast Review** — 缺 `Shop Stock Qty (M-2)` 欄但有 LLM 欄時，M-2 期缺貨還原改以 LLM 代理（LLM ≤ 0 視為 M-2 缺貨，列 warning）；M-2 期還原由「永遠略過」變為新格式檔案可用；說明頁與 `stats` 新增 `m2_llm_proxy`
+- **店舖精簡SKU模式** — 「過去60日有無存貨」擴為「**過去90日有無存貨**」＝ LLM／LM／CM 任一大於 0（Excel 固定表頭一併改名，屬經確認的資料契約變更）；三個庫存欄同時缺失才停止，缺任何欄位列 warning 說明以實際存在的欄位判定；結果頁指標卡與說明同步更新
+- **文件與 UI** — README、使用說明頁、分析頁上載提示（v1.92 的「計算暫未使用」文字改為已納入說明）同步更新
+- **測試** — 新增 `tests/test_llm_90day_rule.py` 18 項（五處準則、LLM＝0／NaN／負數排除、無 LLM 欄行為不變、排除列數 warning、CM＝0 排除與 CM 優先於 LLM 的歸因、LM＝0 靜默排除、Forecast LLM 代理還原與否、店舖精簡 90 日判定與缺欄提示）；`tests/test_shop_simplify.py` 更新欄名契約；全數 839 項測試通過
+- Change: `version.py` 1.92.0 → 1.93.0
+
 ## v1.92.0 (2026-10-26)
 
 系統加入 2026-10-26 起來源報表（By SKUxShop）新增 M-2（上上月，LLM）庫存欄位的認知；欄位一律為選用，任何計算邏輯暫不改動：

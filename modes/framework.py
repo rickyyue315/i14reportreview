@@ -924,7 +924,9 @@ def _hybrid_p90d_zero_sales_mask(raw: pd.DataFrame, ref_date=None) -> tuple[pd.S
 
     準則與獨立 Past 90 Days 0 Sales 模式一致：四期銷售皆 ≤ 0 且店舖有庫存
     （NaN 視為 0；負數視為 ≤ 0；`Shop Stock Qty (LM)` 欄存在時須 LM／CM 皆 > 0，
-    缺欄時僅以 CM > 0 判定）。另作新品保護（`Launch Date` 距參考日期 90 天內排除，
+    缺欄時僅以 CM > 0 判定；`Shop Stock Qty (LLM)` 欄存在時另須 LLM > 0——
+    90 日窗口內非全程有貨（M-2 無貨）的列不算真坐貨）。
+    另作新品保護（`Launch Date` 距參考日期 90 天內排除，
     重用 `_parse_launch_dates`；缺欄／缺值／無法解析視為非新品；參考日期預設為今天，
     建議傳入 MTD 截止日期）與防呆排除
     （`需要調貨=是` 列、非 RF 列不納入；`RP Type` 缺欄時沿用全 RF 處理）。
@@ -951,6 +953,9 @@ def _hybrid_p90d_zero_sales_mask(raw: pd.DataFrame, ref_date=None) -> tuple[pd.S
     if "Shop Stock Qty (LM)" in raw.columns:
         stock_lm = _safe_numeric(raw.get("Shop Stock Qty (LM)", _safe_default_series(0, idx)))
         mask &= (stock_lm > 0).fillna(False)
+    if "Shop Stock Qty (LLM)" in raw.columns:
+        stock_llm = _safe_numeric(raw.get("Shop Stock Qty (LLM)", _safe_default_series(0, idx)))
+        mask &= (stock_llm > 0).fillna(False)
     if "Launch Date" in raw.columns:
         launch_dt = _parse_launch_dates(raw["Launch Date"].fillna("").astype(str).str.strip())
         _ref = _normalize_ref_date(ref_date)

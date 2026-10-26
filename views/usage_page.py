@@ -96,13 +96,13 @@ MODES = [
 - 由 Item_Shop 解析 SKU Desc 與 Shop Name（SKU Desc 排於 Brand 之後、Shop Name 排於 Site Code 之後）
 - 刪除欄名含 Value 的欄位（Valuation Class 不受影響）
 - 自動判定過去90日有無賣過（Sold Qty (P90D) > 0＝有，否則無賣）
-- 自動判定過去60日有無存貨（Shop Stock Qty (LM) 或 (CM) > 0＝有存貨，兩者同時為 0＝無存貨）
+- 自動判定過去90日有無存貨（Shop Stock Qty (LLM)／(LM)／(CM) 任一 > 0＝有存貨，三者同時為 0＝無存貨；LLM 欄自 2026-10-26 起來源報表提供，舊檔缺欄時以其餘庫存欄判定並列 warning）
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 三欄留空，供 SCT 與店舖填寫
 - 輸出：Summary（Adj. MCH1 × Item Status 計數）＋ Export（依 Brand／SKU 排序，套用範本欄寬、隱藏欄與顏色標示）
      """,
      """
 1. **過去90日有無賣過** = Sold Qty (P90D) > 0 →「有」；等於 0、負數或空白 →「無賣」
-2. **過去60日有無存貨** = Shop Stock Qty (LM) > 0 或 Shop Stock Qty (CM) > 0 →「有存貨」；兩者同時為 0（或空白／負數）→「無存貨」
+2. **過去90日有無存貨** = Shop Stock Qty (LLM) > 0 或 Shop Stock Qty (LM) > 0 或 Shop Stock Qty (CM) > 0 →「有存貨」；三者同時為 0（或空白／負數）→「無存貨」（LLM 欄缺欄時以其餘庫存欄判定並列 warning；v1.92 前本欄為「過去60日有無存貨」，只以 LM／CM 判定）
 3. **回覆欄留空** — SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 一律留空；來源檔已有這些欄位時以本次結果覆蓋，舊回覆不會保留
 4. **不篩選列** — 全店全 SKU 輸出，清理規則與其他模式一致（剔除合計列與 117 - Marketing）；Shop Nature 篩選為選填
 5. **SKU Desc／Shop Name** — 由 Item_Shop 以 Site Code 解析；SKU Desc 排於 Brand 之後、Shop Name 排於 Site Code 之後；Item_Shop 缺欄時兩欄留空並列 warning
@@ -190,7 +190,7 @@ MODES = [
 
     ("📦 P90D 0 Sales Review(Shop回覆)",
      """
-- 篩選 `Shop Stock Status` 為 P90D 0 Sales 狀態且 `Shop Stock Qty (LM)` 大於 0 的 SKU×Shop 記錄（LM 為 0 者不計算）
+- 篩選 `Shop Stock Status` 為 P90D 0 Sales 狀態且 `Shop Stock Qty (LM)` 大於 0 的 SKU×Shop 記錄（LM 或 CM 為 0 者不計算；LLM 欄存在時另須 `(LLM)` 大於 0，排除列數列 warning）
 - 按店舖統計 P90D 0 Sales SKU 總數（已刪除重複）及庫存總數，各分類同時顯示 SKU 數與庫存總數，分類維度可切換：MAKE UP（Adj. MCH1 為 02 - MAKE UP）／Non-MAKE UP、Item Class（A1／A2／A3／B／C／D）、Adj. MCH1（15 個大類），或交叉維度：MAKE UP × Item Class、MAKE UP × Adj. MCH1（每個店舖／分組按 MAKE UP／Non-MAKE UP 逐列，欄為次分類分項 SKU 數及「小計 SKU 數」，無該主分類資料者不列該列）；空白值歸入「空白」組
 - 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列（預設只限 Non-MAKE UP；勾選「包括 MAKE UP SKU」後一併計算），附店內庫存排名及空白「店舖回覆」欄供店舖填寫
 - Top 10 欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
@@ -203,7 +203,7 @@ MODES = [
      """,
      """
 針對 `Shop Stock Status` 去除前後空格後完全相符者收錄：
-1. 只收錄 P90D 0 Sales 狀態的列（且 Shop Stock Qty (LM) 須大於 0，LM 為 0 者不計算），其他狀態一律排除
+1. 只收錄 P90D 0 Sales 狀態的列（且 Shop Stock Qty (LM) 及 (CM) 須大於 0，LM 或 CM 為 0 者不計算；LLM 欄存在時另須 Shop Stock Qty (LLM) 大於 0——三個月快照皆有貨才算 90 日真坐貨，排除列數按 CM／LLM 原因分別列 warning），其他狀態一律排除
 2. MAKE UP 分類＝Adj. MCH1 去除前後空格後等於 02 - MAKE UP，其餘（含空白）為 Non-MAKE UP
 3. SKU 數一律已刪除重複；庫存總數為 Shop Stock Qty (CM) 加總
 4. 以 Item Class 或 Adj. MCH1 分類時，分組欄按固定順序排列（Item Class：A1→D；MCH1：編號排序），空白值歸入「空白」組
@@ -212,7 +212,7 @@ MODES = [
 
     ("📦 P90D 0 Sales Review(個別店舖)",
      """
-- 供個別店舖查閱自身 P90D 0 Sales 情況，篩選準則與店舖回覆版相同（`Shop Stock Status` 為 P90D 0 Sales 狀態且 `Shop Stock Qty (LM)` 大於 0）
+- 供個別店舖查閱自身 P90D 0 Sales 情況，篩選準則與店舖回覆版相同（`Shop Stock Status` 為 P90D 0 Sales 狀態且 `Shop Stock Qty (LM)` 及 `(CM)` 大於 0；LLM 欄存在時另須 `(LLM)` 大於 0）
 - 分類固定以 MAKE UP 分類統計（MAKE UP／Non-MAKE UP 同時顯示 SKU 數與庫存總數），適合個別店舖原始資料
 - 各店舖全部列按 Shop Stock Qty (CM) 由大至小排序，包括 MAKE UP 與 Non-MAKE UP 全部 SKU，不設「店舖回覆」欄，供店舖查閱自身其他零銷售 SKU 情況
 - ALL SKU 明細欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
@@ -224,7 +224,7 @@ MODES = [
      """,
      """
 篩選與店舖回覆版相同：
-1. 只收錄 P90D 0 Sales 狀態的列（且 Shop Stock Qty (LM) 須大於 0，LM 為 0 者不計算），其他狀態一律排除
+1. 只收錄 P90D 0 Sales 狀態的列（且 Shop Stock Qty (LM) 及 (CM) 須大於 0，LM 或 CM 為 0 者不計算；LLM 欄存在時另須 Shop Stock Qty (LLM) 大於 0——三個月快照皆有貨才算 90 日真坐貨，排除列數按 CM／LLM 原因分別列 warning），其他狀態一律排除
 2. MAKE UP 分類＝Adj. MCH1 去除前後空格後等於 02 - MAKE UP，其餘（含空白）為 Non-MAKE UP
 3. SKU 數一律已刪除重複；庫存總數為 Shop Stock Qty (CM) 加總
      """),
@@ -349,14 +349,14 @@ Tourist 缺貨、Mix/NT 調撥計算：
      """,
      """
 SKU 級 Forecast 計算（v2 加權混合）：
-1. **缺貨還原（取代式，逐列；只限 RF 列）** = M-2／M-1／CM 期缺貨（該期庫存 ≤ 0）且月均基準 > 0 的列，取該期實績與該店月均基準（Shop Monthly Sold Qty (P90D)，缺欄時以 Sold Qty (P90D) ÷ 90 × 30.5 換算）孰高；還原上限為該店月均，不疊加。CM 期先月化再還原。ND 列不還原；來源缺 `Shop Stock Qty (M-2)` 時該期還原略過，缺 `(M-1)` 但有 `Shop Stock Qty (LM)` 時以 LM 代理（兩者皆缺則略過），均列 warning
+1. **缺貨還原（取代式，逐列；只限 RF 列）** = M-2／M-1／CM 期缺貨（該期庫存 ≤ 0）且月均基準 > 0 的列，取該期實績與該店月均基準（Shop Monthly Sold Qty (P90D)，缺欄時以 Sold Qty (P90D) ÷ 90 × 30.5 換算）孰高；還原上限為該店月均，不疊加。CM 期先月化再還原。ND 列不還原；來源缺 `Shop Stock Qty (M-2)` 但有 `Shop Stock Qty (LLM)` 時以 LLM 代理 M-2、缺 `(M-1)` 但有 `Shop Stock Qty (LM)` 時以 LM 代理（兩期欄皆缺則該期略過），均列 warning
 2. **開賣日折算（SKU 級）** = 最早 Launch Date 落在 M-2／M-1 時，按期內有效日數折算為整月規模（`factor = 期間日數 ÷ max(開賣後日數, 7)`）；落在本月時 MTD 月化以開賣後有效日數為分母（最少 7 日）。無 Launch Date 或無效 MTD 日期時不折算
 3. **情境（SKU 級聚合後計算）** = MTD 調整月化＝按已過日數把 MTD 月化與月均基準混合（`r = MTD 日數 ÷ 當月日數`；MTD 日期無效時退回 max(M-1, 月均基準)）；標準＝月均基準 × 權重 ＋ M-1 折算後 × 權重 ＋ MTD 調整月化 × 權重（預設 0.4／0.3／0.3，自動正規化）；保守＝月均基準（只作參考）；樂觀＝max(M-1 折算後, MTD 調整月化) × (1 ＋ 衰減係數（預設 0.8）× 趨勢增速 g)，g＝max(0, M-1 ÷ M-2 − 1) 且不超過趨勢增速上限（預設 1.0 倍），樂觀不低於標準
 4. **爆升分類（SKU 級；輸入為還原＋折算後數值）** = 新起量（M-2＋M-1 在基數內且近期有量，預設基數 10 件）／加速中（M-1 ≥ 加速倍數 × M-2 且 MTD 月化 ≥ 加速倍數 × M-1，預設 1.15 倍）／爆升（max(M-1, MTD 月化) ÷ max(M-2, 基數) ≥ 爆升倍數，預設 1.5 倍）用樂觀情境；其餘平穩用標準情境；月預估為採用情境無條件捨去取整
 5. **位置** = Warehouse 貨：店舖庫存合計＋D001 庫存 (Net)＋D001 PO＋在途（Shop Pending Receive (±7 days)，實檔別名相容）；Vendor 貨：店舖庫存合計＋Shop PO 合計＋在途。Supply Source 缺欄全視 Warehouse，RP Type 缺欄全視 RF；同 SKU 多個 Supply Source 以眾數為準並列 warning
 6. **建議訂量** = 目標覆蓋量——平穩類＝ceil(月預估 ÷ 30.5 × 目標天數，預設 30 日）、爆升類（新起量／加速中／爆升）＝ceil(月預估 × 爆升目標覆蓋月數，預設 2.0 個月）；缺口＝max(0, 目標覆蓋量 − 位置）；上限空間＝max(0, ceil(月預估 × 上限月數，預設 2.0 個月） − 位置）；建議訂量＝min(缺口, 上限空間）；缺口大於上限空間時狀態標「建議訂貨（已封頂）」；全 ND 的 SKU 建議訂量為 0（狀態「ND 不建議訂貨」）
 7. **店舖覆蓋（母體：建議訂量＞0 的 SKU）** = 店舖日銷＝MTD ÷ 有效日數（無 MTD 銷售時退回 P90D ÷ 30.5）；可用日數＝(店舖庫存＋該店在途) ÷ 店舖日銷；風險旗：已缺貨（庫存 0）／≤7日／≤目標天數／足夠；按 SKU＋風險＋日數排序；主表另計缺貨風險店數（可用日數 ≤7 日，RF／ND 皆計）／現已缺貨店數／鋪貨店數
-8. **輸入檢核** = `Buyer / Brand / SKU / Shop Stock Status`（共用）＋ `Site Code / Sold Qty (M-2) / Sold Qty (M-1) / Sold Qty (CM - MTD) / Sold Qty (P90D) / Shop Stock Qty (CM)`（本模式嚴格欄，缺任一即停止）；`Shop Stock Qty (M-2)`／`(M-1)` 為選填（M-2 缺欄時該期還原略過；M-1 缺欄但有 `Shop Stock Qty (LM)` 時以 LM 代理；均列 warning）；D001 PO／Shop PO／在途欄缺欄時計 0 並列 warning；負銷售按 0、負庫存或非數值庫存按 0（列 warning，不拒絕）
+8. **輸入檢核** = `Buyer / Brand / SKU / Shop Stock Status`（共用）＋ `Site Code / Sold Qty (M-2) / Sold Qty (M-1) / Sold Qty (CM - MTD) / Sold Qty (P90D) / Shop Stock Qty (CM)`（本模式嚴格欄，缺任一即停止）；`Shop Stock Qty (M-2)`／`(M-1)` 為選填（M-2 缺欄但有 `Shop Stock Qty (LLM)` 時以 LLM 代理；M-1 缺欄但有 `Shop Stock Qty (LM)` 時以 LM 代理；兩期欄皆缺時該期還原略過；均列 warning）；D001 PO／Shop PO／在途欄缺欄時計 0 並列 warning；負銷售按 0、負庫存或非數值庫存按 0（列 warning，不拒絕）
 9. **輸出 6 工作表** = 說明（首頁導讀：本次參數＋核心邏輯＋工作表導讀＋實用提示；開啟 Excel 時預設顯示本頁）/ Forecast 主表（SKU 級：識別／三期銷售＋月化／爆升分類／三情境＋MTD 調整月化＋趨勢增速＋採用月預估／位置分項與合計／目標覆蓋量／缺口／上限空間／建議訂量（醒目底色）／建議訂貨對象（D001 PO／Shop PO）／SKU 狀態／風險店數；按 Buyer／Brand／SKU 排序）/ 店舖覆蓋 / 按 Buyer 彙總（建議訂量合計分 D001 PO／Shop PO 兩欄）/ RAW（重排欄序，不顯示 Item_Shop 與 Value 金額欄；含還原值欄、逐列訊號欄與 FC 缺貨還原列旗）/ Forecast 摘要（指標卡 8 項＋按 Buyer 表）
      """),
 
@@ -456,7 +456,7 @@ st.markdown("""
         <li>📌 <span class="col-badge">Shop Nature</span> <span style="color:#d97706;font-size:0.84em">(店舖性質)</span></li>
     </ul>
     <p style="color: #475569; font-size: 0.88rem; margin-top: 0.8rem; margin-bottom: 0;">Safety Stock x NetStock Review 另建議包含 <span class="col-badge">RP Type</span>（RF＝可補貨／ND＝不可補貨）——ND 列不作調貨需求方；缺失時全部列按 RF 處理並退回 Shop Nature 維度（列 warning，不停止）。</p>
-    <p style="color: #475569; font-size: 0.88rem; margin-top: 0.8rem; margin-bottom: 0;">📌 選用欄位（<b>2026-10-26</b> 起來源報表新增，舊月份檔案沒有）：<span class="col-badge">D001 Stock Qty (LLM)</span>／<span class="col-badge">Shop Stock Qty (LLM)</span>／<span class="col-badge">Shop Stock Value (LLM)</span>——M-2（上上月）庫存，語意對照 LLM＝上上月、LM＝上月、CM＝當月。全部模式皆不檢核、不要求：存在時完整保留於 RAW 明細，缺失時行為完全不變；現有計算邏輯暫未使用，之後將逐步用於 M-2 店舖庫存追蹤。</p>
+    <p style="color: #475569; font-size: 0.88rem; margin-top: 0.8rem; margin-bottom: 0;">📌 選用欄位（<b>2026-10-26</b> 起來源報表新增，舊月份檔案沒有）：<span class="col-badge">D001 Stock Qty (LLM)</span>／<span class="col-badge">Shop Stock Qty (LLM)</span>／<span class="col-badge">Shop Stock Value (LLM)</span>——M-2（上上月）庫存，語意對照 LLM＝上上月、LM＝上月、CM＝當月。全部模式皆不檢核、不要求：存在時完整保留於 RAW 明細，缺失時行為不變（沿用 LM／CM 準則）。P90D 0 Sales 相關模式已將 LLM 納入 90 日有貨準則（欄存在時須大於 0，M-2 無貨者排除）；Forecast Review 缺 M-2 庫存欄時以 LLM 代理缺貨還原；店舖精簡SKU模式的存貨判定擴為 LLM／LM／CM 任一大於 0。</p>
 </div>
 """, unsafe_allow_html=True)
 

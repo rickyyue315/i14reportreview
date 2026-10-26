@@ -615,7 +615,14 @@ def transform_forecast(
             mtd_ann_row,
         )
     df["FC MTD 月化"] = np.round(mtd_ann_row, 1)
-    m2_stock_col = _resolve_column_name("Shop Stock Qty (M-2)", avail)
+    m2_stock_native = _resolve_column_name("Shop Stock Qty (M-2)", avail)
+    m2_stock_col = m2_stock_native
+    m2_stock_llm_proxy = False
+    if m2_stock_col is None:
+        llm_stock_col = _resolve_column_name("Shop Stock Qty (LLM)", avail)
+        if llm_stock_col is not None:
+            m2_stock_col = llm_stock_col
+            m2_stock_llm_proxy = True
     m1_stock_native = _resolve_column_name("Shop Stock Qty (M-1)", avail)
     m1_stock_col = m1_stock_native
     m1_stock_lm_proxy = False
@@ -626,11 +633,16 @@ def transform_forecast(
             m1_stock_lm_proxy = True
     if m2_stock_col is None:
         warnings.append("來源檔案缺少「Shop Stock Qty (M-2)」欄，M-2 期缺貨還原略過。")
+    elif m2_stock_llm_proxy:
+        warnings.append("來源檔案缺少「Shop Stock Qty (M-2)」欄，M-2 期缺貨還原改用「Shop Stock Qty (LLM)」代理。")
     if m1_stock_col is None:
         warnings.append("來源檔案缺少「Shop Stock Qty (M-1)」欄，M-1 期缺貨還原略過。")
     elif m1_stock_lm_proxy:
         warnings.append("來源檔案缺少「Shop Stock Qty (M-1)」欄，M-1 期缺貨還原改用「Shop Stock Qty (LM)」代理。")
-    oos_m2 = df.get("Is OOS (M-2)", _safe_default_series(False, idx)).to_numpy(dtype=bool)
+    if m2_stock_llm_proxy:
+        oos_m2 = _safe_numeric(df[m2_stock_col]).to_numpy(dtype=float) <= 0
+    else:
+        oos_m2 = df.get("Is OOS (M-2)", _safe_default_series(False, idx)).to_numpy(dtype=bool)
     if m1_stock_lm_proxy:
         oos_m1 = _safe_numeric(df[m1_stock_col]).to_numpy(dtype=float) <= 0
     else:
@@ -1097,6 +1109,7 @@ def transform_forecast(
         "m2_stock_missing": bool(m2_stock_col is None),
         "m1_stock_missing": bool(m1_stock_native is None),
         "m1_lm_proxy": bool(m1_stock_lm_proxy),
+        "m2_llm_proxy": bool(m2_stock_llm_proxy),
         "pending_col": pending_col,
         "d001_net_col": d001_net_col,
         "d001_net_is_stock_fallback": bool(d001_net_is_stock_fallback),
@@ -1264,7 +1277,8 @@ def _write_forecast_guide_sheet(ws, stats):
     _kv("加速倍數", f'{st_.get("accel_mult", 1.15):g} 倍（M-1 ≥ 此倍數 × M-2 且 MTD 月化 ≥ 此倍數 × M-1 → 加速中）')
     _kv("衰減係數", f'{st_.get("damp", 0.8):g}（趨勢外推的衰減；樂觀不低於標準）')
     _kv("缺貨還原列數", f'M-2 {st_.get("restored_rows_m2", 0):g} 列／M-1 {st_.get("restored_rows_m1", 0):g} 列／CM {st_.get("restored_rows_cm", 0):g} 列（缺貨列還原至該店月均；ND 不還原）'
-        + ("；M-2 期缺 Shop Stock Qty (M-2) 欄不還原" if st_.get("m2_stock_missing") else "")
+        + ("；M-2 期以 Shop Stock Qty (LLM) 代理" if st_.get("m2_llm_proxy")
+           else ("；M-2 期缺 Shop Stock Qty (M-2) 欄不還原" if st_.get("m2_stock_missing") else ""))
         + ("；M-1 期以 Shop Stock Qty (LM) 代理" if st_.get("m1_lm_proxy")
            else ("；M-1 期缺 Shop Stock Qty (M-1) 欄不還原" if st_.get("m1_stock_missing") else "")))
     _kv("開賣折算 SKU 數", f'{st_.get("launch_prorated_skus", 0):g} 個（M-2／M-1 按整月折算；本月按開賣後有效日數，最少 7 日）')
@@ -1276,7 +1290,7 @@ def _write_forecast_guide_sheet(ws, stats):
     _sec("② 核心邏輯（這份報告怎樣算出來）")
     _bullet("逐列缺貨還原（取代式，非疊加）：M-2／M-1／CM 期缺貨（該期店舖庫存 0）且 RF 的列，"
             "取該期實績與該店月均基準（Shop Monthly Sold Qty (P90D)）孰高；還原上限為該店月均。"
-            "ND 列不還原；來源缺 Shop Stock Qty (M-2) 時該期略過、缺 (M-1) 但有 Shop Stock Qty (LM) 時以 LM 代理，均列 warning。")
+            "ND 列不還原；來源缺 Shop Stock Qty (M-2) 但有 Shop Stock Qty (LLM) 時以 LLM 代理 M-2、缺 (M-1) 但有 Shop Stock Qty (LM) 時以 LM 代理，兩期欄皆缺時該期略過，均列 warning。")
     _bullet("開賣日折算（SKU 級）：最早 Launch Date 落在 M-2／M-1 時，按期內有效日數折算為整月規模"
             "（最少按 7 日計）；落在本月時 MTD 月化以開賣後有效日數為分母。")
     _bullet("標準情境（SKU 級聚合後計算）＝月均基準 × 權重 ＋ M-1 折算後 × 權重 ＋ MTD 調整月化 × 權重；"

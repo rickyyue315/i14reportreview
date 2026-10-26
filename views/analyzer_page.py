@@ -311,14 +311,14 @@ MODE_DESCRIPTIONS = {
     "OOS Review": "篩選缺貨與潛在缺貨品項，偵測安全庫存不足。",
     "Carry SKU Review": "統計各店舖實際經營品項數量與結構。",
     "SKU 精簡 Review": "針對不可補貨品項，建議退倉安排。",
-    "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去60日有無存貨，並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
+    "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去90日有無存貨（LLM／LM／CM 任一 > 0＝有存貨，LLM 欄自 2026-10-26 起來源報表提供），並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
     "NDRF 月份對比": "對比兩個月份各店舖經營與不可補貨品項變化。",
     "Safety Stock Review": "全面審查安全庫存設定，計算平衡建議值。",
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
     "Stock Impact Analysis (簡化)": "快速檢視各品項三期存貨與銷售趨勢。",
     "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
-    "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 須大於 0），分類維度可切換 MAKE UP／Item Class／Adj. MCH1，或交叉維度 MAKE UP × Item Class／MAKE UP × Adj. MCH1（按主分類逐列交叉次分類）；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈，另按 SKU 統計無銷售店舖數、店舖總數（分母）及佔比，並列出最多店舖無銷售的 Top 20 SKU；另按 Buyer 統計出現店舖數。",
-    "P90D 0 Sales Review(個別店舖)": "供個別店舖查閱自身 P90D 0 Sales 情況（Shop Stock Qty (LM) 須大於 0），分類固定以 MAKE UP 分類統計；輸出各店全部 SKU 明細（ALL SKU，包括 MAKE UP 與 Non-MAKE UP，不設列數上限與店舖回覆欄，按庫存由大至小排序），以及 Shop Nature 與 OM 分佈，另按 SKU 統計出現店舖數、店舖總數（分母）及佔比，並按 Buyer 統計出現店舖數。",
+    "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 及 (CM) 須大於 0；LLM 欄存在時（2026-10-26 起來源報表）另須 (LLM) 大於 0——三個月快照皆有貨才算 90 日真坐貨），分類維度可切換 MAKE UP／Item Class／Adj. MCH1，或交叉維度 MAKE UP × Item Class／MAKE UP × Adj. MCH1（按主分類逐列交叉次分類）；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈，另按 SKU 統計無銷售店舖數、店舖總數（分母）及佔比，並列出最多店舖無銷售的 Top 20 SKU；另按 Buyer 統計出現店舖數。",
+    "P90D 0 Sales Review(個別店舖)": "供個別店舖查閱自身 P90D 0 Sales 情況（Shop Stock Qty (LM) 及 (CM) 須大於 0；LLM 欄存在時（2026-10-26 起來源報表）另須 (LLM) 大於 0——三個月快照皆有貨才算 90 日真坐貨），分類固定以 MAKE UP 分類統計；輸出各店全部 SKU 明細（ALL SKU，包括 MAKE UP 與 Non-MAKE UP，不設列數上限與店舖回覆欄，按庫存由大至小排序），以及 Shop Nature 與 OM 分佈，另按 SKU 統計出現店舖數、店舖總數（分母）及佔比，並按 Buyer 統計出現店舖數。",
     "P90D 0 Sales Review(轉貨模式)": "先指定轉出店舖（0 Sales 且有庫存），其 0 Sales 有庫存列全數轉出，分配予同 SKU 有銷售記錄的店舖（不分 OM，接收多間時按銷售比例分配，力求全數接收）。",
     "ND SKU with Stock Review(轉貨模式)": "先指定轉出店舖（RP Type＝ND 且有庫存），其 ND 有庫存列全數轉出，分配予同 SKU 有銷售記錄（Sold Qty (P90D) > 0）的 RF 店舖（不分 OM，接收多間時按銷售比例分配，力求全數接收）；可選擇每個 SKU 集中於銷量最高的 1–2 間或 3–4 間接收店，或維持不限。",
     "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
@@ -843,8 +843,10 @@ if uploaded_file is not None:
         st.info(
             f"偵測到 {M2_STOCK_LLM_EFFECTIVE_DATE} 起來源報表新增的 M-2（上上月）庫存欄位："
             f"**{', '.join(f'`{c}`' for c in _m2_cols)}**。"
-            "系統已識別這些欄位並會在 RAW 明細完整保留；屬選用欄位，任何模式皆不要求，"
-            "現有計算邏輯暫未使用 M-2 店舖庫存，之後將逐步用於追蹤 M-2 庫存變化。"
+            "系統已識別這些欄位並會在 RAW 明細完整保留；屬選用欄位，任何模式皆不要求。"
+            "P90D 0 Sales 相關模式已將 LLM 納入 90 日有貨準則（欄存在時須大於 0，M-2 無貨者排除）；"
+            "Forecast Review 缺 M-2 庫存欄時以 LLM 代理缺貨還原；"
+            "店舖精簡SKU模式的存貨判定擴為 LLM／LM／CM 任一大於 0。"
         )
 
     # 預覽原始資料摺疊區塊
@@ -4134,7 +4136,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #ef4444;">
                     <div class="metric-title">P90D 0 Sales 行數</div>
                     <div class="metric-value" style="color: #ef4444;">{total_rows:,}</div>
-                    <div class="metric-desc">P90D 0 Sales 狀態且 Shop Stock Qty (LM) 大於 0 的列數</div>
+                    <div class="metric-desc">P90D 0 Sales 狀態且 Shop Stock Qty (LM)／(CM) 大於 0 的列數（LLM 欄存在時另須 (LLM) 大於 0）</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
@@ -4240,7 +4242,7 @@ if uploaded_file is not None:
             with tab_sku:
                 st.markdown("#### 最多店舖無銷售的 SKU（按無銷售店舖數由大至小排序）")
                 st.caption(
-                    "無銷售店舖數＝該 SKU 在多少間店舖出現 P90D 0 Sales（且 Shop Stock Qty (LM) 大於 0）；"
+                    "無銷售店舖數＝該 SKU 在多少間店舖出現 P90D 0 Sales（且 Shop Stock Qty (LM)／(CM) 大於 0；LLM 欄存在時另須 (LLM) 大於 0）；"
                     "分母＝本次上載資料經 Shop Nature 篩選後的店舖總數；"
                     "無銷售店舖佔比＝無銷售店舖數 ÷ 店舖總數。"
                 )
@@ -4349,7 +4351,7 @@ if uploaded_file is not None:
                 <div class="metric-card" style="border-left-color: #ef4444;">
                     <div class="metric-title">P90D 0 Sales 行數</div>
                     <div class="metric-value" style="color: #ef4444;">{total_rows:,}</div>
-                    <div class="metric-desc">P90D 0 Sales 狀態且 Shop Stock Qty (LM) 大於 0 的列數</div>
+                    <div class="metric-desc">P90D 0 Sales 狀態且 Shop Stock Qty (LM)／(CM) 大於 0 的列數（LLM 欄存在時另須 (LLM) 大於 0）</div>
                 </div>
                 """, unsafe_allow_html=True)
             with r1_col2:
@@ -5020,7 +5022,7 @@ if uploaded_file is not None:
             _shop_cards = [
                 ("總明細行數", _stats.get("rows", 0), "店舖 × SKU 列數（全數輸出，不篩選）", "#3b82f6"),
                 ("過去90日無賣", _stats.get("sold_no", 0), "Sold Qty (P90D) 等於 0 或少於 0", "#ef4444"),
-                ("過去60日無存貨", _stats.get("stock_no", 0), "Shop Stock Qty (LM) 與 (CM) 同時為 0", "#f59e0b"),
+                ("過去90日無存貨", _stats.get("stock_no", 0), "Shop Stock Qty (LLM)／(LM)／(CM) 同時為 0（缺欄者不計）", "#f59e0b"),
                 ("同時無賣且無存貨", _stats.get("both_no", 0), "精簡候選（兩個條件同時成立）", "#8b5cf6"),
             ]
             _shop_cols = st.columns(4)

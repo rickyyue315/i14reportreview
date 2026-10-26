@@ -2,7 +2,7 @@
 
 核心契約：
 - 過去90日有無賣過：Sold Qty (P90D) > 0 →「有」，其餘（0／負數／空白）→「無賣」；
-- 過去60日有無存貨：Shop Stock Qty (LM) 或 (CM) > 0 →「有存貨」，兩者同時為 0 →「無存貨」；
+- 過去90日有無存貨（v1.93.0 起；前名「過去60日有無存貨」）：Shop Stock Qty (LLM)／(LM)／(CM) 任一 > 0 →「有存貨」，三者同時為 0 →「無存貨」；
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 一律留空；
 - 不篩選列，保留來源欄序，五個輸出欄固定排最後；輸出 Summary＋Export 兩個工作表，
   並依 Brand／SKU（文字）排序、套用範本欄寬／隱藏欄／數字格式與顏色標示。
@@ -70,7 +70,7 @@ def test_registry_entry_resolves_to_functions():
 
 def test_output_columns_contract_names():
     assert _SHOP_SIMPLIFY_SOLD_COLUMN == "過去90日有無賣過"
-    assert _SHOP_SIMPLIFY_STOCK_COLUMN == "過去60日有無存貨"
+    assert _SHOP_SIMPLIFY_STOCK_COLUMN == "過去90日有無存貨"
     assert _SHOP_SIMPLIFY_SCT_COLUMN == "SCT建議"
     assert _SHOP_SIMPLIFY_NDRF_COLUMN == "Shop 回覆新的NDRF"
     assert _SHOP_SIMPLIFY_SAFETY_COLUMN == "如果RF的Safety Qty"
@@ -105,7 +105,7 @@ def test_sold_zero_negative_and_blank_is_no_sale():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 3. 過去60日有無存貨
+# 3. 過去90日有無存貨
 # ──────────────────────────────────────────────────────────────────────────────
 def test_stock_any_positive_is_in_stock():
     raw, _ = transform_shop_simplify(_df([
@@ -331,7 +331,7 @@ def test_excel_has_summary_and_export_sheets():
     assert headers == list(raw.columns)
     assert "SKU Desc" in headers and "Shop Name" in headers
     assert headers[-5:] == [
-        "過去90日有無賣過", "過去60日有無存貨",
+        "過去90日有無賣過", "過去90日有無存貨",
         "SCT建議", "Shop 回覆新的NDRF", "如果RF的Safety Qty",
     ]
     assert ws.max_row == 1 + len(raw)

@@ -6,6 +6,12 @@
 篩選：``Shop Stock Status`` 去除前後空格後等於 ``Overstock (P90D 0 Sales)``
 （狀態值見 ``_OP90D_STATUS``）且 ``Shop Stock Qty (LM)`` 大於 0 的列；
 LM 為 0（或空白視為 0）者不計算。
+90 日真坐貨準則：三個月快照皆須大於 0——LM 與 CM 為必要檢查；
+``Shop Stock Qty (LLM)`` 欄存在時（2026-10-26 起來源報表）另須 LLM 大於 0。
+任何一個月為 0 都代表期間曾有調貨／派貨移動（LM 或 LLM 為 0＝曾調走後再派貨；
+CM 為 0＝現時已無貨，可能已調離），不算真坐貨，予以排除
+（來源檔 Shop Stock Status 不改自身邏輯，此類列仍標 P90D 0 Sales，
+CM 與 LLM 的排除列數分別列 warning）。
 MAKE UP 判定：``Adj. MCH1`` 去除前後空格後等於 ``02 - MAKE UP`` 者為 MAKE UP，
 其餘（含空白）一律為 Non-MAKE UP。
 
@@ -96,6 +102,12 @@ _OP90D_MAKEUP_MCH1 = "02 - MAKE UP"
 # 店舖總數（分母）暫存於 raw.attrs，供 By SKU 計算無銷售店舖佔比。
 # 母體為清理及 Shop Nature 篩選後的上載資料，而非只有 P90D 0 Sales 的列。
 _OP90D_TOTAL_SHOPS_ATTR = "_op90d_total_shops"
+
+# LLM 排除列數（Shop Stock Status 為 P90D 0 Sales 且 LM > 0，但 LLM = 0 而按 90 日準則排除）
+_OP90D_LLM_EXCLUDED_ATTR = "_op90d_llm_excluded"
+
+# CM 排除列數（Shop Stock Status 為 P90D 0 Sales 且 LM > 0，但 CM = 0——現時無貨，可能已調離）
+_OP90D_CM_EXCLUDED_ATTR = "_op90d_cm_excluded"
 
 _OP90D_MAKEUP_LABEL = "MAKE UP"
 _OP90D_NON_MAKEUP_LABEL = "Non-MAKE UP"
@@ -319,8 +331,27 @@ def _prepare_filtered(df_input: pd.DataFrame, shop_natures: list[str] | None = N
     df["SKU"] = df["SKU"].apply(_safe_sku)
     status = df.get("Shop Stock Status", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     stock_lm = _safe_numeric(df.get("Shop Stock Qty (LM)", _safe_default_series(0, df.index)))
-    raw = df[(status == _OP90D_STATUS) & (stock_lm > 0)].copy()
+    stock_cm = _safe_numeric(df.get("Shop Stock Qty (CM)", _safe_default_series(0, df.index)))
+    # 90 日真坐貨準則：三個月快照（LLM／LM／CM）皆須大於 0——任何一個月為 0
+    # 都代表期間曾有調貨／派貨移動（LM 或 LLM 為 0＝曾調走後再派貨；CM 為 0＝
+    # 現時已無貨，可能已調離），不算 90 日 0 銷售坐貨。
+    base_mask = (status == _OP90D_STATUS) & (stock_lm > 0) & (stock_cm > 0)
+    cm_excluded = int(
+        ((status == _OP90D_STATUS) & (stock_lm > 0) & ~(stock_cm > 0)).sum()
+    )
+    # LLM 欄存在時（2026-10-26 起來源報表）另須 LLM > 0：M-2 無貨的列 90 日窗口
+    # 內非全程有貨，不算真坐貨；來源 Shop Stock Status 不改邏輯仍標 P90D 0 Sales，
+    # 排除列數存 attrs 供上層列 warning。
+    llm_col = _resolve_column_name("Shop Stock Qty (LLM)", set(df.columns))
+    llm_excluded = 0
+    if llm_col is not None:
+        stock_llm = _safe_numeric(df[llm_col])
+        llm_excluded = int((base_mask & ~(stock_llm > 0)).sum())
+        base_mask &= stock_llm > 0
+    raw = df[base_mask].copy()
     raw.attrs[_OP90D_TOTAL_SHOPS_ATTR] = _total_shops
+    raw.attrs[_OP90D_LLM_EXCLUDED_ATTR] = llm_excluded
+    raw.attrs[_OP90D_CM_EXCLUDED_ATTR] = cm_excluded
     if raw.empty:
         return raw
     raw["MAKE UP 分類"] = _classify_makeup(raw["Adj. MCH1"])
@@ -975,7 +1006,7 @@ def transform_overstock_p90d(
     include_makeup: bool = False,
     breakdown: str = _OP90D_BREAKDOWN_MAKEUP,
 ):
-    """篩選 P90D 0 Sales 列（狀態值見 _OP90D_STATUS，且 Shop Stock Qty (LM) 須大於 0），輸出店舖統計、Top 10、Nature 及 OM 分佈。
+    """篩選 P90D 0 Sales 列（狀態值見 _OP90D_STATUS，且 Shop Stock Qty LM／CM 須大於 0；LLM 欄存在時 (LLM) 亦須大於 0），輸出店舖統計、Top 10、Nature 及 OM 分佈。
 
     Top 10 預設只限 Non-MAKE UP；include_makeup 為 True 時則包括 MAKE UP SKU。
     breakdown 決定 By Shop、By Nature、By OM 的分組欄位：
@@ -1007,7 +1038,19 @@ def transform_overstock_p90d(
 
     warnings = []
     if raw.empty:
-        warnings.append("沒有符合「P90D 0 Sales（Shop Stock Qty (LM) 大於 0）」的資料。")
+        warnings.append("沒有符合「P90D 0 Sales（Shop Stock Qty LM／CM 皆大於 0，LLM 欄存在時 (LLM) 亦須大於 0）」的資料。")
+    _cm_excluded = int(raw.attrs.get(_OP90D_CM_EXCLUDED_ATTR, 0) or 0)
+    if _cm_excluded:
+        warnings.append(
+            f"有 {_cm_excluded} 列 Shop Stock Status 為 P90D 0 Sales 且 Shop Stock Qty (LM) 大於 0，"
+            "但 Shop Stock Qty (CM) 為 0（現時無貨，可能已調離），已排除。"
+        )
+    _llm_excluded = int(raw.attrs.get(_OP90D_LLM_EXCLUDED_ATTR, 0) or 0)
+    if _llm_excluded:
+        warnings.append(
+            f"有 {_llm_excluded} 列 Shop Stock Status 為 P90D 0 Sales 且 Shop Stock Qty (LM) 大於 0，"
+            "但 Shop Stock Qty (LLM) 為 0（M-2 無貨，90 日內非全程有貨），已按 90 日有貨準則排除。"
+        )
     elif breakdown in (_OP90D_BREAKDOWN_MAKEUP_ITEM, _OP90D_BREAKDOWN_MAKEUP_MCH1):
         sub = _op90d_cross_sub(breakdown)
         blank_count = int((_op90d_group_series(raw, sub) == "空白").sum())
@@ -1030,7 +1073,7 @@ def transform_overstock_p90d_shop(
     progress_callback=None,
     shop_natures: list[str] | None = None,
 ):
-    """個別店舖版：篩選準則與店舖回覆版相同，分類固定以 MAKE UP 分類統計。
+    """個別店舖版：篩選準則與店舖回覆版相同（LM／CM 皆須大於 0，LLM 欄存在時另須 (LLM) 大於 0），分類固定以 MAKE UP 分類統計。
 
     ALL SKU 明細包括 MAKE UP 與 Non-MAKE UP 全部 SKU（不設列數上限），
     不輸出「店舖回覆」欄，供店舖查閱自身全部零銷售 SKU 情況，無須回覆。
@@ -1054,7 +1097,19 @@ def transform_overstock_p90d_shop(
 
     warnings = []
     if raw.empty:
-        warnings.append("沒有符合「P90D 0 Sales（Shop Stock Qty (LM) 大於 0）」的資料。")
+        warnings.append("沒有符合「P90D 0 Sales（Shop Stock Qty LM／CM 皆大於 0，LLM 欄存在時 (LLM) 亦須大於 0）」的資料。")
+    _cm_excluded = int(raw.attrs.get(_OP90D_CM_EXCLUDED_ATTR, 0) or 0)
+    if _cm_excluded:
+        warnings.append(
+            f"有 {_cm_excluded} 列 Shop Stock Status 為 P90D 0 Sales 且 Shop Stock Qty (LM) 大於 0，"
+            "但 Shop Stock Qty (CM) 為 0（現時無貨，可能已調離），已排除。"
+        )
+    _llm_excluded = int(raw.attrs.get(_OP90D_LLM_EXCLUDED_ATTR, 0) or 0)
+    if _llm_excluded:
+        warnings.append(
+            f"有 {_llm_excluded} 列 Shop Stock Status 為 P90D 0 Sales 且 Shop Stock Qty (LM) 大於 0，"
+            "但 Shop Stock Qty (LLM) 為 0（M-2 無貨，90 日內非全程有貨），已按 90 日有貨準則排除。"
+        )
 
     if progress_callback:
         progress_callback(0.7, "完成資料轉換...")
