@@ -19,8 +19,11 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 
 __all__ = [
+    "M2_STOCK_LLM_COLUMNS",
+    "M2_STOCK_LLM_EFFECTIVE_DATE",
     "RAW_COLUMN_ORDER_NAMES",
     "REQUIRED_COLUMNS",
+    "available_m2_stock_columns",
     "_ADJ_SAFETY_DISPLAY_COL",
     "_ADJ_SAFETY_SOURCE_COL",
     "_SAFETY_DISPLAY_NAMES",
@@ -56,6 +59,43 @@ __all__ = [
 
 
 REQUIRED_COLUMNS = ["Buyer", "Brand", "SKU", "Shop Stock Status"]
+
+
+# 2026-10-26 起來源報表（By SKUxShop）新增的 M-2 庫存欄位（LLM = Last Last Month，上上月），
+# 語意對照既有欄位：LLM = M-2（上上月）、LM = M-1（上月）、CM = 當月。
+# 舊月份檔案沒有這些欄位，故一律為「選用欄位」：任何模式皆不檢核、不要求；
+# 存在時完整保留（清理、RAW 欄序重排、無欄位過濾的模式輸出一概帶出），
+# 缺失時所有行為與舊檔完全相同。後續各模式如需以 M-2 店舖庫存調整計算，
+# 欄名一律經此定義取用，不得在各模式內重複寫死。
+# 註：Shop Stock Value (LLM) 屬金額欄——「不含 Value」類輸出（RAW 明細轉化 (不含 Value)、
+# 店舖精簡SKU模式、hybrid RAW 隱藏金額欄）依既有規則刪除／隱藏，與其他 Value 欄一致。
+M2_STOCK_LLM_COLUMNS = [
+    "D001 Stock Qty (LLM)",
+    "Shop Stock Qty (LLM)",
+    "Shop Stock Value (LLM)",
+]
+
+M2_STOCK_LLM_EFFECTIVE_DATE = "2026-10-26"
+
+
+def available_m2_stock_columns(df: pd.DataFrame) -> list[str]:
+    """回傳上載檔案實際存在的 M-2（LLM）庫存欄位（依 M2_STOCK_LLM_COLUMNS 順序）。
+
+    舊月份檔案回傳空列表。欄名比對沿用 _resolve_column_name（前後空格容許），
+    回傳檔案內實際欄名，供 UI 提示與各模式取欄共用。
+    """
+    if df is None:
+        return []
+    try:
+        available = set(df.columns)
+    except Exception:
+        return []
+    found: list[str] = []
+    for name in M2_STOCK_LLM_COLUMNS:
+        resolved = _resolve_column_name(name, available)
+        if resolved:
+            found.append(resolved)
+    return found
 
 
 

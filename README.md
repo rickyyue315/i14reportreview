@@ -95,6 +95,8 @@ Forecast Review 額外必要欄位（缺少時停止並提示）：`Site Code／
 
 Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）：`MONTH／YEAR`（位於來源檔案尾部，日後此模式恒為必要欄位）`／Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM)`；`Adj. MCH1／Adj. SST` 為選填（缺欄時對應樞紐以「空白」列示並列 warning）。
 
+選用欄位（2026-10-26 起來源報表新增，舊月份檔案沒有）：`D001 Stock Qty (LLM)／Shop Stock Qty (LLM)／Shop Stock Value (LLM)`——M-2（上上月）庫存，語意對照 LLM＝上上月、LM＝上月、CM＝當月。全部模式皆不檢核、不要求；存在時完整保留於 RAW 明細（「不含 Value」類輸出仍依既有規則刪除／隱藏 `Shop Stock Value (LLM)` 金額欄），缺失時行為完全不變。系統於上載時自動偵測並提示；現有計算邏輯暫未使用 M-2 店舖庫存，之後將逐步用於 M-2 庫存追蹤（欄名定義集中於 `modes/common.py` 的 `M2_STOCK_LLM_COLUMNS`）。
+
 ## 分析模式
 
 ### Overstock Review

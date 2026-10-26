@@ -456,6 +456,7 @@ st.markdown("""
         <li>📌 <span class="col-badge">Shop Nature</span> <span style="color:#d97706;font-size:0.84em">(店舖性質)</span></li>
     </ul>
     <p style="color: #475569; font-size: 0.88rem; margin-top: 0.8rem; margin-bottom: 0;">Safety Stock x NetStock Review 另建議包含 <span class="col-badge">RP Type</span>（RF＝可補貨／ND＝不可補貨）——ND 列不作調貨需求方；缺失時全部列按 RF 處理並退回 Shop Nature 維度（列 warning，不停止）。</p>
+    <p style="color: #475569; font-size: 0.88rem; margin-top: 0.8rem; margin-bottom: 0;">📌 選用欄位（<b>2026-10-26</b> 起來源報表新增，舊月份檔案沒有）：<span class="col-badge">D001 Stock Qty (LLM)</span>／<span class="col-badge">Shop Stock Qty (LLM)</span>／<span class="col-badge">Shop Stock Value (LLM)</span>——M-2（上上月）庫存，語意對照 LLM＝上上月、LM＝上月、CM＝當月。全部模式皆不檢核、不要求：存在時完整保留於 RAW 明細，缺失時行為完全不變；現有計算邏輯暫未使用，之後將逐步用於 M-2 店舖庫存追蹤。</p>
 </div>
 """, unsafe_allow_html=True)
 

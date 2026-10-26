@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from transformer import (
     transform, generate_excel, validate_input, _resolve_column_name,
     _display_safety_header,
+    M2_STOCK_LLM_COLUMNS, M2_STOCK_LLM_EFFECTIVE_DATE, available_m2_stock_columns,
     transform_oos, generate_excel_oos,
     transform_carry, generate_excel_carry,
     transform_combined, generate_excel_combined,
@@ -248,6 +249,8 @@ with st.sidebar:
 
         OOS／Safety Stock Review 會使用 `Shop Stock Status` 等模式專用欄位；
         **Safety Stock x NetStock Review** 不要求 `Shop Stock Status`，專用必要欄位詳見使用說明頁；另建議包含 `RP Type`（RF＝可補貨／ND＝不可補貨，ND 列不作調貨需求方；缺失時全部列按 RF 處理並退回 Shop Nature 維度）。
+
+        另有選用欄位 `""" + "／".join(M2_STOCK_LLM_COLUMNS) + """`（M-2 上上月庫存，LLM＝上上月、LM＝上月、CM＝當月）：僅 **""" + M2_STOCK_LLM_EFFECTIVE_DATE + """** 起的來源報表提供，全部模式皆不檢核、不要求；存在時完整保留於 RAW 明細，缺失時行為不變。
         """, unsafe_allow_html=True)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -832,7 +835,18 @@ if uploaded_file is not None:
         """, unsafe_allow_html=True)
         
     st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
-    
+
+    # 2026-10-26 起來源報表新增的 M-2（上上月）庫存欄位：選用欄位，偵測到即提示已識別；
+    # 舊月份檔案沒有這些欄位，不顯示任何提示，行為不變。
+    _m2_cols = available_m2_stock_columns(df_input)
+    if _m2_cols:
+        st.info(
+            f"偵測到 {M2_STOCK_LLM_EFFECTIVE_DATE} 起來源報表新增的 M-2（上上月）庫存欄位："
+            f"**{', '.join(f'`{c}`' for c in _m2_cols)}**。"
+            "系統已識別這些欄位並會在 RAW 明細完整保留；屬選用欄位，任何模式皆不要求，"
+            "現有計算邏輯暫未使用 M-2 店舖庫存，之後將逐步用於追蹤 M-2 庫存變化。"
+        )
+
     # 預覽原始資料摺疊區塊
     with st.expander("🔍 預覽前 20 筆原始資料", expanded=False):
         st.dataframe(df_input.head(20), width='stretch')
