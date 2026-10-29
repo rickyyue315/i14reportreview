@@ -60,6 +60,7 @@ from transformer import (
     transform_overstock_p90d, generate_excel_overstock_p90d,
     transform_overstock_p90d_shop, generate_excel_overstock_p90d_shop,
     transform_p90d_transfer, generate_excel_p90d_transfer, build_transfer_candidates, build_mch_options,
+    build_mch_breakdown,
     transform_nd_transfer, generate_excel_nd_transfer, build_nd_transfer_candidates, receiver_limit_label,
     _clean_dataframe, _cached_safe_sku_series, _safe_numeric,
     _build_op90d_by_sku, _build_op90d_by_buyer,
@@ -407,7 +408,7 @@ def _transfer_site_selector(df_input, shop_natures, *, prefix, nd_mode):
     if nd_mode:
         st.markdown("#### 🚚 步驟一：指定轉出店舖（RP Type＝ND 且有庫存）")
         _empty_msg = "⚠️ 讀取後沒有符合「RP Type＝ND 且有庫存（Shop Stock Qty (CM) > 0）」的店舖，無法轉貨。"
-        _help = "未選取轉出店舖前不能執行。候選店舖的 ND SKU 數與可轉出庫存可於下方一覽查看。"
+        _help = "未選取轉出店舖前不能執行。候選店舖的 ND SKU 數（含仍錄得銷售的 SKU 數）與可轉出庫存可於下方一覽查看。"
     else:
         st.markdown("#### 🚚 步驟一：指定轉出店舖（0 Sales 且有庫存）")
         _empty_msg = "⚠️ 讀取後沒有符合「0 Sales（Sold Qty (P90D) ≤ 0）且有庫存（Shop Stock Qty (CM) > 0）」的店舖，無法轉貨。"
@@ -418,12 +419,15 @@ def _transfer_site_selector(df_input, shop_natures, *, prefix, nd_mode):
     if nd_mode:
         _caption = (
             f"共 {len(_cand):,} 間店舖有 RP Type＝ND 且有庫存的列。已選店舖只計入其 ND 且有庫存的列（不看銷售記錄），"
-            "轉出數量為全數，不分 OM 群組；接收店由系統自動判定（同 SKU、非轉出店舖、RP Type＝RF 且有銷售記錄）。"
+            "轉出數量為全數，不分 OM 群組；「有銷售 ND SKU 數」大於 0 表示該店仍錄得銷售的 ND 列會照轉（轉貨單附轉出店銷量供核對）；"
+            "接收店由系統自動判定（同 SKU、非轉出店舖、RP Type＝RF 且有銷售記錄）。"
         )
     else:
         _caption = (
             f"共 {len(_cand):,} 間店舖有 0 Sales 且有庫存的列。已選店舖只計入其 0 Sales 且有庫存的列，轉出數量為全數，不分 OM 群組；"
-            "接收店由系統自動判定（同 SKU、非轉出店舖、有銷售記錄）。"
+            "Shop Stock Qty (LM)／(LLM) 欄存在時另須大於 0（90 日有貨準則：M-2／M-1 無貨＝期間剛調入／派貨，不算真坐貨）、"
+            "Launch Date 欄存在時排除 90 天內新品；接收店由系統自動判定（同 SKU、非轉出店舖、有銷售記錄；"
+            "RP Type 欄存在時排除 ND 店）。"
         )
     _label_to_site = {}
     for _site, _name in zip(_cand["Site Code"], _cand["Shop Name"]):
@@ -489,40 +493,12 @@ def _transfer_mch_filter(df_input, shop_natures, *, prefix):
 
 
 def _transfer_mch_breakdown(df_input, shop_natures, *, nd_mode):
-    """候選轉出店舖可轉出列按 Adj. MCH1 的分佈（供篩選參考）。"""
-    _blank = "__BLANK__"
-    _blank_label = "（空白）"
+    """候選轉出店舖可轉出列按 Adj. MCH1 的分佈（供篩選參考）。
 
-    def _text(df, name):
-        return df.get(name, pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
-
-    df = _clean_dataframe(df_input, shop_natures=shop_natures)
-    if df.empty:
-        return pd.DataFrame()
-    site = _text(df, "Site Code")
-    sku = _cached_safe_sku_series(df["SKU"]).fillna("").astype(str).str.strip()
-    stock = _safe_numeric(df["Shop Stock Qty (CM)"])
-    if nd_mode:
-        rp = _text(df, "RP Type").str.upper()
-        mask = (site != "") & (sku != "") & (rp == "ND") & (stock > 0)
-        _sku_col = "ND SKU 數"
-    else:
-        sales = _safe_numeric(df["Sold Qty (P90D)"])
-        mask = (site != "") & (sku != "") & (sales <= 0) & (stock > 0)
-        _sku_col = "0 Sales SKU 數"
-    if not mask.any():
-        return pd.DataFrame()
-    out = pd.DataFrame({
-        "Adj. MCH1": _text(df, "Adj. MCH1")[mask].replace("", _blank),
-        "SKU": sku[mask],
-        "Stock": np.floor(stock[mask] + 1e-9),
-    })
-    g = out.groupby("Adj. MCH1", sort=True)
-    return pd.DataFrame({
-        "Adj. MCH1": [_blank_label if v == _blank else str(v) for v in g.size().index],
-        _sku_col: g["SKU"].nunique().astype(int).values,
-        "可轉出庫存 (件)": g["Stock"].sum().astype(int).values,
-    })
+    委由 modes.transfer_p90d.build_mch_breakdown 計算，與候選清單、執行轉換共用
+    同一準則（P90D 模式含 90 日有貨準則與新品除外），確保各步驟數字一致。
+    """
+    return build_mch_breakdown(df_input, shop_natures=shop_natures, nd_mode=nd_mode)
 
 
 # 轉貨模式兩變體的顯示設定（結果看板共用同一渲染器）
@@ -592,6 +568,8 @@ def _render_transfer_results(mode_key: str) -> None:
     if mode_key == _NDTR_MODE:
         _receiver_limit = _stats.get("receiver_limit")
         st.caption(f"🎯 每個 SKU 接收店舖：{receiver_limit_label(_receiver_limit)}。")
+    if _stats.get("receiver_cap"):
+        st.caption("📦 接收量上限：接收店按「補到 14 日」需求封頂（Sold Qty (P90D) ÷ 90 × 14 − 調前庫存，最低 0）；超出部分保留於原店舖。")
 
     for _row_i in range(0, len(_cfg["cards"]), 4):
         _row = _cfg["cards"][_row_i:_row_i + 4]
@@ -2923,9 +2901,11 @@ if uploaded_file is not None:
 
         _op90dt_sites = []
         _op90dt_mch1_filter = None
+        _op90dt_receiver_cap = False
         _ndtr_sites = []
         _ndtr_mch1_filter = None
         _ndtr_receiver_limit = None
+        _ndtr_receiver_cap = False
         if mode == _OP90DT_MODE:
             _op90dt_sites = _transfer_site_selector(
                 df_input,
@@ -2938,6 +2918,18 @@ if uploaded_file is not None:
                 selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                 prefix="op90dt_",
             )
+            st.markdown("#### 🎯 步驟三：接收量上限（可選，預設不限）")
+            _op90dt_receiver_cap = st.checkbox(
+                "📦 接收店按「補到 14 日」需求封頂",
+                key="op90dt_receiver_cap",
+                help="開啟後每間接收店最多接收其 14 日需求（Sold Qty (P90D) ÷ 90 × 14 無條件進位 − 調前庫存，最低 0）；"
+                     "按銷售比例分配後超出上限的餘量，會在尚有需求的接收店之間重新分配，仍未派完者列未分配（保留原店）。"
+                     "關閉時按銷售比例全數分配，不設上限。",
+            )
+            if _op90dt_receiver_cap:
+                st.caption("目前設定 → 接收店最多接收其 14 日需求；超出部分保留於原店舖（轉貨單附各接收店 14 日需求供核對）。")
+            else:
+                st.caption("目前設定 → 不設上限，按銷售比例全數分配。")
         elif mode == _NDTR_MODE:
             if _resolve_column_name("RP Type", set(df_input.columns)) is None:
                 st.error(
@@ -2980,6 +2972,17 @@ if uploaded_file is not None:
                 else "目前設定 → 不限接收店數目，全數有銷售記錄的 RF 店舖按 Sold Qty (P90D) 比例分配。"
             )
             st.caption(_ndtr_receiver_caption)
+            _ndtr_receiver_cap = st.checkbox(
+                "📦 接收店按「補到 14 日」需求封頂（可與集中模式併用）",
+                key="ndtr_receiver_cap",
+                help="開啟後每間接收店最多接收其 14 日需求（Sold Qty (P90D) ÷ 90 × 14 無條件進位 − 調前庫存，最低 0）；"
+                     "按銷售比例分配後超出上限的餘量，會在尚有需求的接收店之間重新分配，仍未派完者列未分配（保留原店）。"
+                     "關閉時按銷售比例全數分配，不設上限。",
+            )
+            if _ndtr_receiver_cap:
+                st.caption("目前設定 → 接收店最多接收其 14 日需求；超出部分保留於原店舖（轉貨單附各接收店 14 日需求供核對）。")
+            else:
+                st.caption("目前設定 → 接收量不設上限，按銷售比例全數分配。")
 
         _is_overstock_mode = (mode == "Overstock Review")
         _is_carry_mode = (mode == "Carry SKU Review")
@@ -3190,12 +3193,14 @@ if uploaded_file is not None:
                         progress_callback=_cb_transform,
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                         mch1_filter=_op90dt_mch1_filter,
+                        receiver_cap=_op90dt_receiver_cap,
                     )
                     buf = generate_excel_p90d_transfer(
                         _plan_df, _out_df, _in_df, _sku_df, _mch_df, _stats,
                         nature_label="全部" if set(selected_shop_natures) == set(SHOP_NATURE_OPTIONS) else "、".join(selected_shop_natures),
                         mch_filter_label="全部（未排除）" if _op90dt_mch1_filter is None else "已排除部分分類",
                         progress_callback=_cb_excel,
+                        receiver_cap=_op90dt_receiver_cap,
                     )
                     st.session_state.op90dt_processed = True
                     st.session_state.op90dt_plan_df = _plan_df
@@ -3214,6 +3219,7 @@ if uploaded_file is not None:
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                         mch1_filter=_ndtr_mch1_filter,
                         receiver_limit=_ndtr_receiver_limit,
+                        receiver_cap=_ndtr_receiver_cap,
                     )
                     buf = generate_excel_nd_transfer(
                         _plan_df, _out_df, _in_df, _sku_df, _mch_df, _stats,
@@ -3221,6 +3227,7 @@ if uploaded_file is not None:
                         mch_filter_label="全部（未排除）" if _ndtr_mch1_filter is None else "已排除部分分類",
                         progress_callback=_cb_excel,
                         receiver_limit=_ndtr_receiver_limit,
+                        receiver_cap=_ndtr_receiver_cap,
                     )
                     st.session_state.ndtr_processed = True
                     st.session_state.ndtr_plan_df = _plan_df

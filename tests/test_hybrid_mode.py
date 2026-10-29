@@ -259,7 +259,9 @@ def test_no_sale_donor_suggests_zero():
          "D001 Net Stock Qty (CM)": 10.0},
         {"SKU": 400, "Site Code": "N02", "Shop Nature": "Non Tourist",
          "Sold Qty (P90D)": 0.0, "Shop Stock Qty (CM)": 20.0,
-         "Shop Monthly Sold Qty (P90D)": 0.0, "Adj. Safety Stock": 5},
+         "Shop Monthly Sold Qty (P90D)": 0.0, "Adj. Safety Stock": 5,
+         # 真坐貨前提：四個銷售期皆 0（90 日有貨準則；LM／LLM／Launch Date 欄不存在時不檢查）
+         "Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0, "Sold Qty (CM - MTD)": 0.0},
     ]
     raw, sc_summary, _, _, _, stats, _ = transform_hybrid(_df(rows))
     assert _get(raw, "N02", "事件類型") == "實際轉出"
@@ -1627,6 +1629,9 @@ def test_nonfinite_stock_sales_and_safety_rejected():
 def test_negative_sales_treated_as_zero_with_warning():
     df = _df(_SCENARIO_A)
     df.loc[df["Site Code"] == "N01", "Sold Qty (P90D)"] = -10
+    # 負銷售遮蔽為 0 後按真坐貨處理（四期銷售皆 0）才可全數釋放；期別不一致者不適用全數轉出
+    for _c in ("Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)"):
+        df.loc[df["Site Code"] == "N01", _c] = 0
     raw, _, _, _, _, _, warns = transform_hybrid(df)
     assert any("Sold Qty (P90D)" in w and "負數" in w for w in warns)
     # N01 由可轉出 16 件變為全數釋放 30 件（負銷售不再放大成超額以外的供應）

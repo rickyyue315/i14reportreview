@@ -27,6 +27,7 @@ from modes.common import (
     _extract_shop_name,
     _iter_header_rows,
     _normalize_ref_date,
+    _parse_launch_dates,
     _resolve_column_name,
     _safe_default_series,
     _safe_numeric,
@@ -1369,6 +1370,11 @@ def transform_hybrid(
       **資料品質補正**（Shop Nature 正規化、月銷逐列回補、D001 逐列 Net→Stock
       fallback；回補準則見各段 warning），故同一份輸入在兩個模式可能出現細微差異。
       **調貨段恆以 14 日為基準，不受 safety_days 影響。**
+      「90 日 0 零售全數可轉出」須為**真坐貨**：四個銷售期皆 ≤ 0；
+      `Shop Stock Qty (LM)`／`(LLM)` 欄存在時另須 > 0（M-2／M-1 無貨＝期間剛調入／
+      派貨，非全程有貨）；`Launch Date` 欄存在時排除 90 天內新品（ref_date 基準，
+      與轉 ND 提示同一參考日期）。0 零售但非真坐貨的列可轉出貨量按 0 計並列 warning；
+      欄不存在時視為準則成立（舊檔行為不變）。
     - Review 段（Safety 基準周轉天數，按 Shop Nature 分別設定）：
       Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 的基準天數)；
       safety_days 預設 {"Tourist": 10, "Mix": 9, "Non Tourist": 7}（UI 建議範圍 7–10 日）。
@@ -1658,7 +1664,66 @@ def transform_hybrid(
     cm_stock_val = cm_stock.to_numpy(dtype=float)
     sold_val = sold_p90d.to_numpy(dtype=float)
     msold_val = msold_eff.to_numpy(dtype=float)
+
+    # ── 90 日 0 零售「真坐貨」準則（全數可轉出的前提；對齊指引規則三除外條款與 v1.93.0）──
+    # 四個銷售期皆 ≤ 0；Shop Stock Qty (LM)／(LLM) 欄存在時另須 > 0（M-2／M-1 無貨＝
+    # 期間剛調入／派貨，90 日窗口內非全程有貨，不算真坐貨）；Launch Date 欄存在時
+    # 排除 90 天內新品（銷售尚未起步，指引規則三除外條款）。
+    # 欄不存在時視為準則成立（舊檔行為不變，與 _hybrid_p90d_zero_sales_mask 同一口徑）。
+    _ref_date = _normalize_ref_date(ref_date)
+    _avail_hybrid = set(df.columns)
+    _true_zero = np.ones(len(df), dtype=bool)
+    for _zc in ("Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)"):
+        _zc_col = _resolve_column_name(_zc, _avail_hybrid)
+        if _zc_col is not None:
+            _true_zero &= _safe_numeric(df[_zc_col]).fillna(0.0).to_numpy(dtype=float) <= 0
+    _lm_col = _resolve_column_name("Shop Stock Qty (LM)", _avail_hybrid)
+    _llm_col = _resolve_column_name("Shop Stock Qty (LLM)", _avail_hybrid)
+    if _lm_col is not None:
+        _true_zero &= _safe_numeric(df[_lm_col]).fillna(0.0).to_numpy(dtype=float) > 0
+    if _llm_col is not None:
+        _true_zero &= _safe_numeric(df[_llm_col]).fillna(0.0).to_numpy(dtype=float) > 0
+    _launch_col = _resolve_column_name("Launch Date", _avail_hybrid)
+    _n_zero_excluded = 0
+    if _launch_col is not None:
+        _launch_dt = _parse_launch_dates(df[_launch_col].fillna("").astype(str).str.strip())
+        _is_new = _launch_dt.notna() & (_launch_dt >= pd.Timestamp(_ref_date) - pd.Timedelta(days=90))
+        _true_zero &= ~_is_new.to_numpy()
+
     no_sale_has_stock = (sold_val <= 0) & (cm_stock_val > 0)
+    # 真坐貨（0 零售＋全程有貨＋非新品）→ 全數庫存可轉出；
+    # 0 零售但非真坐貨（剛調入／派貨、新品）→ 不視為超額（14 日線為 0 不能作全數轉出依據），
+    # 可轉出貨量按 0 計算，並列 warning。
+    _zero_excluded = no_sale_has_stock & ~_true_zero
+    _n_zero_excluded = int(_zero_excluded.sum())
+    if _n_zero_excluded:
+        _excl_reasons = []
+        _period_cols = [
+            _resolve_column_name(_zc, _avail_hybrid)
+            for _zc in ("Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)")
+        ]
+        _period_cols = [c for c in _period_cols if c is not None]
+        if _period_cols:
+            _period_pos = np.zeros(len(df), dtype=bool)
+            for _pc in _period_cols:
+                _period_pos |= _safe_numeric(df[_pc]).fillna(0.0).to_numpy(dtype=float) > 0
+            if int((_zero_excluded & _period_pos).sum()):
+                _excl_reasons.append("期別銷售不一致（M-2／M-1／CM-MTD 有銷售但 P90D ≤ 0）")
+        if _lm_col is not None or _llm_col is not None:
+            _hist_zero = np.ones(len(df), dtype=bool)
+            if _lm_col is not None:
+                _hist_zero &= _safe_numeric(df[_lm_col]).fillna(0.0).to_numpy(dtype=float) <= 0
+            if _llm_col is not None:
+                _hist_zero &= _safe_numeric(df[_llm_col]).fillna(0.0).to_numpy(dtype=float) <= 0
+            if int((_zero_excluded & _hist_zero).sum()):
+                _excl_reasons.append("M-2／M-1 無貨（期間剛調入／派貨）")
+        if _launch_col is not None and int((_zero_excluded & _is_new.to_numpy()).sum()):
+            _excl_reasons.append("90 天內新品")
+        _reason_txt = f"（{'、'.join(_excl_reasons)}）" if _excl_reasons else ""
+        warnings.append(
+            f"有 {_n_zero_excluded} 列 0 Sales 且有庫存不符合「90 日有貨／非新品」準則{_reason_txt}，"
+            "不視為真坐貨：不適用全數可轉出，可轉出貨量按 0 計算。"
+        )
     ideal_14d = sold_val / 90.0 * 14
     # Safety 基準天數（按 Nature）— 只用於 Review 段；調貨段一律用上面的 14 日
     _safety_days, _safety_day_warnings = _hybrid_safety_days(safety_days)
@@ -1731,7 +1796,13 @@ def transform_hybrid(
                 "門檻所用數值見「加總 TurnDay (RF)」欄；原有全列「加總 TurnDay」欄位值不變。"
             )
 
-    per_row_excess = np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d))
+    # 供給側：真坐貨（0 零售＋90 日全程有貨＋非新品）全數可轉出；
+    # 其餘列按逐列 14 日超額（0 零售但非真坐貨者已按 0 計，見上）
+    per_row_excess = np.where(
+        no_sale_has_stock & _true_zero,
+        cm_stock_val,
+        np.where(_zero_excluded, 0.0, np.maximum(0, cm_stock_val - ideal_14d)),
+    )
     # 供給側池級門檻（可轉出池）：維持計全部列（含 ND），讓 ND 死庫存仍可清走
     mix_pool_ok = sku_mix_turnday >= turnday_threshold
     nt_pool_ok = sku_nt_turnday >= turnday_threshold
@@ -2116,7 +2187,7 @@ def transform_hybrid(
 
     if progress_callback:
         progress_callback(0.55, "建立 Review 表...")
-    _ref_date = _normalize_ref_date(ref_date)
+    # _ref_date 已於調貨段計算（真坐貨新品判定與轉 ND 提示共用同一參考日期）
     _zero_mask, _zero_warnings = _hybrid_p90d_zero_sales_mask(raw, ref_date=_ref_date)
     warnings.extend(_zero_warnings)
     if bool(_zero_mask.any()):

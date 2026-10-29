@@ -260,15 +260,19 @@ def test_p90d_mode_does_not_require_rp_type():
 
 # 5. 重複列、未納入轉出與空結果
 
-def test_duplicate_site_sku_is_aggregated_with_warning():
+def test_duplicate_site_sku_stops_execution():
+    """重複列一律停止計算（與 P90D 模式及調貨段同一準則）。"""
     df = _df([
         _row("S01", sku=1, stock=2, rp="ND"),
         _row("S01", sku=1, stock=3, rp="ND"),
         _row("S02", sku=1, sales=1, stock=0, rp="RF"),
     ])
-    plan, _, _, _, _, stats, warns = transform_nd_transfer(df, ["S01"])
-    assert _lines(plan) == {("S01", "1", "S02"): 5}
-    assert any("重複" in w for w in warns)
+    try:
+        transform_nd_transfer(df, ["S01"])
+    except ValueError as exc:
+        assert "重複" in str(exc) and "S01" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for duplicate Site Code × SKU")
 
 
 def test_selected_site_without_nd_stock_is_reported():
@@ -421,7 +425,7 @@ def test_excel_plan_group_colors_in_nd_mode():
 
 
 def test_p90d_guide_wording_unchanged():
-    """P90D 模式的說明頁措辭不因新增 ND 模式而改變（零變動）。"""
+    """P90D 模式的說明頁維持自身措辭（不使用 ND 模式的轉出／接收定義）。"""
     from modes.transfer_p90d import generate_excel_p90d_transfer, transform_p90d_transfer
     df = _df([
         _row("S01", sku=1, sales=0, stock=10, rp="ND"),
@@ -435,7 +439,8 @@ def test_p90d_guide_wording_unchanged():
     ]
     assert any("P90D 0 Sales Review（轉貨模式）說明" in t for t in texts)
     assert any("0 Sales 定義" in t for t in texts)
-    assert not any("RP Type＝ND" in t for t in texts)
+    assert not any("ND 定義" in t for t in texts)
+    assert not any("RP Type＝RF 且 Sold Qty (P90D) > 0" in t for t in texts)
 
 
 # 8. 接收店舖集中模式（每個 SKU 最多 2／4 間）

@@ -22,6 +22,7 @@ from modes.transfer_p90d import (
     generate_excel_p90d_transfer,
     transform_p90d_transfer,
 )
+from modes.transfer_nd import build_nd_transfer_candidates, transform_nd_transfer
 import transformer as shim
 from modes import MODE_REGISTRY
 
@@ -181,15 +182,25 @@ def test_shop_nature_filter_applies_to_both_sides():
     assert _lines(plan) == {("S01", "1", "S03"): 6}
 
 
-def test_duplicate_site_sku_is_aggregated_with_warning():
+def test_duplicate_site_sku_stops_execution():
+    """重複列一律停止計算（與調貨段同一準則），不得自行合併庫存或銷售。"""
     df = _df([
         _row("S01", sku=1, sales=0, stock=2),
         _row("S01", sku=1, sales=0, stock=3),
         _row("S02", sku=1, sales=1, stock=0),
     ])
-    plan, _, _, _, _, stats, warnings = transform_p90d_transfer(df, ["S01"])
-    assert _lines(plan) == {("S01", "1", "S02"): 5}
-    assert any("重複" in w for w in warnings)
+    try:
+        transform_p90d_transfer(df, ["S01"])
+    except ValueError as exc:
+        assert "重複" in str(exc) and "S01" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for duplicate Site Code × SKU")
+    try:
+        build_transfer_candidates(df)
+    except ValueError as exc:
+        assert "重複" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for duplicates in candidates")
 
 
 def test_selected_site_without_zero_stock_is_reported():
@@ -535,3 +546,199 @@ def test_transformer_shim_and_registry():
     assert entry["module"] == "modes.transfer_p90d"
     assert entry["transform"] == "transform_p90d_transfer"
     assert entry["generate_excel"] == "generate_excel_p90d_transfer"
+
+
+# 3. 90 日有貨準則與新品除外（欄存在時生效；ND 模式不受約束）
+
+def test_lm_zero_rows_excluded_with_warning():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=1, stock=0),
+    ])
+    df["Shop Stock Qty (LM)"] = [0.0, 0.0]
+    assert build_transfer_candidates(df).empty
+    plan, _, _, _, _, stats, warns = transform_p90d_transfer(df, ["S01"])
+    assert plan.empty and stats["out_qty"] == 0
+    assert any("Shop Stock Qty (LM) 為 0" in w for w in warns)
+
+
+def test_lm_column_absent_keeps_old_behaviour():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=1, stock=0),
+    ]).drop(columns=["Shop Stock Qty (LM)"])
+    plan, _, _, _, _, stats, warns = transform_p90d_transfer(df, ["S01"])
+    assert _lines(plan) == {("S01", "1", "S02"): 5}
+    assert not any("90 日有貨準則" in w for w in warns)
+
+
+def test_llm_zero_rows_excluded_when_lm_ok():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=1, stock=0),
+    ])
+    df["Shop Stock Qty (LM)"] = [4.0, 4.0]
+    df["Shop Stock Qty (LLM)"] = [0.0, 4.0]
+    cand = build_transfer_candidates(df)
+    assert cand.empty
+    plan, _, _, _, _, _, warns = transform_p90d_transfer(df, ["S01"])
+    assert plan.empty
+    assert any("Shop Stock Qty (LLM) 為 0" in w for w in warns)
+
+
+def test_recent_launch_new_product_excluded():
+    import datetime
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=1, stock=0),
+    ])
+    df["Launch Date"] = [
+        (datetime.date.today() - datetime.timedelta(days=5)).isoformat(),
+        "2024-01-01",
+    ]
+    plan, _, _, _, _, _, warns = transform_p90d_transfer(df, ["S01"])
+    assert plan.empty
+    assert any("新品" in w for w in warns)
+    # 舊 Launch Date 不受影響
+    df["Launch Date"] = ["2024-01-01", "2024-01-01"]
+    plan, _, _, _, _, stats, _ = transform_p90d_transfer(df, ["S01"])
+    assert stats["alloc_qty"] == 5
+    # 缺 Launch Date 欄時不檢查
+    plan, _, _, _, _, stats, _ = transform_p90d_transfer(df.drop(columns=["Launch Date"]), ["S01"])
+    assert stats["alloc_qty"] == 5
+
+
+def test_nd_mode_unaffected_by_stock_history_criteria():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=1, stock=0),
+    ])
+    df.loc[df["Site Code"] == "S01", "RP Type"] = "ND"
+    df["Shop Stock Qty (LM)"] = [0.0, 0.0]
+    df["Shop Stock Qty (LLM)"] = [0.0, 0.0]
+    plan, _, _, _, _, stats, warns = transform_nd_transfer(df, ["S01"])
+    assert _lines(plan) == {("S01", "1", "S02"): 5}
+    assert not any("90 日有貨準則" in w for w in warns)
+
+
+# 4. 接收店排除 ND（RP Type 欄存在時）
+
+def test_nd_shops_excluded_from_receivers():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=2, stock=0),
+        _row("S03", sku=1, sales=3, stock=0),
+    ])
+    df.loc[df["Site Code"] == "S02", "RP Type"] = "ND"
+    plan, _, _, _, _, stats, warns = transform_p90d_transfer(df, ["S01"])
+    assert set(plan["接收 Site Code"]) == {"S03"}
+    assert stats["alloc_qty"] == 5
+    assert any("RP Type＝ND" in w and "排除接收" in w for w in warns)
+
+
+def test_nd_shops_receive_when_rp_column_absent():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=2, stock=0),
+    ]).drop(columns=["RP Type"])
+    plan, _, _, _, _, stats, warns = transform_p90d_transfer(df, ["S01"])
+    assert set(plan["接收 Site Code"]) == {"S02"}
+    assert stats["alloc_qty"] == 5
+    assert not any("排除接收" in w for w in warns)
+
+
+# 5. 轉貨單轉出店銷量欄與 ND 候選有銷售 SKU 數
+
+def test_plan_includes_out_shop_sales_column():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=3, stock=0),
+    ])
+    plan, _, _, _, _, _, _ = transform_p90d_transfer(df, ["S01"])
+    assert "轉出店 Sold Qty (P90D)" in plan.columns
+    assert int(plan.iloc[0]["轉出店 Sold Qty (P90D)"]) == 0
+    assert "接收店 14 日需求 (件)" in plan.columns
+
+
+def test_nd_candidates_show_sales_counts():
+    df = _df([
+        _row("S01", sku=1, sales=8, stock=4),
+        _row("S01", sku=2, sales=0, stock=6),
+        _row("S03", sku=3, sales=0, stock=3),
+    ])
+    df["RP Type"] = "ND"
+    cand = build_nd_transfer_candidates(df)
+    s1 = cand[cand["Site Code"] == "S01"].iloc[0]
+    assert int(s1["ND SKU 數"]) == 2
+    assert int(s1["有銷售 ND SKU 數"]) == 1
+    s3 = cand[cand["Site Code"] == "S03"].iloc[0]
+    assert int(s3["有銷售 ND SKU 數"]) == 0
+
+
+def test_nd_plan_out_sales_visible():
+    df = _df([
+        _row("S01", sku=1, sales=9, stock=5),
+        _row("S02", sku=1, sales=2, stock=0),
+    ])
+    df.loc[df["Site Code"] == "S01", "RP Type"] = "ND"
+    plan, _, _, _, _, _, _ = transform_nd_transfer(df, ["S01"])
+    assert int(plan.iloc[0]["轉出店 Sold Qty (P90D)"]) == 9
+
+
+# 6. 接收量「補到 14 日」封頂
+
+def test_receiver_cap_limits_allocation_to_14d_need():
+    # 接收店 S02：sales=90 → 14 日需求 = ceil(90÷90×14) − 0 = 14；轉出 30 件只接收 14 件
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=30),
+        _row("S02", sku=1, sales=90, stock=0),
+    ])
+    plan, _, _, sku_df, _, stats, warns = transform_p90d_transfer(df, ["S01"], receiver_cap=True)
+    assert _lines(plan) == {("S01", "1", "S02"): 14}
+    assert int(plan.iloc[0]["接收店 14 日需求 (件)"]) == 14
+    assert stats["alloc_qty"] == 14 and stats["unalloc_qty"] == 16
+    body = sku_df[sku_df["Brand"] != "總計"].iloc[0]
+    assert body["狀態"] == "接收店 14 日需求已滿（保留原店）"
+    assert any("補到 14 日」封頂" in w for w in warns)
+
+
+def test_receiver_cap_redistributes_to_remaining_capacity():
+    # S03 銷量高（14 日需求 ceil(100÷90×14)=16）先按比例取得近全數再封頂；
+    # S02 銷量低（14 日需求 ceil(1÷90×14)=1）餘量重新分配，仍未派完者列未分配
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=60),
+        _row("S02", sku=1, sales=1, stock=0),
+        _row("S03", sku=1, sales=100, stock=0),
+    ])
+    plan, _, _, _, _, stats, warns = transform_p90d_transfer(df, ["S01"], receiver_cap=True)
+    lines = _lines(plan)
+    assert lines[("S01", "1", "S03")] == 16
+    assert lines[("S01", "1", "S02")] == 1
+    assert stats["alloc_qty"] == 17 and stats["unalloc_qty"] == 43
+    assert any("補到 14 日」封頂" in w for w in warns)
+
+
+def test_receiver_cap_off_keeps_full_allocation():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=30),
+        _row("S02", sku=1, sales=90, stock=0),
+    ])
+    plan, _, _, _, _, stats, warns = transform_p90d_transfer(df, ["S01"])
+    assert _lines(plan) == {("S01", "1", "S02"): 30}
+    assert stats["alloc_qty"] == 30 and stats["unalloc_qty"] == 0
+    assert stats["receiver_cap"] is False
+    assert not any("封頂" in w for w in warns)
+    # 轉貨單仍顯示接收店 14 日需求供稽核
+    assert int(plan.iloc[0]["接收店 14 日需求 (件)"]) == 14
+
+
+def test_allocate_with_caps_invariants():
+    from modes.transfer_p90d import _allocate_with_caps
+    alloc, unalloc = _allocate_with_caps(60, [1.0, 100.0], [28, 2])
+    assert alloc == [28, 2] and unalloc == 30
+    alloc, unalloc = _allocate_with_caps(10, [3.0, 1.0], [99, 99])
+    assert alloc == [8, 2] and unalloc == 0
+    alloc, unalloc = _allocate_with_caps(10, [3.0, 1.0], [0, 0])
+    assert alloc == [0, 0] and unalloc == 10
+    alloc, unalloc = _allocate_with_caps(0, [1.0], [5])
+    assert alloc == [0] and unalloc == 0

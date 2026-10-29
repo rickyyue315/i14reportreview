@@ -26,6 +26,7 @@ from transformer import (
     transform_p90d_zero_sales,
     transform_forecast,
     transform_shop_simplify,
+    transform_hybrid,
     _SHOP_SIMPLIFY_STOCK_COLUMN,
     _SHOP_SIMPLIFY_STOCK_YES,
     _SHOP_SIMPLIFY_STOCK_NO,
@@ -286,3 +287,71 @@ def test_shop_simplify_all_three_stock_columns_missing_raises():
     )
     with pytest.raises(ValueError, match="過去90日有無存貨"):
         transform_shop_simplify(df)
+
+
+# ── 6. hybrid 調貨段：「90 日 0 零售全數可轉出」須為真坐貨（v1.94.0）────────────
+def test_hybrid_zero_sale_donor_llm_zero_not_transferable():
+    df = pd.DataFrame([
+        _hy_row(SKU=1),                                  # LLM > 0 → 真坐貨 → 全數 5 件可轉出
+        _hy_row(SKU=2, **{"Shop Stock Qty (LLM)": 0.0}),  # M-2 無貨 → 非真坐貨 → 可轉出 0
+    ])
+    df["Shop Nature"] = "Non Tourist"
+    raw, _, _, _, _, _, warns = transform_hybrid(df)
+    _sku = raw["SKU"].astype(str)
+    assert int(raw.loc[_sku == "1", "可轉出貨量 (Non Tourist)"].iloc[0]) == 5
+    assert int(raw.loc[_sku == "2", "可轉出貨量 (Non Tourist)"].iloc[0]) == 0
+    assert any("90 日有貨／非新品」準則" in w and "可轉出貨量按 0" in w for w in warns)
+
+
+def test_hybrid_zero_sale_donor_without_llm_column_unchanged():
+    df = pd.DataFrame([_hy_row(SKU=1)]).drop(columns=["Shop Stock Qty (LLM)"])
+    df["Shop Nature"] = "Non Tourist"
+    raw, _, _, _, _, _, warns = transform_hybrid(df)
+    assert int(raw.loc[raw["SKU"].astype(str) == "1", "可轉出貨量 (Non Tourist)"].iloc[0]) == 5
+    assert not any("90 日有貨／非新品」準則" in w for w in warns)
+
+
+def test_hybrid_new_product_donor_not_transferable():
+    import datetime
+    recent = (datetime.date.today() - datetime.timedelta(days=5)).isoformat()
+    df = pd.DataFrame([
+        _hy_row(SKU=1),                                    # 舊品 → 可轉出
+        _hy_row(SKU=2, **{"Launch Date": recent}),          # 90 天內新品 → 可轉出 0
+    ])
+    df["Shop Nature"] = "Non Tourist"
+    raw, _, _, _, _, _, warns = transform_hybrid(df)
+    _sku = raw["SKU"].astype(str)
+    assert int(raw.loc[_sku == "1", "可轉出貨量 (Non Tourist)"].iloc[0]) == 5
+    assert int(raw.loc[_sku == "2", "可轉出貨量 (Non Tourist)"].iloc[0]) == 0
+    assert any("90 天內新品" in w for w in warns)
+
+
+# ── 7. 轉貨模式（P90D）：轉出候選同受 90 日有貨準則約束（ND 模式不受約束）──────
+def test_transfer_mode_llm_zero_excluded():
+    from modes.transfer_p90d import build_transfer_candidates, transform_p90d_transfer
+    df = pd.DataFrame([
+        _hy_row(SKU=1),
+        _hy_row(SKU=1, **{"Site Code": "S02", "Shop Stock Qty (LLM)": 0.0,
+                          "Shop Stock Qty (CM)": 3.0}),
+        _hy_row(SKU=1, **{"Site Code": "S03", "Sold Qty (P90D)": 4.0,
+                          "Shop Stock Qty (CM)": 0.0}),
+    ])
+    df["Shop Stock Status"] = "Overstock (P90D 0 Sales)"
+    cand = build_transfer_candidates(df)
+    # SKU 2（LLM=0）被排除，只有 SKU 1 所在的 S01 入候選
+    assert list(cand["Site Code"]) == ["S01"]
+    plan, _, _, _, _, stats, warns = transform_p90d_transfer(df, ["S01"])
+    assert int(stats["out_qty"]) == 5 and int(stats["alloc_qty"]) == 5
+    assert any("Shop Stock Qty (LLM) 為 0" in w for w in warns)
+
+
+def test_nd_transfer_mode_unaffected_by_llm():
+    from modes.transfer_nd import transform_nd_transfer
+    df = pd.DataFrame([
+        _hy_row(SKU=1, **{"RP Type": "ND"}),
+        _hy_row(SKU=1, **{"Site Code": "S02", "RP Type": "RF",
+                          "Sold Qty (P90D)": 4.0, "Shop Stock Qty (CM)": 0.0}),
+    ])
+    df["Shop Stock Status"] = "Overstock (P90D 0 Sales)"
+    plan, _, _, _, _, stats, _ = transform_nd_transfer(df, ["S01"])
+    assert int(stats["alloc_qty"]) == 5
