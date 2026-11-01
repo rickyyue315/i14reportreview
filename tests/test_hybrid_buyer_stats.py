@@ -4,7 +4,7 @@
 - Buyer 需調整 Safety SKU 統計母體為 Safety 設定不足＋過高（有建議 Safety 設定值的列）
 - 兩者按 Buyer 外連接合併為單一表：Buyer／需調貨 SKU 數／需調貨 SKU 佔比／調入需求量合計／
   需調整 Safety SKU 數／需調整 Safety SKU 佔比／Safety 建議調整量合計
-- Excel Review 摘要在既有 ①②③ 區塊後另加 ④ 合併表；Streamlit 看板與 Review 摘要分頁同步顯示
+- Excel Review 摘要在既有 ①②③ 區塊後另加 ④ 合併表；Streamlit 儀表板與 Review 摘要分頁同步顯示
 """
 import warnings
 warnings.filterwarnings("ignore")

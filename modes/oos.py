@@ -411,7 +411,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None, i
 
     _total_row = summary_df[summary_df["Buyer"] == "總計"]
     if _total_row.empty:
-        raise ValueError("摘要資料中未找到總計列，無法生成分析看板")
+        raise ValueError("摘要資料中未找到總計列，無法生成分析儀表板")
     total_oos = int(_total_row["總計"].values[0])
     total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
     total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())

@@ -483,7 +483,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
             "nt_turnday": Non Tourist Turnday 分級表 (B1b),
             "nature_compare": Nature 存貨對比表 (B2),
             "imbalance_sku": 存貨失衡 SKU 清單 (B3, Tourist缺貨+其他過剩),
-            "low_stock_allocation": 低存貨 SKU 配置決策表 (B4),
+            "low_stock_allocation": 低存貨 SKU 分配決策表 (B4),
             "transfer_priority": 可調貨優先分析 (B5, Tourist缺貨+同SKU在Mix/NT有可釋放件數),
         }
     """
@@ -677,7 +677,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
         )
         result["imbalance_sku"] = merged
 
-    # ── B4: 低存貨 SKU 配置決策（D001 + Shop Stock < 門檻）─────────────────────
+    # ── B4: 低存貨 SKU 分配決策（D001 + Shop Stock < 門檻）─────────────────────
     # 找出總可用存貨不足門檻的 SKU，分析是否該減少 Non Tourist RF 店舖。
     # 同時統計 RF 店「無銷售有存貨」與 ND 店存貨（有/無銷售）的浪費情況。
     if "SKU" in raw.columns:
@@ -1104,7 +1104,7 @@ def transform_stock_impact(
             raw[_gc] = raw[_gc].astype("category")
 
     # 注意：stock_threshold 不再用於全域過濾，只會在 low_stock_allocation（B4）
-    # 中內部使用，分析所有低存貨 SKU 的配置決策。
+    # 中內部使用，分析所有低存貨 SKU 的分配決策。
     if progress_callback:
         progress_callback(0.4, "建構多維度彙總中...")
 
@@ -1390,17 +1390,17 @@ def _write_inventory_distribution_sheet(ws, inv_distribution, header_font, heade
             current_row += 1
         current_row += 1
 
-    # B4: 低存貨 SKU 配置決策
+    # B4: 低存貨 SKU 分配決策
     if progress_callback:
-        progress_callback(0.799, "寫入低存貨 SKU 配置決策...")
+        progress_callback(0.799, "寫入低存貨 SKU 分配決策...")
     low_alloc = inv_distribution.get("low_stock_allocation")
     if low_alloc is not None and not low_alloc.empty:
         # 轉置為 2 欄（指標/數值）方便閱讀
         low_display = low_alloc.T.reset_index()
         low_display.columns = ["指標", "數值"]
-        current_row = _write_subtable("⚖️ 低存貨 SKU 配置決策（D001 + Shop Stock < 門檻 → 是否減少 Non Tourist RF 店舖）", low_display, current_row)
+        current_row = _write_subtable("⚖️ 低存貨 SKU 分配決策（D001 + Shop Stock < 門檻 → 是否減少 Non Tourist RF 店舖）", low_display, current_row)
     else:
-        ws.cell(row=current_row, column=1, value="⚖️ 低存貨 SKU 配置決策：無資料").font = Font(size=12, color="1E40AF")
+        ws.cell(row=current_row, column=1, value="⚖️ 低存貨 SKU 分配決策：無資料").font = Font(size=12, color="1E40AF")
         current_row += 3
 
     # B5: 可調貨優先 SKU 清單（Tourist缺貨 + 同SKU在Mix/NT有可釋放件數）
@@ -1684,12 +1684,12 @@ def generate_excel_stock_impact(
     else:
         ws_item_class.cell(row=1, column=1, value="無 Item Class 層級缺貨影響數據").font = Font(size=12)
 
-    # Sheet 6b: SKU Monthly Sales & Storage (按 SKU 月銷量與存儲量)
+    # Sheet 6b: SKU Monthly Sales & Storage (按 SKU 月銷量與存量)
     if progress_callback:
-        progress_callback(0.69, "建立 SKU 月銷量和存儲量工作表...")
+        progress_callback(0.69, "建立 SKU 月銷量和存量工作表...")
     ws_sku_monthly = wb.create_sheet(title="SKU Monthly Sales&Store")
     if sku_monthly_analysis is not None and not sku_monthly_analysis.empty:
-        ws_sku_monthly.cell(row=1, column=1, value="SKU 月銷量和存儲量分析（按 Shop Nature）").font = Font(bold=True, size=12, color="1E40AF")
+        ws_sku_monthly.cell(row=1, column=1, value="SKU 月銷量和存量分析（按 Shop Nature）").font = Font(bold=True, size=12, color="1E40AF")
         ws_sku_monthly.cell(row=2, column=1, value="各 SKU 在 Tourist/Mix/Non Tourist 店舖的月均銷售（Shop Monthly Sold Qty P90D 已是月均）與當期庫存（CM Shop Stock）。低存貨 SKU 優先顯示。").font = Font(size=10, italic=True, color="6B7280")
         headers = list(sku_monthly_analysis.columns)
         for col_idx, h in enumerate(headers, 1):
@@ -1713,7 +1713,7 @@ def generate_excel_stock_impact(
                 progress_callback(0.69 + 0.01 * ((row_idx - 4) / max(len(sku_monthly_analysis), 1)), f"寫入 SKU 月銷量 ({row_idx-4}/{len(sku_monthly_analysis)})...")
         _auto_width(ws_sku_monthly)
     else:
-        ws_sku_monthly.cell(row=1, column=1, value="無 SKU 月銷量/存儲量數據").font = Font(size=12)
+        ws_sku_monthly.cell(row=1, column=1, value="無 SKU 月銷量/存量數據").font = Font(size=12)
 
     # Sheet 7: SKU Stock Diagnosis (by-SKU 缺貨 Review, 含 D001 + 店舖貨量)
     if progress_callback:
@@ -2214,7 +2214,7 @@ def generate_excel_stock_impact_simplified(
     # Sheet 2: SKU Monthly Sales&Store
     ws_sku_monthly = wb.create_sheet(title="SKU Monthly Sales&Store")
     if sku_monthly_analysis is not None and not sku_monthly_analysis.empty:
-        ws_sku_monthly.cell(row=1, column=1, value="SKU 月銷量和存儲量分析（簡化版，含原版欄位 + 新增 M-2/M-1 不分 Nature 存貨/銷售）").font = Font(bold=True, size=12, color="1E40AF")
+        ws_sku_monthly.cell(row=1, column=1, value="SKU 月銷量和存量分析（簡化版，含原版欄位 + 新增 M-2/M-1 不分 Nature 存貨/銷售）").font = Font(bold=True, size=12, color="1E40AF")
         ws_sku_monthly.cell(row=2, column=1, value="保留原版 Tourist/Mix/Non Tourist 所有欄位及新增資訊欄位，再新增 M-2, M-1 的 D001 存貨量、店舖總存貨量及 M-2, M-1, MTD 的店舖總銷售量（不分 Shop Nature）。低存貨 SKU 優先顯示。").font = Font(size=10, italic=True, color="6B7280")
         headers = list(sku_monthly_analysis.columns)
         for col_idx, h in enumerate(headers, 1):
@@ -2238,7 +2238,7 @@ def generate_excel_stock_impact_simplified(
                 progress_callback(0.2 + 0.35 * ((row_idx - 4) / max(len(sku_monthly_analysis), 1)), f"寫入 SKU 月銷量 ({row_idx-4}/{len(sku_monthly_analysis)})...")
         _auto_width(ws_sku_monthly)
     else:
-        ws_sku_monthly.cell(row=1, column=1, value="無 SKU 月銷量/存儲量數據").font = Font(size=12)
+        ws_sku_monthly.cell(row=1, column=1, value="無 SKU 月銷量/存量數據").font = Font(size=12)
 
     if progress_callback:
         progress_callback(0.58, "建立 New sheet（SOH Tier 分佈）...")
@@ -2473,7 +2473,7 @@ def _build_sku_info_lookup(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 1000, sku_lookup: pd.DataFrame | None = None) -> pd.DataFrame:
-    """按 SKU 計算遊客/混合/非遊客的每月銷量及存儲量分析。
+    """按 SKU 計算遊客/混合/非遊客的每月銷量及存量分析。
 
     每列為一個 SKU，彙總各 Nature 的月均銷售、當期庫存、店數等。
     低存貨 SKU（D001 + Shop < threshold）排在前面。
@@ -2667,7 +2667,7 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 1000, 
 
 
 def _build_sku_monthly_analysis_simplified(raw: pd.DataFrame, stock_threshold: int = 1000) -> pd.DataFrame:
-    """簡化版 SKU 月銷量和存儲量分析（同原版欄位，含新增不分 Nature 的週期存貨/銷售欄位）。
+    """簡化版 SKU 月銷量和存量分析（同原版欄位，含新增不分 Nature 的週期存貨/銷售欄位）。
 
     直接使用 `_build_sku_monthly_analysis` 的完整輸出（已含補充資訊與週期欄位），
     不需要額外計算。

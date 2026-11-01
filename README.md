@@ -14,8 +14,8 @@
 | Stock Checking 分析 | D001 倉庫少貨且 Tourist 店舖 Turnday < 門檻 → 標示調貨需求，從 Mix / Non Tourist 店舖分配可轉出貨量（Non Tourist 優先）；Summary 另以佔比差額標示「存貨偏重」的 Nature（存貨集中但銷量不高，偏重數值以醒目橘底加強顯示，偏低數值以淺藍底標示）；RAW 按可讀性重排欄序，不顯示 Item_Shop 與 Value 金額欄；另附「店舖問題 SKU」（每間店舖需行動列：需要調入／可轉出供應，問題＋建議方法；建議方法只計涉及來源店舖數量，不重複列出店號）；可選擇**分類維度**（七選一，與 Safety Stock x NetStock Review 同一組選項；只改 Summary 分組，調貨計算不變）；RAW／店舖問題 SKU 恆附「銷量帶」與「銷量存貨分類」顯示欄 |
 | Safety Stock x NetStock | 沿用 Stock Checking 調貨引擎，以 **Safety 基準周轉天數（按 Nature，預設 Tourist 10 / Mix 9 / Non Tourist 7，可調 7–10）** Review 調貨事件是否因 Safety Stock 設定不足／過高，輸出店舖×SKU Review 主表與建議調整量（下調建議補底 3 件——SAP MOQ 下 Safety 1–2 件難補貨；現有 1–2 件不強制上調、零銷售歸零不受保底）；Safety 基準與調貨的 14 日線互相獨立；調貨分不限OM與同OM兩套對照（OM 限制不影響 Safety 建議）；可選擇**分類維度**（預設 Shop Nature，可改 RP Type、Shop Nature＋RP Type、OM、Shop Nature＋OM、銷量（高銷／中銷／低銷／零銷四帶）或銷量＋Shop Nature（Nature×銷量帶 12 組）；OM／銷量／銷量＋Shop Nature 維度計算與預設相同、僅分組顯示不同；ND 列一律不作調貨需求方、仍可作供應）；可勾選「允許雙向調貨」讓任何 Nature 缺貨皆可調入、遊客區店舖亦可轉出；可勾選「ND 優先轉出」（同一 Shop Nature 池內 ND 店先於 RF 店轉出，池間順序與轉出資格不變，不影響 Safety Review 與建議調整量）；可勾選「啟用銷量再平衡」（高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可調入、積壓列提供來源，跟隨單向／雙向框架，守衛不放寬，預設關閉）；可勾選「建議退D001」（退貨基準為 Safety Stock (現時)：中銷／低銷／零銷列退回超出 Safety 的庫存；高銷列原則上不退，僅當庫存 ≥ 3×Safety（高於 Safety 200%）時退至 2×Safety；調貨優先、需要調貨列不退；接收目標 D001 Warehouse 可無限接收，故不跑分配；不影響調貨分配與 Safety 計算；開啟時 Excel 另加「退D001 建議」工作表，預設關閉）；RAW／主表恆附「銷量帶」與「銷量存貨分類」顯示欄（同 SKU 內排名分帶＋店舖周轉日數門檻判定）；「Review 摘要」另提供 **Safety 調整方向分類**（增加／減少／不變）、**SKU 級 Safety 調整明細**與**銷量 × 存貨分類交叉表**（母體為全部列）；另附**全列預防性 Safety 設定建議**（母體為全部店舖×SKU 列，不依賴調貨事件，建議一次過設定，減少日後調貨次數；Excel 另加「Safety 設定建議 (全列)」工作表） |
 | 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式、調貨門檻、Safety 基準周轉天數（按 Nature）、分類維度（Shop Nature／RP Type／Shop Nature＋RP Type／OM／Shop Nature＋OM／銷量／銷量＋Shop Nature）、允許雙向調貨、ND 優先轉出、建議退D001、缺貨深度優先、池健康度排除 ND 死庫存、有貨可調改用實際可轉出量 |
-| 視覺化看板 | 即時顯示統計指標與交叉分析表 |
-| Excel 導出 | 一鍵下載含 RAW、Shop Stock Status、By Shop、分析摘要之美化報表 |
+| 視覺化儀表板 | 即時顯示統計指標與交叉分析表 |
+| Excel 匯出 | 一鍵下載含 RAW、Shop Stock Status、By Shop、分析摘要之美化報表 |
 | Forecast 分析 | 以 SKU 級計算建議訂貨量（v2 加權混合：缺貨還原＋開賣折算後，標準情境＝月均基準／M-1／MTD 調整月化按可調權重混合、樂觀情境＝趨勢外推設增速上限；爆升 SKU 用樂觀情境、其餘用標準情境；目標覆蓋量平穩類按目標天數、爆升類按爆升目標覆蓋月數（預設 2 個月）；Warehouse（D001）貨由 D001 向 Vendor 下單補貨（D001 PO）、Vendor 貨由店舖向供應商下單（Shop PO）；建議訂量＝min(缺口, 上限空間)防 Overstock；全 ND 的 SKU 不建議訂貨），另附店舖覆蓋檢視（有訂量 SKU 的每店可用日數與風險旗） |
 
 ## 系統架構
@@ -23,7 +23,7 @@
 ```
 ├── app.py              # 導航入口（頁面設定、共用 CSS、多頁導航）
 ├── views/
-│   ├── analyzer_page.py    # 分析工具主頁（上傳、模式、執行、看板）
+│   ├── analyzer_page.py    # 分析工具主頁（上傳、模式、執行、儀表板）
 │   └── usage_page.py       # 使用說明頁（各模式說明與核心計算規則）
 ├── transformer.py      # 資料轉換、計算與 Excel 產生邏輯
 ├── version.py          # 版本號
@@ -53,13 +53,13 @@ docker run -p 8080:8080 i14-report-review
 
 專案已預設 `Dockerfile`，任何支援 Docker 的平台（或 Streamlit Cloud 直連 GitHub 倉庫）皆可直接部署。
 
-**容器部署機制**：倉庫根目錄有 `Dockerfile` 時，平台會自動以 Docker 構建；`requirements.txt` 已固定版本（`==`），確保每次構建可重現、加快緩存命中。
+**容器部署機制**：倉庫根目錄有 `Dockerfile` 時，平台會自動以 Docker 構建；`requirements.txt` 已固定版本（`==`），確保每次構建可重現、提升快取命中率。
 
 **運行優化（已內建）**：
 
 | 項目 | 設定 | 說明 |
 |------|------|------|
-| PORT 綁定 | `--server.port=${PORT:-8080}` | 自動適配平台注入的 PORT，未注入時用 8080，監聽 0.0.0.0 |
+| PORT 綁定 | `--server.port=${PORT:-8080}` | 自動配合平台注入的 PORT，未注入時用 8080，監聽 0.0.0.0 |
 | 健康檢查 | `/_stcore/health` | Docker HEALTHCHECK 以 Python 內建模組檢查（無需 curl，映像更小） |
 | 檔案監視 | `--server.fileWatcherType=none` | 生產環境關閉代碼監視，節省記憶體與 CPU |
 | WebSocket 壓縮 | `--server.enableWebsocketCompression=false` | 大數據表傳輸時降低 CPU 負擔 |
@@ -177,7 +177,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 - **Summary** — SKU 級彙總（每 SKU 一列，按 Brand / SKU 排序；**按所選分類維度分組**，nature 三組為 A–AC 契約欄序且與 Safety Stock x NetStock Review 同格式同值）：Brand / SKU / SKU Desc / Buyer / Adj. SST / Supply Source / D001 Net Stock Qty (CM)；各分組加總 Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)（取整）、TurnDay = ROUND(加總庫存 ÷ 加總月銷 × 30.5, 0)（取整，月銷 0 留空）、涉及店舖數（同 SKU 同組 Site Code 不重複計數，空白不計，置於該組 TurnDay 之後）、各分組佔比 (%)（庫存/月銷各 N 欄，活公式 + 0.00% 顯示，合計 0 留空）；強制調貨提示（該 SKU 有 Tourist 店需要調貨時標示）、由各分組店舖預計調出數量（nature 維度為 Non Tourist / Mix 兩欄固定順序）；存貨偏重提示（某分組庫存佔比 ≥ 門檻且庫存佔比 − 銷量佔比 ≥ 差距門檻 →「存貨偏重 {分組}（庫存 x% / 銷量 y%）」，多個分組以；分隔、差距大者在前；偏重提示欄與偏重分組的庫存佔比欄以醒目橘底加強顯示，Streamlit 同步）；文字欄靠左、數值置中、間隔列底紋、凍結表頭 + 自動篩選
 - **RAW** — 按可讀性重排欄序（識別→品項屬性→庫存與銷售→SKU 級判定→調貨執行→其他原始欄），不顯示「Item_Shop」與所有含「Value」的金額欄；新增：Tourist / Mix / Non Tourist 加總 TurnDay / 需要調貨 / 調入需求量 (補到14日) / 實際調入量 / 調入缺口 / 可轉出貨量 (Mix) / 可轉出貨量 (Non Tourist) / 轉出量 / 調貨來源 (Site Code)
 - **店舖問題 SKU** — 每間店舖需行動列（只收需要調入／可轉出供應，缺口在同一列加註），按店舖分組、店內按嚴重度排序，逐列顯示問題說明與建議方法（數量＋行動指引）；另顯示 Supply Source 與 D001 Net Stock Qty (CM)；缺口跟進按供貨來源分支 — Warehouse＋D001 有貨由 D001 補貨、Warehouse＋D001 無貨寫 D001缺貨、Vendor 貨向供應商追貨（Vendor 由供應商直送店舖，不經 D001）
-- **調貨分析摘要** — Dashboard 指標卡（與 Streamlit 看板同一準則）：需要調貨列數 / 需調貨 SKU 數 / 調入需求量 / 實際調入量 / Non Tourist 轉出量 / Mix 轉出量 / 無法足額缺口 / 總明細行數
+- **調貨分析摘要** — Dashboard 指標卡（與 Streamlit 儀表板同一準則）：需要調貨列數 / 需調貨 SKU 數 / 調入需求量 / 實際調入量 / Non Tourist 轉出量 / Mix 轉出量 / 無法足額缺口 / 總明細行數
 
 ### Safety Stock x NetStock Review（調貨事件 Review Safety 設定）
 
@@ -248,7 +248,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 
 ### Safety Stock 月度變化分析
 
-追蹤店舖每月 Safety Stock 原始值變化對生意的影響（主鍵 `Site Code × SKU × YEAR-MONTH`，兼容多店舖檔案）：
+追蹤店舖每月 Safety Stock 原始值變化對生意的影響（主鍵 `Site Code × SKU × YEAR-MONTH`，相容多店舖檔案）：
 
 1. **YEAR-MONTH** — 由 `YEAR × 100 ＋ MONTH` 排序；`MONTH` 須為 1–12 整數，無效列略過並列警告；至少需 2 個月份方可作環比
 2. **月化** — 除上載當月外，其餘月份的 `CM - MTD` 已是足月實績；最新月份按數據截止日月化（係數＝當月總日數 ÷ 截止日日號，僅套用於 `Sold Qty (CM - MTD)` 與 `Net Sales (CM - MTD)` 兩欄；`Shop Stock Qty (CM)` 與 `Adj. Safety Stock` 為快照不月化）
@@ -296,7 +296,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 | Shop Stock Status | 採購人員 x 品牌之庫存異常交叉統計表 |
 | By Shop | 各店舖層級之彙總分析 |
 | SUMMARY | 分類統計 — ① Safety Qty Change 分類（增加/減少/不變）與 ② ND 建議分類，另附 ③ Safety Qty Change 分類 × 分類維度交叉表（列數／SKU 數／Safety Qty Change 合計，含總計列；分組按所選分類維度切換）（Safety Stock Review） |
-| 分析摘要 | 數據看板 — 關鍵指標總覽 |
+| 分析摘要 | 儀表板 — 關鍵指標總覽 |
 | Summary | SKU 級調貨彙總 — 庫存/月銷加總、TurnDay、涉及店舖數、佔比、調貨提示、存貨偏重提示（門檻按維度切換：nature／rp／both 為分組庫存佔比 ≥40% 且較銷量佔比高 ≥20 個百分點，om 為 ≥25% 且差距 ≥12 個百分點，nature_om／sales_nature 為 ≥12% 且差距 ≥8 個百分點，sales 為 ≥30% 且差距 ≥15 個百分點；店舖數為同 SKU 同組 Site Code 不重複計數，空白不計；混合模式按所選分類維度分組——nature 三組／rp 兩組 RF／ND／both 六組／om 動態 OM 名單／nature_om 三 Nature × OM／sales 四銷量帶／sales_nature 三 Nature × 四帶 12 組；Stock Checking 與混合模式的 Summary 均以醒目橘底加強顯示偏重提示與偏重分組的庫存佔比欄；混合模式另於以銷量／銷量＋Shop Nature 分類時以醒目紅底標示零銷組庫存佔比大於 0% 的儲存格（零銷售而仍有存貨，理論上全屬 Overstock））（Stock Checking 及混合模式均按所選分類維度分組——Stock Checking 於 v1.37.0 起支援七選一維度，調貨計算不隨維度改變） |
 | 調貨分析摘要 | 調貨 Dashboard — 需求/調入/轉出/缺口（Stock Checking） |
 | 調貨 Review Safety Stock (不限OM)／(同OM) | 店舖×SKU Review 主表兩版（僅混合模式）— 需要調入／實際轉出／可轉出未使用事件列，按 Nature 的 Safety 基準天數（預設 7 / 9 / 10）Review 與建議調整量，逐列含「Safety 基準天數」「Safety 周轉所需量」「建議 Safety 設定值 Turnday」及 RP Type、銷量帶、銷量存貨分類；同OM版來源店須與需求店同 OM |

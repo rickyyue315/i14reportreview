@@ -201,7 +201,7 @@ def test_transform_stock_impact():
     assert len(buyer) > 0
     assert len(cat) > 0
     assert len(item_class) > 0
-    assert sku_monthly is not None and not sku_monthly.empty, "應有 SKU 月銷量/存儲量分析"
+    assert sku_monthly is not None and not sku_monthly.empty, "應有 SKU 月銷量/存量分析"
     impacted_count = int(raw["Is Stock Impacted"].sum())
     assert impacted_count == 2, f"應有 2 行缺貨影響，得 {impacted_count}"
     print(f"OK transform_stock_impact（3 維度彙總 + SKU月銷量 + 缺貨影響 {impacted_count} 行）")
@@ -321,12 +321,12 @@ def test_inventory_distribution_summary():
     print(f"OK B3: 存貨失衡 SKU（{len(imb)} 個，含建議調貨量 + 計算註解）")
 
 
-    # B4: 低存貨 SKU 配置決策應存在
+    # B4: 低存貨 SKU 分配決策應存在
     la = inv.get("low_stock_allocation")
-    assert la is not None and not la.empty, "應有低存貨 SKU 配置決策表"
+    assert la is not None and not la.empty, "應有低存貨 SKU 分配決策表"
     assert "NT_RF無銷售有存貨行數" in la.columns
     assert "ND無銷售浪費存貨(件)" in la.columns
-    print(f"OK B4: 低存貨配置決策表（欄位 {list(la.columns)}）")
+    print(f"OK B4: 低存貨分配決策表（欄位 {list(la.columns)}）")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

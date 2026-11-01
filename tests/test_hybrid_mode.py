@@ -2321,7 +2321,7 @@ def test_om_dimension_normalization_and_dynamic_groups():
     assert _hybrid_dimension_groups("om", om_groups=("B", "A")) == ("A", "B")
     assert _hybrid_dimension_groups("nature_om", om_groups=("B", "A")) == (
         "Tourist-A", "Tourist-B", "Mix-A", "Mix-B", "Non Tourist-A", "Non Tourist-B")
-    # om_groups 缺省時退回單一群組（呼叫端應傳入實際名單）
+    # om_groups 未提供時退回單一群組（呼叫端應傳入實際名單）
     assert _hybrid_dimension_groups("om") == ("空白",)
     assert _hybrid_dimension_groups("nature_om") == (
         "Tourist-空白", "Mix-空白", "Non Tourist-空白")

@@ -5,7 +5,7 @@
 
 輸入：標準 By SKUxShop 欄位＋尾部 ``Month``／``Year``（大小寫皆接受，
 此模式恒為必要欄位，缺任一即停止）。主鍵為 ``Site Code × SKU × YEAR-MONTH``，
-兼容多店舖檔案；單一店舖（如 HA19）亦可執行。
+相容多店舖檔案；單一店舖（如 HA19）亦可執行。
 
 分析欄固定五項（Safety 只看原始值增減，不作建議值計算）：
 - ``Adj. Safety Stock`` 變化（增加／減少／不變）
@@ -1460,7 +1460,7 @@ def _build_safm_t0_track(
 
 
 def safety_monthly_dashboard_metrics(change_df: pd.DataFrame, stats: dict | None = None):
-    """月度摘要指標卡（與 Streamlit 看板及 Excel 摘要同一準則）。"""
+    """月度摘要指標卡（與 Streamlit 儀表板及 Excel 摘要同一準則）。"""
     stats = stats or {}
     total_events = int(stats.get("total_events", len(change_df) if change_df is not None else 0))
     row1 = [

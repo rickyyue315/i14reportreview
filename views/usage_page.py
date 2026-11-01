@@ -20,7 +20,7 @@ st.markdown("""
         <div class="usage-step-card"><b>2. 📂 上傳檔案</b>將 Excel 拖曳至主頁面的上傳區域（上限 200MB）。</div>
         <div class="usage-step-card"><b>3. 🔧 設定參數</b>根據模式需要，調整 MTD 日期、Shop Nature Rate 等進階選項。</div>
         <div class="usage-step-card"><b>4. ⚙️ 執行轉換</b>點擊「執行報表轉換與分析」，系統將自動過濾、計算並產生彙總表。</div>
-        <div class="usage-step-card"><b>5. 💾 下載成果</b>於視覺化看板中即時查閱統計資訊，並一鍵導出美化後的 Excel 報表。</div>
+        <div class="usage-step-card"><b>5. 💾 下載成果</b>於視覺化儀表板中即時查閱統計資訊，並一鍵匯出美化後的 Excel 報表。</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -149,14 +149,14 @@ MODES = [
 - 以 Shop Stock Qty = 0（缺貨）為核心，分析存貨對 Sold Qty 的因果影響（無貨就無銷售）
 - 缺貨模式判別：長期缺貨（≥2 期）/ 間歇缺貨（1 期）/ 恢復供貨 / 無缺貨
 - 銷售損失雙基準並列：M-2 Sold 為需求基準 vs P90D 90 天月均為基準（只計 RF 店）
-- 📦 **SKU 月銷量和存儲量分析**：按 SKU 計算各 Nature（Tourist/Mix/NT）月均銷售與庫存，低存貨優先
+- 📦 **SKU 月銷量和存量分析**：按 SKU 計算各 Nature（Tourist/Mix/NT）月均銷售與庫存，低存貨優先
 - 🎯 **存貨分佈分析**：Mix / Non Tourist Turnday 分級（7-14 日標準）、Nature 存貨對比
 - ⚠️ **存貨失衡 SKU 判定**：Tourist 缺貨 + Non Tourist/Mix 過剩 → 揪出配置不當
 - 🔄 **跨 Nature 調貨建議**：Tourist 缺貨但 Mix/NT 有可釋放件數 → 可調貨優先清單
-- ⚖️ **低存貨 SKU 配置決策**：D001 + Shop Stock < N 件時分析 NT RF 浪費與 ND 囤積
+- ⚖️ **低存貨 SKU 分配決策**：D001 + Shop Stock < N 件時分析 NT RF 浪費與 ND 囤積
 - 🔍 **by-SKU 缺貨 Review**：含 D001 倉庫三期貨量 → 區分「倉庫有貨（補貨問題）」vs「源頭斷貨」
 - 📊 **多維度彙總**：By Brand / Buyer / Category (Adj. MCH1) 缺貨影響
-- 門檻只影響低存貨配置決策，不限制整體分析的 SKU 範圍
+- 門檻只影響低存貨分配決策，不限制整體分析的 SKU 範圍
 - 預設只分析 Warehouse SKU，可切換納入 Vendor
      """,
      """
@@ -365,7 +365,7 @@ SKU 級 Forecast 計算（v2 加權混合）：
 
     ("📅 Safety Stock 月度變化分析",
      """
-- 追蹤店舖每月 Safety Stock 原始值變化對生意的影響；主鍵為 Site Code × SKU × YEAR-MONTH，兼容多店舖檔案
+- 追蹤店舖每月 Safety Stock 原始值變化對生意的影響；主鍵為 Site Code × SKU × YEAR-MONTH，相容多店舖檔案
 - 此模式必須包含 MONTH 與 YEAR 欄位（位於來源檔案尾部），用以分類每個月的變化；缺少任一即停止
 - 分析欄固定五項：Adj. Safety Stock（只看原始值增減）／RP Type 轉變／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM)
 - 相鄰月份環比；最新月份按數據截止日月化（Sold Qty 與 Net Sales 同時月化，係數＝當月總日數 ÷ 截止日日號）

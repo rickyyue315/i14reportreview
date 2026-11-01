@@ -415,7 +415,7 @@ def _hybrid_dimension_groups(dimension, om_groups=None) -> tuple[str, ...]:
     sales 維度回傳固定四帶（高銷／中銷／低銷／零銷）；
     sales_nature 回傳 Nature×銷量帶 12 組（Nature 外層固定順序、帶內層固定順序）；
     om 維度回傳動態 OM 名單（排序後不重複值）；nature_om 回傳完整笛卡兒積
-    （Nature 外層固定順序、OM 內層排序）。om_groups 缺省時退回單一
+    （Nature 外層固定順序、OM 內層排序）。om_groups 未提供時退回單一
     「空白」群組，呼叫端應傳入實際名單（transform 內由 OM 欄推導，
     Excel 回退路徑由 stats 或 raw 重建）。
     """
@@ -533,7 +533,7 @@ _HYBRID_SAFETY_LINE_COLUMN = "Safety 周轉所需量"
 
 
 
-# 每列實際採用的基準天數（Echo 自參數，供導出檔稽核與回退彙總）
+# 每列實際採用的基準天數（Echo 自參數，供匯出檔稽核與回退彙總）
 _HYBRID_SAFETY_DAYS_COLUMN = "Safety 基準天數"
 
 

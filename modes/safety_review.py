@@ -556,7 +556,7 @@ def _build_combined_dimension_cross_tab(raw, dimension="nature", om_groups=None)
     """Safety Qty Change 分類 × 分類維度交叉表（SUMMARY 區塊 ③）。
 
     Safety Stock Review 引入分類維度用：只改分組顯示，不影響任何 Safety 建議計算。
-    分組鍵與混合模式同一準則（_hybrid_group_key_series）；om_groups 缺省時由 raw 即時推導；
+    分組鍵與混合模式同一準則（_hybrid_group_key_series）；om_groups 未提供時由 raw 即時推導；
     RAW 缺「銷量帶」欄時銷量兩個維度退回 Shop Nature 鍵（與 hybrid 同一守衛）。
     每格統計 列數 / SKU 數 / Safety Qty Change 合計；總計列的 SKU 數為全表不重複 SKU
     （同一 SKU 可跨分類，與區塊 ① 同一準則）；非標準 Shop Nature 值不佔分組欄、只計入合計。
@@ -824,7 +824,7 @@ def generate_excel_combined(
 ) -> BytesIO:
     """Safety Stock Review 輸出。dimension／om_groups 決定 SUMMARY 區塊 ③
     「Safety Qty Change 分類 × 分類維度交叉表」的分組（只影響顯示，不影響任何建議計算）；
-    om_groups 缺省時由 raw 即時推導。stats 只供首頁「說明」導讀表照錄本次執行參數
+    om_groups 未提供時由 raw 即時推導。stats 只供首頁「說明」導讀表照錄本次執行參數
     （缺失時顯示預設值），不參與任何計算。輸出 7 工作表：說明（首頁導讀）＋
     RAW／Shop Stock Status／By Shop／店舖問題 SKU／SUMMARY／Safety Stock 數據分析摘要。"""
     wb = Workbook()
@@ -967,7 +967,7 @@ def generate_excel_combined(
 
     _total_row = summary_df[summary_df["Buyer"] == "總計"]
     if _total_row.empty:
-        raise ValueError("摘要資料中未找到總計列，無法生成分析看板")
+        raise ValueError("摘要資料中未找到總計列，無法生成分析儀表板")
     total_combined = int(_total_row["總計"].values[0])
     total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
     total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())

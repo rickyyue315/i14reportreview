@@ -1,5 +1,17 @@
 # 版本記錄
 
+## v1.94.1 (2026-11-01)
+
+用語統一（香港寫法）：把介面、Excel 說明文字與文件中的大陸商業／科技用語改回香港慣用寫法，計算邏輯、欄位與 Excel 固定表頭一律不變：
+
+- **介面與說明文字** — 導出→匯出（30 處）、看板→儀表板（30 處）、存儲量→存量、配置決策→分配決策（18 處）、反饋→回饋、缺省→預設／未提供時、店鋪→店舖、支持→支援
+- **技術用詞** — 緩存→快取、校驗→檢核、兼容→相容、自動適配→自動配合
+- **措辭微調** — 「SKU 月銷量和存儲量分析」→「SKU 月銷量和存量分析」（含 tab 標籤與 Excel 區塊標題）；「釋放記憶體」提示改寫為「清除所有快取資料（含 st.cache_data 快取）…」，避免同句重複「快取」
+- **不受影響** — 所有 DataFrame 欄名、Excel 固定表頭（如「調入需求量 (補到14日)」「需要調貨」「調貨後庫存」）、工作表名稱與計算結果完全不變；「庫存」經確認維持原樣（以不影響運作為先，且部分已屬 Excel 表頭）
+- **文件** — AGENTS.md 新增「香港用語（避免大陸商業／科技用語）」對照表，供日後落筆依循；README、VERSION、AI_Decisions、JEV 風險評估同步
+- **測試** — 858 項全數通過（僅註解與訊息文字改動，無邏輯變更）
+- Change: `version.py` 1.94.0 → 1.94.1
+
 ## v1.94.0 (2026-10-29)
 
 調貨邏輯風險修補（R1–R5）：對齊《跨OM組別調貨指引》與 v1.93.0 的 90 日有貨準則，補足調貨供給側與轉貨模式的缺口：
@@ -60,7 +72,7 @@ ND SKU with Stock Review（轉貨模式）新增「接收店舖集中模式」�
 
 - **選項** — 步驟三可選「不限（原有）」、「集中 1–2 間」或「集中 3–4 間」；預設不限，原有分配結果不變
 - **集中規則** — 每個 SKU 只取 Sold Qty (P90D) 最高的 2 間或 4 間 RF 接收店（同銷量以 Site Code 排序），再按這批店舖的銷售比例以最大餘數法分配；轉出總量仍力求全數接收
-- **報表** — 說明頁新增「接收店舖集中模式」參數與計算說明；集中模式下 warning 列明未納入的「SKU × 有銷售接收店」組合數；結果看板顯示目前模式
+- **報表** — 說明頁新增「接收店舖集中模式」參數與計算說明；集中模式下 warning 列明未納入的「SKU × 有銷售接收店」組合數；結果儀表板顯示目前模式
 - **範圍** — 只套用於 ND SKU with Stock Review（轉貨模式）；P90D 0 Sales Review（轉貨模式）行為與輸出完全不變
 - **驗證** — `tests/test_transfer_nd.py` 新增 7 項集中模式測試（取最高銷量、4 間上限、單一接收店、同銷量 Site Code 排序、不限對照、無效參數、Excel 說明頁）；全套 803 項測試通過
 - Change: `version.py` 1.89.0 → 1.90.0
@@ -161,7 +173,7 @@ ND SKU with Stock Review（轉貨模式）新增「接收店舖集中模式」�
 美化系統介面（全域主題、互動元件、分析工具主頁與使用說明頁），計算邏輯、資料契約與匯出報表零變動：
 
 - **UI: 全域淺色專業主題與字型系統** — `.streamlit/config.toml` 與 `app.py` 升級為淺灰藍背景（`#f8fafc`）配純白卡片（`#ffffff`），引入 `Inter`、`Noto Sans TC` 與等寬數字字型 `JetBrains Mono`（`tabular-nums`）；頁首橫幅加入版本與系統標籤（`.header-badge`）與左側強調色條；修正橫向單選按鈕（`div[data-testid="stRadio"] > div[role="radiogroup"]`）膠囊化樣式與頁籤（`.stTabs`）分段膠囊列設計
-- **Fix: 消除看板上方空白卡片與螢光色低對比問題** — `views/analyzer_page.py` 原有 16 處跨 `st.markdown` 拆開的 `<div class="custom-card">...</div>` 改為獨立 `.section-banner` 標題橫幅；舊版螢光指標卡色碼（`#00ff88`、`#ff44ff`、`#00d4ff` 等）全面替換為高對比專業色系；新增 4 欄模式分類導覽網格（`.mode-category-grid`）、當前模式用途橫幅（`.mode-desc-banner`）及未上傳檔案引導卡片
+- **Fix: 消除儀表板上方空白卡片與螢光色低對比問題** — `views/analyzer_page.py` 原有 16 處跨 `st.markdown` 拆開的 `<div class="custom-card">...</div>` 改為獨立 `.section-banner` 標題橫幅；舊版螢光指標卡色碼（`#00ff88`、`#ff44ff`、`#00d4ff` 等）全面替換為高對比專業色系；新增 4 欄模式分類導覽網格（`.mode-category-grid`）、當前模式用途橫幅（`.mode-desc-banner`）及未上傳檔案引導卡片
 - **UI: 使用說明頁視覺升級** — `views/usage_page.py` 系統操作流程改為五欄步驟卡片網格（`.usage-steps-grid`），必要與建議欄位加上等寬代碼標籤（`.col-badge`）
 - Change: `version.py` 1.82.0 → 1.82.1
 
@@ -191,7 +203,7 @@ ND SKU with Stock Review（轉貨模式）新增「接收店舖集中模式」�
 - **New: ND SKU with Stock Review(轉貨模式)** — 新模組 `modes/transfer_nd.py`（對外介面）＋ `modes/transfer_p90d.py` 內新增 `nd_mode=True` 共用引擎（分配、配對、彙總、Excel 產生全部共用），已登記於 `MODE_REGISTRY` 並由 `transformer.py` 墊片轉出。轉出為已選店舖中 RP Type＝ND 且 Shop Stock Qty (CM) > 0 的列，數量為全數（不看銷售記錄，即使該列仍有銷售亦照轉）；接收為同 SKU、非轉出店舖、RP Type＝RF 且 Sold Qty (P90D) > 0 的店舖（不論有無庫存）。同 SKU 轉出總量按接收店 Sold Qty (P90D) 比例以最大餘數法分配整數件，全數分完；只有一間接收店時全數給該店；無接收店的 SKU 不轉出，列為未分配。
 - **New: RP Type 檢核** — 去除前後空格、大小寫不敏感比對 ND／RF；`RP Type` 為必要欄位（缺失即停止計算，UI 另先顯示明確錯誤訊息）；空白或其他非 RF／ND 的值一律不納入轉出與接收，排除列數列 warning。`build_nd_transfer_candidates()` 的候選店舖一覽欄名為「ND SKU 數」（P90D 模式維持「0 Sales SKU 數」）。
 - **輸出** — 六個工作表：說明（ND 模式措辭：ND 定義＝RP Type＝ND、轉出數量全數不看銷售、接收店＝RF 且有銷售記錄）、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總（無 RAW）；轉貨單／彙總欄位與 MCH1 篩選行為與 P90D 模式完全一致。
-- **UI** — 「選擇分析模式」新增該模式（置於 P90D 0 Sales Review(轉貨模式) 之後，同屬「🔄 調貨與補貨」群組）；步驟一沿用候選轉出店舖勾選（ND 模式以 RP Type＝ND 且有庫存判定，MCH 分佈表同步改用「ND SKU 數」）、步驟二沿用 MCH 篩選；結果看板（摘要卡片、五個分頁、置頂與底部下載）由 P90D 模式抽出共用渲染器 `_render_transfer_results()`，兩模式僅文案不同，未選取轉出店舖不能執行。
+- **UI** — 「選擇分析模式」新增該模式（置於 P90D 0 Sales Review(轉貨模式) 之後，同屬「🔄 調貨與補貨」群組）；步驟一沿用候選轉出店舖勾選（ND 模式以 RP Type＝ND 且有庫存判定，MCH 分佈表同步改用「ND SKU 數」）、步驟二沿用 MCH 篩選；結果儀表板（摘要卡片、五個分頁、置頂與底部下載）由 P90D 模式抽出共用渲染器 `_render_transfer_results()`，兩模式僅文案不同，未選取轉出店舖不能執行。
 - **文件** — README 新增模式說明；使用說明頁新增模式條目與必要欄位（RP Type 缺失即停止）。
 - **測試** — 新增 `tests/test_transfer_nd.py`（25 項）：候選判定（RP＝ND 且有庫存、非 RF／ND 排除）、ND 有銷售仍轉出、RF 有庫存不轉出、接收店限 RF 且有銷售、多接收店比例分配、無接收店未分配、選定店舖自我排除、OM 忽略、Shop Nature 篩選、RP Type 缺欄即以 ValueError 停止、大小寫與前後空格正規化、非標準值排除與 warning、P90D 模式不要求 RP Type、重複列合併、未納入轉出與空結果、MCH1 篩選與候選清單收窄、彙總與轉貨計畫加總一致、Excel 結構與 ND 說明措辭、P90D 說明措辭零變動、墊片與登記；全數 736 項測試通過。
 - **維護** — `scripts/modtools/moved.json` 補登記轉貨模式兩模組的對外名稱（先前 P90D 轉貨模式建立時遺漏，`check_modes.py` 的 A／E 檢查因此對轉貨模組零錯誤零警告；其餘既有錯誤維持不變）。
@@ -415,7 +427,7 @@ Safety Stock 月度變化分析三個樞紐改為三段式（每月合計 → �
 新增第 15 個分析模式**Safety Stock 月度變化分析**——追蹤店舖每月 Safety Stock 原始值變化對生意的影響；其餘 14 個模式計算、欄位、欄序零變動：
 
 - **輸入** — `MONTH／YEAR` 為恒為必要欄位（位於來源檔案尾部，大小寫皆接受，缺任一即停止）；另需 `Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM)`；`Adj. MCH1／Adj. SST` 為選填（缺欄時對應樞紐以「空白」列示）
-- **計算** — `modes/safety_monthly.py`：主鍵 `Site Code × SKU × YEAR-MONTH`（兼容多店舖）→ 相鄰月份環比事件（上月缺資料者不計變化）→ Safety 只看原始值增減（增加／減少／不變）→ RP 轉變（RF→RF／ND→ND／RF→ND／ND→RF）→ 最新月份按數據截止日月化（係數＝當月總日數 ÷ 截止日日號，Sold 與 Net 兩欄同時月化；舊月份係數為 1）→ Sold／Net 變化以月化基準計算
+- **計算** — `modes/safety_monthly.py`：主鍵 `Site Code × SKU × YEAR-MONTH`（相容多店舖）→ 相鄰月份環比事件（上月缺資料者不計變化）→ Safety 只看原始值增減（增加／減少／不變）→ RP 轉變（RF→RF／ND→ND／RF→ND／ND→RF）→ 最新月份按數據截止日月化（係數＝當月總日數 ÷ 截止日日號，Sold 與 Net 兩欄同時月化；舊月份係數為 1）→ Sold／Net 變化以月化基準計算
 - **輸出** — 說明／SKU月度變化／By Adj. MCH1／By Adj. SST／By MCH1×SST／By Shop／月度摘要／RAW 共 8 個工作表，支援略過 RAW 選項
 - **文件** — 使用說明頁、README 同步
 - **測試** — 新增 `tests/test_safety_monthly.py` ×11；共 520 項測試通過，3 項略過
@@ -787,7 +799,7 @@ Safety Stock x NetStock Review 輸出 Excel 由 8 個工作表擴為 **9 個工�
 
 Safety Stock x NetStock Review 分類維度由六選一擴為**七選一**，新增「以銷量＋Shop Nature分類」（`sales_nature`）——Summary 與 Review 摘要交叉表改按 Nature×銷量帶 12 組（Tourist-高銷／Tourist-中銷／…／Non Tourist-零銷，Nature 外層固定順序、帶內層固定順序）分欄呈現。**非破壞性**——計算與預設完全相同（需求方 Tourist-RF，池級歸零與同 Nature 守衛照舊；TurnDay 池與 Safety 基準天數恆按 Shop Nature），銷量帶口徑與「以銷量分類」相同（常開產出欄，分帶結果隨本次上傳資料的篩選範圍而變）；舊六維度輸出欄位與數值零變動；缺 RP Type／OM 欄時不退回（銷量帶分組不依賴兩者）。
 
-- New: 分類維度第七選項 `sales_nature`（以銷量＋Shop Nature分類）——`_HYBRID_DIMENSIONS`／`_HYBRID_DIMENSION_LABELS`（「銷量＋Shop Nature」）／新常數 `_HYBRID_SALES_NATURE_GROUPS`（3 Nature×4 帶＝12 組）；`_hybrid_dimension_groups()`／`_hybrid_group_key_series()`／`_build_stock_checking_summary()` 支持合併分組（每列鍵值＝Shop Nature-銷量帶；銷量帶欄缺失時顯式退回 Shop Nature 鍵，正常輸入不會觸發）；Summary 每組各一欄「由{Nature-帶} 店舖預計調出數量」；存貨偏重門檻 sales_nature 為 ≥12% 且差距 ≥8 個百分點（12 組，與 nature_om 同門檻）
+- New: 分類維度第七選項 `sales_nature`（以銷量＋Shop Nature分類）——`_HYBRID_DIMENSIONS`／`_HYBRID_DIMENSION_LABELS`（「銷量＋Shop Nature」）／新常數 `_HYBRID_SALES_NATURE_GROUPS`（3 Nature×4 帶＝12 組）；`_hybrid_dimension_groups()`／`_hybrid_group_key_series()`／`_build_stock_checking_summary()` 支援合併分組（每列鍵值＝Shop Nature-銷量帶；銷量帶欄缺失時顯式退回 Shop Nature 鍵，正常輸入不會觸發）；Summary 每組各一欄「由{Nature-帶} 店舖預計調出數量」；存貨偏重門檻 sales_nature 為 ≥12% 且差距 ≥8 個百分點（12 組，與 nature_om 同門檻）
 - New: 結果頁參數區「🗂️ 分類維度」radio 加「🧮 以銷量＋Shop Nature分類」＋help 文字與維度 caption 說明；存貨偏重門檻完整對照 caption 加 sales_nature 門檻
 - Change: 全站說明同步——README（分類維度七選一、銷量＋Shop Nature 維度規則、輸出工作表描述與門檻對照）、使用說明頁（分類維度 ①–⑦ 與輸出 8 工作表描述）
 - Update: `tests/test_hybrid_sales.py` 新增 sales_nature 維度測試區（註冊與門檻、Summary／交叉表分組欄位與分組加總對帳、逐列分組鍵值、缺銷量帶欄退回 Shop Nature 鍵、計算與預設零變動、Excel Summary 群組標籤與 Review 摘要交叉表標題）；共 324 項測試通過
@@ -799,7 +811,7 @@ Safety Stock x NetStock Review 新增「以銷量分類」：RAW／主表恆附*
 - New: 銷量分類常數與計算函數——`_HYBRID_SALES_BANDS`／`_HYBRID_SALES_CLASS_ORDER`、`_hybrid_sales_bands()`（同 SKU 有銷列平均排名分帶，有銷列 < 4 不產生高銷／低銷避免小樣本假區分，並列同值同帶）、`_hybrid_sales_classification()`（店舖 TurnDay = 庫存 ÷ 生效月銷 × 30.5；缺貨用「低於」、積壓用「不少於」；零銷有存未達保底歸正常，仍由 Past 90 Days 0 Sales 轉 ND 提示涵蓋）、`_hybrid_sales_params()`（缺貨線預設 7 日可調 1–14、積壓線預設 30 日可調 15–90、保底預設 5 件可調 1–100；非整數拒絕、範圍外箝制列 warning，風格同 `_hybrid_safety_days`）
 - New: `transform_hybrid()` 新增 `sales_rebalance`／`sales_oos_days`／`sales_overstock_days`／`sales_overstock_min_units` 關鍵字參數（全部帶預設值，舊呼叫零影響）；銷量帶／銷量存貨分類兩欄恆寫入 RAW 並加入「調貨 Review Safety Stock」主表（`_HYBRID_DIAG_COLUMNS` 26→28 欄，置於 `Shop Monthly Sold Qty (P90D)` 之後）與 RAW 顯示欄序
 - New: **銷量再平衡通道**（`sales_rebalance=True`）——需求方在原判定外**增列**高銷缺貨 RF 列：豁免所屬 Nature 池加總 TurnDay 門檻，仍須補到 14 日需求 > 0、D001 < 門檻、同 SKU 有可轉出量；跟隨單向／雙向框架（單向需求仍限 Tourist、轉出池仍限 Mix／Non Tourist）；供應方轉出量公式與池級歸零不變，需求擴大後健康池內積壓列經既有 donor 判定自動入事件表；自我調貨／同 Nature／同OM 守衛與 ND 不作需求方全部保留；stats 新增 `sales_rebalance`／三個門檻／`sales_oos_rows`／`sales_oos_skus`／`sales_overstock_rows`／`sales_overstock_units`／`sales_need_rows`（僅本通道新增需求列數），`_hybrid_stats_from_raw()` 以同口徑補算四個分類統計（開關狀態無法由 RAW 反推，回退路徑不列）
-- New: 分類維度第六選項 `sales`（以銷量分類）——`_HYBRID_DIMENSIONS`／`_HYBRID_DIMENSION_LABELS`／`_hybrid_dimension_groups()`／`_hybrid_group_key_series()`／`_build_stock_checking_summary()` 支持銷量帶分組；存貨偏重門檻 sales 為 ≥30% 且差距 ≥15 個百分點；計算與預設完全相同（僅分組顯示不同）；新區塊 `_build_hybrid_sales_summary()`——「銷量 × 存貨分類交叉表」（母體為**全部店舖×SKU 列**，有別於 ①–④ 的事件列母體；各分類 × Shop Nature 列數、總計列數／SKU 數／店舖數、庫存與 P90D 銷量合計，含總計列）掛入「Review 摘要」工作表（⑤，恆寫入——無調貨事件時 ①–④ 顯示「無符合資料（①–④ 統計區塊以調貨事件列為母體）」而 ⑤ 照常輸出）與 Streamlit「Review 摘要」tab
+- New: 分類維度第六選項 `sales`（以銷量分類）——`_HYBRID_DIMENSIONS`／`_HYBRID_DIMENSION_LABELS`／`_hybrid_dimension_groups()`／`_hybrid_group_key_series()`／`_build_stock_checking_summary()` 支援銷量帶分組；存貨偏重門檻 sales 為 ≥30% 且差距 ≥15 個百分點；計算與預設完全相同（僅分組顯示不同）；新區塊 `_build_hybrid_sales_summary()`——「銷量 × 存貨分類交叉表」（母體為**全部店舖×SKU 列**，有別於 ①–④ 的事件列母體；各分類 × Shop Nature 列數、總計列數／SKU 數／店舖數、庫存與 P90D 銷量合計，含總計列）掛入「Review 摘要」工作表（⑤，恆寫入——無調貨事件時 ①–④ 顯示「無符合資料（①–④ 統計區塊以調貨事件列為母體）」而 ⑤ 照常輸出）與 Streamlit「Review 摘要」tab
 - New: 指標卡末尾另加「銷量分類概況」一排（高銷缺貨列數／高銷缺貨 SKU 數／積壓列數／積壓庫存件數，僅 `sales_rebalance=True` 時，無第 5 排時該排為第 5 排；`_write_metric_cards()` 新增 `row6_metrics`，Review 摘要 table_start 改按排數動態計算 4×排數＋4，舊排版面零變動）；結果頁參數區新增「⚖️ 啟用銷量再平衡」核選（key `hy_sales_reb`）＋缺貨線／積壓線／保底件數三個數值輸入＋開啟時 caption 說明；分類維度 radio 加「📈 以銷量分類」；`build_hybrid_params()` 納入新開關與三參數，`hybrid_params_changed()` 舊快照補齊預設值（向後相容）
 - Change: 全站說明同步——README（分類維度六選一、銷量分類與再平衡規則、輸出欄位描述）、使用說明頁（模式說明與核心計算規則）、結果頁模式說明 caption、存貨偏重門檻完整對照 caption 加 sales 門檻
 - Update: 新增 `tests/test_hybrid_sales.py` ×25（銷量帶分帶規則與小樣本守衛、分類邊界與保底件數、參數正規化、再平衡通道單向／雙向／ND／池級歸零守衛、sales 維度 Summary／交叉表／門檻、區塊⑤版面與無事件時輸出、銷量分類概況指標卡排、params 向後相容）；`tests/test_hybrid_mode.py` 主表欄數斷言 25→27／26→28 更新、①–④ 空母體提示與區塊⑤恆輸出斷言更新；`tests/_smoke_pipeline.py` 加銷量再平衡＋sales 維度案例；共 317 項測試通過
@@ -824,7 +836,7 @@ Safety Stock x NetStock Review 參數區新增存貨偏重提示門檻說明（�
 Safety Stock x NetStock Review 分類維度由三選一擴為五選一，新增「以 OM 分類」（`om`）與「以 Shop Nature＋OM 分類」（`nature_om`）。**非破壞性**——兩個新維度計算與預設完全相同（需求方 Tourist-RF，池級歸零與同 Nature 守衛照舊；TurnDay 池與 Safety 基準天數恆按 Shop Nature），僅 Summary 與 Review 摘要交叉表改按 OM 或 Nature×OM 動態分組；舊維度輸出欄位與數值零變動。
 
 - New: `_HYBRID_DIMENSIONS` 新增 `om`／`nature_om`，`_HYBRID_DIMENSION_LABELS` 新增 `om: OM`／`nature_om: Shop Nature＋OM`；新增 `_hybrid_om_groups_from_values()`（OM 欄去除前後空格、空白歸入「(未填OM)」、按字串排序）、`_hybrid_skew_thresholds()`／`_hybrid_skew_hint_text()`（存貨偏重門檻按維度切換：nature／rp／both 沿用 40%／20pp，om 用 25%／12pp，nature_om 用 12%／8pp）；`_hybrid_dimension_groups()` 新增 `om_groups` 參數（om 回傳動態名單，nature_om 回傳完整笛卡兒積 Nature 外層×OM 內層）
-- New: `_hybrid_group_key_series()`、`_hybrid_diag_summary_columns()`、`_build_hybrid_diag_summary()`、`_stock_checking_summary_columns()`、`_build_stock_checking_summary()`、`_write_stock_checking_summary_sheet()` 新增 `om_groups` 參數（缺省時由 raw 即時推導；寫入層另由 Summary 欄位反推 `_hybrid_om_groups_from_summary_columns()`）；`transform_hybrid()` stats 新增 `om_groups`（排序後名單），`generate_excel_hybrid()` 由 stats 還原、缺失時由 raw 推導；`_hybrid_stats_from_raw()` 同步補算
+- New: `_hybrid_group_key_series()`、`_hybrid_diag_summary_columns()`、`_build_hybrid_diag_summary()`、`_stock_checking_summary_columns()`、`_build_stock_checking_summary()`、`_write_stock_checking_summary_sheet()` 新增 `om_groups` 參數（未提供時由 raw 即時推導；寫入層另由 Summary 欄位反推 `_hybrid_om_groups_from_summary_columns()`）；`transform_hybrid()` stats 新增 `om_groups`（排序後名單），`generate_excel_hybrid()` 由 stats 還原、缺失時由 raw 推導；`_hybrid_stats_from_raw()` 同步補算
 - Change: 來源缺「RP Type」欄時僅 rp／both 維度退回 nature（om／nature_om 分組不依賴 RP Type，不退回）；來源缺「OM」欄或全欄空白時 om／nature_om 退回 nature 並列 warning；非法維度值維持退回 nature
 - New: 結果頁參數區「🗂️ 分類維度」擴為五選一（預設維持 Shop Nature，新選項置後）＋ OM 維度 caption 說明；存貨偏重提示 caption 改按所選維度顯示門檻；`build_hybrid_params()` 無需改簽名（dimension 為字串透傳，過期偵測自動涵蓋新值）
 - Update: 新增 `tests/test_hybrid_mode.py` 第 21 節 OM 維度測試 ×11（正規化與動態分組、OM 名單規則、門檻與提示文字、om／nature_om 與 nature 數值一致性、笛卡兒積欄位、缺 OM 欄與全空白退回、缺 RP 欄不退回、新門檻觸發、Excel 版面與回退重建）；共 288 項測試通過；README／使用說明頁同步
@@ -948,16 +960,16 @@ Safety Stock x NetStock Review 新增分類維度選擇（Shop Nature／RP Type�
 Safety Stock x NetStock Review Buyer 統計合併為單一對照表。
 
 - Change: ④ Buyer 需調貨 SKU 統計與 ⑤ Buyer 需調整 Safety SKU 統計合併為單一 ④ Buyer 統計（需調貨＋需調整 Safety）：同一 Buyer 的需調貨 SKU 數、需調整 Safety SKU 數與 Safety 建議調整量合計並列顯示（外連接，缺席以 0 補齊；按需調貨數降序、再按需調整數降序）
-- Update: 新增 `_hybrid_buyer_combined_stats` 與 `_write_hybrid_buyer_combined_table`（欄位 Buyer／需調貨 SKU 數／需調整 Safety SKU 數／Safety 建議調整量合計＋總計列）；`transform_hybrid` stats 維持 `buyer_need_skus` 與 `buyer_safety_fix` 作為組合輸入；Excel Review 摘要由 ①②③④⑤ 五表改為 ①②③④ 四表；Streamlit 看板與分頁同步改為單表
+- Update: 新增 `_hybrid_buyer_combined_stats` 與 `_write_hybrid_buyer_combined_table`（欄位 Buyer／需調貨 SKU 數／需調整 Safety SKU 數／Safety 建議調整量合計＋總計列）；`transform_hybrid` stats 維持 `buyer_need_skus` 與 `buyer_safety_fix` 作為組合輸入；Excel Review 摘要由 ①②③④⑤ 五表改為 ①②③④ 四表；Streamlit 儀表板與分頁同步改為單表
 - Update: `tests/test_hybrid_buyer_stats.py` 同步（×8，含外連接與合併表位置／總計）；使用說明頁同步
 
 ## v1.18.0 (2026-09-05)
 
 Safety Stock x NetStock Review 新增 Buyer 統計與需要修改 Safety 統計。
 
-- New: 沿用 Stock Checking 的 Buyer 需調貨 SKU 統計（同 SKU 首個非空 Buyer，已刪除重複，按數量降序），於 Hybrid 看板、Review 摘要分頁與 Excel Review 摘要同步顯示
+- New: 沿用 Stock Checking 的 Buyer 需調貨 SKU 統計（同 SKU 首個非空 Buyer，已刪除重複，按數量降序），於 Hybrid 儀表板、Review 摘要分頁與 Excel Review 摘要同步顯示
 - New: 新增 Buyer 需調整 Safety SKU 統計（母體為 Safety 設定不足＋過高，即有建議 Safety 設定值的列；同 SKU 首個非空 Buyer，已刪除重複；另含各 Buyer 的 Safety 建議調整量合計，淨額正=增加、負=減少），與需調貨統計並列顯示
-- Update: `transform_hybrid` stats 新增 `buyer_need_skus` 與 `buyer_safety_fix`（`_hybrid_stats_from_raw` 回退同口徑）；`generate_excel_hybrid` 的 Review 摘要在既有 ①②③ 區塊後另加 ④⑤ Buyer 表（7 工作表數目與既有區塊列位置不變）；Streamlit Hybrid 看板與 Review 摘要分頁同步新增兩表
+- Update: `transform_hybrid` stats 新增 `buyer_need_skus` 與 `buyer_safety_fix`（`_hybrid_stats_from_raw` 回退同口徑）；`generate_excel_hybrid` 的 Review 摘要在既有 ①②③ 區塊後另加 ④⑤ Buyer 表（7 工作表數目與既有區塊列位置不變）；Streamlit Hybrid 儀表板與 Review 摘要分頁同步新增兩表
 - Update: 新增 `tests/test_hybrid_buyer_stats.py`（×7：需調貨口徑等價、空白 Buyer 歸組、Safety 計數與金額對帳、空母體、回退一致、Excel 兩表位置與總計、空表不寫入）；共 216 項測試通過；使用說明頁同步
 
 ## v1.17.2 (2026-09-05)
@@ -987,7 +999,7 @@ Safety Stock x NetStock Review：**Safety 設定不再跟隨存貨（調貨）�
 - New: Safety Review 基準由固定 14 日改為**按 Nature 的「Safety 基準周轉天數」** — 結果頁左側新增三個輸入（🧳 Tourist／🔀 Mix／🏪 Non Tourist，範圍 7–10 日），預設 **Tourist 7 / Mix 9 / Non Tourist 10**；`Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 的基準天數)`
 - New: **調貨段完全不受影響** — `調入需求量 (補到14日)`、`實際調入量`、`調入缺口`、`轉出量`、`可轉出貨量 (Mix/Non Tourist/Tourist)`、`調貨後庫存`、`調貨後 TurnDay` 及其同OM變體一律沿用 14 日口徑（測試 `test_transfers_unchanged_by_safety_days` 逐欄比較預設與 14/14/14 兩種設定，要求完全相同）
 - Change: **欄位改名（破壞性）** — `14日周轉所需量` → `Safety 周轉所需量`（數值已非固定 14 日）；影響 RAW、兩個「調貨 Review Safety Stock」主表、Review 摘要三個統計區塊與相關測試
-- New: RAW 與主表新增 **`Safety 基準天數`** 欄（逐列回顯實際採用的 Nature 基準，供導出檔稽核，並讓 stats 回退路徑可還原基準）；主表由 24 欄改為 25 欄
+- New: RAW 與主表新增 **`Safety 基準天數`** 欄（逐列回顯實際採用的 Nature 基準，供匯出檔稽核，並讓 stats 回退路徑可還原基準）；主表由 24 欄改為 25 欄
 - Update: `transform_hybrid()` 新增 `safety_days` 參數（**位於 `progress_callback` 之前、以關鍵字傳入**；回傳仍為 7 元組）；新增 `_hybrid_safety_days()`（未知 Nature／非數值／非正數一律退回預設，不拋錯）、`_hybrid_safety_days_label()`、`_hybrid_safety_days_from_raw()` 與 `_HYBRID_SAFETY_DAYS_DEFAULT`／`_MIN`／`_MAX`／`_HYBRID_SAFETY_LINE_COLUMN`／`_HYBRID_SAFETY_DAYS_COLUMN` 常數；`generate_excel_hybrid()` 簽名不變
 - Update: 指標卡第 3 排說明與「Review 摘要」工作表標題改為顯示實際採用的基準（如「…｜Safety 基準 Tourist 7 日 / Mix 9 日 / Non Tourist 10 日」）；指標卡文字不再內嵌日數，維持 `stats` 有無時輸出一致
 - Update: tests/test_hybrid_mode.py — 既有的 Review 數值測試改傳 `safety_days=_SD14`（三個 Nature 統一 14 日＝v1.16.0 口徑，數值斷言原樣保留）；欄名斷言全域改名；新增第 15 節 ×7（預設值與範圍、正規化無效輸入、Nature 基準逐列判定與 不足/過高/正常 反轉、**調貨欄位不受 safety_days 影響**、基準回顯與回退還原、主表 25 欄契約、Excel 標題含基準）；共 193 項測試通過
@@ -1033,7 +1045,7 @@ Safety Stock x NetStock Review：**Safety 設定不再跟隨存貨（調貨）�
 ## v1.14.0 (2026-09-04)
 
 - New: Safety Stock x NetStock Review 新增「允許雙向調貨」選項（UI checkbox `hy_bidir`，預設關閉）— 針對「存貨偏重遊客區而其他區域賣得好出現缺貨」場景，調貨由單向（只向遊客區調入）改為**完全對稱三向**：任何 Nature 缺貨（該 Nature 加總 TurnDay < 門檻 且 D001 < 門檻 且個別店補到 14 日需求 > 0）且其他任一 Nature 有貨（加總 TurnDay ≥ 門檻）即標示需要調貨；來源優先序固定 **Non Tourist → Mix → Tourist**（需求 Nature 自身除外）；缺貨 Nature 的超額列一律不可轉出（池級歸零）；自我調貨與同OM守衛不變
-- New: 雙向時 RAW 另加「可轉出貨量 (Tourist)」欄；Summary 末尾另加「由Tourist 店舖預計調出數量」欄（AA 欄，A–Z 契約欄序不動）；Review 事件對稱擴展——`需要調入` 可出現在任何 Nature 列、`實際轉出`／`可轉出未使用` 可出現在 Tourist 列（事件與診斷文字不變）；主表「可轉出貨量」含 Tourist；Review 摘要與 Streamlit 看板另加第 5 排指標卡（Tourist 轉出量／Tourist 轉出量 (同OM)）；stats 新增 tourist_transfer / tourist_transfer_om / bidirectional
+- New: 雙向時 RAW 另加「可轉出貨量 (Tourist)」欄；Summary 末尾另加「由Tourist 店舖預計調出數量」欄（AA 欄，A–Z 契約欄序不動）；Review 事件對稱擴展——`需要調入` 可出現在任何 Nature 列、`實際轉出`／`可轉出未使用` 可出現在 Tourist 列（事件與診斷文字不變）；主表「可轉出貨量」含 Tourist；Review 摘要與 Streamlit 儀表板另加第 5 排指標卡（Tourist 轉出量／Tourist 轉出量 (同OM)）；stats 新增 tourist_transfer / tourist_transfer_om / bidirectional
 - Change: 未勾選雙向時輸出欄位、數值與工作表結構與 v1.13.3 完全一致（零契約變動）；雙向只適用於本模式，**Stock Checking 維持單向**（兩模式調貨引擎自此分岔）
 - Update: `transform_hybrid()` 加 `bidirectional` 參數；`_hybrid_allocate_transfers()` 加 `tourist_avail0` 來源池；`_build_stock_checking_summary()`／`_write_stock_checking_summary_sheet()` 加 `bidirectional` 參數；`_write_metric_cards()` 加 `row5_metrics`；`generate_excel_hybrid()` 以 RAW 是否含「可轉出貨量 (Tourist)」推定雙向
 - Update: tests/test_hybrid_mode.py 新增雙向測試 ×8（逆向轉出、來源序、雙缺競爭、同店／同OM守衛、全池不足不標示、單向契約零變動、第 5 排指標卡與 stats 回退、Excel 27 欄契約）；_smoke_pipeline.py 加雙向一輪；共 162 項測試通過
@@ -1063,7 +1075,7 @@ Safety Stock x NetStock Review：**Safety 設定不再跟隨存貨（調貨）�
 
 - New: 調貨診斷 Safety Stock 分「不限OM」與「同OM」兩套 — 公司規定某些情況只允許同 OM 店舖調貨（例 Ivy HBA6 → Ivy HB94），同OM變體來源店須與需求店同 OM 才可轉出；分配抽為共用函數 `_hybrid_allocate_transfers()`（om_arr 參數），跑兩遍；同OM結果以「(同OM)」後綴欄存於 RAW（實際調入量 / 調入缺口 / 轉出量 / 調貨來源 / 調貨後庫存 / 調貨後 TurnDay），診斷主表輸出兩份工作表「調貨診斷 Safety Stock (不限OM)／(同OM)」，事件類型（實際轉出／可轉出未使用）按變體重算；**Safety 診斷與建議調整量兩變體完全相同（OM 限制不影響建議）**；OM 為選填欄位：缺失時同OM退化為不限OM＋warning（RAW／主表補「(未填OM)」欄），空白列歸入「(未填OM)」群組
 - New: 診斷主表新增「OM」欄（Site Code 後，共 24 欄）— 同OM對照時可直接核對店群；OM 缺失時以「(未填OM)」補入
-- New: 診斷摘要與 Streamlit 看板加第 4 排指標卡（同OM對照）：實際調入量 (同OM) / 無法足額缺口 (同OM) / Non Tourist 轉出量 (同OM) / Mix 轉出量 (同OM)（共 16 卡）；混合模式 Excel 由 3 工作表改為 4（RAW／不限OM 主表／同OM 主表／診斷摘要）；stats 新增 total_actual_om / total_gap_om / nt_transfer_om / mix_transfer_om / donated_rows_om；`transform_hybrid()` 回傳改 6 元組
+- New: 診斷摘要與 Streamlit 儀表板加第 4 排指標卡（同OM對照）：實際調入量 (同OM) / 無法足額缺口 (同OM) / Non Tourist 轉出量 (同OM) / Mix 轉出量 (同OM)（共 16 卡）；混合模式 Excel 由 3 工作表改為 4（RAW／不限OM 主表／同OM 主表／診斷摘要）；stats 新增 total_actual_om / total_gap_om / nt_transfer_om / mix_transfer_om / donated_rows_om；`transform_hybrid()` 回傳改 6 元組
 - New: Stock Checking Summary 新增「存貨偏重提示」欄（Z 欄，25→26 欄）— 個別 Nature 庫存佔比 ≥ 40% 且（庫存佔比 − 銷量佔比）≥ 20 個百分點 →「存貨偏重 {Nature}（庫存 x% / 銷量 y%）」，識別存貨集中但銷量不高的 Nature；全 SKU 月銷 0 時銷量佔比以 0 計；多 Nature 符合以；分隔、差距大者在前；總庫存 0 不提示
 - Update: README / 使用說明頁同步；真實來源檔（22,735 列 × 45 欄、275 SKU）實測：不限OM 實際調入 9,433／缺口 8,338 對比同OM 4,784／12,987，存貨偏重提示命中 14 個 SKU，Excel 生成約 12 秒
 - Update: tests/test_hybrid_mode.py 新增同OM測試 ×6 與主表 OM 欄斷言；test_stock_checking.py 新增存貨偏重提示測試 ×4 並更新 26 欄 Excel 契約；共 149+ 項測試通過
@@ -1071,17 +1083,17 @@ Safety Stock x NetStock Review：**Safety 設定不再跟隨存貨（調貨）�
 ## v1.13.0 (2026-09-04)
 
 - New: Safety Stock x NetStock Review 調貨分配分「不限OM」與「同OM」兩變體 — 來源店須與需求店同 OM 才可轉出（公司規定某些情況只允許同 OM 店舖調貨，例 Ivy HBA6 → Ivy HB94）；同OM結果以「(同OM)」後綴欄存於 RAW（實際調入量 / 調入缺口 / 轉出量 / 調貨來源 / 調貨後庫存 / 調貨後 TurnDay），診斷主表輸出兩份工作表「調貨診斷 Safety Stock (不限OM)／(同OM)」，事件類型（實際轉出／可轉出未使用）按變體重算；Safety 診斷與建議調整量兩變體完全相同（OM 限制不影響建議）；OM 為選填欄位：缺失時同OM退化為不限OM＋warning，空白列歸入「(未填OM)」群組
-- New: 診斷摘要加第 4 排指標卡（同OM對照）：實際調入量 (同OM) / 無法足額缺口 (同OM) / Non Tourist 轉出量 (同OM) / Mix 轉出量 (同OM)；Streamlit 看板同步 4 排 16 卡 + 診斷主表分兩頁籤；stats 新增 total_actual_om / total_gap_om / nt_transfer_om / mix_transfer_om / donated_rows_om；混合模式 Excel 由 3 工作表改為 4（RAW／不限OM 主表／同OM 主表／診斷摘要）
+- New: 診斷摘要加第 4 排指標卡（同OM對照）：實際調入量 (同OM) / 無法足額缺口 (同OM) / Non Tourist 轉出量 (同OM) / Mix 轉出量 (同OM)；Streamlit 儀表板同步 4 排 16 卡 + 診斷主表分兩頁籤；stats 新增 total_actual_om / total_gap_om / nt_transfer_om / mix_transfer_om / donated_rows_om；混合模式 Excel 由 3 工作表改為 4（RAW／不限OM 主表／同OM 主表／診斷摘要）
 - New: Stock Checking Summary 新增「存貨偏重提示」欄（Z 欄，25→26 欄）— 個別 Nature 庫存佔比 ≥ 40% 且（庫存佔比 − 銷量佔比）≥ 20 個百分點 →「存貨偏重 {Nature}（庫存 x% / 銷量 y%）」；全 SKU 月銷 0 時銷量佔比以 0 計；多 Nature 符合以；分隔、差距大者在前；總庫存 0 不提示
 - Update: 調貨分配抽為共用函數 `_hybrid_allocate_transfers()`（om_arr 參數控制同OM限制）；`_build_hybrid_diagnosis()` 加 variant 參數（free／om）；`transform_hybrid()` 回傳改 6 元組 (raw, diagnosis, diagnosis_om, diag_summary, stats, warnings)；`generate_excel_hybrid()` 改 4 表簽名
 - Update: tests/test_hybrid_mode.py 新增同OM測試 ×6（來源切換、同OM缺口、診斷兩版一致、OM 缺失／空白、RAW 同OM欄、row4 指標卡對照）；test_stock_checking.py 新增存貨偏重提示測試 ×4 並更新 26 欄契約；共 149 項測試通過
 
 ## v1.12.0 (2026-09-04)
 
-- Change: 「Safety Stock x NetStock Review」由「兩報告並排 + 反饋欄」完全轉換為「調貨事件診斷 Safety 設定」格式 — 以 14 日周轉線（14日周轉所需量 = ceil(P90D ÷ 90 × 14)，與調貨邏輯同口徑）診斷：Tourist 需調入列現有 Adj. Safety Stock < 所需量 → 「Safety 設定不足」；已標示調貨 SKU 的 Mix / Non Tourist 有貨列（轉出量 > 0 或可轉出貨量 > 0）現有設定 > 所需量 → 「Safety 設定過高」；等於邊界視為正常；建議 Safety 設定值 = 所需量、Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）
+- Change: 「Safety Stock x NetStock Review」由「兩報告並排 + 回饋欄」完全轉換為「調貨事件診斷 Safety 設定」格式 — 以 14 日周轉線（14日周轉所需量 = ceil(P90D ÷ 90 × 14)，與調貨邏輯同口徑）診斷：Tourist 需調入列現有 Adj. Safety Stock < 所需量 → 「Safety 設定不足」；已標示調貨 SKU 的 Mix / Non Tourist 有貨列（轉出量 > 0 或可轉出貨量 > 0）現有設定 > 所需量 → 「Safety 設定過高」；等於邊界視為正常；建議 Safety 設定值 = 所需量、Safety 建議調整量 = 建議值 − 現有設定（正=增加、負=減少）
 - Change: 移除混合模式內的安全庫存引擎段 — 不再計算 Recommend Safety Stock / X cap / Y floor；UI 刪除 MTD 日期、Overstock/OOS Rate、只可增加/可加可減參數（僅保留調貨兩門檻）；輸入檢核不再要求 Sold Qty (CM - MTD)；Adj. Safety Stock 空白或非數值診斷視為 0 並列 warning
 - Change: Excel 輸出由 8 工作表精簡為 3 — RAW（全部欄位 + 診斷欄：14日周轉所需量 / 事件類型 / Safety 診斷 / 建議 Safety 設定值 / Safety 建議調整量 / 調貨後庫存 / 調貨後 TurnDay，非事件列留空）、調貨診斷 Safety Stock（店舖×SKU 主表，按 Brand / SKU / 事件類型 / Site Code 排序）、診斷摘要（指標卡 12 項 + Safety 診斷 × Shop Nature 交叉表含總計列）；刪除 Shop Stock Status / By Shop / SUMMARY / Safety 數據分析摘要 / 調貨 Summary / 調貨分析摘要 / Hybrid Summary
-- Change: Streamlit 混合模式看板改為診斷指標卡（3 排 × 4：需調貨 SKU 數、需要調入列數、轉出來源列數、調入需求量、實際調入量、無法足額缺口、NT/Mix 轉出量、設定不足列數、建議增加合計、設定過高列數、建議減少合計）+ 3 個分頁（診斷主表 / 交叉表 / RAW）
+- Change: Streamlit 混合模式儀表板改為診斷指標卡（3 排 × 4：需調貨 SKU 數、需要調入列數、轉出來源列數、調入需求量、實際調入量、無法足額缺口、NT/Mix 轉出量、設定不足列數、建議增加合計、設定過高列數、建議減少合計）+ 3 個分頁（診斷主表 / 交叉表 / RAW）
 - Update: `transform_hybrid()` 簽名精簡（移除 rates / mtd / safety_mode 參數）回傳 (raw, diagnosis, diag_summary, stats, warnings)；新增 `_build_hybrid_diagnosis()`、`_build_hybrid_diag_summary()`、`_hybrid_dashboard_metrics()`、`_hybrid_stats_from_raw()`、`_write_hybrid_diagnosis_sheet()`、`_write_hybrid_diag_summary_sheet()`；刪除 `_hybrid_build_safety_summary()`、`_build_hybrid_summary()`、`_write_hybrid_summary_sheet()`；`generate_excel_hybrid()` 改 3 表
 - Update: tests/test_hybrid_mode.py 重寫為診斷契約（判定規則、事件類型、主表範圍、交叉表、3 表 Excel 契約等）；_smoke_pipeline.py 同步；README / 使用說明頁同步
 
@@ -1104,7 +1116,7 @@ Safety Stock x NetStock Review：**Safety 設定不再跟隨存貨（調貨）�
 - Fix: D001 改為逐列有效值（`D001 Effective Stock Qty (CM)` = Net 優先、Stock 回補、空白視為 0，附 warning）；RAW 新增 Effective / D001 Stock 稽核欄位
 - Fix: Shop Monthly Sold Qty (P90D) 單列空白改以 Sold Qty (P90D) ÷ 90 × 30.5 逐列換算（修復加總 TurnDay 誤判 inf 而不觸發調貨），並列 warning
 - Fix: Shop Stock Qty (CM) 要求整數件數，小數值 fail-closed 明確報錯（避免 astype(int) 造成守恆失真）
-- Fix: Hybrid UI Dashboard 補足 20 卡（Safety 8 + 調貨 8 + 反饋 4：含影響 Buyers/Brands、Overstock/OOS/調整行數、需要調貨列數、總明細行數）；「改善件數」改名「Safety 缺口改善量」並支援負值紅字顯示
+- Fix: Hybrid UI Dashboard 補足 20 卡（Safety 8 + 調貨 8 + 回饋 4：含影響 Buyers/Brands、Overstock/OOS/調整行數、需要調貨列數、總明細行數）；「改善件數」改名「Safety 缺口改善量」並支援負值紅字顯示
 - Fix: Excel 生成 progress bar 全程單調不倒退（`_write_stock_checking_summary_sheet` 區間參數化）
 - Fix: SKU Desc 欄存在但全空白時以 Item_Shop 補正，摘要 groupby 不塌陷
 - Fix: tests/_smoke_pipeline.py 可直接 `python tests/_smoke_pipeline.py` 執行（self 加入 repo root 至 path）
@@ -1112,14 +1124,14 @@ Safety Stock x NetStock Review：**Safety 設定不再跟隨存貨（調貨）�
 
 ## v1.10.0 (2026-09-03)
 
-- New: 新增「Safety Stock x NetStock Review」混合模式 — 同一次執行 Safety Stock Review + Stock Checking，調貨結果只反饋為 Safety 診斷（不改寫 Recommend Safety Stock）
+- New: 新增「Safety Stock x NetStock Review」混合模式 — 同一次執行 Safety Stock Review + Stock Checking，調貨結果只回饋為 Safety 診斷（不改寫 Recommend Safety Stock）
 - New: `transform_hybrid()`、`generate_excel_hybrid()`、`validate_hybrid_input()`、`_normalize_hybrid_nature()`、`_hybrid_build_safety_summary()`、`_build_hybrid_summary()`、`_write_hybrid_summary_sheet()` in transformer.py
-- New: 反饋欄位 — 調貨後庫存 = Shop Stock Qty (CM) + 實際調入量 − 轉出量；調貨前/後 Safety 缺口 = max(0, Recommend Safety Stock − 庫存)；調貨後 TurnDay = 調貨後庫存 ÷ Shop Monthly Sold Qty (P90D) × 30.5（月銷 0 留空）
+- New: 回饋欄位 — 調貨後庫存 = Shop Stock Qty (CM) + 實際調入量 − 轉出量；調貨前/後 Safety 缺口 = max(0, Recommend Safety Stock − 庫存)；調貨後 TurnDay = 調貨後庫存 ÷ Shop Monthly Sold Qty (P90D) × 30.5（月銷 0 留空）
 - New: 參數合併兩模式 — MTD 日期、Overstock/OOS Rate（Tourist/Mix/Non Tourist）、Safety Qty 模式（只可增加/可加可減）、Tourist 加總 TurnDay 門檻（預設 14）、D001 門檻（預設 100）；調貨目標固定 14 日
 - New: Shop Nature 固定三種；Other/空白/大小寫差異一律正規化為 Non Tourist（映射列數列入 warning）；混合必要欄位（基礎四欄 + Shop Nature / Site Code / Shop Stock Qty (CM) / Sold Qty (P90D) / Adj. Safety Stock / Shop Monthly Sold Qty (P90D) / Sold Qty (CM - MTD)）嚴格檢核；D001 沿用 Net→Stock fallback
-- New: Excel 8 工作表 — RAW / Shop Stock Status / By Shop / SUMMARY / Safety Stock 數據分析摘要 / Summary（調貨）/ 調貨分析摘要 / Hybrid Summary（調貨反饋 Safety）
+- New: Excel 8 工作表 — RAW / Shop Stock Status / By Shop / SUMMARY / Safety Stock 數據分析摘要 / Summary（調貨）/ 調貨分析摘要 / Hybrid Summary（調貨回饋 Safety）
 - Update: Streamlit 新增模式分支（指標卡 ×3 排 + 4 tabs + 下載，檔名 I14 Safety Stock x NetStock Review_<時間戳>.xlsx）；Sidebar 說明與核心計算規則同步
-- Update: tests/test_hybrid_mode.py 新增（×20：輸入檢核、等價性、反饋公式、Nature 正規化、D001 fallback、Hybrid/Safety Summary、Excel 契約）；_smoke_pipeline.py 新增 hybrid 項目；共 123 項測試通過
+- Update: tests/test_hybrid_mode.py 新增（×20：輸入檢核、等價性、回饋公式、Nature 正規化、D001 fallback、Hybrid/Safety Summary、Excel 契約）；_smoke_pipeline.py 新增 hybrid 項目；共 123 項測試通過
 
 ## v1.9.6 (2026-09-03)
 
@@ -1137,7 +1149,7 @@ Safety Stock x NetStock Review：**Safety 設定不再跟隨存貨（調貨）�
 ## v1.9.4 (2026-09-03)
 
 - New: Stock Checking 輸出新增 **調貨分析摘要** 工作表（Dashboard，主題色指標卡，與 Streamlit Transfer Analysis Dashboard 同口徑）— 兩排共 8 卡：需要調貨列數 / 需調貨 SKU 數 / 調入需求量 / 實際調入量 / Non Tourist 轉出量 / Mix 轉出量 / 無法足額缺口 / 總明細行數；沿用 `_write_metric_cards()` 格局（其餘模式的「分析摘要」工作表同式）
-- Change: `generate_excel_stock_checking()` 新增 `stats` 參數（由 `transform_stock_checking()` 回傳的統計直傳；缺省時由 RAW 匯總，舊呼叫相容）；工作表順序為 Summary → RAW → 調貨分析摘要
+- Change: `generate_excel_stock_checking()` 新增 `stats` 參數（由 `transform_stock_checking()` 回傳的統計直傳；未提供時由 RAW 匯總，舊呼叫相容）；工作表順序為 Summary → RAW → 調貨分析摘要
 - Update: app.py 傳入 `_stats`、Sidebar 說明與核心計算規則同步；tests/test_stock_checking.py 更新 Excel 期望（×2：三表結構 + Dashboard 指標值校對），共 103 項測試通過
 
 - Change: Stock Checking 新增供應端門檻（SKU 級）— 該 SKU 的 Mix 加總 TurnDay 與 Non Tourist 加總 TurnDay **皆低於門檻**（UI 可調，預設 14 日）時，理論上無貨可調，整個 SKU **無須標示「需要調貨」**；此前只檢查 Tourist 加總 TurnDay 與 D001
@@ -1230,9 +1242,9 @@ Safety Stock x NetStock Review：**Safety 設定不再跟隨存貨（調貨）�
 ## v1.8.5 (2026-08-28)
 
 - Fix: 「🧹 釋放記憶體」按鈕修復 — 過去刪除 session_state 後檔案仍掛在 file_uploader 上，st.rerun() 時會即時重新讀取整個 Excel，導致每按一次記憶體不減反增；現以更換 uploader widget key 徹底釋放已上傳檔案
-- Fix: 按鈕新增 `st.cache_data.clear()` — transformer 的 `_compute_raw_extra_columns` 模組級緩存過去無 TTL／無 max_entries（無限累積 DataFrame 拷貝）且按鈕從未清除
+- Fix: 按鈕新增 `st.cache_data.clear()` — transformer 的 `_compute_raw_extra_columns` 模組級快取過去無 TTL／無 max_entries（無限累積 DataFrame 拷貝）且按鈕從未清除
 - Fix: `_release_os_memory()` — gc 後呼叫 `malloc_trim` 將已釋放記憶體真正歸還作業系統（單靠 gc.collect() RSS 不會下降），令 Memory Usage 顯示如實反映
-- Update: transformer.py 緩存加上 `max_entries=4, ttl=3600`，限制長時間運行下的記憶體增長
+- Update: transformer.py 快取加上 `max_entries=4, ttl=3600`，限制長時間運行下的記憶體增長
 
 ## v1.8.4 (2026-08-28)
 

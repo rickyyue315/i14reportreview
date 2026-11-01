@@ -773,7 +773,7 @@ def _build_stock_checking_summary(
       （Buyer、Adj. SST 取同 SKU 首個非空值作代表）
     - 按分類維度分組（dimension：nature 三組／rp 兩組 RF／ND／both 六組／
       om 動態 OM 名單／nature_om 三 Nature × OM 笛卡兒積／sales 四銷量帶／
-      sales_nature 三 Nature × 四帶 12 組；om_groups 缺省時由 raw 即時推導）加總
+      sales_nature 三 Nature × 四帶 12 組；om_groups 未提供時由 raw 即時推導）加總
       Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)，
       TurnDay = 加總庫存 ÷ 加總月銷 × 30.5（月銷為 0 時留空）；除佔比外一律取整顯示
     - 各組涉及店舖數：同 SKU 同組的 Site Code 不重複計數（空白 Site Code 不計），
@@ -996,7 +996,7 @@ def _write_stock_checking_summary_sheet(ws, summary, progress_callback=None, pro
     見 _HYBRID_SHORTAGE_THRESHOLDS）的庫存佔比欄以淺藍底（BDD7EE）加粗深藍字標示——
     庫存佔比明顯低於銷量佔比，提示潛在缺貨風險；只標示儲存格，不新增文字欄；
     與橘底／紅底互斥（同一儲存格不會同時觸發），欄位、數值與排序一律不變（純標示）。
-    om_groups 缺省時由 summary 欄位反推（om／nature_om 維度）；無法反推時退回單一群組。
+    om_groups 未提供時由 summary 欄位反推（om／nature_om 維度）；無法反推時退回單一群組。
     """
     dim = _hybrid_dimension(dimension)
     if dim in ("om", "nature_om") and not om_groups and summary is not None and not summary.empty:

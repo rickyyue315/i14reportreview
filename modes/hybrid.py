@@ -405,7 +405,7 @@ def _hybrid_diag_summary_columns(dimension: str = "nature", om_groups=None) -> l
 
 def _build_hybrid_diag_summary(raw: pd.DataFrame, dimension: str = "nature", om_groups=None) -> pd.DataFrame:
     """Safety Review × 分類維度（預設 Shop Nature）交叉表（列數 / SKU 數 / 建議調整量合計），含總計列。
-    om／nature_om 維度由 OM 欄推導動態分組（om_groups 缺省時由 raw 即時推導）。"""
+    om／nature_om 維度由 OM 欄推導動態分組（om_groups 未提供時由 raw 即時推導）。"""
     dim = _hybrid_dimension(dimension)
     if dim in ("om", "nature_om") and om_groups is None and raw is not None and not raw.empty:
         om_groups = _hybrid_om_groups_from_values(
@@ -1437,7 +1437,7 @@ def transform_hybrid(
       與銷量存貨分類的店舖周轉日數同一準則）；月銷 0 的列不會成為需求方（需求 > 0 前提）。
       解決「供給不足時，0 庫存的斷貨店舖反被需求量較大的快滿店舖蓋過而分文未得」；
       同深度仍以需求量為次要鍵，故同周轉日數時行為與現行一致。
-      只改變同 SKU 內需求列的**分配次序**：各店鋪調入總量、可轉出量、轉出資格、
+      只改變同 SKU 內需求列的**分配次序**：各店舖調入總量、可轉出量、轉出資格、
       守衛條件、觸發判定與 Safety Review／建議調整量全部不變；被改變者為
       「實際調入量」／「調入缺口」／「調貨來源 (Site Code)」／「調貨後庫存」／
       「調貨後 TurnDay」及同OM 對應欄。兩次分配（不限OM／同OM）使用同一排序鍵。

@@ -758,7 +758,7 @@ def _auto_width(ws, min_width=8, max_width=50, sample_rows=200):
 
 try:
     import streamlit as st
-    # 必須限制緩存大小與壽命 — 無 TTL/無 max_entries 時每次轉換都累積一份 DataFrame 拷貝，
+    # 必須限制快取大小與壽命 — 無 TTL/無 max_entries 時每次轉換都累積一份 DataFrame 拷貝，
     # 長時間運作的容器記憶體會持續增長且「釋放記憶體」按鈕前的執行間隔內無法自動回收
     # P0（單人使用）：由 4 份降為 1 份，TTL 縮短，減少常駐記憶體
     _compute_raw_extra_columns_impl = st.cache_data(_compute_raw_extra_columns_impl, max_entries=1, ttl=1800)

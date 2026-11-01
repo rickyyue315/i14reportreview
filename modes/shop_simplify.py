@@ -58,7 +58,7 @@ __all__ = [
 ]
 
 
-# ── 輸出欄位契約（欄名固定，測試與導出檔依賴，未經明確要求不得改動）──
+# ── 輸出欄位契約（欄名固定，測試與匯出檔依賴，未經明確要求不得改動）──
 _SHOP_SIMPLIFY_SOLD_COLUMN = "過去90日有無賣過"
 _SHOP_SIMPLIFY_STOCK_COLUMN = "過去90日有無存貨"
 _SHOP_SIMPLIFY_SCT_COLUMN = "SCT建議"
