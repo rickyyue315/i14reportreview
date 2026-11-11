@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.94.2 (2026-11-11)
+
+P90D 0 Sales 明細補回 M-2 快照庫存欄（`Shop Stock Qty (LLM)`）：
+
+- **P90D 0 Sales Review(個別店舖)** — 匯出的「店舖90日零銷售ALL SKU」工作表新增 `Shop Stock Qty (LLM)` 欄，置於 `Shop Stock Qty (LM)` 之前（次序 LLM → LM → CM），方便店舖對照三個月快照；來源有 LLM 欄時才輸出，舊檔缺欄時不出現該欄，其餘欄位、排序與計算完全不變
+- **P90D 0 Sales Review(Shop回覆)** — 兩版共用同一欄位契約，Top 10 明細同步顯示 `Shop Stock Qty (LLM)`（LLM 缺欄時不顯示），兩個版本對照一致
+- **不影響** — 篩選準則、90 日有貨判定、By Shop／By Nature／By OM／By SKU／By Buyer 統計與其他工作表不變；LLM 仍屬選用欄位
+- **文件** — 模組說明、使用說明頁（兩個模式的欄位說明）、README 選用欄位章節同步
+- **測試** — 新增 3 項（ALL SKU 顯示 LLM 及 LLM→LM→CM 次序、舊檔缺欄不輸出、Excel 表頭次序；Top 10 顯示 LLM），全數 861 項通過
+- Change: `version.py` 1.94.1 → 1.94.2
+
 ## v1.94.1 (2026-11-01)
 
 用語統一（香港寫法）：把介面、Excel 說明文字與文件中的大陸商業／科技用語改回香港慣用寫法，計算邏輯、欄位與 Excel 固定表頭一律不變：

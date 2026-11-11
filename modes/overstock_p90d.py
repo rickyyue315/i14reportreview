@@ -20,7 +20,8 @@ MAKE UP 判定：``Adj. MCH1`` 去除前後空格後等於 ``02 - MAKE UP`` 者�
    分類維度可切換：MAKE UP 分類、Item Class、Adj. MCH1、交叉維度（MAKE UP × Item Class、
    MAKE UP × Adj. MCH1：每個店舖／分組按 MAKE UP／Non-MAKE UP 逐列，欄為次分類分項與小計）
 2. 店舖90日零銷售Top 10 SKU回覆 — 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列
-   （預設只限 Non-MAKE UP；勾選包括 MAKE UP 時則一併計算），附店內庫存排名及空白「店舖回覆」欄
+   （預設只限 Non-MAKE UP；勾選包括 MAKE UP 時則一併計算），附店內庫存排名及空白「店舖回覆」欄；
+   庫存欄依次顯示 Shop Stock Qty (LLM)／(LM)／(CM)（LLM 欄存在時；舊檔缺欄則不顯示）
 3. By Nature — 按 Shop Nature 分佈（分組欄隨分類維度變動）
 4. By OM — 按 OM 分佈（分組欄隨分類維度變動）
 5. By SKU — 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序
@@ -29,6 +30,7 @@ MAKE UP 判定：``Adj. MCH1`` 去除前後空格後等於 ``02 - MAKE UP`` 者�
 個別店舖版（P90D 0 Sales Review(個別店舖)）：篩選準則相同，分類固定以 MAKE UP 分類；
 明細工作表為「店舖90日零銷售ALL SKU」，列出各店舖全部 SKU（包括 MAKE UP 與
 Non-MAKE UP，不設列數上限）且不設「店舖回覆」欄，
+庫存欄依次顯示 Shop Stock Qty (LLM)／(LM)／(CM)（LLM 欄存在時；舊檔缺欄則不顯示），
 供個別店舖查閱自身全部零銷售 SKU 情況。
 """
 
@@ -178,6 +180,7 @@ _OP90D_TOP10_COLUMNS = [
     "Adj. Safety Stock",
     "Item Status",
     "Supply Source",
+    "Shop Stock Qty (LLM)",
     "Shop Stock Qty (LM)",
     "Shop Stock Qty (CM)",
     "Sold Qty (P90D)",

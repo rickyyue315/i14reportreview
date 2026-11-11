@@ -85,6 +85,24 @@ def test_shop_all_sku_includes_makeup_no_reply():
     assert list(all_sku.columns) == [c for c in _OP90D_ALL_SKU_COLUMNS if c in all_sku.columns]
 
 
+def test_shop_all_sku_shows_llm_stock_column():
+    """ALL SKU 明細須顯示 M-2 快照 (LLM)，並按 LLM → LM → CM 三個月次序排列。"""
+    df = _df([{"SKU": 1, "Shop Stock Qty (LLM)": 12.0}])
+    _, _, all_sku, _, _, _ = transform_overstock_p90d_shop(df)
+    cols = list(all_sku.columns)
+    assert "Shop Stock Qty (LLM)" in cols
+    assert cols.index("Shop Stock Qty (LLM)") < cols.index("Shop Stock Qty (LM)") < cols.index("Shop Stock Qty (CM)")
+    assert float(all_sku["Shop Stock Qty (LLM)"].iloc[0]) == 12.0
+
+
+def test_shop_all_sku_without_llm_column_omits_it():
+    """舊檔（無 LLM 欄）不輸出該欄，其餘欄位與行數不變。"""
+    df = _df([{"SKU": 1}])
+    _, _, all_sku, _, _, _ = transform_overstock_p90d_shop(df)
+    assert "Shop Stock Qty (LLM)" not in all_sku.columns
+    assert list(all_sku.columns) == [c for c in _OP90D_ALL_SKU_COLUMNS if c in all_sku.columns]
+
+
 def test_shop_all_sku_no_row_limit():
     rows = [{"SKU": i, "Shop Stock Qty (CM)": float(i)} for i in range(1, 13)]
     df = _df(rows)
@@ -132,7 +150,7 @@ def test_shop_by_shop_fixed_makeup_columns():
 
 def test_shop_excel_sheet_name_and_no_reply_header():
     df = _df([
-        {"SKU": 1, "Adj. MCH1": "02 - MAKE UP"},
+        {"SKU": 1, "Adj. MCH1": "02 - MAKE UP", "Shop Stock Qty (LLM)": 6.0},
         {"SKU": 2},
     ])
     raw, by_shop, all_sku, by_nature, by_om, _ = transform_overstock_p90d_shop(df)
@@ -144,6 +162,8 @@ def test_shop_excel_sheet_name_and_no_reply_header():
     hdr = [c.value for c in wb[_OP90D_ALL_SKU_SHEET][1]]
     assert "店舖回覆" not in hdr
     assert "MAKE UP 分類" in hdr
+    # 匯出表頭須見 Shop Stock Qty (LLM)，且次序為 LLM → LM → CM
+    assert hdr.index("Shop Stock Qty (LLM)") < hdr.index("Shop Stock Qty (LM)") < hdr.index("Shop Stock Qty (CM)")
 
 
 def test_shop_empty_result():

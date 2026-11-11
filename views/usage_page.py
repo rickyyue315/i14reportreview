@@ -193,7 +193,7 @@ MODES = [
 - 篩選 `Shop Stock Status` 為 P90D 0 Sales 狀態且 `Shop Stock Qty (LM)` 大於 0 的 SKU×Shop 記錄（LM 或 CM 為 0 者不計算；LLM 欄存在時另須 `(LLM)` 大於 0，排除列數列 warning）
 - 按店舖統計 P90D 0 Sales SKU 總數（已刪除重複）及庫存總數，各分類同時顯示 SKU 數與庫存總數，分類維度可切換：MAKE UP（Adj. MCH1 為 02 - MAKE UP）／Non-MAKE UP、Item Class（A1／A2／A3／B／C／D）、Adj. MCH1（15 個大類），或交叉維度：MAKE UP × Item Class、MAKE UP × Adj. MCH1（每個店舖／分組按 MAKE UP／Non-MAKE UP 逐列，欄為次分類分項 SKU 數及「小計 SKU 數」，無該主分類資料者不列該列）；空白值歸入「空白」組
 - 各店舖按 Shop Stock Qty (CM) 由大至小取前 10 列（預設只限 Non-MAKE UP；勾選「包括 MAKE UP SKU」後一併計算），附店內庫存排名及空白「店舖回覆」欄供店舖填寫
-- Top 10 欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
+- Top 10 欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LLM)／(LM) 依次置於 Shop Stock Qty (CM) 之前，對照三個月快照的坐貨情況（LLM 欄存在時；舊檔缺欄則不顯示）
 - 按 Shop Nature 及 OM 統計分佈（涉及店舖數、SKU 數、行數、分類分項 SKU 數、庫存總數，分組欄隨分類維度變動）
 - 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），另計算「店舖總數 (分母)」（本次上載資料經 Shop Nature 篩選後的店舖總數）、「無銷售店舖佔比」（無銷售店舖數 ÷ 店舖總數）及排名，按無銷售店舖數由大至小排序，方便識別最多店舖積壓的 SKU
 - 另設「最多店舖無銷售SKU」摘要工作表：按無銷售店舖數取前 20 個 SKU，附 SKU 屬性、無銷售店舖數、店舖總數 (分母)、無銷售店舖佔比及庫存總數；完整清單仍保留於 By SKU
@@ -215,7 +215,7 @@ MODES = [
 - 供個別店舖查閱自身 P90D 0 Sales 情況，篩選準則與店舖回覆版相同（`Shop Stock Status` 為 P90D 0 Sales 狀態且 `Shop Stock Qty (LM)` 及 `(CM)` 大於 0；LLM 欄存在時另須 `(LLM)` 大於 0）
 - 分類固定以 MAKE UP 分類統計（MAKE UP／Non-MAKE UP 同時顯示 SKU 數與庫存總數），適合個別店舖原始資料
 - 各店舖全部列按 Shop Stock Qty (CM) 由大至小排序，包括 MAKE UP 與 Non-MAKE UP 全部 SKU，不設「店舖回覆」欄，供店舖查閱自身其他零銷售 SKU 情況
-- ALL SKU 明細欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LM) 置於 Shop Stock Qty (CM) 之前，對照坐貨情況
+- ALL SKU 明細欄位不含 Shop Stock Status（全表皆為 P90D 0 Sales 狀態），改為顯示 Supply Source；另以 Shop Stock Qty (LLM)／(LM) 依次置於 Shop Stock Qty (CM) 之前，對照三個月快照的坐貨情況（LLM 欄存在時；舊檔缺欄則不顯示）
 - 按 Shop Nature 及 OM 統計分佈（涉及店舖數、SKU 數、行數、分類分項 SKU 數、庫存總數）
 - 按 SKU 統計出現 P90D 0 Sales 的店舖數（已刪除重複），另計算店舖總數（分母）及無銷售店舖佔比，按出現店舖數由大至小排序
 - 按 Buyer 統計出現 P90D 0 Sales 的店舖數（已刪除重複），按出現店舖數由大至小排序

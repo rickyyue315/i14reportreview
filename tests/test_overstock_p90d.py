@@ -170,7 +170,17 @@ def test_top10_columns_supply_lm_no_status_excess():
     assert "Excess Stock Qty" not in cols
     assert "Shop Stock Qty (LM)" in cols
     assert cols.index("Shop Stock Qty (LM)") < cols.index("Shop Stock Qty (CM)")
+    assert "Shop Stock Qty (LLM)" not in cols  # 舊檔無 LLM 欄 → 不輸出
     assert list(top10["Supply Source"]) == ["Warehouse"]
+
+
+def test_top10_shows_llm_before_lm_when_present():
+    # 來源有 LLM 欄時輸出三個月快照，次序 LLM → LM → CM
+    df = _df([{"SKU": 1, "Shop Stock Qty (LLM)": 7.0}])
+    _, _, top10, _, _, _ = transform_overstock_p90d(df)
+    cols = list(top10.columns)
+    assert cols.index("Shop Stock Qty (LLM)") < cols.index("Shop Stock Qty (LM)") < cols.index("Shop Stock Qty (CM)")
+    assert float(top10["Shop Stock Qty (LLM)"].iloc[0]) == 7.0
 
 
 def test_top10_safety_after_rp_type():
