@@ -137,9 +137,15 @@ _TRANSFER_STATUS_CAPPED = "接收店 14 日需求已滿（保留原店）"
 #   2／4＝每個 SKU 固定只取銷量最高的 1–2／3–4 間接收店
 _TRANSFER_RECEIVER_LIMIT_NONE = "不限（原有：全數有銷售的接收店舖）"
 _TRANSFER_RECEIVER_AUTO = "auto"
-_TRANSFER_RECEIVER_AUTO_LABEL = "按件數自動集中（3 件或以下 1 間、4–6 件 2 間；每間 2–3 件）"
-# 自動集中的每間目標件數：接收店數＝ceil(同 SKU 轉出總量 ÷ 3)
+_TRANSFER_RECEIVER_AUTO_LABEL = "按件數自動集中（3 件或以下 1 間、4–6 件 2 間，10 件起最多 5 間、之後每 30 件加 1 間）"
+# 自動集中的每間目標件數：接收店數＝ceil(同 SKU 轉出總量 ÷ 3)，另按件數設上限
 _TRANSFER_RECEIVER_AUTO_TARGET = 3
+# 個別 MCH2 分類的每間目標件數（0302 - MINIATURE 屬迷你裝，每間可收 4 件）
+_TRANSFER_RECEIVER_TARGET_BY_MCH2 = {"0302": 4}
+# 接收店數上限：10 件起最多 5 間，之後每 30 件加 1 間（30–60 最多 6 間、60–90 最多 7 間……）
+_TRANSFER_RECEIVER_AUTO_CAP_FROM = 10
+_TRANSFER_RECEIVER_AUTO_BASE_CAP = 5
+_TRANSFER_RECEIVER_AUTO_CAP_STEP = 30
 _TRANSFER_RECEIVER_LIMIT_LABELS = {
     2: "集中 1–2 間（同 SKU 銷量最高的接收店）",
     4: "集中 3–4 間（同 SKU 銷量最高的接收店）",
@@ -176,17 +182,52 @@ def _validate_receiver_limit(receiver_limit: int | str | None) -> int | str | No
     return limit
 
 
-def _auto_receiver_count(total: int) -> int:
-    """按同 SKU 轉出總量決定接收店數，令每間店以 2–3 件為目標。
+def _auto_receiver_cap(total: int) -> int:
+    """自動集中模式下每個 SKU 的接收店數上限。
 
-    ≤3 件 → 1 間；4–6 件 → 2 間；7–9 件 → 3 間，如此類推
-    （即 ceil(total ÷ 3)）。件數太少時派多間只會造成每店 1 件，
-    故以 3 件為每間上限，集中出貨、減少分箱。
+    ≤9 件不設上限（由每間 2–3 件的 ceil 計算決定，即 1／2／3 間）；
+    10–30 件最多 5 間；30 件以上每 30 件加 1 間（30–60 最多 6 間、60–90 最多 7 間……），
+    避免件數越多、店數線性膨脹，出貨又要分多箱。
+    """
+    total = int(total)
+    if total < _TRANSFER_RECEIVER_AUTO_CAP_FROM:
+        return max(total, 1)
+    if total <= _TRANSFER_RECEIVER_AUTO_CAP_STEP:
+        return _TRANSFER_RECEIVER_AUTO_BASE_CAP
+    return _TRANSFER_RECEIVER_AUTO_BASE_CAP + math.ceil(
+        (total - _TRANSFER_RECEIVER_AUTO_CAP_STEP) / _TRANSFER_RECEIVER_AUTO_CAP_STEP
+    )
+
+
+def _auto_receiver_target(mch2: str = "") -> int:
+    """按 MCH2 分類決定每間接收店的目標件數（預設 3）。
+
+    ``0302 - MINIATURE`` 等小件分類可設較大的目標件數（每間 4 件），
+    令件數不多時也集中在一間店；MCH2 欄不存在時一律用預設值。
+    """
+    txt = str(mch2 or "").strip()
+    for prefix, target in _TRANSFER_RECEIVER_TARGET_BY_MCH2.items():
+        if txt.startswith(prefix):
+            return int(target)
+    return _TRANSFER_RECEIVER_AUTO_TARGET
+
+
+def _auto_receiver_count(total: int, target: int | None = None) -> int:
+    """按同 SKU 轉出總量決定接收店數。
+
+    先以每間 ``target`` 件（預設 3 件）算出所需店數，再套用件數上限
+    （見 ``_auto_receiver_cap``）：
+    ≤3 件 → 1 間；4–6 件 → 2 間；7–9 件 → 3 間；
+    10–30 件 → 最多 5 間；30–60 件 → 最多 6 間；之後每 30 件加 1 間。
     """
     total = int(total)
     if total <= 0:
         return 0
-    return max(1, math.ceil(total / _TRANSFER_RECEIVER_AUTO_TARGET))
+    per_shop = int(target or _TRANSFER_RECEIVER_AUTO_TARGET)
+    if per_shop <= 0:
+        per_shop = _TRANSFER_RECEIVER_AUTO_TARGET
+    wanted = max(1, math.ceil(total / per_shop))
+    return min(wanted, _auto_receiver_cap(total))
 
 
 # 「轉貨單」欄位分組著色（表頭底色、資料底色）：黃＝轉出店與轉貨數量、淺藍＝接收店相關欄位。
@@ -262,6 +303,7 @@ def _prepare_transfer_base(df_input: pd.DataFrame, shop_natures: list[str] | Non
         "llm_col": _resolve_column_name(_TRANSFER_LLM_COL, avail),
         "launch_col": _resolve_column_name(_TRANSFER_LAUNCH_COL, avail),
         "rp_col": _resolve_column_name(_TRANSFER_RP_COL, avail),
+        "mch2_col": _resolve_column_name("MCH2", avail),
     }
     if df.empty:
         return pd.DataFrame(), warnings, meta
@@ -287,6 +329,10 @@ def _prepare_transfer_base(df_input: pd.DataFrame, shop_natures: list[str] | Non
         "Buyer": _text_column(df, "Buyer"),
         "SKU Desc": _text_column(df, "SKU Desc"),
         "Adj. MCH1": _text_column(df, _TRANSFER_MCH1_COL),
+        "_mch2": (
+            _text_column(df, meta["mch2_col"]) if meta["mch2_col"]
+            else pd.Series("", index=df.index)
+        ),
         "Supply Source": _text_column(df, "Supply Source"),
     })
     keep = (base["_site"] != "") & (base["_sku"] != "")
@@ -778,6 +824,7 @@ def transform_p90d_transfer(
         **{
             "SKU Desc": ("SKU Desc", _first_nonblank),
             "Adj. MCH1": ("Adj. MCH1", _first_nonblank),
+            "MCH2": ("_mch2", _first_nonblank),
             "Supply Source": ("Supply Source", _first_nonblank),
         },
     ).to_dict("index")
@@ -797,6 +844,7 @@ def transform_p90d_transfer(
     cap_short_skus = 0
     cap_short_qty = 0
     for sku, sku_out in out_agg.groupby("_sku", sort=True):
+        info = sku_info.get(sku, {})
         sources = [
             (site, int(round(q)), float(s))
             for site, q, s in zip(sku_out["_site"], sku_out["qty"], sku_out["sales"])
@@ -807,9 +855,10 @@ def transform_p90d_transfer(
             pool = all_pool
         else:
             # 集中模式：只取 Sold Qty (P90D) 最高的接收店（同銷量以 Site Code 排序）；
-            # "auto" 按同 SKU 轉出總量決定店數（每間 2–3 件），整數則為固定上限
+            # "auto" 按同 SKU 轉出總量決定店數（每間 2–3 件，0302 迷你裝每間 4 件），
+            # 並受件數上限約束（10–30 件最多 5 間、之後每 30 件加 1 間）；整數則為固定上限
             take = (
-                _auto_receiver_count(total)
+                _auto_receiver_count(total, _auto_receiver_target(info.get("MCH2", "")))
                 if _is_auto_receiver(receiver_limit)
                 else int(receiver_limit)
             )
@@ -829,7 +878,6 @@ def transform_p90d_transfer(
         recv_map = {site: (sales, stock, a, c) for site, sales, stock, a, c in recv}
         sales_sum = sum(sales for _, sales, _ in pool)
         src_sales = {site: s for site, _, s in sources}
-        info = sku_info.get(sku, {})
         order = sorted(recv, key=lambda r: (-r[3], -r[1], r[0]))
         pairs = _pair_transfer([(site, q) for site, q, _ in sources], [(site, a) for site, _, _, a, _ in order])
         for from_site, to_site, qty in pairs:
@@ -1118,7 +1166,7 @@ def generate_excel_p90d_transfer(
         _logic = [
             "同 SKU 的轉出總量＝所有已選轉出店舖的 RP Type＝ND 有庫存列 Shop Stock Qty (CM) 合計，全數轉出，不設上限（即使該列仍有銷售記錄亦照轉，轉出店銷量已列於轉貨單「轉出店 Sold Qty (P90D)」欄供核對）。",
             "只有一間接收店時，全數分配給該店；有多間接收店時，按各店 Sold Qty (P90D) 的銷售比例分配（最大餘數法取整數件），力求轉出總量全數被接收。",
-            "接收店舖集中模式（可選）：「按件數自動集中」時，每個 SKU 的接收店數目按同 SKU 轉出總量決定——3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間，如此類推（即 ceil(轉出總量 ÷ 3)，令每間店以 2–3 件為目標），只取 Sold Qty (P90D) 最高的店舖（同銷量以 Site Code 排序）；分配時每間先保底 2 件，餘量再按這批店舖的銷售比例分配（件數不足時均分），確保不會出現只收 1 件的碎片；「集中 1–2 間」或「集中 3–4 間」為固定上限，按銷售比例分配；「不限」時全數有銷售記錄的 RF 接收店舖按銷售比例分配。集中後未納入的店舖不會收到該 SKU 的轉貨，轉出總量仍力求全數接收。",
+            "接收店舖集中模式（可選）：「按件數自動集中」時，每個 SKU 的接收店數目按同 SKU 轉出總量決定——3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間；10–30 件最多 5 間，30–60 件 6 間、60–90 件 7 間，之後每 30 件加 1 間（每間以 2–3 件為目標，並以件數上限封頂）。只取 Sold Qty (P90D) 最高的店舖（同銷量以 Site Code 排序）；分配時每間先保底 2 件，餘量再按這批店舖的銷售比例分配（件數不足時均分），確保不會出現只收 1 件的碎片。MCH2＝0302 - MINIATURE（迷你裝）每間以 4 件為目標，故 4 件或以下集中 1 間；MCH2 欄不存在時不套用。「集中 1–2 間」或「集中 3–4 間」為固定上限，按銷售比例分配；「不限」時全數有銷售記錄的 RF 接收店舖按銷售比例分配。集中後未納入的店舖不會收到該 SKU 的轉貨，轉出總量仍力求全數接收。",
             "接收量上限（可選）：「補到 14 日」封頂時，每間接收店最多接收其 14 日需求（Sold Qty (P90D) ÷ 90 × 14 無條件進位 − 調前庫存，最低 0，見轉貨單「接收店 14 日需求 (件)」欄）；按銷售比例分配後超出上限的餘量，會在尚有需求的接收店之間重新分配，仍未派完者列未分配（保留原店）。",
             "轉貨單配對：同 SKU 內，轉出店依 Site Code 排序，接收店依分配量由大至小排序，依序配對成「轉出店 → 接收店」行，各行數量合計與分配一致。",
             "接收店不受庫存限制（封頂模式開啟時受 14 日需求限制）；接收後庫存＝調前庫存＋分配總量。",
@@ -1138,7 +1186,8 @@ def generate_excel_p90d_transfer(
         if _is_auto_receiver(receiver_limit):
             _tips.append(
                 "已啟用按件數自動集中：每個 SKU 只集中分配予銷量最高的一批 RF 接收店"
-                "（3 件或以下 1 間、4–6 件 2 間，隨件數遞增），每間先保底 2 件，"
+                "（3 件或以下 1 間、4–6 件 2 間；10–30 件最多 5 間、之後每 30 件加 1 間），"
+                "每間以 2–3 件為目標（0302 - MINIATURE 迷你裝每間 4 件），"
                 "減少出貨要分多箱的情況；如需全數有銷售店舖接收，"
                 "請將接收店舖集中模式改為「不限」。"
             )
@@ -1170,7 +1219,7 @@ def generate_excel_p90d_transfer(
             "90 日有貨準則（Shop Stock Qty (LM)／(LLM) 欄存在時）：M-2／M-1 無貨的列 90 日窗口內非全程有貨（期間剛調入／派貨），不算真坐貨，排除轉出；90 天內新品（Launch Date）銷售尚未起步，亦排除轉出；欄不存在時該準則不生效。",
             "接收店於 RP Type 欄存在時排除 RP Type＝ND 的店舖（ND 不再補貨，調入只會形成新的積壓）；欄不存在時不檢查。",
             "只有一間接收店時，全數分配給該店；有多間接收店時，按各店 Sold Qty (P90D) 的銷售比例分配（最大餘數法取整數件），力求轉出總量全數被接收。",
-            "接收店舖集中模式：「按件數自動集中」時，每個 SKU 的接收店數目按同 SKU 轉出總量決定——3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間，如此類推（即 ceil(轉出總量 ÷ 3)，令每間店以 2–3 件為目標），只取 Sold Qty (P90D) 最高的店舖（同銷量以 Site Code 排序）；分配時每間先保底 2 件，餘量再按這批店舖的銷售比例分配（件數不足時均分），確保不會出現只收 1 件的碎片；「集中 1–2 間／3–4 間」為固定上限，按銷售比例分配；「不限」時全數有銷售記錄的店舖按銷售比例分配。集中後未納入的店舖不會收到該 SKU 的轉貨，轉出總量仍力求全數接收。",
+            "接收店舖集中模式：「按件數自動集中」時，每個 SKU 的接收店數目按同 SKU 轉出總量決定——3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間；10–30 件最多 5 間，30–60 件 6 間、60–90 件 7 間，之後每 30 件加 1 間（每間以 2–3 件為目標，並以件數上限封頂）。只取 Sold Qty (P90D) 最高的店舖（同銷量以 Site Code 排序）；分配時每間先保底 2 件，餘量再按這批店舖的銷售比例分配（件數不足時均分），確保不會出現只收 1 件的碎片。MCH2＝0302 - MINIATURE（迷你裝）每間以 4 件為目標，故 4 件或以下集中 1 間；MCH2 欄不存在時不套用。「集中 1–2 間／3–4 間」為固定上限，按銷售比例分配；「不限」時全數有銷售記錄的店舖按銷售比例分配。集中後未納入的店舖不會收到該 SKU 的轉貨，轉出總量仍力求全數接收。",
             "接收量上限（可選）：「補到 14 日」封頂時，每間接收店最多接收其 14 日需求（Sold Qty (P90D) ÷ 90 × 14 無條件進位 − 調前庫存，最低 0，見轉貨單「接收店 14 日需求 (件)」欄）；按銷售比例分配後超出上限的餘量，會在尚有需求的接收店之間重新分配，仍未派完者列未分配（保留原店）。",
             "轉貨單配對：同 SKU 內，轉出店依 Site Code 排序，接收店依分配量由大至小排序，依序配對成「轉出店 → 接收店」行，各行數量合計與分配一致。",
             "接收店不受庫存限制（封頂模式開啟時受 14 日需求限制）；接收後庫存＝調前庫存＋分配總量。",
@@ -1188,7 +1237,8 @@ def generate_excel_p90d_transfer(
         if _is_auto_receiver(receiver_limit):
             _tips.append(
                 "已啟用按件數自動集中：每個 SKU 只集中分配予銷量最高的一批接收店"
-                "（3 件或以下 1 間、4–6 件 2 間，隨件數遞增），每間以 2–3 件為目標，"
+                "（3 件或以下 1 間、4–6 件 2 間；10–30 件最多 5 間、之後每 30 件加 1 間），"
+                "每間以 2–3 件為目標（0302 - MINIATURE 迷你裝每間 4 件），"
                 "減少出貨要分多箱的情況；如需全數有銷售店舖接收，"
                 "請將接收店舖集中模式改為「不限」。"
             )

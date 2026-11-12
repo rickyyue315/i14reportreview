@@ -18,7 +18,9 @@ from openpyxl import load_workbook
 from modes.transfer_p90d import (
     _allocate_concentrated,
     _allocate_proportional,
+    _auto_receiver_cap,
     _auto_receiver_count,
+    _auto_receiver_target,
     build_mch_options,
     build_transfer_candidates,
     generate_excel_p90d_transfer,
@@ -750,7 +752,7 @@ def test_allocate_with_caps_invariants():
 # 7. 接收店舖集中模式：按件數自動集中（"auto"）
 
 def test_auto_receiver_count_formula():
-    """接收店數＝ceil(件數 ÷ 3)：≤3 件 1 間、4–6 件 2 間、7–9 件 3 間，如此類推。"""
+    """≤9 件按每間 3 件（1／2／3 間）；10–30 件最多 5 間；30 件以上每 30 件加 1 間。"""
     assert _auto_receiver_count(0) == 0
     assert _auto_receiver_count(1) == 1
     assert _auto_receiver_count(3) == 1
@@ -759,7 +761,80 @@ def test_auto_receiver_count_formula():
     assert _auto_receiver_count(7) == 3
     assert _auto_receiver_count(9) == 3
     assert _auto_receiver_count(10) == 4
-    assert _auto_receiver_count(30) == 10
+    assert _auto_receiver_count(13) == 5
+    assert _auto_receiver_count(16) == 5       # 上限 5 間（非 ceil(16/3)=6）
+    assert _auto_receiver_count(30) == 5
+    assert _auto_receiver_count(31) == 6
+    assert _auto_receiver_count(60) == 6
+    assert _auto_receiver_count(61) == 7
+    assert _auto_receiver_count(90) == 7
+    assert _auto_receiver_count(91) == 8
+
+
+def test_auto_receiver_cap_steps():
+    """件數上限：10–30 件 5 間、30–60 件 6 間、61–90 件 7 間，之後每 30 件加 1 間。"""
+    assert _auto_receiver_cap(9) == 9
+    assert _auto_receiver_cap(10) == 5
+    assert _auto_receiver_cap(30) == 5
+    assert _auto_receiver_cap(31) == 6
+    assert _auto_receiver_cap(60) == 6
+    assert _auto_receiver_cap(61) == 7
+    assert _auto_receiver_cap(90) == 7
+    assert _auto_receiver_cap(91) == 8
+    assert _auto_receiver_cap(120) == 8
+
+
+def test_auto_receiver_target_by_mch2():
+    """0302 - MINIATURE 每間 4 件；0303 - MINIATURE SET 及其他分類維持 3 件。"""
+    assert _auto_receiver_target("0302 - MINIATURE") == 4
+    assert _auto_receiver_target(" 0302 - MINIATURE ") == 4
+    assert _auto_receiver_target("0303 - MINIATURE SET") == 3
+    assert _auto_receiver_target("") == 3
+    assert _auto_receiver_target(None) == 3
+
+
+def test_auto_concentrate_miniature_0302_four_per_receiver():
+    """0302 - MINIATURE：4 件集中 1 間、8 件 2 間、9 件 3 間、13 件 4 間（每間 4 件）。"""
+    for qty, expected in (
+        (4, {"S02": 4}),
+        (8, {"S02": 4, "S03": 4}),
+        (9, {"S02": 3, "S03": 3, "S04": 3}),
+        (13, {"S02": 4, "S03": 3, "S04": 3, "S05": 3}),
+    ):
+        df = _df([
+            _row("S01", sku=1, sales=0, stock=qty, mch2="0302 - MINIATURE"),
+            _row("S02", sku=1, sales=9, stock=0, mch2="0302 - MINIATURE"),
+            _row("S03", sku=1, sales=7, stock=0, mch2="0302 - MINIATURE"),
+            _row("S04", sku=1, sales=5, stock=0, mch2="0302 - MINIATURE"),
+            _row("S05", sku=1, sales=3, stock=0, mch2="0302 - MINIATURE"),
+            _row("S06", sku=1, sales=1, stock=0, mch2="0302 - MINIATURE"),
+        ])
+        plan, _, _, _, _, stats, _ = transform_p90d_transfer(df, ["S01"], receiver_limit="auto")
+        got = {r["接收 Site Code"]: int(r["轉貨數量 (件)"]) for _, r in plan.iterrows()}
+        assert got == expected, (qty, got)
+        assert stats["alloc_qty"] == qty and stats["unalloc_qty"] == 0
+
+
+def test_auto_concentrate_miniature_set_0303_keeps_three_per_receiver():
+    """0303 - MINIATURE SET 不在個別規則內：4 件仍分 2 間。"""
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=4, mch2="0303 - MINIATURE SET"),
+        _row("S02", sku=1, sales=9, stock=0, mch2="0303 - MINIATURE SET"),
+        _row("S03", sku=1, sales=7, stock=0, mch2="0303 - MINIATURE SET"),
+    ])
+    plan, _, _, _, _, _, _ = transform_p90d_transfer(df, ["S01"], receiver_limit="auto")
+    assert {r["接收 Site Code"]: int(r["轉貨數量 (件)"]) for _, r in plan.iterrows()} == {"S02": 2, "S03": 2}
+
+
+def test_auto_concentrate_without_mch2_column_unchanged():
+    """來源檔缺 MCH2 欄時，0302 規則不生效，沿用每間 3 件。"""
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=4),
+        _row("S02", sku=1, sales=9, stock=0),
+        _row("S03", sku=1, sales=7, stock=0),
+    ])
+    plan, _, _, _, _, _, _ = transform_p90d_transfer(df, ["S01"], receiver_limit="auto")
+    assert {r["接收 Site Code"]: int(r["轉貨數量 (件)"]) for _, r in plan.iterrows()} == {"S02": 2, "S03": 2}
 
 
 def test_receiver_limit_label_auto():
@@ -906,3 +981,37 @@ def test_auto_concentrate_excel_guide_wording():
     assert any("接收店舖集中模式" in t for t in texts)
     assert any("按件數自動集中" in t for t in texts)
     assert any("3 件或以下集中 1 間" in t for t in texts)
+
+
+# 8. 來源檔尾部合計列（Column A 寫 Total）不得計入
+
+def test_total_footer_row_excluded_from_candidates_and_plan():
+    """匯出檔的 Total 列（Column A 寫 Total，其餘欄位沿用最後一筆的 Site Code／SKU，
+    庫存為全表合計）不得當成一間店舖或一個 SKU 計入候選與轉貨計畫。"""
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=3, stock=0),
+        _row("S02", sku=1, sales=0, stock=22471),  # Total 列：與 S02 同店同 SKU
+    ])
+    df.loc[df.index[-1], "Item_Shop"] = "Total"
+    cand = build_transfer_candidates(df)
+    assert list(cand["Site Code"]) == ["S01"]
+    assert int(cand.iloc[0]["可轉出庫存 (件)"]) == 5
+    # 若 Total 列未被剔除，會與 S02 真實列形成重複而停止計算
+    plan, _, _, sku_df, _, stats, _ = transform_p90d_transfer(df, ["S01"])
+    assert _lines(plan) == {("S01", "1", "S02"): 5}
+    assert stats["out_qty"] == 5 and stats["out_skus"] == 1
+    assert len(sku_df[sku_df["Brand"] != "總計"]) == 1
+
+
+def test_applied_filters_footer_row_excluded():
+    """Applied filters 註腳列（只有 Item_Shop 有文字、Buyer 空白）亦不計入。"""
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=3, stock=0),
+        {"Item_Shop": "Applied filters: Brand is A", "Buyer": None, "Site Code": "S02",
+         "SKU": 1, "Shop Stock Qty (CM)": 999, "Sold Qty (P90D)": 0},
+    ])
+    plan, _, _, _, _, stats, _ = transform_p90d_transfer(df, ["S01"])
+    assert _lines(plan) == {("S01", "1", "S02"): 5}
+    assert stats["out_qty"] == 5

@@ -63,6 +63,7 @@ from transformer import (
     build_mch_breakdown,
     transform_nd_transfer, generate_excel_nd_transfer, build_nd_transfer_candidates, receiver_limit_label,
     _clean_dataframe, _cached_safe_sku_series, _safe_numeric,
+    count_valid_source_rows,
     _build_op90d_by_sku, _build_op90d_by_buyer,
     _build_op90d_top_no_sales_sku,
     _HYBRID_FULL_SAFETY_SHEET,
@@ -320,8 +321,8 @@ MODE_DESCRIPTIONS = {
     "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
     "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 及 (CM) 須大於 0；LLM 欄存在時（2026-10-26 起來源報表）另須 (LLM) 大於 0——三個月快照皆有貨才算 90 日真坐貨），分類維度可切換 MAKE UP／Item Class／Adj. MCH1，或交叉維度 MAKE UP × Item Class／MAKE UP × Adj. MCH1（按主分類逐列交叉次分類）；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈，另按 SKU 統計無銷售店舖數、店舖總數（分母）及佔比，並列出最多店舖無銷售的 Top 20 SKU；另按 Buyer 統計出現店舖數。",
     "P90D 0 Sales Review(個別店舖)": "供個別店舖查閱自身 P90D 0 Sales 情況（Shop Stock Qty (LM) 及 (CM) 須大於 0；LLM 欄存在時（2026-10-26 起來源報表）另須 (LLM) 大於 0——三個月快照皆有貨才算 90 日真坐貨），分類固定以 MAKE UP 分類統計；輸出各店全部 SKU 明細（ALL SKU，包括 MAKE UP 與 Non-MAKE UP，不設列數上限與店舖回覆欄，按庫存由大至小排序），以及 Shop Nature 與 OM 分佈，另按 SKU 統計出現店舖數、店舖總數（分母）及佔比，並按 Buyer 統計出現店舖數。",
-    "P90D 0 Sales Review(轉貨模式)": "先指定轉出店舖（0 Sales 且有庫存），其 0 Sales 有庫存列全數轉出，分配予同 SKU 有銷售記錄的店舖（不分 OM；預設按件數自動集中——3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間，每間以 2–3 件為目標，減少每店只收 1 件與出貨分箱，可改為不限／固定 1–2 間／3–4 間；轉出總量力求全數接收）。",
-    "ND SKU with Stock Review(轉貨模式)": "先指定轉出店舖（RP Type＝ND 且有庫存），其 ND 有庫存列全數轉出，分配予同 SKU 有銷售記錄（Sold Qty (P90D) > 0）的 RF 店舖（不分 OM；預設按件數自動集中——3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間，每間以 2–3 件為目標，減少每店只收 1 件與出貨分箱，可改為不限／固定 1–2 間／3–4 間；轉出總量力求全數接收）。",
+    "P90D 0 Sales Review(轉貨模式)": "先指定轉出店舖（0 Sales 且有庫存），其 0 Sales 有庫存列全數轉出，分配予同 SKU 有銷售記錄的店舖（不分 OM；預設按件數自動集中——3 件或以下集中 1 間、4–6 件 2 間，10–30 件最多 5 間、之後每 30 件加 1 間，0302 - MINIATURE 每間 4 件，減少每店只收 1 件與出貨分箱，可改為不限／固定 1–2 間／3–4 間；轉出總量力求全數接收）。",
+    "ND SKU with Stock Review(轉貨模式)": "先指定轉出店舖（RP Type＝ND 且有庫存），其 ND 有庫存列全數轉出，分配予同 SKU 有銷售記錄（Sold Qty (P90D) > 0）的 RF 店舖（不分 OM；預設按件數自動集中——3 件或以下集中 1 間、4–6 件 2 間，10–30 件最多 5 間、之後每 30 件加 1 間，0302 - MINIATURE 每間 4 件，減少每店只收 1 件與出貨分箱，可改為不限／固定 1–2 間／3–4 間；轉出總量力求全數接收）。",
     "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
     "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
@@ -786,6 +787,11 @@ if uploaded_file is not None:
     # 顯示上傳檔案基本資訊與預覽卡片
     st.markdown('<div class="section-banner"><h3>📊 來源檔案成功載入</h3></div>', unsafe_allow_html=True)
     
+    _valid_rows, _excluded_rows = count_valid_source_rows(df_input)
+    _row_desc = (
+        f"原始 {len(df_input):,} 行｜已剔除 {_excluded_rows:,} 行合計／註腳與空白列"
+        if _excluded_rows else f"原始 {len(df_input):,} 行，全部為明細列"
+    )
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown(f"""
@@ -798,9 +804,9 @@ if uploaded_file is not None:
     with col2:
         st.markdown(f"""
         <div class="metric-card" style="border-left-color: #3B82F6;">
-            <div class="metric-title">總資料行數</div>
-            <div class="metric-value">{len(df_input):,}</div>
-            <div class="metric-desc">原始資料列數 (Rows)</div>
+            <div class="metric-title">有效資料行數</div>
+            <div class="metric-value">{_valid_rows:,}</div>
+            <div class="metric-desc">{_row_desc}</div>
         </div>
         """, unsafe_allow_html=True)
     with col3:
@@ -831,6 +837,11 @@ if uploaded_file is not None:
     with st.expander("🔍 預覽前 20 筆原始資料", expanded=False):
         st.dataframe(df_input.head(20), width='stretch')
         st.caption(f"目前顯示第 1 至第 20 筆明細（總共 {len(df_input):,} 筆原始資料）")
+        if _excluded_rows:
+            st.caption(
+                f"ℹ️ 表格尾部的「Total」合計列與「Applied filters」註腳已自動剔除"
+                f"（共 {_excluded_rows:,} 行），不參與任何計算。"
+            )
 
     # P0：全域匯出選項（各模式共用，略過 RAW 明細可省三至七成匯出時間）
     # RAW 明細轉化（含／不含 Value）的產出即為 RAW 工作表、店舖精簡SKU模式的產出即為 Export 明細，不提供略過選項
@@ -2932,16 +2943,19 @@ if uploaded_file is not None:
                 index=0,
                 horizontal=True,
                 key="op90dt_receiver_limit_mode",
-                help="「按件數自動集中」：同 SKU 轉出 3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間，如此類推，"
-                     "每間以 2–3 件為目標（每間先保底 2 件，餘量按銷售比例分配），只取 Sold Qty (P90D) 最高的店舖"
-                     "（同銷量以 Site Code 排序），減少每店只收到 1 件、出貨要分多箱的情況。"
+                help="「按件數自動集中」：同 SKU 轉出 3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間；"
+                     "10–30 件最多 5 間，之後每 30 件加 1 間（30–60 件 6 間、60–90 件 7 間）。"
+                     "每間以 2–3 件為目標；MCH2＝0302 - MINIATURE 迷你裝每間 4 件，故 4 件或以下集中 1 間。"
+                     "只取 Sold Qty (P90D) 最高的店舖（同銷量以 Site Code 排序），每間先保底 2 件、餘量按銷售比例分配，"
+                     "減少每店只收到 1 件、出貨要分多箱的情況。"
                      "「集中 1–2 間／3–4 間」為固定上限；「不限」沿用原有分配：全數有銷售記錄的店舖按銷售比例分配。",
             )
             _op90dt_receiver_limit = _op90dt_receiver_options[_op90dt_receiver_choice]
             if _op90dt_receiver_limit == "auto":
                 st.caption(
-                    "目前設定 → 按件數自動集中：3 件或以下 1 間、4–6 件 2 間、7–9 件 3 間（如此類推）；"
-                    "只取銷量最高的店舖，每間先保底 2 件，餘量按銷售比例分配，力求出貨集中、減少分箱。"
+                    "目前設定 → 按件數自動集中：3 件或以下 1 間、4–6 件 2 間；10–30 件最多 5 間、之後每 30 件加 1 間；"
+                    "0302 - MINIATURE 每間 4 件。只取銷量最高的店舖，每間先保底 2 件、餘量按銷售比例分配，"
+                    "力求出貨集中、減少分箱。"
                 )
             elif _op90dt_receiver_limit is None:
                 st.caption("目前設定 → 不限：全數有銷售記錄的接收店舖按銷售比例分配（轉出總量仍力求全數接收）。")
@@ -2991,16 +3005,19 @@ if uploaded_file is not None:
                 index=0,
                 horizontal=True,
                 key="ndtr_receiver_limit_mode",
-                help="「按件數自動集中」：同 SKU 轉出 3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間，如此類推，"
-                     "每間以 2–3 件為目標（每間先保底 2 件，餘量按銷售比例分配），只取 Sold Qty (P90D) 最高的 RF 店舖"
-                     "（同銷量以 Site Code 排序），減少每店只收到 1 件、出貨要分多箱的情況。"
+                help="「按件數自動集中」：同 SKU 轉出 3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間；"
+                     "10–30 件最多 5 間，之後每 30 件加 1 間（30–60 件 6 間、60–90 件 7 間）。"
+                     "每間以 2–3 件為目標；MCH2＝0302 - MINIATURE 迷你裝每間 4 件，故 4 件或以下集中 1 間。"
+                     "只取 Sold Qty (P90D) 最高的 RF 店舖（同銷量以 Site Code 排序），每間先保底 2 件、餘量按銷售比例分配，"
+                     "減少每店只收到 1 件、出貨要分多箱的情況。"
                      "「集中 1–2 間／3–4 間」為固定上限；「不限」沿用原有分配：全數有銷售記錄的 RF 店舖按銷售比例分配。",
             )
             _ndtr_receiver_limit = _ndtr_receiver_options[_ndtr_receiver_choice]
             if _ndtr_receiver_limit == "auto":
                 _ndtr_receiver_caption = (
-                    "目前設定 → 按件數自動集中：3 件或以下 1 間、4–6 件 2 間、7–9 件 3 間（如此類推）；"
-                    "只取銷量最高的 RF 店舖，每間先保底 2 件，餘量按銷售比例分配，力求出貨集中、減少分箱。"
+                    "目前設定 → 按件數自動集中：3 件或以下 1 間、4–6 件 2 間；10–30 件最多 5 間、之後每 30 件加 1 間；"
+                    "0302 - MINIATURE 每間 4 件。只取銷量最高的 RF 店舖，每間先保底 2 件、餘量按銷售比例分配，"
+                    "力求出貨集中、減少分箱。"
                 )
             elif _ndtr_receiver_limit is None:
                 _ndtr_receiver_caption = (

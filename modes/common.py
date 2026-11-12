@@ -29,6 +29,7 @@ __all__ = [
     "_SAFETY_DISPLAY_NAMES",
     "_auto_width",
     "_clean_dataframe",
+    "count_valid_source_rows",
     "_compute_raw_extra_columns",
     "_compute_raw_extra_columns_impl",
     "_cached_shop_names",
@@ -567,15 +568,63 @@ def _extract_shop_name(item_shop, site_code) -> str:
 
 
 
+# 匯出工具在明細尾部追加的合計／註腳列：這些列的 Column A 通常是「Total」或「Applied filters: …」，
+# 但其餘欄位仍可能帶有數值（例如全表庫存合計、最後一筆的 Site Code／SKU），
+# 必須在任何統計前剔除，否則會被當成一間店舖／一個 SKU 計入。
+# 品項欄只認純「Total」「Grand Total」（可帶冒號）與「Applied filters」，避免把
+# 「Total Care 洗髮水」這類以 Total 開頭的商品名誤刪；Buyer 欄沿用原有寬鬆比對。
+_FOOTER_TEXT_RE = re.compile(
+    r"^(?:grand\s+)?total\s*[:：]?\s*$|^applied\s+filters", re.IGNORECASE
+)
+
+
+def _footer_row_mask(df: pd.DataFrame) -> pd.Series:
+    """標記匯出檔尾部的合計／註腳列（True＝應剔除）。
+
+    檢查 ``Buyer``、``Item_Shop`` 及表格第一欄（Excel Column A）：``Buyer`` 以
+    「Total」／「Applied filters」開頭即剔除；品項欄與第一欄只認純合計值。
+    第一欄的檢查不依賴欄名——匯出工具改掉第一欄標題（不再叫 Item_Shop）時
+    仍能剔除；該欄為數值時不會命中。
+    """
+    mask = pd.Series(False, index=df.index, dtype=bool)
+    if "Buyer" in df.columns:
+        text = df["Buyer"].astype(str).str.strip().str.lower()
+        mask = mask | text.str.startswith(("total", "applied filters"))
+    _item_cols = ["Item_Shop"] if "Item_Shop" in df.columns else []
+    if len(df.columns) and df.columns[0] not in set(_item_cols) | {"Buyer"}:
+        _item_cols.append(df.columns[0])
+    for col in _item_cols:
+        text = df[col].astype(str).str.strip()
+        mask = mask | text.str.match(_FOOTER_TEXT_RE).fillna(False)
+    return mask
+
+
+def count_valid_source_rows(df_input: pd.DataFrame) -> tuple[int, int]:
+    """回傳 (有效明細列數, 已剔除列數)，供介面顯示。
+
+    有效＝剔除尾部合計／註腳列、「117 - Marketing」列與 ``Buyer`` 空白列後，
+    與 ``_clean_dataframe`` 同一準則（不含使用者自選的 Shop Nature 篩選）。
+    """
+    total = len(df_input)
+    if total == 0:
+        return 0, 0
+    mask = _footer_row_mask(df_input)
+    if "Buyer" in df_input.columns:
+        buyer = df_input["Buyer"]
+        mask = mask | buyer.isna()
+        mask = mask | (buyer.astype(str).str.strip() == "117 - Marketing")
+    valid = int((~mask).sum())
+    return valid, total - valid
+
+
 def _clean_dataframe(df_input: pd.DataFrame, shop_natures: list[str] | None = None, progress_callback=None) -> pd.DataFrame:
-    df = _standardize_safety_column(df_input).dropna(subset=["Buyer"])
+    df = _standardize_safety_column(df_input)
+    # 先剔除尾部合計／註腳列，再處理 Buyer 空白列：Total 列的 Buyer 可能有值，
+    # 只靠 dropna 不足以排除，且其餘欄位仍帶有全表合計數值
+    df = df[~_footer_row_mask(df)]
+    df = df.dropna(subset=["Buyer"])
     if progress_callback:
         progress_callback(0.1, "清理資料中...")
-    _footer_mask = df["Buyer"].astype(str).str.strip().str.lower().str.startswith(("total", "applied filters"))
-    if "Item_Shop" in df.columns:
-        _item_shop_mask = df["Item_Shop"].astype(str).str.strip().str.lower().str.startswith("total")
-        _footer_mask = _footer_mask | _item_shop_mask
-    df = df[~_footer_mask]
     df = df[df["Buyer"].astype(str).str.strip() != "117 - Marketing"]
     if shop_natures is not None and "Shop Nature" in df.columns:
         sn_col = df["Shop Nature"].fillna("").astype(str).str.strip().str.lower()

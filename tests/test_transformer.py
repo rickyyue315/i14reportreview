@@ -21,6 +21,7 @@ from transformer import (
     _add_nd_recommendation_columns,
     _build_combined_shop_issues,
     _clean_dataframe,
+    count_valid_source_rows,
     transform_nd,
     transform_carry,
     _build_carry_dashboard,
@@ -1259,3 +1260,76 @@ def test_combined_guide_sheet_defaults_without_stats():
     assert pairs["Safety Qty 計算模式"].startswith("只可增加")
     assert pairs["Overstock Rate"].startswith("Tourist 30%／Mix 40%／Non Tourist 50%")
     assert pairs["分類維度"].startswith("Shop Nature（")
+
+
+# 來源檔尾部合計／註腳列（Total、Applied filters）一律剔除
+
+def _total_row(**kw):
+    """模擬匯出工具的 Total 列：Column A 寫 Total，其餘欄位仍帶最後一筆的值。"""
+    row = {
+        "Buyer": "B1",
+        "Brand": "BrandA",
+        "SKU": "1001",
+        "Site Code": "S02",
+        "Item_Shop": "Total",
+        "Shop Stock Status": "Normal",
+        "Adj. Safety Stock": 5,
+        "Shop Monthly Sold Qty (P90D)": 10,
+        "Sold Qty (CM - MTD)": 0.0,
+        "Shop Stock Qty (CM)": 22471.0,
+        "Shop Nature": "Mix",
+        "RP Type": "ND",
+    }
+    row.update(kw)
+    return row
+
+
+def test_clean_dataframe_drops_total_row_with_buyer_value():
+    """Total 列的 Buyer 有值（非空白）時仍須剔除，不能只靠 dropna。"""
+    df = _df([_base_row(), _total_row()])
+    out = _clean_dataframe(df)
+    assert len(out) == 1
+    assert (out["Item_Shop"].astype(str).str.strip() != "Total").all()
+
+
+def test_clean_dataframe_drops_total_row_when_first_column_renamed():
+    """第一欄不叫 Item_Shop 時，仍以 Column A 的 Total 判定剔除。"""
+    df = _df([_base_row(), _total_row()]).rename(columns={"Item_Shop": "Item"})
+    df = df[["Item"] + [c for c in df.columns if c != "Item"]]
+    out = _clean_dataframe(df)
+    assert len(out) == 1
+    assert str(out.iloc[0]["Item"]) != "Total"
+
+
+def test_clean_dataframe_drops_applied_filters_footer():
+    """Applied filters 註腳（只有第一欄有文字）亦剔除。"""
+    footer = {"Item_Shop": "Applied filters://nBrand is A, B", "Buyer": None}
+    df = _df([_base_row(), footer])
+    out = _clean_dataframe(df)
+    assert len(out) == 1
+
+
+def test_clean_dataframe_keeps_normal_first_column_values():
+    """第一欄的正常值（品牌、貨品名稱）不得被誤刪。"""
+    df = _df([
+        _base_row(Item_Shop="Total Care Shampoo-S01"),
+        _base_row(Item_Shop="Totalcare 保濕霜-S02"),
+    ])
+    out = _clean_dataframe(df)
+    assert len(out) == 2
+
+
+def test_count_valid_source_rows():
+    """有效行數＝剔除 Total／註腳／Buyer 空白後；已剔除數供介面顯示。"""
+    df = _df([
+        _base_row(),
+        _base_row(),
+        _total_row(),
+        {"Item_Shop": "Applied filters://nBrand is A", "Buyer": None},
+        {"Item_Shop": None, "Buyer": None},
+    ])
+    valid, excluded = count_valid_source_rows(df)
+    assert valid == 2 and excluded == 3
+    assert len(_clean_dataframe(df)) == 2
+    # 全空表不拋錯
+    assert count_valid_source_rows(pd.DataFrame()) == (0, 0)
