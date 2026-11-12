@@ -297,7 +297,7 @@ st.markdown(f"""
 st.markdown("""
 <div class="steps-bar">
     <div class="step"><span class="n">1</span><b>選擇模式</b><small>下方向常用模式開始</small></div>
-    <div class="step"><span class="n">2</span><b>上傳檔案</b><small>.xlsx，上限 200MB</small></div>
+    <div class="step"><span class="n">2</span><b>上傳檔案</b><small>.xlsx，上限 300MB</small></div>
     <div class="step"><span class="n">3</span><b>設定參數</b><small>只顯示與模式相關選項</small></div>
     <div class="step"><span class="n">4</span><b>執行並下載</b><small>儀表板預覽＋一鍵匯出</small></div>
 </div>
@@ -696,7 +696,7 @@ uploaded_file = st.file_uploader(
     "📂 上傳 By SKUxShop 原始 Excel 檔案 (.xlsx)",
     type=["xlsx"],
     key=f"src_uploader_{st.session_state.get('uploader_reset', 0)}",
-    help="支援標準 Excel (.xlsx) 格式，檔案上限 200MB，最佳化支援 5 萬行以上大數據處理"
+    help="支援標準 Excel (.xlsx) 格式，檔案上限 300MB；店舖精簡SKU模式(指定店舖) 已針對 80 萬行大數據優化"
 )
 
 # 7. 處理上傳的檔案

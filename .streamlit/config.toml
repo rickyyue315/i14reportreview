@@ -1,5 +1,6 @@
 [server]
-maxUploadSize = 200
+# 店舖精簡SKU模式(指定店舖) 支援大檔：80 萬行 By SKUxShop 約 200–220MB，預留至 300MB
+maxUploadSize = 300
 
 [theme]
 primaryColor = "#0284c7"

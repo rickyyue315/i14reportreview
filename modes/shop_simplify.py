@@ -544,16 +544,29 @@ def transform_shop_simplify_site(
     if not site:
         raise ValueError("未提供指定店舖（Site Code），無法執行指定店舖模式。")
 
-    if progress_callback:
-        progress_callback(0.02, "整理店舖×SKU 明細...")
-    df, warnings = transform_shop_simplify(df_input, progress_callback=progress_callback, shop_natures=None)
+    missing = validate_input(df_input)
+    if missing:
+        raise ValueError(f"缺少必需欄位: {', '.join(missing)}")
 
-    avail = set(df.columns)
+    avail = set(df_input.columns)
     site_col = _resolve_column_name("Site Code", avail)
     if site_col is None:
         raise ValueError("來源檔案缺少「Site Code」，無法指定店舖。")
+    sku_col = _resolve_column_name("SKU", avail)
+    sold_col = _resolve_column_name("Sold Qty (P90D)", avail)
+    if sku_col is None or sold_col is None:
+        raise ValueError("來源檔案缺少「SKU」或「Sold Qty (P90D)」，無法計算 Top 80%。")
+    sst_col = _resolve_column_name("Adj. SST", avail)
+    nature_col = _resolve_column_name("Shop Nature", avail)
 
-    sites = df[site_col].fillna("").astype(str).str.strip()
+    if progress_callback:
+        progress_callback(0.02, "清理來源資料（全表）...")
+    # 全表只做向量化清理：逐列 Item_Shop 解析留到篩選店舖後才做，
+    # 80 萬行時可避免對全表逐列解析與排序，大幅節省時間與記憶體。
+    df_clean = _clean_dataframe(df_input, shop_natures=None, progress_callback=progress_callback)
+
+    warnings: list[str] = []
+    sites = df_clean[site_col].fillna("").astype(str).str.strip()
     exact = sites == site
     if exact.any():
         matched_site = site
@@ -567,27 +580,84 @@ def transform_shop_simplify_site(
         matched_site = str(sites[case_insensitive].iloc[0]).strip()
         warnings.append(f"指定店舖「{site}」按大小寫不敏感比對為「{matched_site}」，以下按此店舖計算。")
 
-    shop_df = df[sites == matched_site].copy()
-    if shop_df.empty:
+    shop_raw = df_clean[sites == matched_site].copy()
+    if shop_raw.empty:
         raise ValueError(f"指定店舖「{matched_site}」在清理後沒有資料列，無法計算 Top 80%。")
 
-    sku_col = _resolve_column_name("SKU", avail)
-    sold_col = _resolve_column_name("Sold Qty (P90D)", avail)
-    if sku_col is None or sold_col is None:
-        raise ValueError("來源檔案缺少「SKU」或「Sold Qty (P90D)」，無法計算 Top 80%。")
-
-    if progress_callback:
-        progress_callback(0.78, f"計算 {matched_site} 的 Top 80%（按 Adj. SST 分類）...")
-    shop_sku = _cached_safe_sku_series(shop_df[sku_col]).astype(str).str.strip()
-    shop_qty = _safe_numeric(shop_df[sold_col])
-
-    # Top 80% 以 Adj. SST 分類為母體：每個分類各自累計，分類之間不互相擠佔
-    sst_col = _resolve_column_name("Adj. SST", avail)
     if sst_col is None:
         warnings.append(
             "來源檔案缺少「Adj. SST」，Top 80% 未能按 Adj. SST 分類，"
             "改以全店／全 Nature 單一分組計算。"
         )
+
+    # ── 同 Shop Nature 的 Top 80%：先在清理後全表按 (Adj. SST, SKU) 算好，
+    #    稍後映射到指定店舖的列；其他 Nature 不計入母體 ──
+    nature_available = False
+    nature_value = ""
+    nature_keys: set[tuple[str, str]] = set()
+    nature_shop_count = 0
+    nature_total = 0.0
+    if nature_col is None:
+        warnings.append(
+            "來源檔案缺少「Shop Nature」，未能判定「"
+            f"{_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN}」，該欄留空。"
+        )
+    else:
+        row_natures = shop_raw[nature_col].fillna("").astype(str).str.strip()
+        row_natures = row_natures[row_natures != ""]
+        if row_natures.empty:
+            warnings.append(
+                f"指定店舖「{matched_site}」的 Shop Nature 空白，未能判定「"
+                f"{_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN}」，該欄留空。"
+            )
+        else:
+            nature_value = str(row_natures.mode().iloc[0])
+            nature_available = True
+            if row_natures.nunique() > 1:
+                warnings.append(
+                    f"指定店舖「{matched_site}」的 Shop Nature 有多個值"
+                    f"（{'、'.join(sorted(row_natures.unique()))}），同 Nature 判定以「{nature_value}」計算。"
+                )
+
+            nature_series = df_clean[nature_col].fillna("").astype(str).str.strip()
+            nature_df = df_clean[nature_series == nature_value]
+            nature_sku = _cached_safe_sku_series(nature_df[sku_col]).astype(str).str.strip()
+            nature_qty = _safe_numeric(nature_df[sold_col])
+            if sst_col is None:
+                nature_sst = pd.Series("(全部)", index=nature_df.index)
+            else:
+                nature_sst = nature_df[sst_col].fillna("").astype(str).str.strip()
+                nature_sst = nature_sst.mask(nature_sst == "", "(空白)")
+            nature_keys = _shop_simplify_top80_keys(nature_sst, nature_sku, nature_qty)
+
+            nature_sites = nature_df[site_col].fillna("").astype(str).str.strip()
+            nature_sites = nature_sites[nature_sites != ""]
+            nature_shop_count = int(nature_sites.nunique())
+            nature_total = float(nature_qty.sum())
+            del nature_df, nature_series, nature_sku, nature_qty, nature_sst, nature_sites
+
+    # 全表清理結果只留到此處，及早釋放（80 萬行可省數 GB）
+    del df_clean, sites
+    gc.collect()
+
+    def _site_progress(pct, msg):
+        if progress_callback:
+            progress_callback(0.2 + 0.65 * float(pct), msg)
+
+    if progress_callback:
+        progress_callback(0.2, f"整理 {matched_site} 的店舖×SKU 明細...")
+    shop_df, base_warnings = transform_shop_simplify(
+        shop_raw,
+        progress_callback=_site_progress if progress_callback else None,
+        shop_natures=None,
+    )
+    warnings = list(base_warnings) + warnings
+
+    if progress_callback:
+        progress_callback(0.88, f"計算 {matched_site} 的 Top 80%（按 Adj. SST 分類）...")
+    shop_sku = _cached_safe_sku_series(shop_df[sku_col]).astype(str).str.strip()
+    shop_qty = _safe_numeric(shop_df[sold_col])
+    if sst_col is None:
         shop_sst = pd.Series("(全部)", index=shop_df.index)
     else:
         shop_sst = shop_df[sst_col].fillna("").astype(str).str.strip()
@@ -599,69 +669,29 @@ def transform_shop_simplify_site(
         index=shop_df.index,
         dtype=bool,
     )
+    nature_flags = pd.Series(
+        [(group, sku) in nature_keys for group, sku in zip(shop_sst, shop_sku)]
+        if nature_available else False,
+        index=shop_df.index,
+        dtype=bool,
+    )
 
     if float(shop_qty.sum()) <= 0:
         warnings.append(
             f"指定店舖「{matched_site}」的 Sold Qty (P90D) 合計為 0，"
             f"「{_shop_simplify_site_top80_column(matched_site)}」全部標示為「{_SHOP_SIMPLIFY_TOP80_NO}」。"
         )
-
-    # ── 同 Shop Nature 的 Top 80%（以來源檔內同 Nature 全部店舖的 SKU 銷量加總為母體）──
-    nature_available = False
-    nature_value = ""
-    nature_col = _resolve_column_name("Shop Nature", avail)
-    if nature_col is None:
-        warnings.append(
-            "來源檔案缺少「Shop Nature」，未能判定「"
-            f"{_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN}」，該欄留空。"
-        )
-        nature_flags = pd.Series(False, index=shop_df.index)
-    else:
-        row_natures = shop_df[nature_col].fillna("").astype(str).str.strip()
-        row_natures = row_natures[row_natures != ""]
-        if row_natures.empty:
+    if nature_available:
+        if nature_shop_count <= 1:
             warnings.append(
-                f"指定店舖「{matched_site}」的 Shop Nature 空白，未能判定「"
-                f"{_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN}」，該欄留空。"
+                f"同 Shop Nature「{nature_value}」在來源檔只有 1 間店舖（即指定店舖），"
+                f"「{_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN}」與店舖 Top 80% 結果相同。"
             )
-            nature_flags = pd.Series(False, index=shop_df.index)
-        else:
-            nature_value = str(row_natures.mode().iloc[0])
-            nature_available = True
-            if row_natures.nunique() > 1:
-                warnings.append(
-                    f"指定店舖「{matched_site}」的 Shop Nature 有多個值"
-                    f"（{'、'.join(sorted(row_natures.unique()))}），同 Nature 判定以「{nature_value}」計算。"
-                )
-
-            nature_series = df[nature_col].fillna("").astype(str).str.strip()
-            nature_df = df[nature_series == nature_value]
-            nature_sku = _cached_safe_sku_series(nature_df[sku_col]).astype(str).str.strip()
-            nature_qty = _safe_numeric(nature_df[sold_col])
-            if sst_col is None:
-                nature_sst = pd.Series("(全部)", index=nature_df.index)
-            else:
-                nature_sst = nature_df[sst_col].fillna("").astype(str).str.strip()
-                nature_sst = nature_sst.mask(nature_sst == "", "(空白)")
-            nature_keys = _shop_simplify_top80_keys(nature_sst, nature_sku, nature_qty)
-            nature_flags = pd.Series(
-                [(group, sku) in nature_keys for group, sku in zip(shop_sst, shop_sku)],
-                index=shop_df.index,
-                dtype=bool,
+        if nature_total <= 0:
+            warnings.append(
+                f"同 Shop Nature「{nature_value}」的 Sold Qty (P90D) 合計為 0，"
+                f"「{_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN}」全部標示為「{_SHOP_SIMPLIFY_TOP80_NO}」。"
             )
-
-            nature_sites = nature_df[site_col].fillna("").astype(str).str.strip()
-            nature_sites = nature_sites[nature_sites != ""]
-            if nature_sites.nunique() <= 1:
-                warnings.append(
-                    f"同 Shop Nature「{nature_value}」在來源檔只有 1 間店舖（即指定店舖），"
-                    f"「{_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN}」與店舖 Top 80% 結果相同。"
-                )
-            if float(nature_qty.sum()) <= 0:
-                warnings.append(
-                    f"同 Shop Nature「{nature_value}」的 Sold Qty (P90D) 合計為 0，"
-                    f"「{_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN}」全部標示為「{_SHOP_SIMPLIFY_TOP80_NO}」。"
-                )
 
     site_top80_column = _shop_simplify_site_top80_column(matched_site)
     shop_df[site_top80_column] = np.where(shop_flags, _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO)

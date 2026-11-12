@@ -156,6 +156,7 @@ Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）�
 5. **欄序** — `過去90日有無賣過`／`過去90日有無存貨`／`是否{店舖}的Top 80%`／`是否同Shop Nature的Top 80%`／`SCT建議`／`Shop 回覆新的NDRF`／`如果RF的Safety Qty`；兩個判定欄只加在指定店舖的列
 6. **特殊情況** — 來源缺 `Shop Nature` 或該店 Nature 空白時，Nature 欄留空並列 warning；該店 `Sold Qty (P90D)` 合計為 0 時，兩個判定欄全部「否」並列 warning；同 Nature 在來源檔只有一間店舖時列 warning（Nature 判定與店舖判定相同）；指定店舖不存在時停止並提示
 7. **判定用途** — 「兩項皆非」即精簡候選（既非該店 Top 80%，亦非同 Nature Top 80%）；結果頁另設「兩項皆非」與「店舖 Top 80%」兩個預覽分頁，下載檔名為 `I14 店舖精簡SKU模式_{店舖}_指定店舖_{YYYYMMDD_HHMM}.xlsx`
+8. **大檔效能** — 全表只做向量化清理（Site Code／SKU／Shop Nature／Adj. SST／Sold Qty），`Item_Shop` 逐列解析與排序只套用在指定店舖的列；83.7 萬行模擬轉換約 6.7 秒（另加讀檔時間，8.37 萬行／22.5MB 約 2.5 秒，線性外推 80 萬行約 25 秒）。上傳上限已放寬至 **300MB**（80 萬行以現有欄位密度估算約 200–220MB）
 
 ### Safety Stock Review
 

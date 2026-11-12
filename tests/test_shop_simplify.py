@@ -749,3 +749,30 @@ def test_site_mode_stats_include_adj_sst_group_count():
 def test_site_mode_missing_adj_sst_falls_back_and_warns():
     _, warnings = transform_shop_simplify_site(_df(_site_rows()), "HA21")
     assert any("缺少「Adj. SST」" in x for x in warnings)
+
+
+def test_site_mode_only_parses_selected_shop_rows(monkeypatch):
+    """大檔效能契約：全表只做向量化清理，Item_Shop 逐列解析只套用在指定店舖的列。"""
+    import modes.shop_simplify as shop_simplify_module
+
+    calls = []
+    original = shop_simplify_module._compute_raw_extra_columns
+
+    def counting(df):
+        calls.append(len(df))
+        return original(df)
+
+    monkeypatch.setattr(shop_simplify_module, "_compute_raw_extra_columns", counting)
+    rows = [
+        {"SKU": f"X{i}", "Site Code": "HA20", "Shop Nature": "Non Tourist",
+         "Adj. SST": "01 - Local", "Sold Qty (P90D)": 1}
+        for i in range(50)
+    ]
+    rows += [
+        {"SKU": "A", "Site Code": "HA21", "Shop Nature": "Non Tourist",
+         "Adj. SST": "01 - Local", "Sold Qty (P90D)": 10},
+        {"SKU": "B", "Site Code": "HA21", "Shop Nature": "Non Tourist",
+         "Adj. SST": "01 - Local", "Sold Qty (P90D)": 5},
+    ]
+    transform_shop_simplify_site(_df(rows), "HA21")
+    assert calls == [2]

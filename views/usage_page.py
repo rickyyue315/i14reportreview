@@ -17,7 +17,7 @@ st.markdown("""
     <h3 style="margin-top: 0; margin-bottom: 0.25rem;">📋 系統操作流程</h3>
     <div class="usage-steps-grid">
         <div class="usage-step-card"><b>1. 🎯 選擇模式</b>於「分析工具」頁主頁面頂端選擇要執行的分析模式。</div>
-        <div class="usage-step-card"><b>2. 📂 上傳檔案</b>將 Excel 拖曳至主頁面的上傳區域（上限 200MB）。</div>
+        <div class="usage-step-card"><b>2. 📂 上傳檔案</b>將 Excel 拖曳至主頁面的上傳區域（上限 300MB）。</div>
         <div class="usage-step-card"><b>3. 🔧 設定參數</b>根據模式需要，調整 MTD 日期、Shop Nature Rate 等進階選項。</div>
         <div class="usage-step-card"><b>4. ⚙️ 執行轉換</b>點擊「執行報表轉換與分析」，系統將自動過濾、計算並產生彙總表。</div>
         <div class="usage-step-card"><b>5. 💾 下載成果</b>於視覺化儀表板中即時查閱統計資訊，並一鍵匯出美化後的 Excel 報表。</div>
