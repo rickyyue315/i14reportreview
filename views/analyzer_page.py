@@ -320,8 +320,8 @@ MODE_DESCRIPTIONS = {
     "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
     "P90D 0 Sales Review(Shop回覆)": "按店舖統計 P90D 0 Sales SKU 數（Shop Stock Qty (LM) 及 (CM) 須大於 0；LLM 欄存在時（2026-10-26 起來源報表）另須 (LLM) 大於 0——三個月快照皆有貨才算 90 日真坐貨），分類維度可切換 MAKE UP／Item Class／Adj. MCH1，或交叉維度 MAKE UP × Item Class／MAKE UP × Adj. MCH1（按主分類逐列交叉次分類）；輸出各店最高庫存 Top 10（預設只限 Non-MAKE UP，可勾選包括 MAKE UP）供店舖回覆，以及 Shop Nature 與 OM 分佈，另按 SKU 統計無銷售店舖數、店舖總數（分母）及佔比，並列出最多店舖無銷售的 Top 20 SKU；另按 Buyer 統計出現店舖數。",
     "P90D 0 Sales Review(個別店舖)": "供個別店舖查閱自身 P90D 0 Sales 情況（Shop Stock Qty (LM) 及 (CM) 須大於 0；LLM 欄存在時（2026-10-26 起來源報表）另須 (LLM) 大於 0——三個月快照皆有貨才算 90 日真坐貨），分類固定以 MAKE UP 分類統計；輸出各店全部 SKU 明細（ALL SKU，包括 MAKE UP 與 Non-MAKE UP，不設列數上限與店舖回覆欄，按庫存由大至小排序），以及 Shop Nature 與 OM 分佈，另按 SKU 統計出現店舖數、店舖總數（分母）及佔比，並按 Buyer 統計出現店舖數。",
-    "P90D 0 Sales Review(轉貨模式)": "先指定轉出店舖（0 Sales 且有庫存），其 0 Sales 有庫存列全數轉出，分配予同 SKU 有銷售記錄的店舖（不分 OM，接收多間時按銷售比例分配，力求全數接收）。",
-    "ND SKU with Stock Review(轉貨模式)": "先指定轉出店舖（RP Type＝ND 且有庫存），其 ND 有庫存列全數轉出，分配予同 SKU 有銷售記錄（Sold Qty (P90D) > 0）的 RF 店舖（不分 OM，接收多間時按銷售比例分配，力求全數接收）；可選擇每個 SKU 集中於銷量最高的 1–2 間或 3–4 間接收店，或維持不限。",
+    "P90D 0 Sales Review(轉貨模式)": "先指定轉出店舖（0 Sales 且有庫存），其 0 Sales 有庫存列全數轉出，分配予同 SKU 有銷售記錄的店舖（不分 OM；預設按件數自動集中——3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間，每間以 2–3 件為目標，減少每店只收 1 件與出貨分箱，可改為不限／固定 1–2 間／3–4 間；轉出總量力求全數接收）。",
+    "ND SKU with Stock Review(轉貨模式)": "先指定轉出店舖（RP Type＝ND 且有庫存），其 ND 有庫存列全數轉出，分配予同 SKU 有銷售記錄（Sold Qty (P90D) > 0）的 RF 店舖（不分 OM；預設按件數自動集中——3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間，每間以 2–3 件為目標，減少每店只收 1 件與出貨分箱，可改為不限／固定 1–2 間／3–4 間；轉出總量力求全數接收）。",
     "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
     "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
     "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
@@ -565,7 +565,7 @@ def _render_transfer_results(mode_key: str) -> None:
 
     st.markdown(f'<div class="section-banner"><h3>{_cfg["title"]}</h3></div>', unsafe_allow_html=True)
     _top_download_button(_excel_data, _cfg["top_prefix"], f"dl_top_{_cfg['widget_key']}")
-    if mode_key == _NDTR_MODE:
+    if mode_key in (_NDTR_MODE, _OP90DT_MODE):
         _receiver_limit = _stats.get("receiver_limit")
         st.caption(f"🎯 每個 SKU 接收店舖：{receiver_limit_label(_receiver_limit)}。")
     if _stats.get("receiver_cap"):
@@ -2901,10 +2901,11 @@ if uploaded_file is not None:
 
         _op90dt_sites = []
         _op90dt_mch1_filter = None
+        _op90dt_receiver_limit = "auto"
         _op90dt_receiver_cap = False
         _ndtr_sites = []
         _ndtr_mch1_filter = None
-        _ndtr_receiver_limit = None
+        _ndtr_receiver_limit = "auto"
         _ndtr_receiver_cap = False
         if mode == _OP90DT_MODE:
             _op90dt_sites = _transfer_site_selector(
@@ -2918,7 +2919,36 @@ if uploaded_file is not None:
                 selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                 prefix="op90dt_",
             )
-            st.markdown("#### 🎯 步驟三：接收量上限（可選，預設不限）")
+            st.markdown("#### 🎯 步驟三：接收店舖集中模式（減少出貨分箱）")
+            _op90dt_receiver_options = {
+                "按件數自動集中（建議）": "auto",
+                "不限（原有：全數按比例）": None,
+                "集中 1–2 間": 2,
+                "集中 3–4 間": 4,
+            }
+            _op90dt_receiver_choice = st.radio(
+                "🎯 每個 SKU 的接收店舖數量",
+                options=list(_op90dt_receiver_options),
+                index=0,
+                horizontal=True,
+                key="op90dt_receiver_limit_mode",
+                help="「按件數自動集中」：同 SKU 轉出 3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間，如此類推，"
+                     "每間以 2–3 件為目標（每間先保底 2 件，餘量按銷售比例分配），只取 Sold Qty (P90D) 最高的店舖"
+                     "（同銷量以 Site Code 排序），減少每店只收到 1 件、出貨要分多箱的情況。"
+                     "「集中 1–2 間／3–4 間」為固定上限；「不限」沿用原有分配：全數有銷售記錄的店舖按銷售比例分配。",
+            )
+            _op90dt_receiver_limit = _op90dt_receiver_options[_op90dt_receiver_choice]
+            if _op90dt_receiver_limit == "auto":
+                st.caption(
+                    "目前設定 → 按件數自動集中：3 件或以下 1 間、4–6 件 2 間、7–9 件 3 間（如此類推）；"
+                    "只取銷量最高的店舖，每間先保底 2 件，餘量按銷售比例分配，力求出貨集中、減少分箱。"
+                )
+            elif _op90dt_receiver_limit is None:
+                st.caption("目前設定 → 不限：全數有銷售記錄的接收店舖按銷售比例分配（轉出總量仍力求全數接收）。")
+            else:
+                st.caption(f"目前設定 → {receiver_limit_label(_op90dt_receiver_limit)}。")
+
+            st.markdown("#### 🎯 步驟四：接收量上限（可選，預設不限）")
             _op90dt_receiver_cap = st.checkbox(
                 "📦 接收店按「補到 14 日」需求封頂",
                 key="op90dt_receiver_cap",
@@ -2948,11 +2978,12 @@ if uploaded_file is not None:
                 selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                 prefix="ndtr_",
             )
-            st.markdown("#### 🎯 步驟三：接收店舖集中模式（減少每店只收到 1 件）")
+            st.markdown("#### 🎯 步驟三：接收店舖集中模式（減少出貨分箱）")
             _ndtr_receiver_options = {
-                "不限（原有：全數有銷售的 RF 店舖）": None,
-                "集中 1–2 間（同 SKU 銷量最高）": 2,
-                "集中 3–4 間（同 SKU 銷量最高）": 4,
+                "按件數自動集中（建議）": "auto",
+                "不限（原有：全數按比例）": None,
+                "集中 1–2 間": 2,
+                "集中 3–4 間": 4,
             }
             _ndtr_receiver_choice = st.radio(
                 "🎯 每個 SKU 的接收店舖數量",
@@ -2960,17 +2991,26 @@ if uploaded_file is not None:
                 index=0,
                 horizontal=True,
                 key="ndtr_receiver_limit_mode",
-                help="「不限」沿用原有分配：同 SKU 全數有銷售記錄的 RF 店舖按 Sold Qty (P90D) 比例分配。"
-                     "選擇集中模式後，每個 SKU 只分配給 Sold Qty (P90D) 最高的 1–2 間或 3–4 間 RF 店舖"
-                     "（同銷量以 Site Code 排序），其餘有銷售店舖不獲分配；轉出總量仍力求全數接收。",
+                help="「按件數自動集中」：同 SKU 轉出 3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間，如此類推，"
+                     "每間以 2–3 件為目標（每間先保底 2 件，餘量按銷售比例分配），只取 Sold Qty (P90D) 最高的 RF 店舖"
+                     "（同銷量以 Site Code 排序），減少每店只收到 1 件、出貨要分多箱的情況。"
+                     "「集中 1–2 間／3–4 間」為固定上限；「不限」沿用原有分配：全數有銷售記錄的 RF 店舖按銷售比例分配。",
             )
             _ndtr_receiver_limit = _ndtr_receiver_options[_ndtr_receiver_choice]
-            _ndtr_receiver_caption = (
-                "目前設定 → 每個 SKU 只集中分配予銷量最高的 1–2 間或 3–4 間 RF 接收店；"
-                "其餘有銷售店舖不會收到該 SKU 的轉貨。"
-                if _ndtr_receiver_limit is not None
-                else "目前設定 → 不限接收店數目，全數有銷售記錄的 RF 店舖按 Sold Qty (P90D) 比例分配。"
-            )
+            if _ndtr_receiver_limit == "auto":
+                _ndtr_receiver_caption = (
+                    "目前設定 → 按件數自動集中：3 件或以下 1 間、4–6 件 2 間、7–9 件 3 間（如此類推）；"
+                    "只取銷量最高的 RF 店舖，每間先保底 2 件，餘量按銷售比例分配，力求出貨集中、減少分箱。"
+                )
+            elif _ndtr_receiver_limit is None:
+                _ndtr_receiver_caption = (
+                    "目前設定 → 不限接收店數目，全數有銷售記錄的 RF 店舖按 Sold Qty (P90D) 比例分配。"
+                )
+            else:
+                _ndtr_receiver_caption = (
+                    f"目前設定 → {receiver_limit_label(_ndtr_receiver_limit)}；"
+                    "其餘有銷售店舖不會收到該 SKU 的轉貨。"
+                )
             st.caption(_ndtr_receiver_caption)
             _ndtr_receiver_cap = st.checkbox(
                 "📦 接收店按「補到 14 日」需求封頂（可與集中模式併用）",
@@ -3193,6 +3233,7 @@ if uploaded_file is not None:
                         progress_callback=_cb_transform,
                         shop_natures=selected_shop_natures if set(selected_shop_natures) != set(SHOP_NATURE_OPTIONS) else None,
                         mch1_filter=_op90dt_mch1_filter,
+                        receiver_limit=_op90dt_receiver_limit,
                         receiver_cap=_op90dt_receiver_cap,
                     )
                     buf = generate_excel_p90d_transfer(
@@ -3200,6 +3241,7 @@ if uploaded_file is not None:
                         nature_label="全部" if set(selected_shop_natures) == set(SHOP_NATURE_OPTIONS) else "、".join(selected_shop_natures),
                         mch_filter_label="全部（未排除）" if _op90dt_mch1_filter is None else "已排除部分分類",
                         progress_callback=_cb_excel,
+                        receiver_limit=_op90dt_receiver_limit,
                         receiver_cap=_op90dt_receiver_cap,
                     )
                     st.session_state.op90dt_processed = True

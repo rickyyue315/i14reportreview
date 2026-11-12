@@ -5,8 +5,9 @@
 - 轉出：已選轉出店舖中符合上述條件的列，數量為 Shop Stock Qty (CM) 全數（不看銷售記錄）
 - 接收：同 SKU、非轉出店舖、RP Type＝RF 且 Sold Qty (P90D) > 0 的列，不論有無庫存
 - 分配：同 SKU 轉出總量按接收店 Sold Qty (P90D) 比例分配（最大餘數法取整數件、全數分完）
-- 接收店舖集中模式（可選）：每個 SKU 只取 Sold Qty (P90D) 最高的 2 間或 4 間 RF 接收店，
-  再按這批店舖的銷售比例分配；預設不限，維持全數有銷售店舖接收
+- 接收店舖集中模式：介面預設「按件數自動集中」——接收店數＝ceil(轉出總量 ÷ 3)
+  （3 件或以下 1 間、4–6 件 2 間、7–9 件 3 間，每間先保底 2 件）；亦可固定取最高銷量的
+  2／4 間 RF 接收店；函式參數 None＝不限，維持全數有銷售店舖接收
 - RP Type：去除前後空格、大小寫不敏感；缺欄即停止；非 RF／ND 的值一律排除（列 warning）
 - MCH 篩選（執行前）：可按 Adj. MCH1 排除分類（預設全部包含），對轉出與接收兩側同時生效
 - 分配、配對與彙總與 P90D 0 Sales Review(轉貨模式) 共用同一引擎（nd_mode=True）
@@ -552,6 +553,82 @@ def test_receiver_limit_excel_guide_wording():
     assert any("接收店舖集中模式" in t for t in texts)
     assert any("集中 1–2 間" in t for t in texts)
     assert any("未納入的店舖不會收到該 SKU 的轉貨" in t for t in texts)
+
+
+# 8a. 按件數自動集中（"auto"）
+
+def test_nd_auto_concentrate_three_or_less_into_one_receiver():
+    """ND 模式：3 件或以下集中 1 間銷量最高的 RF 店舖。"""
+    df = _df([
+        _row("S01", sku=1, stock=3, rp="ND"),
+        _row("S02", sku=1, sales=9, stock=0, rp="RF"),
+        _row("S03", sku=1, sales=7, stock=0, rp="RF"),
+        _row("S04", sku=1, sales=5, stock=0, rp="RF"),
+    ])
+    plan, _, _, sku_df, _, stats, warns = transform_nd_transfer(
+        df, ["S01"], receiver_limit="auto"
+    )
+    assert _lines(plan) == {("S01", "1", "S02"): 3}
+    assert stats["alloc_qty"] == 3 and stats["unalloc_qty"] == 0
+    assert stats["receiver_limit"] == "auto"
+    body = sku_df[sku_df["Brand"].astype(str) != "總計"].iloc[0]
+    assert int(body["實際接收店舖數"]) == 1
+    assert not any("超出上限" in w for w in warns)
+
+
+def test_nd_auto_concentrate_four_to_six_into_two_receivers():
+    """ND 模式：4–6 件分 2 間，平均每間 2–3 件。"""
+    for qty, expected in {
+        4: {"S02": 2, "S03": 2},
+        5: {"S02": 3, "S03": 2},
+        6: {"S02": 3, "S03": 3},
+    }.items():
+        df = _df([
+            _row("S01", sku=1, stock=qty, rp="ND"),
+            _row("S02", sku=1, sales=9, stock=0, rp="RF"),
+            _row("S03", sku=1, sales=7, stock=0, rp="RF"),
+            _row("S04", sku=1, sales=5, stock=0, rp="RF"),
+        ])
+        plan, _, _, _, _, stats, _ = transform_nd_transfer(
+            df, ["S01"], receiver_limit="auto"
+        )
+        got = {r["接收 Site Code"]: int(r["轉貨數量 (件)"]) for _, r in plan.iterrows()}
+        assert got == expected, (qty, got)
+        assert stats["alloc_qty"] == qty and stats["unalloc_qty"] == 0
+
+
+def test_nd_auto_concentrate_skips_nd_receivers():
+    """集中選店時只在 RF 店舖中挑銷量最高者，ND 店（即使銷量更高）不接收。"""
+    df = _df([
+        _row("S01", sku=1, stock=5, rp="ND"),
+        _row("S09", sku=1, sales=100, stock=0, rp="ND"),
+        _row("S02", sku=1, sales=4, stock=0, rp="RF"),
+        _row("S03", sku=1, sales=2, stock=0, rp="RF"),
+    ])
+    plan, _, _, _, _, _, _ = transform_nd_transfer(df, ["S01"], receiver_limit="auto")
+    assert set(plan["接收 Site Code"]) == {"S02", "S03"}
+    assert "S09" not in set(plan["接收 Site Code"])
+
+
+def test_nd_auto_concentrate_excel_guide_wording():
+    df = _df([
+        _row("S01", sku=1, stock=5, rp="ND"),
+        _row("S02", sku=1, sales=9, stock=0, rp="RF"),
+        _row("S03", sku=1, sales=7, stock=0, rp="RF"),
+    ])
+    plan, out_df, in_df, sku_df, mch_df, stats, _ = transform_nd_transfer(
+        df, ["S01"], receiver_limit="auto"
+    )
+    buf = generate_excel_nd_transfer(
+        plan, out_df, in_df, sku_df, mch_df, stats, receiver_limit="auto"
+    )
+    wb = load_workbook(buf)
+    texts = [
+        str(cell.value) for row in wb["說明"].iter_rows() for cell in row if cell.value is not None
+    ]
+    assert any("接收店舖集中模式" in t for t in texts)
+    assert any("按件數自動集中" in t for t in texts)
+    assert any("3 件或以下集中 1 間" in t for t in texts)
 
 
 # 9. 墊片與模式登記

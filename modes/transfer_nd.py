@@ -15,8 +15,10 @@
 - 接收：同 SKU、非轉出店舖、RP Type＝RF 且 Sold Qty (P90D) > 0 的列（有銷售記錄），不論有無庫存。
 - 分配：同 SKU 的轉出總量按接收店 Sold Qty (P90D) 比例分配，以最大餘數法取整數件、全數分完；
   只有一間接收店時全數給該店；無接收店時該 SKU 不轉出，列入未分配。
-- 接收店舖集中模式（可選，預設不限）：每個 SKU 可只分配給 Sold Qty (P90D) 最高的
-  1–2 間或 3–4 間 RF 接收店，減少每店只收到 1 件的分散情況；轉出總量仍力求全數接收。
+- 接收店舖集中模式（介面預設「按件數自動集中」）：每個 SKU 可只分配給 Sold Qty (P90D) 最高的
+  1–2 間或 3–4 間 RF 接收店，或按件數自動集中（3 件或以下 1 間、4–6 件 2 間、7–9 件 3 間，
+  每間以 2–3 件為目標，每間先保底 2 件），減少每店只收到 1 件、出貨要分多箱的情況；
+  轉出總量仍力求全數接收。
 - 接收量上限（可選，「補到 14 日」封頂）：每間接收店最多接收其 14 日需求
   （Sold Qty (P90D) ÷ 90 × 14 無條件進位 − 調前庫存，最低 0）；超出上限的餘量在尚有
   需求的接收店之間按銷售比例重新分配，仍未派完者列未分配（保留原店）。
@@ -63,17 +65,19 @@ def transform_nd_transfer(
     progress_callback=None,
     shop_natures: list[str] | None = None,
     mch1_filter=None,
-    receiver_limit: int | None = None,
+    receiver_limit: int | str | None = None,
     receiver_cap: bool = False,
 ):
     """依指定轉出店舖產生轉貨計畫（RP Type＝ND 且有庫存 → RP Type＝RF 且有銷售記錄的店舖）。
 
-    ``mch1_filter`` 為執行前的 MCH1 篩選（None 或包含全部值＝不排除），
+    ``mch1_filter`` 為執行前的 MCH 篩選（None 或包含全部值＝不排除），
     對轉出與接收兩側同時生效。
 
-    ``receiver_limit`` 為每個 SKU 的接收店舖上限（None＝不限，原有行為）：
-    2／4 時只取 Sold Qty (P90D) 最高的 1–2／3–4 間 RF 接收店，再按這批店舖的
-    銷售比例分配，轉出總量仍力求全數接收。
+    ``receiver_limit`` 為每個 SKU 的接收店舖集中方式（None＝不限，原有行為）：
+    - ``"auto"``：按件數自動集中——接收店數＝ceil(同 SKU 轉出總量 ÷ 3)，
+      3 件或以下 1 間、4–6 件 2 間、7–9 件 3 間，每間以 2–3 件為目標；
+    - 2／4：固定只取 Sold Qty (P90D) 最高的 1–2／3–4 間 RF 接收店。
+    集中後再按這批店舖的銷售比例分配，轉出總量仍力求全數接收。
 
     ``receiver_cap=True`` 時啟用接收量「補到 14 日」封頂：每間接收店最多接收其
     14 日需求（Sold Qty (P90D) ÷ 90 × 14 無條件進位 − 調前庫存，最低 0），
@@ -103,12 +107,13 @@ def generate_excel_nd_transfer(
     nature_label: str = "全部",
     mch_filter_label: str = "全部（未排除）",
     progress_callback=None,
-    receiver_limit: int | None = None,
+    receiver_limit: int | str | None = None,
     receiver_cap: bool = False,
 ):
     """產生六個工作表：說明、轉貨單、轉出店舖彙總、接收店舖彙總、SKU 轉貨彙總、MCH1 分類彙總（無 RAW）。
 
-    ``receiver_limit`` 只影響說明頁的「接收店舖集中模式」參數（None＝不限、2／4＝集中）。
+    ``receiver_limit`` 只影響說明頁的「接收店舖集中模式」參數
+    （None＝不限、"auto"＝按件數自動集中、2／4＝固定集中）。
     ``receiver_cap`` 只影響說明頁的「接收量上限」參數（False＝不限、True＝補到 14 日封頂）。
     """
     return generate_excel_p90d_transfer(

@@ -16,10 +16,13 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from modes.transfer_p90d import (
+    _allocate_concentrated,
     _allocate_proportional,
+    _auto_receiver_count,
     build_mch_options,
     build_transfer_candidates,
     generate_excel_p90d_transfer,
+    receiver_limit_label,
     transform_p90d_transfer,
 )
 from modes.transfer_nd import build_nd_transfer_candidates, transform_nd_transfer
@@ -742,3 +745,164 @@ def test_allocate_with_caps_invariants():
     assert alloc == [0, 0] and unalloc == 10
     alloc, unalloc = _allocate_with_caps(0, [1.0], [5])
     assert alloc == [0] and unalloc == 0
+
+
+# 7. 接收店舖集中模式：按件數自動集中（"auto"）
+
+def test_auto_receiver_count_formula():
+    """接收店數＝ceil(件數 ÷ 3)：≤3 件 1 間、4–6 件 2 間、7–9 件 3 間，如此類推。"""
+    assert _auto_receiver_count(0) == 0
+    assert _auto_receiver_count(1) == 1
+    assert _auto_receiver_count(3) == 1
+    assert _auto_receiver_count(4) == 2
+    assert _auto_receiver_count(6) == 2
+    assert _auto_receiver_count(7) == 3
+    assert _auto_receiver_count(9) == 3
+    assert _auto_receiver_count(10) == 4
+    assert _auto_receiver_count(30) == 10
+
+
+def test_receiver_limit_label_auto():
+    assert "按件數自動集中" in receiver_limit_label("auto")
+    assert "3 件或以下" in receiver_limit_label("AUTO")
+    assert receiver_limit_label(None) == "不限（原有：全數有銷售的接收店舖）"
+    assert "集中 1–2 間" in receiver_limit_label(2)
+
+
+def test_auto_concentrate_three_or_less_into_one_receiver():
+    """3 件或以下集中 1 間（銷量最高那間），不再分散至多間。"""
+    for qty in (2, 3):
+        df = _df([
+            _row("S01", sku=1, sales=0, stock=qty),
+            _row("S02", sku=1, sales=9, stock=0),
+            _row("S03", sku=1, sales=7, stock=0),
+            _row("S04", sku=1, sales=5, stock=0),
+        ])
+        plan, _, _, sku_df, _, stats, warns = transform_p90d_transfer(
+            df, ["S01"], receiver_limit="auto"
+        )
+        assert _lines(plan) == {("S01", "1", "S02"): qty}
+        assert stats["alloc_qty"] == qty and stats["unalloc_qty"] == 0
+        assert stats["receiver_limit"] == "auto"
+        body = sku_df[sku_df["Brand"] != "總計"].iloc[0]
+        assert int(body["實際接收店舖數"]) == 1
+        # 自動集中為預期行為，不列「超出上限」warning
+        assert not any("超出上限" in w for w in warns)
+
+
+def test_auto_concentrate_four_to_six_into_two_receivers():
+    """4–6 件分 2 間，平均每間 2–3 件。"""
+    cases = {
+        4: {"S02": 2, "S03": 2},
+        5: {"S02": 3, "S03": 2},
+        6: {"S02": 3, "S03": 3},
+    }
+    for qty, expected in cases.items():
+        df = _df([
+            _row("S01", sku=1, sales=0, stock=qty),
+            _row("S02", sku=1, sales=9, stock=0),
+            _row("S03", sku=1, sales=7, stock=0),
+            _row("S04", sku=1, sales=5, stock=0),
+        ])
+        plan, _, _, _, _, stats, _ = transform_p90d_transfer(
+            df, ["S01"], receiver_limit="auto"
+        )
+        got = {r["接收 Site Code"]: int(r["轉貨數量 (件)"]) for _, r in plan.iterrows()}
+        assert got == expected, (qty, got)
+        assert stats["alloc_qty"] == qty and stats["unalloc_qty"] == 0
+
+
+def test_auto_concentrate_scales_with_quantity():
+    """7–9 件 3 間、10–12 件 4 間；每間不少於 2 件，不出現 1 件碎片。"""
+    cases = {7: 3, 9: 3, 10: 4, 12: 4}
+    for qty, n_receivers in cases.items():
+        df = _df(
+            [_row("S01", sku=1, sales=0, stock=qty)]
+            + [_row(f"R{i}", sku=1, sales=s, stock=0)
+               for i, s in enumerate([9, 7, 5, 3, 1], 1)]
+        )
+        plan, _, _, _, _, stats, _ = transform_p90d_transfer(
+            df, ["S01"], receiver_limit="auto"
+        )
+        qtys = [int(r["轉貨數量 (件)"]) for _, r in plan.iterrows()]
+        assert len(qtys) == n_receivers, (qty, qtys)
+        assert min(qtys) >= 2, (qty, qtys)
+        assert max(qtys) <= 4, (qty, qtys)
+        assert stats["alloc_qty"] == qty and stats["unalloc_qty"] == 0
+
+
+def test_auto_concentrate_limited_by_available_receivers():
+    """有銷售的接收店不足時全數分配給實際可用的店舖。"""
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=10),
+        _row("S02", sku=1, sales=4, stock=0),
+    ])
+    plan, _, _, _, _, stats, _ = transform_p90d_transfer(df, ["S01"], receiver_limit="auto")
+    assert _lines(plan) == {("S01", "1", "S02"): 10}
+    assert stats["alloc_qty"] == 10 and stats["unalloc_qty"] == 0
+
+
+def test_auto_concentrate_with_receiver_cap():
+    """可與「補到 14 日」封頂併用：店數仍按件數集中，每店受 14 日需求限制。"""
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=30),
+        _row("S02", sku=1, sales=90, stock=0),
+    ])
+    plan, _, _, _, _, stats, warns = transform_p90d_transfer(
+        df, ["S01"], receiver_limit="auto", receiver_cap=True
+    )
+    assert _lines(plan) == {("S01", "1", "S02"): 14}
+    assert stats["unalloc_qty"] == 16
+    assert any("補到 14 日」封頂" in w for w in warns)
+
+
+def test_allocate_concentrated_invariants():
+    assert _allocate_concentrated(10, [9.0, 7.0, 5.0, 3.0]) == [3, 3, 2, 2]
+    assert _allocate_concentrated(7, [9.0, 7.0, 5.0]) == [3, 2, 2]
+    assert _allocate_concentrated(6, [9.0, 7.0]) == [3, 3]
+    assert _allocate_concentrated(3, [9.0]) == [3]
+    assert _allocate_concentrated(1, [9.0]) == [1]
+    assert _allocate_concentrated(0, [1.0, 2.0]) == [0, 0]
+    # 極端銷量差距下仍不出現 1 件碎片
+    assert _allocate_concentrated(10, [1000.0, 1.0, 1.0, 1.0]) == [4, 2, 2, 2]
+    rng = random.Random(20261112)
+    for _ in range(200):
+        total = rng.randint(1, 300)
+        n = rng.randint(1, min(8, max(1, total)))
+        weights = [float(rng.randint(1, 80)) for _ in range(n)]
+        alloc = _allocate_concentrated(total, weights)
+        assert len(alloc) == n and sum(alloc) == total
+        floor = min(2, total // n)
+        assert min(alloc) >= floor, (total, n, alloc)
+
+
+def test_invalid_receiver_limit_rejects_unknown_string():
+    df = _df([_row("S01", sku=1, sales=0, stock=5), _row("S02", sku=1, sales=1, stock=0)])
+    for bad in ("auto2", "concentrate", 0, -1):
+        try:
+            transform_p90d_transfer(df, ["S01"], receiver_limit=bad)
+        except ValueError as exc:
+            assert "集中上限" in str(exc)
+        else:
+            raise AssertionError(f"expected ValueError for receiver_limit={bad!r}")
+
+
+def test_auto_concentrate_excel_guide_wording():
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=5),
+        _row("S02", sku=1, sales=9, stock=0),
+        _row("S03", sku=1, sales=7, stock=0),
+    ])
+    plan, out_df, in_df, sku_df, mch_df, stats, _ = transform_p90d_transfer(
+        df, ["S01"], receiver_limit="auto"
+    )
+    buf = generate_excel_p90d_transfer(
+        plan, out_df, in_df, sku_df, mch_df, stats, receiver_limit="auto"
+    )
+    wb = load_workbook(buf)
+    texts = [
+        str(cell.value) for row in wb["說明"].iter_rows() for cell in row if cell.value is not None
+    ]
+    assert any("接收店舖集中模式" in t for t in texts)
+    assert any("按件數自動集中" in t for t in texts)
+    assert any("3 件或以下集中 1 間" in t for t in texts)
