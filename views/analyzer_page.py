@@ -316,7 +316,7 @@ MODE_DESCRIPTIONS = {
     "OOS Review": "篩選缺貨與潛在缺貨品項，偵測安全庫存不足。",
     "Carry SKU Review": "統計各店舖實際經營品項數量與結構。",
     "SKU 精簡 Review": "針對不可補貨品項，建議退倉安排。",
-    "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去90日有無存貨（LLM／LM／CM 任一 > 0＝有存貨，LLM 欄自 2026-10-26 起來源報表提供），並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
+    "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去90日有無存貨（LLM／LM／CM 任一 > 0＝有存貨，LLM 欄自 2026-10-26 起來源報表提供），另判定「是否該店的Top 80%」（每間店按 Adj. SST 分類各自累計 80%，同一銷量整組納入或排除，分類之間不互相擠佔；不設同 Nature 判定），並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
     "店舖精簡SKU模式(指定店舖)": "只列指定店舖（如 HA21）的 SKU，額外判定「是否該店的Top 80%」及「是否同Shop Nature的Top 80%」——兩者均按 Adj. SST 分類，在每個分類內按 Sold Qty (P90D) 由高至低累計，累計銷量首次達該分類母體（該店／同 Nature 全部店舖）總銷量 80% 即屬 Top 80%（同一銷量整組納入或排除，分類之間不互相擠佔）；其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則與店舖精簡SKU模式相同。",
     "NDRF 月份對比": "對比兩個月份各店舖經營與不可補貨品項變化。",
     "Safety Stock Review": "全面審查安全庫存設定，計算平衡建議值。",

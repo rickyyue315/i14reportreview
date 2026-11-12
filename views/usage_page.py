@@ -97,17 +97,19 @@ MODES = [
 - 刪除欄名含 Value 的欄位（Valuation Class 不受影響）
 - 自動判定過去90日有無賣過（Sold Qty (P90D) > 0＝有，否則無賣）
 - 自動判定過去90日有無存貨（Shop Stock Qty (LLM)／(LM)／(CM) 任一 > 0＝有存貨，三者同時為 0＝無存貨；LLM 欄自 2026-10-26 起來源報表提供，舊檔缺欄時以其餘庫存欄判定並列 warning）
+- 自動判定「是否該店的Top 80%」：每間店按 Adj. SST 分類各自累計 80%（同一銷量整組納入或整組排除；分類之間不互相擠佔；不設同 Shop Nature 判定）
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 三欄留空，供 SCT 與店舖填寫
 - 輸出：Summary（Adj. MCH1 × Item Status 計數）＋ Export（依 Brand／SKU 排序，套用範本欄寬、隱藏欄與顏色標示）
      """,
      """
 1. **過去90日有無賣過** = Sold Qty (P90D) > 0 →「有」；等於 0、負數或空白 →「無賣」
 2. **過去90日有無存貨** = Shop Stock Qty (LLM) > 0 或 Shop Stock Qty (LM) > 0 或 Shop Stock Qty (CM) > 0 →「有存貨」；三者同時為 0（或空白／負數）→「無存貨」（LLM 欄缺欄時以其餘庫存欄判定並列 warning；v1.92 前本欄為「過去60日有無存貨」，只以 LM／CM 判定）
-3. **回覆欄留空** — SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 一律留空；來源檔已有這些欄位時以本次結果覆蓋，舊回覆不會保留
-4. **不篩選列** — 全店全 SKU 輸出，清理規則與其他模式一致（剔除合計列與 117 - Marketing）；Shop Nature 篩選為選填
-5. **SKU Desc／Shop Name** — 由 Item_Shop 以 Site Code 解析；SKU Desc 排於 Brand 之後、Shop Name 排於 Site Code 之後；Item_Shop 缺欄時兩欄留空並列 warning
-6. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄）一律刪除；大小寫敏感，Valuation Class 不會被刪除
-7. **排序與格式** — 依 Brand、SKU（文字）升序；Summary 為 Adj. MCH1 × Item Status 的 SKU 列數；Export 凍結 F2、縮放 85%，套用範本欄寬、隱藏欄、數字格式與顏色（RP Type／Shop Stock Qty (CM) 綠色、Sold Qty (P90D) 紫色、「無賣」列淡紅、Item Status＝Discontinued／RP Type＝ND／過去90日有無存貨＝無存貨 紅色底）
+3. **是否該店的Top 80%** = 每間店以 Adj. SST 分類為母體，在每個分類內按 Sold Qty (P90D) 由高至低累計，累計銷量首次達該店該分類總銷量 80% 的 SKU 為「是」，其餘「否」；同一銷量的 SKU 整組納入或整組排除，分類之間不互相擠佔；缺 Site Code 時全表單一分組、缺 Adj. SST 時每店單一分組，均列 warning
+4. **回覆欄留空** — SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 一律留空；來源檔已有這些欄位時以本次結果覆蓋，舊回覆不會保留
+5. **不篩選列** — 全店全 SKU 輸出，清理規則與其他模式一致（剔除合計列與 117 - Marketing）；Shop Nature 篩選為選填
+6. **SKU Desc／Shop Name** — 由 Item_Shop 以 Site Code 解析；SKU Desc 排於 Brand 之後、Shop Name 排於 Site Code 之後；Item_Shop 缺欄時兩欄留空並列 warning
+7. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄）一律刪除；大小寫敏感，Valuation Class 不會被刪除
+8. **排序與格式** — 依 Brand、SKU（文字）升序；Summary 為 Adj. MCH1 × Item Status 的 SKU 列數；Export 凍結 F2、縮放 85%，套用範本欄寬、隱藏欄、數字格式與顏色（RP Type／Shop Stock Qty (CM) 綠色、Sold Qty (P90D) 紫色、「無賣」列淡紅、Item Status＝Discontinued／RP Type＝ND／過去90日有無存貨＝無存貨 紅色底）
      """),
 
     ("🏪 店舖精簡SKU模式(指定店舖)",
@@ -124,7 +126,7 @@ MODES = [
 3. **Adj. SST 分類為母體** — 兩個判定都在每個分類內獨立累計，分類之間不互相擠佔（Local、Private Label、Sole Agent 等各自有自己的 80% 線）；來源缺 Adj. SST → 退回全店／全 Nature 單一分組並列 warning
 4. **母體與範圍** — 只有指定店舖的列會輸出，兩個判定欄亦只加在這些列；Summary 只計該店 SKU
 5. **特殊情況** — 缺 Shop Nature 或該店 Nature 空白 → Nature 欄留空並列 warning；該店 Sold Qty (P90D) 合計為 0 → 兩個判定欄全部「否」並列 warning；同 Nature 只有一間店舖 → 列 warning（Nature 判定與店舖判定相同）；指定店舖不存在 → 停止並提示
-6. **沿用規則** — 清理（剔除合計列與 117 - Marketing）、Item_Shop 解析 SKU Desc／Shop Name、刪除欄名含 Value 的欄位、Brand／SKU 排序、SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 三欄留空，全部與店舖精簡SKU模式相同
+6. **沿用規則** — 清理（剔除合計列與 117 - Marketing）、Item_Shop 解析 SKU Desc／Shop Name、刪除欄名含 Value 的欄位、Brand／SKU 排序、SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 三欄留空，全部與店舖精簡SKU模式相同；原模式的「是否該店的Top 80%」不另加，改由下列兩個判定欄取代
 7. **紅色底標示** — Export 的 Item Status＝Discontinued、RP Type＝ND、過去90日有無存貨＝無存貨 三類值以紅色底標示（比對忽略大小寫與前後空白；RP Type 的紅色底蓋過該欄綠色；兩個模式共用同一匯出引擎）
      """),
 

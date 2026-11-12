@@ -4,7 +4,9 @@
 - 過去90日有無賣過：Sold Qty (P90D) > 0 →「有」，其餘（0／負數／空白）→「無賣」；
 - 過去90日有無存貨（v1.93.0 起；前名「過去60日有無存貨」）：Shop Stock Qty (LLM)／(LM)／(CM) 任一 > 0 →「有存貨」，三者同時為 0 →「無存貨」；
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 一律留空；
-- 不篩選列，保留來源欄序，五個輸出欄固定排最後；輸出 Summary＋Export 兩個工作表，
+- 是否該店的Top 80%：每間店以 Adj. SST 分類為母體，每個分類各自一條 80% 線
+  （指定店舖變體改用「是否{店舖}的Top 80%」與「是否同Shop Nature的Top 80%」，不設本欄）；
+- 不篩選列，保留來源欄序，六個輸出欄固定排最後；輸出 Summary＋Export 兩個工作表，
   並依 Brand／SKU（文字）排序、套用範本欄寬／隱藏欄／數字格式與顏色標示。
 """
 import warnings
@@ -38,6 +40,7 @@ from transformer import (
     _SHOP_SIMPLIFY_TOP80_YES,
     _SHOP_SIMPLIFY_TOP80_NO,
     _SHOP_SIMPLIFY_RED,
+    _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN,
     _shop_simplify_site_top80_column,
     _shop_simplify_top80_mask,
     _shop_simplify_top80_keys,
@@ -163,10 +166,11 @@ def test_existing_output_columns_are_replaced_and_moved_to_end():
         "SCT建議": "自行決定",
     }])
     raw, _ = transform_shop_simplify(df)
-    # 五個輸出欄各只出現一次，且固定排最後
-    assert list(raw.columns)[-5:] == [
+    # 六個輸出欄各只出現一次，且固定排最後
+    assert list(raw.columns)[-6:] == [
         _SHOP_SIMPLIFY_SOLD_COLUMN,
         _SHOP_SIMPLIFY_STOCK_COLUMN,
+        _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN,
         *_SHOP_SIMPLIFY_REPLY_COLUMNS,
     ]
     assert sum(c == _SHOP_SIMPLIFY_SOLD_COLUMN for c in raw.columns) == 1
@@ -185,12 +189,13 @@ def test_source_column_order_preserved():
     # 解析欄插入慣用位置：SKU Desc 於 Brand 後、Shop Name 於 Site Code 後
     assert cols[:4] == ["Buyer", "Brand", "SKU Desc", "SKU"]
     assert cols[cols.index("Site Code") + 1] == "Shop Name"
-    # 其餘來源欄位相對順序不變，五個輸出欄固定排最後
+    # 其餘來源欄位相對順序不變，六個輸出欄固定排最後
     source_cols = [c for c in cols if c in df.columns and c not in ("SKU Desc", "Shop Name")]
     assert source_cols == list(df.columns)
-    assert cols[-5:] == [
+    assert cols[-6:] == [
         _SHOP_SIMPLIFY_SOLD_COLUMN,
         _SHOP_SIMPLIFY_STOCK_COLUMN,
+        _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN,
         *_SHOP_SIMPLIFY_REPLY_COLUMNS,
     ]
 
@@ -208,7 +213,7 @@ def test_value_columns_removed_but_valuation_class_kept():
     # 大小寫敏感：Valuation Class 不含「Value」，必須保留
     assert "Valuation Class" in raw.columns
     assert "SKU Desc" in raw.columns and "Shop Name" in raw.columns
-    assert list(raw.columns)[-5] == _SHOP_SIMPLIFY_SOLD_COLUMN
+    assert list(raw.columns)[-6] == _SHOP_SIMPLIFY_SOLD_COLUMN
 
     ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
     headers = [c.value for c in ws[1]]
@@ -323,6 +328,79 @@ def test_stats_counts_sold_stock_both():
     assert stats["skus"] == 4
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 7b. 原模式：每間店各自的 Top 80%（Adj. SST 分組、不設同 Nature 判定）
+# ──────────────────────────────────────────────────────────────────────────────
+def _top80_flags(raw):
+    return dict(zip(zip(raw["Site Code"], raw["SKU"]), raw[_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN]))
+
+
+def test_shop_top80_uses_each_shops_own_ball_line():
+    """HA21 A70/B10/C10/D5/E5（合計 100）→ A、B、C；HA20 A100/B1/C1/D1/E1 → 只有 A。"""
+    rows = [{"SKU": s, "Site Code": "HA21", "Adj. SST": "01 - Local", "Sold Qty (P90D)": q}
+            for s, q in zip("ABCDE", (70, 10, 10, 5, 5))]
+    rows += [{"SKU": s, "Site Code": "HA20", "Adj. SST": "01 - Local", "Sold Qty (P90D)": q}
+             for s, q in zip("ABCDE", (100, 1, 1, 1, 1))]
+    raw, _ = transform_shop_simplify(_df(rows))
+    flags = _top80_flags(raw)
+    assert [flags[("HA21", s)] for s in "ABCDE"] == ["是", "是", "是", "否", "否"]
+    assert [flags[("HA20", s)] for s in "ABCDE"] == ["是", "否", "否", "否", "否"]
+
+
+def test_shop_top80_sst_groups_do_not_crowd_each_other():
+    """同一店兩個 Adj. SST 各自一條線：Local A100/B5 → 只有 A；Private Label C10/D9 → C、D。
+    若不分類（全店合計 124、線 99.2）只會剩 A，故本測試同時驗證分類母體。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 100},
+        {"SKU": "B", "Site Code": "HA21", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 5},
+        {"SKU": "C", "Site Code": "HA21", "Adj. SST": "03 - Private Label", "Sold Qty (P90D)": 10},
+        {"SKU": "D", "Site Code": "HA21", "Adj. SST": "03 - Private Label", "Sold Qty (P90D)": 9},
+    ]
+    raw, _ = transform_shop_simplify(_df(rows))
+    assert list(raw[_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN]) == ["是", "否", "是", "是"]
+
+
+def test_shop_top80_zero_sales_all_no():
+    raw, _ = transform_shop_simplify(_df([
+        {"SKU": "A", "Sold Qty (P90D)": 0},
+        {"SKU": "B", "Sold Qty (P90D)": -3},
+    ]))
+    assert list(raw[_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN]) == ["否", "否"]
+
+
+def test_shop_top80_missing_sst_falls_back_to_single_group_per_shop():
+    df = _df([
+        {"SKU": "A", "Site Code": "HA21", "Sold Qty (P90D)": 10},
+        {"SKU": "B", "Site Code": "HA21", "Sold Qty (P90D)": 1},
+    ])
+    assert "Adj. SST" not in df.columns
+    raw, warnings = transform_shop_simplify(df)
+    assert list(raw[_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN]) == ["是", "否"]
+    assert any("缺少「Adj. SST」" in x and "Top 80%" in x for x in warnings)
+
+
+def test_shop_top80_missing_site_code_falls_back_to_whole_table():
+    df = _df([
+        {"SKU": "A", "Sold Qty (P90D)": 10},
+        {"SKU": "B", "Sold Qty (P90D)": 1},
+    ]).drop(columns=["Site Code"])
+    raw, warnings = transform_shop_simplify(df)
+    assert list(raw[_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN]) == ["是", "否"]
+    assert any("缺少「Site Code」" in x and "Top 80%" in x for x in warnings)
+
+
+def test_shop_top80_column_export_width_and_no_nature_column():
+    from openpyxl.utils import get_column_letter
+
+    raw, _ = transform_shop_simplify(_df([{"SKU": "A", "Sold Qty (P90D)": 3}]))
+    assert _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN not in raw.columns
+    assert raw.columns[-4] == _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
+    headers = [c.value for c in ws[1]]
+    letter = get_column_letter(headers.index(_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN) + 1)
+    assert round(ws.column_dimensions[letter].width, 2) == 14.0
+
+
 def test_excel_has_summary_and_export_sheets():
     df = _df([
         {"SKU": 1, "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active"},
@@ -339,8 +417,8 @@ def test_excel_has_summary_and_export_sheets():
     headers = [c.value for c in ws[1]]
     assert headers == list(raw.columns)
     assert "SKU Desc" in headers and "Shop Name" in headers
-    assert headers[-5:] == [
-        "過去90日有無賣過", "過去90日有無存貨",
+    assert headers[-6:] == [
+        "過去90日有無賣過", "過去90日有無存貨", "是否該店的Top 80%",
         "SCT建議", "Shop 回覆新的NDRF", "如果RF的Safety Qty",
     ]
     assert ws.max_row == 1 + len(raw)
@@ -719,6 +797,8 @@ def test_site_mode_excel_headers_widths_and_summary():
         site_col, _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN,
         *_SHOP_SIMPLIFY_REPLY_COLUMNS,
     ]
+    # 指定店舖變體不加原模式的「是否該店的Top 80%」，避免兩個同義欄並存
+    assert _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN not in headers
     assert round(ws.column_dimensions[get_column_letter(headers.index(site_col) + 1)].width, 2) == 14.0
     assert round(ws.column_dimensions[get_column_letter(headers.index(_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN) + 1)].width, 2) == 16.0
     assert ws.freeze_panes == f"{get_column_letter(headers.index('SKU Desc') + 2)}2"

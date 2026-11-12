@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 """店舖精簡SKU模式：把 By SKUxShop 明細轉化為店舖精簡 SKU 回覆表。
 
-每列一店×一 SKU，保留來源檔全部欄位，並在最後附加五個固定欄位：
+每列一店×一 SKU，保留來源檔全部欄位，並在最後附加六個固定欄位：
 
 - 過去90日有無賣過：Sold Qty (P90D) > 0 → 「有」，否則（等於 0、負數或空白）→「無賣」；
 - 過去90日有無存貨：Shop Stock Qty (LLM)、(LM) 或 (CM) 任一 > 0 →「有存貨」
   （LLM 欄自 2026-10-26 起來源報表提供；缺欄時以其餘庫存欄判定），
   三者同時為 0（或空白／負數）→「無存貨」；
+- 是否該店的Top 80%：每間店以 Adj. SST 分類為母體，在每個分類內按 Sold Qty (P90D)
+  由高至低累計，累計銷量首次達該店該分類總銷量 80% 的 SKU 為「是」
+  （同一銷量整組納入或整組排除；分類之間不互相擠佔；缺 Site Code 時全表單一分組、
+  缺 Adj. SST 時每店單一分組，均列 warning）；
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty：一律留空，供 SCT／店舖填寫。
 
 本模式不作調貨、Safety 或退倉建議，亦不篩選列（全店全 SKU 輸出）；清理規則沿用
@@ -72,6 +76,7 @@ __all__ = [
     "_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN",
     "_SHOP_SIMPLIFY_TOP80_YES",
     "_SHOP_SIMPLIFY_TOP80_NO",
+    "_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN",
     "_SHOP_SIMPLIFY_RED",
     "_SHOP_SIMPLIFY_RED_RULES",
     "_shop_simplify_site_top80_column",
@@ -113,6 +118,8 @@ _SHOP_SIMPLIFY_SITE_TOP80_TEMPLATE = "是否{site}的Top 80%"
 _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN = "是否同Shop Nature的Top 80%"
 _SHOP_SIMPLIFY_TOP80_YES = "是"
 _SHOP_SIMPLIFY_TOP80_NO = "否"
+# 原模式（多店輸出）每店各自的 Top 80% 欄名；指定店舖變體改用「是否{店舖}的Top 80%」
+_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN = "是否該店的Top 80%"
 
 
 # ── Excel 輸出格式（對齊店舖精簡回覆表範本）──
@@ -385,6 +392,42 @@ def _shop_simplify_top80_keys(
     return keys
 
 
+def _shop_simplify_shop_top80_flags(
+    df: pd.DataFrame,
+    sold: pd.Series,
+    site_col: str | None,
+    sst_col: str | None,
+) -> pd.Series:
+    """每列是否屬「該店 × 該 Adj. SST 分類」累計 80% 內的 SKU（原模式多店輸出用）。
+
+    以 (Site Code, Adj. SST) 為母體鍵，母體之間互不擠佔；缺 Site Code 時全表視為
+    單一店舖（"(全部店舖)"），缺 Adj. SST 時每店單一分組（"(全部)"）。
+    """
+    index = df.index
+    if site_col is not None and site_col in df.columns:
+        sites = df[site_col].fillna("").astype(str).str.strip()
+        sites = sites.mask(sites == "", "(空白店舖)")
+    else:
+        sites = pd.Series("(全部店舖)", index=index, dtype=object)
+    if sst_col is not None and sst_col in df.columns:
+        groups = df[sst_col].fillna("").astype(str).str.strip()
+        groups = groups.mask(groups == "", "(空白分類)")
+    else:
+        groups = pd.Series("(全部)", index=index, dtype=object)
+    if "SKU" not in df.columns:
+        return pd.Series(False, index=index, dtype=bool)
+
+    # 以不可見分隔符併成單一母體鍵，重用按分類累計 80% 的同一判定
+    body_keys = sites.astype(str) + "\u0000" + groups.astype(str)
+    skus = _cached_safe_sku_series(df["SKU"]).astype(str).str.strip()
+    keys = _shop_simplify_top80_keys(body_keys, skus, sold)
+    return pd.Series(
+        [(group, sku) in keys for group, sku in zip(body_keys, skus)],
+        index=index,
+        dtype=bool,
+    )
+
+
 def _shop_simplify_drop_existing_columns(df: pd.DataFrame) -> pd.DataFrame:
     """移除來源檔已有的輸出欄（含前後空格變體與指定店舖的 Top 80% 欄），避免重複欄位。
 
@@ -404,11 +447,16 @@ def transform_shop_simplify(
     df_input: pd.DataFrame,
     progress_callback=None,
     shop_natures: list[str] | None = None,
+    include_shop_top80: bool = True,
 ):
-    """清理來源資料並附加「過去90日有無賣過／過去90日有無存貨」與三個空白回覆欄。
+    """清理來源資料並附加「過去90日有無賣過／過去90日有無存貨／是否該店的Top 80%」
+    與三個空白回覆欄。
 
-    回傳 (raw_df, warnings)。缺少 Sold Qty (P90D)，或 Shop Stock Qty (LLM)／(LM)／(CM)
-    三個庫存欄同時缺失時拋出 ValueError（無法判定，不應靜默輸出）。
+    - 「是否該店的Top 80%」以 (Site Code, Adj. SST) 為母體，每間店每個分類各自一條
+      80% 線；指定店舖變體另有自己的店舖／同 Nature 判定，故以 `include_shop_top80=False`
+      關閉（避免重複欄位）。
+    - 回傳 (raw_df, warnings)。缺少 Sold Qty (P90D)，或 Shop Stock Qty (LLM)／(LM)／(CM)
+      三個庫存欄同時缺失時拋出 ValueError（無法判定，不應靜默輸出）。
     """
     if progress_callback:
         progress_callback(0.0, "驗證輸入資料...")
@@ -421,6 +469,8 @@ def transform_shop_simplify(
     llm_col = _resolve_column_name("Shop Stock Qty (LLM)", avail)
     lm_col = _resolve_column_name("Shop Stock Qty (LM)", avail)
     cm_col = _resolve_column_name("Shop Stock Qty (CM)", avail)
+    site_col = _resolve_column_name("Site Code", avail)
+    sst_col = _resolve_column_name("Adj. SST", avail)
     if sold_col is None:
         raise ValueError("來源檔案缺少「Sold Qty (P90D)」，無法判定過去90日有無賣過。")
     _stock_pairs = [
@@ -452,8 +502,9 @@ def transform_shop_simplify(
     )
     if had_output_columns:
         warnings.append(
-            "來源檔已含本模式的輸出欄（過去90日有無賣過／過去90日有無存貨／SCT建議／"
-            "Shop 回覆新的NDRF／如果RF的Safety Qty），將以本次計算結果覆蓋，三個回覆欄一律留空。"
+            "來源檔已含本模式的輸出欄（過去90日有無賣過／過去90日有無存貨／"
+            "SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty／Top 80% 判定欄），"
+            "將以本次計算結果覆蓋，三個回覆欄一律留空。"
         )
 
     if progress_callback:
@@ -496,6 +547,27 @@ def transform_shop_simplify(
 
     df[_SHOP_SIMPLIFY_SOLD_COLUMN] = sold_status
     df[_SHOP_SIMPLIFY_STOCK_COLUMN] = stock_status
+
+    if include_shop_top80:
+        if progress_callback:
+            progress_callback(0.62, "判定各店的Top 80%...")
+        if site_col is None:
+            warnings.append(
+                f"來源檔案缺少「Site Code」，「{_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN}」未能按店舖分組，"
+                "改以全表為單一店舖計算。"
+            )
+        if sst_col is None:
+            warnings.append(
+                f"來源檔案缺少「Adj. SST」，「{_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN}」未能按 Adj. SST 分類，"
+                "改以每店單一分組計算。"
+            )
+        shop_top80 = _shop_simplify_shop_top80_flags(df, sold, site_col, sst_col)
+        df[_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN] = np.where(
+            shop_top80.to_numpy(dtype=bool),
+            _SHOP_SIMPLIFY_TOP80_YES,
+            _SHOP_SIMPLIFY_TOP80_NO,
+        )
+
     for name in _SHOP_SIMPLIFY_REPLY_COLUMNS:
         df[name] = ""
 
@@ -551,7 +623,8 @@ def transform_shop_simplify_site(
     全店／全 Nature 單一分組並列 warning。
 
     其餘清理、Item_Shop 解析、刪除 Value 欄、三個回覆欄留空與排序規則完全沿用
-    `transform_shop_simplify`。回傳 (raw_df, warnings)。
+    `transform_shop_simplify`（以 `include_shop_top80=False` 關閉原模式的
+    「是否該店的Top 80%」，改由本函式的兩個判定欄取代）。回傳 (raw_df, warnings)。
     """
     site = str(site_code or "").strip()
     if not site:
@@ -663,6 +736,7 @@ def transform_shop_simplify_site(
         shop_raw,
         progress_callback=_site_progress if progress_callback else None,
         shop_natures=None,
+        include_shop_top80=False,
     )
     warnings = list(base_warnings) + warnings
 
