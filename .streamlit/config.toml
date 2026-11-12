@@ -1,6 +1,8 @@
 [server]
 # 店舖精簡SKU模式(指定店舖) 支援大檔：80 萬行 By SKUxShop 約 200–220MB，預留至 300MB
 maxUploadSize = 300
+# 下載大檔（如 80 萬行 RAW 明細）時 WebSocket 訊息會超過預設 200MB，同步放寬
+maxMessageSize = 300
 
 [theme]
 primaryColor = "#0284c7"

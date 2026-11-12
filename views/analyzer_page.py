@@ -793,7 +793,21 @@ if uploaded_file is not None:
     # 顯示上傳檔案基本資訊與預覽卡片
     st.markdown('<div class="section-banner"><h3>📊 來源檔案成功載入</h3></div>', unsafe_allow_html=True)
     
-    _valid_rows, _excluded_rows = count_valid_source_rows(df_input)
+    # Streamlit 每次互動（任何 widget 變更）都會重跑整頁；80 萬行時 count_valid_source_rows
+    # 約 0.5 秒，以檔案 key 快取結果，避免每次點擊、每次切換模式都重算一次。
+    _counts_cache = st.session_state.get("valid_row_counts")
+    if (
+        not isinstance(_counts_cache, dict)
+        or _counts_cache.get("key") != st.session_state.get("last_uploaded_key")
+    ):
+        _valid_rows, _excluded_rows = count_valid_source_rows(df_input)
+        st.session_state.valid_row_counts = {
+            "key": st.session_state.get("last_uploaded_key"),
+            "valid": _valid_rows,
+            "excluded": _excluded_rows,
+        }
+    else:
+        _valid_rows, _excluded_rows = _counts_cache["valid"], _counts_cache["excluded"]
     _row_desc = (
         f"原始 {len(df_input):,} 行｜已剔除 {_excluded_rows:,} 行合計／註腳與空白列"
         if _excluded_rows else f"原始 {len(df_input):,} 行，全部為明細列"
@@ -825,6 +839,19 @@ if uploaded_file is not None:
         """, unsafe_allow_html=True)
         
     st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
+
+    # 大檔記憶體提示：Streamlit 每個使用者的 session 各自保留一份 df_input（不會跨 session 共用），
+    # 80 萬行實測常駐約 1.6GB、執行峰值約 2.3–2.6GB（另加上傳檔本身的位元組）。
+    if len(df_input) >= 300_000:
+        _est_steady = len(df_input) * 1.9e-6
+        _est_peak = len(df_input) * 2.9e-6
+        st.info(
+            f"📦 **大檔提示**：此檔 {len(df_input):,} 行。Streamlit 每個使用者的 session 會各自保留"
+            f"一份已解析資料，實測約需 **{_est_steady:.1f} GB 常駐、{_est_peak:.1f} GB 峰值**記憶體"
+            "（另加上傳檔本身的位元組）。建議：① 同一時間只讓 1–2 人執行；"
+            "② 下載完成後按側欄「🧹 釋放記憶體」把資料還給系統；"
+            "③ 伺服器至少預留 4GB RAM（80 萬行、2 人同時使用建議 8GB 以上）。"
+        )
 
     # 2026-10-26 起來源報表新增的 M-2（上上月）庫存欄位：選用欄位，偵測到即提示已識別；
     # 舊月份檔案沒有這些欄位，不顯示任何提示，行為不變。

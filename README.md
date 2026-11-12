@@ -68,7 +68,18 @@ docker run -p 8080:8080 i14-report-review
 | 遙測 | `--browser.gatherUsageStats=false` | 停用對外統計請求，加快載入 |
 | 日誌 | `PYTHONUNBUFFERED=1` | 即時輸出到容器日誌 |
 
-**容量建議**：應用會將 DataFrame 與生成的 Excel 保存在 session 記憶體中，建議服務配置 **至少 1GB RAM**（多用戶同時處理大檔案時建議 2GB）。Sidebar 底部會顯示目前行程的 Memory Usage，方便監察容器資源。若服務無故重啟，通常是 OOM（記憶體不足），可升級 plan 或提醒用戶按「🧹 釋放記憶體」。
+**容量建議（實測）**：應用會把整份 DataFrame 與產生的 Excel 留在**每個使用者的 session** 記憶體中（Streamlit 不會跨 session 共用），上傳檔的原始位元組亦由 Streamlit 保留：
+
+| 檔案規模 | 每個 session 常駐 | 執行峰值 | 建議伺服器 RAM |
+|------|------|------|------|
+| 8.4 萬行（約 22MB，實測） | 約 0.4GB | 約 0.8GB | 2GB |
+| 80 萬行（約 200–220MB，實測 83.7 萬行） | 約 1.6–1.8GB | 約 2.3–2.6GB | 8GB（2–3 人同時使用） |
+
+- 同一時間 **N 人**各自處理大檔，記憶體約需 **N × 峰值**：80 萬行 2 人同時執行約 5GB，記憶體不足會令容器被 OOM 重啟。
+- 每次點擊任何控件都會重跑整頁；已解析的 DataFrame 存在 session 內不會重讀（`count_valid_source_rows` 已按檔案快取），但大檔互動仍比小檔慢。
+- 表格預覽一律只送 `head(200)` 給前端；整份 80 萬行直接 `st.dataframe` 會額外產生約 480MB Arrow 資料，故不做全表預覽。
+- 上傳上限 300MB、`server.maxMessageSize` 亦放寬至 300MB（下載大檔 Excel 用）。
+- 用完請按側欄「🧹 釋放記憶體」，清除 session 與 `st.cache_data` 快取並把頁面還給 OS。Sidebar 底部會顯示目前行程的 Memory Usage（Linux／容器），方便監察；若服務無故重啟，通常是 OOM（記憶體不足）。
 
 ## 必要欄位
 
