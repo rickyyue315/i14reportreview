@@ -153,7 +153,7 @@ Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）�
 5. **SKU Desc／Shop Name** — 由 `Item_Shop` 以 `Site Code` 解析；`SKU Desc` 排於 `Brand` 之後、`Shop Name` 排於 `Site Code` 之後，`Item_Shop` 缺欄時兩欄留空並列 warning
 6. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄，如 `Shop Stock Value (LM)`／`(CM)`、`Excess Stock Value`）一律刪除；判定為大小寫敏感的「含 Value」字串比對，故 `Valuation Class` 不會被刪除
 7. **排序與輸出** — 依 `Brand`、`SKU`（文字）升序；輸出 `Summary`（`Adj. MCH1` × `Item Status` 的 SKU 列數，含總計）＋ `Export`（回覆明細，五個固定欄位排最後）兩個工作表
-8. **Export 格式** — 凍結 F2、縮放 85%、指定欄寬與隱藏欄；表頭列高 70.5 並自動換行；`RP Type`／`Shop Stock Qty (CM)` 綠色、`Sold Qty (P90D)` 紫色、「無賣」列淡紅；`Shop Monthly Sold Qty (P90D)`、`Safety VS Monthly Sold Qty`、`Turnday`、`Sold Qty (M-2／M-1／CM - MTD)`、`Net Sales (M-2／M-1／CM - MTD)` 套用指定數字格式
+8. **Export 格式** — 凍結 F2、縮放 85%、指定欄寬與隱藏欄；表頭列高 70.5 並自動換行；`RP Type`／`Shop Stock Qty (CM)` 綠色、`Sold Qty (P90D)` 紫色、「無賣」列淡紅、`Item Status`＝`Discontinued`／`RP Type`＝`ND`／`過去90日有無存貨`＝`無存貨` 紅色底（比對忽略大小寫與前後空白，ND 的紅色底蓋過該欄綠色）；`Shop Monthly Sold Qty (P90D)`、`Safety VS Monthly Sold Qty`、`Turnday`、`Sold Qty (M-2／M-1／CM - MTD)`、`Net Sales (M-2／M-1／CM - MTD)` 套用指定數字格式
 9. **來源工作表** — 多工作表檔案優先讀取 `Export`；沒有 Export 時沿用第一個工作表（例如手動另加樞紐的 HA20 工作檔可直接上傳）
 
 ### 店舖精簡SKU模式（指定店舖）
@@ -168,6 +168,7 @@ Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）�
 6. **特殊情況** — 來源缺 `Shop Nature` 或該店 Nature 空白時，Nature 欄留空並列 warning；該店 `Sold Qty (P90D)` 合計為 0 時，兩個判定欄全部「否」並列 warning；同 Nature 在來源檔只有一間店舖時列 warning（Nature 判定與店舖判定相同）；指定店舖不存在時停止並提示
 7. **判定用途** — 「兩項皆非」即精簡候選（既非該店 Top 80%，亦非同 Nature Top 80%）；結果頁另設「兩項皆非」與「店舖 Top 80%」兩個預覽分頁，下載檔名為 `I14 店舖精簡SKU模式_{店舖}_指定店舖_{YYYYMMDD_HHMM}.xlsx`
 8. **大檔效能** — 全表只做向量化清理（Site Code／SKU／Shop Nature／Adj. SST／Sold Qty），`Item_Shop` 逐列解析與排序只套用在指定店舖的列；83.7 萬行模擬轉換約 6.7 秒（另加讀檔時間，8.37 萬行／22.5MB 約 2.5 秒，線性外推 80 萬行約 25 秒）。上傳上限已放寬至 **300MB**（80 萬行以現有欄位密度估算約 200–220MB）
+9. **紅色底標示** — `Item Status`＝`Discontinued`、`RP Type`＝`ND`、`過去90日有無存貨`＝`無存貨` 三類值以紅色底標示，方便一眼挑出精簡對象；與店舖精簡SKU模式共用同一匯出引擎（該模式一併生效）
 
 ### Safety Stock Review
 

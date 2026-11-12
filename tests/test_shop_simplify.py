@@ -37,6 +37,7 @@ from transformer import (
     _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN,
     _SHOP_SIMPLIFY_TOP80_YES,
     _SHOP_SIMPLIFY_TOP80_NO,
+    _SHOP_SIMPLIFY_RED,
     _shop_simplify_site_top80_column,
     _shop_simplify_top80_mask,
     _shop_simplify_top80_keys,
@@ -497,6 +498,58 @@ def test_excel_format_matches_template():
     assert ws.cell(row=2, column=col["Safety VS Monthly Sold Qty"]).number_format == "0%"
 
 
+def test_excel_red_highlight_rules():
+    """Item Status＝Discontinued、RP Type＝ND、過去90日有無存貨＝無存貨 → 紅色底；
+    比對忽略前後空白與大小寫；RP Type 的紅色底蓋過該欄綠色；「無賣」淡紅不受影響。"""
+    df = _df([
+        {"SKU": 1, "Item Status": "Discontinued", "RP Type": "ND",
+         "Sold Qty (P90D)": 0, "Shop Stock Qty (LM)": 0, "Shop Stock Qty (CM)": 0},
+        {"SKU": 2, "Item Status": "Active", "RP Type": "RF",
+         "Sold Qty (P90D)": 5, "Shop Stock Qty (LM)": 3, "Shop Stock Qty (CM)": 1},
+        {"SKU": 3, "Item Status": " discontinued ", "RP Type": "nd",
+         "Sold Qty (P90D)": 1, "Shop Stock Qty (LM)": 0, "Shop Stock Qty (CM)": 2},
+    ])
+    raw, _ = transform_shop_simplify(df)
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
+    col = {name: i + 1 for i, name in enumerate([c.value for c in ws[1]])}
+
+    def rgb(row, name):
+        return str(ws.cell(row=row, column=col[name]).fill.start_color.rgb)[-6:]
+
+    # 第一列：三個條件同時成立
+    assert rgb(2, "Item Status") == _SHOP_SIMPLIFY_RED
+    assert rgb(2, "RP Type") == _SHOP_SIMPLIFY_RED
+    assert ws.cell(row=2, column=col[_SHOP_SIMPLIFY_STOCK_COLUMN]).value == _SHOP_SIMPLIFY_STOCK_NO
+    assert rgb(2, _SHOP_SIMPLIFY_STOCK_COLUMN) == _SHOP_SIMPLIFY_RED
+    # 「無賣」淡紅與新紅色底各自獨立（同一列可同時出現）
+    assert rgb(2, _SHOP_SIMPLIFY_SOLD_COLUMN) == "F2DCDB"
+
+    # 第二列：沒有命中任何條件，RP Type 維持綠色、其餘無填色
+    assert ws.cell(row=3, column=col["Item Status"]).fill.fill_type is None
+    assert rgb(3, "RP Type") == "CCFF99"
+    assert ws.cell(row=3, column=col[_SHOP_SIMPLIFY_STOCK_COLUMN]).fill.fill_type is None
+
+    # 第三列：來源值前後空白／小寫亦命中（Item Status、RP Type 紅底），有存貨不套紅底
+    assert rgb(4, "Item Status") == _SHOP_SIMPLIFY_RED
+    assert rgb(4, "RP Type") == _SHOP_SIMPLIFY_RED
+    assert ws.cell(row=4, column=col[_SHOP_SIMPLIFY_STOCK_COLUMN]).value == _SHOP_SIMPLIFY_STOCK_YES
+    assert ws.cell(row=4, column=col[_SHOP_SIMPLIFY_STOCK_COLUMN]).fill.fill_type is None
+
+
+def test_excel_red_highlight_skips_missing_columns():
+    """來源缺 Item Status 欄時該條件自動略過，其餘兩個條件照常標示。"""
+    df = _df([
+        {"SKU": 1, "RP Type": "ND", "Sold Qty (P90D)": 1,
+         "Shop Stock Qty (LM)": 0, "Shop Stock Qty (CM)": 0},
+    ])
+    raw, _ = transform_shop_simplify(df)
+    assert "Item Status" not in raw.columns
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
+    col = {name: i + 1 for i, name in enumerate([c.value for c in ws[1]])}
+    assert str(ws.cell(row=2, column=col["RP Type"]).fill.start_color.rgb)[-6:] == _SHOP_SIMPLIFY_RED
+    assert str(ws.cell(row=2, column=col[_SHOP_SIMPLIFY_STOCK_COLUMN]).fill.start_color.rgb)[-6:] == _SHOP_SIMPLIFY_RED
+
+
 def test_excel_freeze_panes_after_sku_desc():
     df = _df([{"SKU": 1}])
     raw, _ = transform_shop_simplify(df)
@@ -670,6 +723,28 @@ def test_site_mode_excel_headers_widths_and_summary():
     assert round(ws.column_dimensions[get_column_letter(headers.index(_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN) + 1)].width, 2) == 16.0
     assert ws.freeze_panes == f"{get_column_letter(headers.index('SKU Desc') + 2)}2"
     assert wb.sheetnames == ["Summary", "Export"]
+
+
+def test_site_mode_excel_red_highlight_rules():
+    """指定店舖變體共用同一匯出引擎：Discontinued／ND／無存貨同樣以紅色底標示。"""
+    df = _df([
+        {"SKU": "A", "Site Code": "HA21", "Item Status": "Discontinued", "RP Type": "ND",
+         "Sold Qty (P90D)": 5, "Shop Stock Qty (LM)": 0, "Shop Stock Qty (CM)": 0},
+        {"SKU": "B", "Site Code": "HA21", "Item Status": "Active", "RP Type": "RF",
+         "Sold Qty (P90D)": 1, "Shop Stock Qty (LM)": 2, "Shop Stock Qty (CM)": 0},
+    ])
+    raw, _ = transform_shop_simplify_site(df, "HA21")
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
+    col = {name: i + 1 for i, name in enumerate([c.value for c in ws[1]])}
+
+    def rgb(row, name):
+        return str(ws.cell(row=row, column=col[name]).fill.start_color.rgb)[-6:]
+
+    assert rgb(2, "Item Status") == _SHOP_SIMPLIFY_RED
+    assert rgb(2, "RP Type") == _SHOP_SIMPLIFY_RED
+    assert rgb(2, _SHOP_SIMPLIFY_STOCK_COLUMN) == _SHOP_SIMPLIFY_RED
+    assert rgb(3, "RP Type") == "CCFF99"
+    assert ws.cell(row=3, column=col[_SHOP_SIMPLIFY_STOCK_COLUMN]).fill.fill_type is None
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -16,7 +16,9 @@ Shop Name 排於 Site Code 之後），其餘來源欄序不變；欄名含「Va
 （大小寫敏感，與「RAW 明細轉化 (不含 Value)」同一判定，故 Valuation Class 不受影響）。
 輸出經 Brand／SKU（文字）排序，並產生 Summary（Adj. MCH1 × Item Status 計數）與
 Export（回覆明細）兩個工作表；Export 套用店舖精簡回覆表範本的欄寬、隱藏欄、
-數字格式、凍結窗格與顏色標示。
+數字格式、凍結窗格與顏色標示——其中 Item Status 為「Discontinued」、RP Type 為
+「ND」、過去90日有無存貨為「無存貨」三類值以紅色底標示（比對忽略大小寫與
+前後空白；RP Type 的紅色底會蓋過該欄的綠色），兩個模式共用同一匯出引擎。
 
 另有「指定店舖」變體（`transform_shop_simplify_site`）：只輸出指定店舖（如 HA21）
 的 SKU 列，並在存貨判定欄之後加兩個 Top 80% 判定欄——
@@ -70,6 +72,8 @@ __all__ = [
     "_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN",
     "_SHOP_SIMPLIFY_TOP80_YES",
     "_SHOP_SIMPLIFY_TOP80_NO",
+    "_SHOP_SIMPLIFY_RED",
+    "_SHOP_SIMPLIFY_RED_RULES",
     "_shop_simplify_site_top80_column",
     "_shop_simplify_top80_mask",
     "_shop_simplify_top80_keys",
@@ -120,6 +124,15 @@ _SHOP_SIMPLIFY_HEADER_BLUE = "D9E2F3"
 _SHOP_SIMPLIFY_GREEN = "CCFF99"
 _SHOP_SIMPLIFY_PURPLE = "E4DFEC"
 _SHOP_SIMPLIFY_NO_SALE_PINK = "F2DCDB"
+
+# 紅色底（醒目紅底；比「無賣」的淡紅 F2DCDB 明顯，故兩者不會混淆）
+_SHOP_SIMPLIFY_RED = "FF9999"
+# 紅色底判定：欄名 → 觸發值（比對前去除前後空白、忽略大小寫；欄位不存在時略過該條件）
+_SHOP_SIMPLIFY_RED_RULES = (
+    ("Item Status", "discontinued"),
+    ("RP Type", "nd"),
+    (_SHOP_SIMPLIFY_STOCK_COLUMN, _SHOP_SIMPLIFY_STOCK_NO.lower()),
+)
 
 # 綠色表頭（另加綠色資料格：RP Type／Shop Stock Qty (CM)）
 _SHOP_SIMPLIFY_GREEN_HEADERS = {
@@ -736,6 +749,12 @@ def _shop_simplify_cell(value):
     return value
 
 
+def _shop_simplify_red_mask(series: pd.Series, target: str) -> np.ndarray:
+    """逐列判定是否套紅色底（去除前後空白、忽略大小寫；空白／缺值不命中）。"""
+    text = series.fillna("").astype(str).str.strip().str.lower()
+    return text.eq(target).to_numpy(dtype=bool)
+
+
 def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
     """Summary 工作表：Adj. MCH1 × Item Status 的 SKU 列數樞紐（含總計；零值留空）。"""
     ws["A3"] = "計數 - SKU"
@@ -803,7 +822,8 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> B
     """產生兩個工作表：Summary（Adj. MCH1 × Item Status 計數）與 Export（回覆明細）。
 
     Export 沿用店舖精簡回覆表範本的格式：Brand／SKU 排序、凍結 F2、指定欄寬與隱藏欄、
-    數字格式、綠色／紫色重點欄，以及「無賣」列的淡紅標示。
+    數字格式、綠色／紫色重點欄、「無賣」列的淡紅標示，以及三類紅色底標示
+    （Item Status＝Discontinued、RP Type＝ND、過去90日有無存貨＝無存貨）。
     """
     wb = Workbook()
     ws_summary = wb.active
@@ -831,6 +851,7 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> B
     fill_green = PatternFill(start_color=_SHOP_SIMPLIFY_GREEN, end_color=_SHOP_SIMPLIFY_GREEN, fill_type="solid")
     fill_purple = PatternFill(start_color=_SHOP_SIMPLIFY_PURPLE, end_color=_SHOP_SIMPLIFY_PURPLE, fill_type="solid")
     fill_pink = PatternFill(start_color=_SHOP_SIMPLIFY_NO_SALE_PINK, end_color=_SHOP_SIMPLIFY_NO_SALE_PINK, fill_type="solid")
+    fill_red = PatternFill(start_color=_SHOP_SIMPLIFY_RED, end_color=_SHOP_SIMPLIFY_RED, fill_type="solid")
 
     # 表頭：粗體、指定底色、細框、置中置頂、自動換行；列高 70.5
     ws.row_dimensions[1].height = 70.5
@@ -856,10 +877,16 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> B
         if name in _SHOP_SIMPLIFY_HIDDEN_COLUMNS:
             ws.column_dimensions[letter].hidden = True
 
-    # 資料格：綠色重點欄、紫色 Sold Qty (P90D)、「無賣」淡紅標示
+    # 資料格：綠色重點欄、紫色 Sold Qty (P90D)、「無賣」淡紅標示、
+    # 以及紅色底重點（Item Status＝Discontinued／RP Type＝ND／過去90日有無存貨＝無存貨）
     green_cols = [i for i, name in enumerate(headers, start=1) if name in _SHOP_SIMPLIFY_GREEN_DATA_COLUMNS]
     purple_cols = [i for i, name in enumerate(headers, start=1) if name in _SHOP_SIMPLIFY_PURPLE_COLUMNS]
     sold_col_idx = headers.index(_SHOP_SIMPLIFY_SOLD_COLUMN) + 1 if _SHOP_SIMPLIFY_SOLD_COLUMN in headers else None
+    red_rules = [
+        (headers.index(name) + 1, _shop_simplify_red_mask(df[name], target))
+        for name, target in _SHOP_SIMPLIFY_RED_RULES
+        if name in headers and name in df.columns
+    ]
     number_formats = [
         (i, _SHOP_SIMPLIFY_NUMBER_FORMATS[name])
         for i, name in enumerate(headers, start=1)
@@ -874,6 +901,10 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> B
             sold_cell = ws.cell(row=row_idx, column=sold_col_idx)
             if sold_cell.value == _SHOP_SIMPLIFY_SOLD_NO:
                 sold_cell.fill = fill_pink
+        # 紅色底最後套用，故 RP Type＝ND 會蓋過該欄的綠色
+        for col_idx, mask in red_rules:
+            if mask[row_idx - 2]:
+                ws.cell(row=row_idx, column=col_idx).fill = fill_red
         for col_idx, fmt in number_formats:
             ws.cell(row=row_idx, column=col_idx).number_format = fmt
 

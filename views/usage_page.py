@@ -107,7 +107,7 @@ MODES = [
 4. **不篩選列** — 全店全 SKU 輸出，清理規則與其他模式一致（剔除合計列與 117 - Marketing）；Shop Nature 篩選為選填
 5. **SKU Desc／Shop Name** — 由 Item_Shop 以 Site Code 解析；SKU Desc 排於 Brand 之後、Shop Name 排於 Site Code 之後；Item_Shop 缺欄時兩欄留空並列 warning
 6. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄）一律刪除；大小寫敏感，Valuation Class 不會被刪除
-7. **排序與格式** — 依 Brand、SKU（文字）升序；Summary 為 Adj. MCH1 × Item Status 的 SKU 列數；Export 凍結 F2、縮放 85%，套用範本欄寬、隱藏欄、數字格式與顏色（RP Type／Shop Stock Qty (CM) 綠色、Sold Qty (P90D) 紫色、「無賣」列淡紅）
+7. **排序與格式** — 依 Brand、SKU（文字）升序；Summary 為 Adj. MCH1 × Item Status 的 SKU 列數；Export 凍結 F2、縮放 85%，套用範本欄寬、隱藏欄、數字格式與顏色（RP Type／Shop Stock Qty (CM) 綠色、Sold Qty (P90D) 紫色、「無賣」列淡紅、Item Status＝Discontinued／RP Type＝ND／過去90日有無存貨＝無存貨 紅色底）
      """),
 
     ("🏪 店舖精簡SKU模式(指定店舖)",
@@ -125,6 +125,7 @@ MODES = [
 4. **母體與範圍** — 只有指定店舖的列會輸出，兩個判定欄亦只加在這些列；Summary 只計該店 SKU
 5. **特殊情況** — 缺 Shop Nature 或該店 Nature 空白 → Nature 欄留空並列 warning；該店 Sold Qty (P90D) 合計為 0 → 兩個判定欄全部「否」並列 warning；同 Nature 只有一間店舖 → 列 warning（Nature 判定與店舖判定相同）；指定店舖不存在 → 停止並提示
 6. **沿用規則** — 清理（剔除合計列與 117 - Marketing）、Item_Shop 解析 SKU Desc／Shop Name、刪除欄名含 Value 的欄位、Brand／SKU 排序、SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 三欄留空，全部與店舖精簡SKU模式相同
+7. **紅色底標示** — Export 的 Item Status＝Discontinued、RP Type＝ND、過去90日有無存貨＝無存貨 三類值以紅色底標示（比對忽略大小寫與前後空白；RP Type 的紅色底蓋過該欄綠色；兩個模式共用同一匯出引擎）
      """),
 
     ("📊 NDRF 月份對比",
