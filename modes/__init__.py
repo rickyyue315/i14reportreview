@@ -31,6 +31,12 @@ MODE_REGISTRY["店舖精簡SKU模式"] = {
     "generate_excel": "generate_excel_shop_simplify",
 }
 
+MODE_REGISTRY["店舖精簡SKU模式(指定店舖)"] = {
+    "module": "modes.shop_simplify",
+    "transform": "transform_shop_simplify_site",
+    "generate_excel": "generate_excel_shop_simplify",
+}
+
 MODE_REGISTRY["Overstock Review"] = {
     "module": "modes.overstock",
     "transform": "transform",

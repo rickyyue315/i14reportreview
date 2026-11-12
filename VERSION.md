@@ -1,5 +1,31 @@
 # 版本記錄
 
+## v1.96.0 (2026-11-12)
+
+店舖精簡SKU模式新增「指定店舖」變體：只為一間指定店舖（如 HA21）列出 SKU，並判斷每個 SKU 是否屬該店 Top 80%、是否屬同 Shop Nature Top 80%——兩個判定均以 **Adj. SST 分類為母體**，在每個分類內獨立累計（店舖主管要求：一眼看出哪些 SKU 是核心、哪些是精簡候選）：
+
+- **新模式** — `店舖精簡SKU模式(指定店舖)`；介面以 Site Code 下拉選單指定店舖，不設 Shop Nature 篩選（母體由該店 Shop Nature 決定），輸出只含該店列
+- **Top 80% 判定（按 Adj. SST 分類）** — 在每個 `Adj. SST` 分類內按 `Sold Qty (P90D)` 由高至低累計，累計銷量首次達該分類總銷量 80% 即屬 Top 80%；同一銷量的 SKU 整組納入或整組排除，避免同銷量被隨意切開；分類之間不互相擠佔（Local、Private Label、Sole Agent 等各自有自己的 80% 線）
+- **兩個母體** — 店舖層為該店每個 Adj. SST 分類；Nature 層為來源檔內同 `Shop Nature` 全部店舖的同 SKU 銷量**按 Adj. SST 分類**加總（其他 Nature 不計入）
+- **欄序** — `過去90日有無賣過`／`過去90日有無存貨`／`是否{店舖}的Top 80%`／`是否同Shop Nature的Top 80%`／`SCT建議`／`Shop 回覆新的NDRF`／`如果RF的Safety Qty`；兩個判定欄只加在指定店舖的列，三個回覆欄維持最後並一律留空
+- **沿用規則** — 清理（剔除 Total／Applied filters／117 - Marketing）、`Item_Shop` 解析 SKU Desc／Shop Name、刪除欄名含 Value 的欄位、Brand／SKU 文字排序、`Summary`（Adj. MCH1 × Item Status）＋`Export` 兩個工作表與原模式完全相同；重跑舊輸出時自動移除舊 Top 80% 欄，不重複
+- **邊界情況** — 缺 `Shop Nature` 或該店 Nature 空白 → Nature 欄留空並列 warning；缺 `Adj. SST` → 退回全店／全 Nature 單一分組並列 warning；該店 `Sold Qty (P90D)` 合計為 0 → 兩個判定欄全部「否」並列 warning；同 Nature 在來源檔只有一間店舖 → 列 warning（Nature 判定與店舖判定相同）；指定店舖不存在 → 停止並提示；Site Code 大小寫不敏感比對
+- **結果頁** — 指標卡（SKU 數／店舖 Top 80%／同 Nature Top 80%／兩項皆非）＋「全部明細」「兩項皆非」「店舖 Top 80%」三個預覽分頁；下載檔名帶店舖（`I14 店舖精簡SKU模式_HA21_指定店舖_YYYYMMDD_HHMM.xlsx`）
+- **實測（`By SKUxShop_HA21_12Nov2026.xlsx`）** — 清洗後 3,833 個 SKU、10 個 Adj. SST 分類；店舖 Top 80% 1,205 個、同 Nature Top 80% 1,483 個、兩項皆非 2,197 個（例：`01 - Local` 1,519 個 SKU 中 512 個屬店舖 Top 80%、656 個屬同 Nature Top 80%；`03 - Private Label - (1)Major` 720 個中 221／230 個）；轉換耗時 1.3 秒（不含 Excel 匯出）
+- **測試** — `tests/test_shop_simplify.py` 新增 20 項（註冊、只輸出指定店舖、累計 80% 與同銷量整組、Adj. SST 各分類獨立、Nature 只計同 Nature、零銷量、缺 Nature／Nature 空白、缺 Adj. SST 退回、無效店舖、大小寫、單店 Nature、重跑去重、統計、Excel 欄位與欄寬），全套 **1,723 項通過**
+- Change: `version.py` 1.95.4 → 1.96.0
+
+## v1.95.4 (2026-11-12)
+
+轉貨接收店集中規則抽成獨立規範，供其他調貨專案共用（本次不改任何計算結果）：
+
+- **共用規範三件套** — `TRANSFER_RULES_SPEC.md`（R1–R9 規則、pseudocode、不變量、參數表、邊界情況、跨專案接入方式）、`transfer_rules.py`（零依賴參考實作，只用標準庫）、`transfer_rules_golden.json`（781 個驗收向量，任何語言可用）
+- **`transfer_rules.py`** — `ReceiverPolicy`（每間目標件數／分類覆寫／件數上限階梯／保底件數）、`select_pool`（選店次序：銷量 desc、Site Code asc）、`allocate_proportional`／`allocate_concentrated`／`allocate_with_caps`、`daily_demand`（14 日需求）、`plan_allocation` 入口、`fingerprint()`（參數指紋，供追溯）、`format_rule_table()`（分檔表由程式產生，文件與 UI 不再手抄）
+- **引擎改為委派** — `modes/transfer_p90d.py` 保留原本常數作為參數來源（`_TRANSFER_POLICY`），`_auto_receiver_count`／`_auto_receiver_cap`／`_auto_receiver_target`／`_allocate_*`／`_receiver_cap`／選店一律呼叫共用模組，同一套規則不再有兩份實作；P90D 與 ND 兩個轉貨模式共用
+- **參數驗證統一** — 非整數浮點（如 `3.5`）不再悄悄截斷成 3 間，改為與 `0`／負數／亂字串同樣報 `ValueError`
+- **驗收** — `scripts/gen_transfer_rules_golden.py` 由引擎重算向量並比對，`--check` 只驗不寫；`tests/test_transfer_rules.py` 816 項（黃金向量、引擎委派同值、R1–R9 不變量隨機測試、邊界、參數覆寫、規範文件分檔表不得漂移），全數 **1,703 項通過**
+- Change: `version.py` 1.95.3 → 1.95.4
+
 ## v1.95.3 (2026-11-12)
 
 轉貨模式「按件數自動集中」再收緊（店舖主管要求：10 件以上也盡量減少接收店；0302 迷你裝更集中）：

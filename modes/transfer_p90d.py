@@ -56,6 +56,10 @@ from modes.common import (
     validate_input,
 )
 
+# 接收店集中規則的共用實作（零依賴，可整檔帶到其他調貨專案）。
+# 規範文件：TRANSFER_RULES_SPEC.md；驗收向量：transfer_rules_golden.json。
+import transfer_rules as _rules
+
 __all__ = [
     "build_transfer_candidates",
     "build_mch_options",
@@ -146,10 +150,22 @@ _TRANSFER_RECEIVER_TARGET_BY_MCH2 = {"0302": 4}
 _TRANSFER_RECEIVER_AUTO_CAP_FROM = 10
 _TRANSFER_RECEIVER_AUTO_BASE_CAP = 5
 _TRANSFER_RECEIVER_AUTO_CAP_STEP = 30
+# 集中模式每間保底件數：避免出現只收 1 件的碎片
+_TRANSFER_RECEIVER_MIN_PER_SHOP = 2
 _TRANSFER_RECEIVER_LIMIT_LABELS = {
     2: "集中 1–2 間（同 SKU 銷量最高的接收店）",
     4: "集中 3–4 間（同 SKU 銷量最高的接收店）",
 }
+# 規則政策：本專案的參數值 → 共用規範物件。改數值只改上面幾個常數即可，
+# 演算法一律在 transfer_rules 內，不在本檔重複實作（避免多份實作各自漂移）。
+_TRANSFER_POLICY = _rules.ReceiverPolicy(
+    per_shop_target=_TRANSFER_RECEIVER_AUTO_TARGET,
+    target_by_category=_TRANSFER_RECEIVER_TARGET_BY_MCH2,
+    cap_from=_TRANSFER_RECEIVER_AUTO_CAP_FROM,
+    base_cap=_TRANSFER_RECEIVER_AUTO_BASE_CAP,
+    cap_step=_TRANSFER_RECEIVER_AUTO_CAP_STEP,
+    min_per_receiver=_TRANSFER_RECEIVER_MIN_PER_SHOP,
+)
 
 
 def _is_auto_receiver(receiver_limit) -> bool:
@@ -169,65 +185,38 @@ def receiver_limit_label(receiver_limit: int | str | None = None) -> str:
 
 
 def _validate_receiver_limit(receiver_limit: int | str | None) -> int | str | None:
-    if receiver_limit is None:
-        return None
-    if _is_auto_receiver(receiver_limit):
-        return _TRANSFER_RECEIVER_AUTO
-    try:
-        limit = int(receiver_limit)
-    except (TypeError, ValueError):
-        raise ValueError("接收店舖集中上限必須為正整數、\"auto\" 或「不限」。") from None
-    if limit <= 0:
-        raise ValueError("接收店舖集中上限必須為正整數、\"auto\" 或「不限」。")
-    return limit
+    # 驗證與正規化（"auto"／None／正整數）由共用規範統一處理，訊息與其他專案一致
+    return _rules.normalize_mode(receiver_limit)
 
 
 def _auto_receiver_cap(total: int) -> int:
-    """自動集中模式下每個 SKU 的接收店數上限。
+    """自動集中模式下每個 SKU 的接收店數上限（見 TRANSFER_RULES_SPEC.md R4）。
 
     ≤9 件不設上限（由每間 2–3 件的 ceil 計算決定，即 1／2／3 間）；
     10–30 件最多 5 間；30 件以上每 30 件加 1 間（30–60 最多 6 間、60–90 最多 7 間……），
     避免件數越多、店數線性膨脹，出貨又要分多箱。
     """
-    total = int(total)
-    if total < _TRANSFER_RECEIVER_AUTO_CAP_FROM:
-        return max(total, 1)
-    if total <= _TRANSFER_RECEIVER_AUTO_CAP_STEP:
-        return _TRANSFER_RECEIVER_AUTO_BASE_CAP
-    return _TRANSFER_RECEIVER_AUTO_BASE_CAP + math.ceil(
-        (total - _TRANSFER_RECEIVER_AUTO_CAP_STEP) / _TRANSFER_RECEIVER_AUTO_CAP_STEP
-    )
+    return _TRANSFER_POLICY.cap(total)
 
 
 def _auto_receiver_target(mch2: str = "") -> int:
-    """按 MCH2 分類決定每間接收店的目標件數（預設 3）。
+    """按 MCH2 分類決定每間接收店的目標件數（預設 3，見 R2）。
 
     ``0302 - MINIATURE`` 等小件分類可設較大的目標件數（每間 4 件），
     令件數不多時也集中在一間店；MCH2 欄不存在時一律用預設值。
     """
-    txt = str(mch2 or "").strip()
-    for prefix, target in _TRANSFER_RECEIVER_TARGET_BY_MCH2.items():
-        if txt.startswith(prefix):
-            return int(target)
-    return _TRANSFER_RECEIVER_AUTO_TARGET
+    return _TRANSFER_POLICY.target_for(mch2)
 
 
 def _auto_receiver_count(total: int, target: int | None = None) -> int:
-    """按同 SKU 轉出總量決定接收店數。
+    """按同 SKU 轉出總量決定接收店數（見 R3–R5）。
 
     先以每間 ``target`` 件（預設 3 件）算出所需店數，再套用件數上限
     （見 ``_auto_receiver_cap``）：
     ≤3 件 → 1 間；4–6 件 → 2 間；7–9 件 → 3 間；
     10–30 件 → 最多 5 間；30–60 件 → 最多 6 間；之後每 30 件加 1 間。
     """
-    total = int(total)
-    if total <= 0:
-        return 0
-    per_shop = int(target or _TRANSFER_RECEIVER_AUTO_TARGET)
-    if per_shop <= 0:
-        per_shop = _TRANSFER_RECEIVER_AUTO_TARGET
-    wanted = max(1, math.ceil(total / per_shop))
-    return min(wanted, _auto_receiver_cap(total))
+    return _TRANSFER_POLICY.receiver_count(total, target=target)
 
 
 # 「轉貨單」欄位分組著色（表頭底色、資料底色）：黃＝轉出店與轉貨數量、淺藍＝接收店相關欄位。
@@ -481,41 +470,19 @@ def _site_meta(base: pd.DataFrame) -> dict:
 
 
 def _allocate_proportional(total: int, weights: list[float]) -> list[int]:
-    """按權重分配整數件（最大餘數法）；權重總和 > 0 時分配結果加總恆等於 total。"""
-    n = len(weights)
-    if n == 0 or total <= 0:
-        return [0] * n
-    wsum = float(sum(weights))
-    if wsum <= 0:
-        weights = [1.0] * n
-        wsum = float(n)
-    raw = [total * w / wsum for w in weights]
-    alloc = [math.floor(x) for x in raw]
-    rest = max(total - sum(alloc), 0)
-    order = sorted(range(n), key=lambda i: (-(raw[i] - alloc[i]), -weights[i], i))
-    for i in order[:rest]:
-        alloc[i] += 1
-    return alloc
+    """按權重分配整數件（最大餘數法，見 TRANSFER_RULES_SPEC.md R7）。"""
+    return _rules.allocate_proportional(total, weights)
 
 
 def _allocate_concentrated(total: int, weights: list[float],
-                           min_per_receiver: int = 2) -> list[int]:
+                           min_per_receiver: int = _TRANSFER_RECEIVER_MIN_PER_SHOP) -> list[int]:
     """集中模式分配：先為每間接收店保底 ``min_per_receiver`` 件（件數不足時均分），
-    餘量再按權重（銷售比例）以最大餘數法分配。
+    餘量再按權重（銷售比例）以最大餘數法分配（見 R7）。
 
     與純比例分配的分別：銷量較高的店仍分得較多，但不會出現某店只分到 1 件的碎片
     （件數已按 ceil(total ÷ 3) 收窄店數，保底後每間一般為 2–3 件）。
     """
-    n = len(weights)
-    if n == 0 or total <= 0:
-        return [0] * n
-    base = min(int(min_per_receiver), int(total) // n)
-    alloc = [base] * n
-    rest = int(total) - base * n
-    if rest > 0:
-        extra = _allocate_proportional(rest, weights)
-        alloc = [a + e for a, e in zip(alloc, extra)]
-    return alloc
+    return _rules.allocate_concentrated(total, weights, min_per_receiver)
 
 
 def _receiver_cap(sales: float, stock: float) -> int:
@@ -523,39 +490,16 @@ def _receiver_cap(sales: float, stock: float) -> int:
 
     與調貨段（Safety Stock x NetStock Review）的「調入需求量 (補到14日)」同一公式。
     """
-    need = math.ceil(float(sales) / 90.0 * _TRANSFER_CAP_DAYS) - int(round(float(stock)))
-    return max(need, 0)
+    return _rules.daily_demand(sales, stock, _TRANSFER_CAP_DAYS)
 
 
 def _allocate_with_caps(total: int, weights: list[float], caps: list[int]) -> tuple[list[int], int]:
-    """按權重比例分配，惟每個接收地不得超出上限（caps）；超出上限的餘量在尚有需求的
-    接收地之間按權重重新分配，直至派完或全部到頂。回傳 (alloc, unalloc)。
+    """按權重比例分配，惟每個接收地不得超出上限（caps，見 R8）；超出上限的餘量在
+    尚有需求的接收地之間按權重重新分配，直至派完或全部到頂。回傳 (alloc, unalloc)。
 
     ``alloc[i] ≤ caps[i]`` 恆成立；``sum(alloc) + unalloc == total``。
     """
-    n = len(weights)
-    alloc = [0] * n
-    if n == 0 or total <= 0:
-        return alloc, max(int(total), 0)
-    remaining = int(total)
-    active = [i for i in range(n) if caps[i] > 0]
-    while remaining > 0 and active:
-        share = _allocate_proportional(remaining, [weights[i] for i in active])
-        moved = 0
-        nxt: list[int] = []
-        for i, s in zip(active, share):
-            room = caps[i] - alloc[i]
-            take = min(s, room)
-            if take > 0:
-                alloc[i] += take
-                moved += take
-            if caps[i] > alloc[i]:
-                nxt.append(i)
-        remaining -= moved
-        if moved == 0:
-            break
-        active = nxt
-    return alloc, remaining
+    return _rules.allocate_with_caps(total, weights, caps)
 
 
 def _pair_transfer(sources: list[tuple[str, int]], receivers: list[tuple[str, int]]) -> list[tuple[str, str, int]]:
@@ -854,15 +798,17 @@ def transform_p90d_transfer(
         if receiver_limit is None:
             pool = all_pool
         else:
-            # 集中模式：只取 Sold Qty (P90D) 最高的接收店（同銷量以 Site Code 排序）；
-            # "auto" 按同 SKU 轉出總量決定店數（每間 2–3 件，0302 迷你裝每間 4 件），
-            # 並受件數上限約束（10–30 件最多 5 間、之後每 30 件加 1 間）；整數則為固定上限
-            take = (
-                _auto_receiver_count(total, _auto_receiver_target(info.get("MCH2", "")))
-                if _is_auto_receiver(receiver_limit)
-                else int(receiver_limit)
+            # 集中模式：選店次序與店數由共用規範決定（R5–R6）——只取 Sold Qty (P90D) 最高的
+            # 接收店（同銷量以 Site Code 排序）；"auto" 按同 SKU 轉出總量決定店數
+            # （每間 2–3 件，0302 迷你裝每間 4 件），並受件數上限約束
+            # （10–30 件最多 5 間、之後每 30 件加 1 間）；整數則為固定上限
+            pool, _pool_dropped = _rules.select_pool(
+                all_pool,
+                total,
+                mode=receiver_limit,
+                category=info.get("MCH2", ""),
+                policy=_TRANSFER_POLICY,
             )
-            pool = sorted(all_pool, key=lambda r: (-r[1], r[0]))[:max(take, 0)]
             capped_out_pairs += max(len(all_pool) - len(pool), 0)
         weights = [sales for _, sales, _ in pool]
         # 接收店 14 日需求（恆計算，供轉貨單稽核；只在封頂模式下約束分配）

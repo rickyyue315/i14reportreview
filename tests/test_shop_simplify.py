@@ -32,6 +32,14 @@ from transformer import (
     _SHOP_SIMPLIFY_SOLD_NO,
     _SHOP_SIMPLIFY_STOCK_YES,
     _SHOP_SIMPLIFY_STOCK_NO,
+    transform_shop_simplify_site,
+    shop_simplify_site_stats,
+    _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN,
+    _SHOP_SIMPLIFY_TOP80_YES,
+    _SHOP_SIMPLIFY_TOP80_NO,
+    _shop_simplify_site_top80_column,
+    _shop_simplify_top80_mask,
+    _shop_simplify_top80_keys,
 )
 
 BASE = {
@@ -510,3 +518,234 @@ def test_empty_dataframe_still_writes_header():
     ws = wb["Export"]
     assert ws.max_row == 1
     assert [c.value for c in ws[1]][-5] == _SHOP_SIMPLIFY_SOLD_COLUMN
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 8. 指定店舖模式：只輸出該店、兩個 Top 80% 判定
+# ──────────────────────────────────────────────────────────────────────────────
+def _site_rows():
+    """HA21（Non Tourist）A70／B10／C10／D5／E5；HA20 同 Nature 的 A 賣 1000；
+    HA19（Tourist）的 E 賣 9999（不得計入 Non Tourist 的 Top 80% 母體）。"""
+    return [
+        {"SKU": "A", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 70},
+        {"SKU": "B", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 10},
+        {"SKU": "C", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 10},
+        {"SKU": "D", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 5},
+        {"SKU": "E", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 5},
+        {"SKU": "A", "Site Code": "HA20", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 1000},
+        {"SKU": "E", "Site Code": "HA19", "Shop Nature": "Tourist", "Sold Qty (P90D)": 9999},
+    ]
+
+
+def test_site_mode_registry_entry_resolves_to_functions():
+    entry = MODE_REGISTRY["店舖精簡SKU模式(指定店舖)"]
+    mod = importlib.import_module(entry["module"])
+    assert callable(getattr(mod, entry["transform"]))
+    assert callable(getattr(mod, entry["generate_excel"]))
+
+
+def test_site_mode_outputs_only_selected_shop():
+    raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21")
+    assert list(raw["Site Code"]) == ["HA21"] * 5
+    assert sorted(raw["SKU"].tolist()) == ["A", "B", "C", "D", "E"]
+    assert len(raw) == 5
+
+
+def test_site_top80_uses_cumulative_80_with_tie_group():
+    raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21")
+    flags = dict(zip(raw["SKU"], raw[_shop_simplify_site_top80_column("HA21")]))
+    # 70＋10 已達 100 的 80%；同為 10 件的 C 一併納入，5 件的 D／E 排除
+    assert flags == {"A": _SHOP_SIMPLIFY_TOP80_YES, "B": _SHOP_SIMPLIFY_TOP80_YES,
+                     "C": _SHOP_SIMPLIFY_TOP80_YES, "D": _SHOP_SIMPLIFY_TOP80_NO,
+                     "E": _SHOP_SIMPLIFY_TOP80_NO}
+
+
+def test_nature_top80_aggregates_same_nature_only():
+    raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21")
+    flags = dict(zip(raw["SKU"], raw[_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN]))
+    # Non Tourist 合計：A 1070、B 10、C 10、D 5、E 5；80% 門檻 880 → 只有 A
+    # HA19（Tourist）的 E 9999 不得計入，否則 E 會變成「是」
+    assert flags == {"A": _SHOP_SIMPLIFY_TOP80_YES, "B": _SHOP_SIMPLIFY_TOP80_NO,
+                     "C": _SHOP_SIMPLIFY_TOP80_NO, "D": _SHOP_SIMPLIFY_TOP80_NO,
+                     "E": _SHOP_SIMPLIFY_TOP80_NO}
+
+
+def test_top80_mask_zero_and_negative_sales_all_false():
+    qty = pd.Series([0.0, 0.0, -5.0, np.nan], index=["A", "B", "C", "D"])
+    assert list(_shop_simplify_top80_mask(qty)) == [False] * 4
+    assert list(_shop_simplify_top80_mask(pd.Series(dtype=float))) == []
+
+
+def test_site_top80_column_name_and_order_before_reply_columns():
+    raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21")
+    site_col = _shop_simplify_site_top80_column("HA21")
+    assert site_col == "是否HA21的Top 80%"
+    cols = list(raw.columns)
+    index = cols.index(_SHOP_SIMPLIFY_STOCK_COLUMN)
+    assert cols[index + 1:index + 4] == [site_col, _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN, _SHOP_SIMPLIFY_SCT_COLUMN]
+    assert cols[-3:] == _SHOP_SIMPLIFY_REPLY_COLUMNS
+    for col in _SHOP_SIMPLIFY_REPLY_COLUMNS:
+        assert list(raw[col]) == [""] * len(raw)
+
+
+def test_site_mode_missing_shop_nature_leaves_column_blank_and_warns():
+    df = _df(_site_rows()).drop(columns=["Shop Nature"])
+    raw, warnings = transform_shop_simplify_site(df, "HA21")
+    assert list(raw[_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN]) == [""] * len(raw)
+    assert any("缺少「Shop Nature」" in x for x in warnings)
+
+
+def test_site_mode_blank_shop_nature_leaves_column_blank_and_warns():
+    rows = [dict(r, **{"Shop Nature": ""}) for r in _site_rows()]
+    raw, warnings = transform_shop_simplify_site(_df(rows), "HA21")
+    assert list(raw[_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN]) == [""] * len(raw)
+    assert any("Shop Nature 空白" in x for x in warnings)
+
+
+def test_site_mode_zero_total_sales_all_no_and_warns():
+    rows = [dict(r, **{"Sold Qty (P90D)": 0}) for r in _site_rows()]
+    raw, warnings = transform_shop_simplify_site(_df(rows), "HA21")
+    site_col = _shop_simplify_site_top80_column("HA21")
+    assert list(raw[site_col]) == [_SHOP_SIMPLIFY_TOP80_NO] * len(raw)
+    assert list(raw[_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN]) == [_SHOP_SIMPLIFY_TOP80_NO] * len(raw)
+    assert any("合計為 0" in x for x in warnings)
+
+
+def test_site_mode_invalid_site_raises():
+    with pytest.raises(ValueError, match="HA99"):
+        transform_shop_simplify_site(_df(_site_rows()), "HA99")
+    with pytest.raises(ValueError, match="未提供指定店舖"):
+        transform_shop_simplify_site(_df(_site_rows()), "  ")
+
+
+def test_site_mode_case_insensitive_site_match():
+    raw, warnings = transform_shop_simplify_site(_df(_site_rows()), " ha21 ")
+    assert set(raw["Site Code"]) == {"HA21"}
+    assert _shop_simplify_site_top80_column("HA21") in raw.columns
+    assert any("大小寫不敏感" in x for x in warnings)
+
+
+def test_site_mode_single_shop_nature_warns_nature_equals_shop():
+    df = _df([{"SKU": 1, "Site Code": "HA21", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 5}])
+    _, warnings = transform_shop_simplify_site(df, "HA21")
+    assert any("只有 1 間店舖" in x for x in warnings)
+
+
+def test_site_mode_rerun_replaces_old_top80_columns():
+    first, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21")
+    second, _ = transform_shop_simplify_site(first, "HA21")
+    site_col = _shop_simplify_site_top80_column("HA21")
+    assert list(second.columns).count(site_col) == 1
+    assert list(second.columns).count(_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN) == 1
+
+
+def test_site_mode_stats_counts():
+    raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21")
+    stats = shop_simplify_site_stats(raw, "HA21")
+    assert stats["rows"] == 5
+    assert stats["skus"] == 5
+    assert stats["site_top80"] == 3
+    assert stats["nature_top80"] == 1
+    assert stats["neither"] == 2
+    assert stats["sold_no"] == 0
+    assert stats["stock_no"] == 0
+    assert stats["site"] == "HA21"
+    assert stats["nature"] == "Non Tourist"
+
+
+def test_site_mode_excel_headers_widths_and_summary():
+    from openpyxl.utils import get_column_letter
+
+    raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21")
+    wb = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))
+    ws = wb["Export"]
+    headers = [c.value for c in ws[1]]
+    site_col = _shop_simplify_site_top80_column("HA21")
+    assert headers == list(raw.columns)
+    assert headers[-5:] == [
+        site_col, _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN,
+        *_SHOP_SIMPLIFY_REPLY_COLUMNS,
+    ]
+    assert round(ws.column_dimensions[get_column_letter(headers.index(site_col) + 1)].width, 2) == 14.0
+    assert round(ws.column_dimensions[get_column_letter(headers.index(_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN) + 1)].width, 2) == 16.0
+    assert ws.freeze_panes == f"{get_column_letter(headers.index('SKU Desc') + 2)}2"
+    assert wb.sheetnames == ["Summary", "Export"]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 9. 指定店舖模式：Top 80% 以 Adj. SST 分類為母體
+# ──────────────────────────────────────────────────────────────────────────────
+def _sst_rows():
+    """HA21（Non Tourist）分兩個 Adj. SST；HA20 同 Nature 以跨店銷量影響 Nature 判定：
+    - Local：HA21 A70／B10／C10／D5／H1；HA20 A1000、D5000
+    - Private Label：HA21 E5／F3／G2；HA20 G1000
+    """
+    def row(sku, sst, sold, site="HA21"):
+        return {"SKU": sku, "Site Code": site, "Shop Nature": "Non Tourist",
+                "Adj. SST": sst, "Sold Qty (P90D)": sold}
+
+    return [
+        row("A", "01 - Local", 70),
+        row("B", "01 - Local", 10),
+        row("C", "01 - Local", 10),
+        row("D", "01 - Local", 5),
+        row("H", "01 - Local", 1),
+        row("E", "03 - Private Label", 5),
+        row("F", "03 - Private Label", 3),
+        row("G", "03 - Private Label", 2),
+        row("A", "01 - Local", 1000, site="HA20"),
+        row("D", "01 - Local", 5000, site="HA20"),
+        row("G", "03 - Private Label", 1000, site="HA20"),
+    ]
+
+
+def test_top80_keys_computed_within_each_adj_sst_group():
+    keys = _shop_simplify_top80_keys(
+        pd.Series(["L", "L", "L", "P", "P"]),
+        pd.Series(["A", "B", "C", "D", "E"]),
+        pd.Series([70, 10, 10, 5, 3]),
+    )
+    # L：A70＋B10 達 80，C 同為 10 件整組納入；P：D5＋E3 剛好 8（100%）全組納入
+    assert keys == {("L", "A"), ("L", "B"), ("L", "C"), ("P", "D"), ("P", "E")}
+
+
+def test_site_top80_isolated_per_adj_sst():
+    raw, _ = transform_shop_simplify_site(_df(_sst_rows()), "HA21")
+    flags = dict(zip(raw["SKU"], raw[_shop_simplify_site_top80_column("HA21")]))
+    # Local：A70＋B10 達 95 的 80%，C 同為 10 件整組納入；D、H 排除
+    # Private Label：E5＋F3 達 10 的 80%，G 排除
+    assert flags == {
+        "A": _SHOP_SIMPLIFY_TOP80_YES, "B": _SHOP_SIMPLIFY_TOP80_YES,
+        "C": _SHOP_SIMPLIFY_TOP80_YES, "D": _SHOP_SIMPLIFY_TOP80_NO,
+        "E": _SHOP_SIMPLIFY_TOP80_YES, "F": _SHOP_SIMPLIFY_TOP80_YES,
+        "G": _SHOP_SIMPLIFY_TOP80_NO, "H": _SHOP_SIMPLIFY_TOP80_NO,
+    }
+
+
+def test_nature_top80_isolated_per_adj_sst_across_shops():
+    raw, _ = transform_shop_simplify_site(_df(_sst_rows()), "HA21")
+    flags = dict(zip(raw["SKU"], raw[_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN]))
+    # Nature Local 合計：D5005＋A1070＋B10＋C10＋H1；80% 門檻 4876.8 → 只有 D
+    # Nature Private Label 合計：G1002＋E5＋F3；80% 門檻 808 → 只有 G
+    assert flags == {
+        "A": _SHOP_SIMPLIFY_TOP80_NO, "B": _SHOP_SIMPLIFY_TOP80_NO,
+        "C": _SHOP_SIMPLIFY_TOP80_NO, "D": _SHOP_SIMPLIFY_TOP80_YES,
+        "E": _SHOP_SIMPLIFY_TOP80_NO, "F": _SHOP_SIMPLIFY_TOP80_NO,
+        "G": _SHOP_SIMPLIFY_TOP80_YES, "H": _SHOP_SIMPLIFY_TOP80_NO,
+    }
+
+
+def test_site_mode_stats_include_adj_sst_group_count():
+    raw, _ = transform_shop_simplify_site(_df(_sst_rows()), "HA21")
+    stats = shop_simplify_site_stats(raw, "HA21")
+    assert stats["rows"] == 8
+    assert stats["skus"] == 8
+    assert stats["sst_groups"] == 2
+    assert stats["site_top80"] == 5
+    assert stats["nature_top80"] == 2
+    assert stats["neither"] == 1
+
+
+def test_site_mode_missing_adj_sst_falls_back_and_warns():
+    _, warnings = transform_shop_simplify_site(_df(_site_rows()), "HA21")
+    assert any("缺少「Adj. SST」" in x for x in warnings)

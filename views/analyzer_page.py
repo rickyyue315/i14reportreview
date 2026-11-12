@@ -71,8 +71,11 @@ from transformer import (
     safety_monthly_dashboard_metrics, _SAFM_PIVOT_METRICS,
     transform_raw_convert, generate_excel_raw_convert,
     transform_shop_simplify, generate_excel_shop_simplify, shop_simplify_stats,
+    transform_shop_simplify_site, shop_simplify_site_stats,
     _SHOP_SIMPLIFY_SOLD_COLUMN, _SHOP_SIMPLIFY_STOCK_COLUMN,
     _SHOP_SIMPLIFY_SOLD_NO, _SHOP_SIMPLIFY_STOCK_NO,
+    _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN, _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO,
+    _shop_simplify_site_top80_column,
 )
 import time
 import traceback
@@ -299,7 +302,7 @@ st.markdown("""
     <div class="step"><span class="n">4</span><b>執行並下載</b><small>儀表板預覽＋一鍵匯出</small></div>
 </div>
 """, unsafe_allow_html=True)
-mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "店舖精簡SKU模式", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review(Shop回覆)", "P90D 0 Sales Review(個別店舖)", "P90D 0 Sales Review(轉貨模式)", "ND SKU with Stock Review(轉貨模式)", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "Safety Stock 月度變化分析", "RAW 明細轉化", "RAW 明細轉化 (不含 Value)"]
+mode_options = ["Overstock Review", "OOS Review", "Carry SKU Review", "SKU 精簡 Review", "店舖精簡SKU模式", "店舖精簡SKU模式(指定店舖)", "NDRF 月份對比", "Safety Stock Review", "Stock Impact Analysis", "Stock Impact Analysis (簡化)", "Past 90 Days 0 Sales", "P90D 0 Sales Review(Shop回覆)", "P90D 0 Sales Review(個別店舖)", "P90D 0 Sales Review(轉貨模式)", "ND SKU with Stock Review(轉貨模式)", "Stock Checking", "Safety Stock x NetStock Review", "Forecast Review", "Safety Stock 月度變化分析", "RAW 明細轉化", "RAW 明細轉化 (不含 Value)"]
 st.markdown("""
 <div class="mode-category-grid">
     <div class="mode-cat-chip"><b>🔄 調貨與補貨</b>Stock Checking · Safety Stock x NetStock Review · P90D 0 Sales Review(轉貨模式) · ND SKU with Stock Review(轉貨模式)</div>
@@ -314,6 +317,7 @@ MODE_DESCRIPTIONS = {
     "Carry SKU Review": "統計各店舖實際經營品項數量與結構。",
     "SKU 精簡 Review": "針對不可補貨品項，建議退倉安排。",
     "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去90日有無存貨（LLM／LM／CM 任一 > 0＝有存貨，LLM 欄自 2026-10-26 起來源報表提供），並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
+    "店舖精簡SKU模式(指定店舖)": "只列指定店舖（如 HA21）的 SKU，額外判定「是否該店的Top 80%」及「是否同Shop Nature的Top 80%」——兩者均按 Adj. SST 分類，在每個分類內按 Sold Qty (P90D) 由高至低累計，累計銷量首次達該分類母體（該店／同 Nature 全部店舖）總銷量 80% 即屬 Top 80%（同一銷量整組納入或排除，分類之間不互相擠佔）；其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則與店舖精簡SKU模式相同。",
     "NDRF 月份對比": "對比兩個月份各店舖經營與不可補貨品項變化。",
     "Safety Stock Review": "全面審查安全庫存設定，計算平衡建議值。",
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
@@ -394,6 +398,7 @@ _RAW_CONVERT_MODE = "RAW 明細轉化"
 _RAW_CONVERT_NO_VALUE_MODE = "RAW 明細轉化 (不含 Value)"
 _RAW_CONVERT_MODES = (_RAW_CONVERT_MODE, _RAW_CONVERT_NO_VALUE_MODE)
 _SHOP_SIMPLIFY_MODE = "店舖精簡SKU模式"
+_SHOP_SIMPLIFY_SITE_MODE = "店舖精簡SKU模式(指定店舖)"
 
 
 def _transfer_site_selector(df_input, shop_natures, *, prefix, nd_mode):
@@ -643,6 +648,7 @@ MODE_KEYS = {
     "Carry SKU Review": {"prefix": "carry_", "processed": False, "summary_left": None, "summary_right": None, "dashboard_df": None, "raw_df": None, "excel_data": None, "warnings": []},
     "SKU 精簡 Review": {"prefix": "nd_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": []},
     "店舖精簡SKU模式": {"prefix": "shopslim_", "processed": False, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
+    "店舖精簡SKU模式(指定店舖)": {"prefix": "shopslimsite_", "processed": False, "raw_df": None, "stats": None, "excel_data": None, "warnings": []},
     "NDRF 月份對比": {"prefix": "ndrf_comp_", "processed": False, "comparison_by_shop": None, "adj_sst_pivot": None, "mch2_pivot": None, "raw_df": None, "excel_data": None, "warnings": []},
     "Safety Stock Review": {"prefix": "combined_", "processed": False, "summary_df": None, "raw_df": None, "categories": None, "excel_data": None, "warnings": [], "dimension": "nature", "sales_oos_days": _HYBRID_SALES_OOS_DAYS_DEFAULT, "sales_overstock_days": _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT, "sales_overstock_min_units": _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT},
 	    "Stock Impact Analysis": {"prefix": "stock_impact_", "processed": False, "summary_brand": None, "summary_buyer": None, "summary_category": None, "sku_diagnosis": None, "inv_distribution": None, "raw_slim": None, "excel_data": None, "warnings": []},
@@ -2897,9 +2903,37 @@ if uploaded_file is not None:
 
         st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
+        _shopslimsite_site = None
+        if mode == _SHOP_SIMPLIFY_SITE_MODE:
+            st.markdown("#### 🏪 指定店舖（Top 80% 判定）")
+            _site_options = canonical_site_codes(
+                df_input["Site Code"] if "Site Code" in df_input.columns else []
+            )
+            if not _site_options:
+                st.error("❌ 來源檔案缺少「Site Code」或全欄空白，無法指定店舖。")
+                st.stop()
+            if st.session_state.get("shopslimsite_site") not in _site_options:
+                st.session_state.pop("shopslimsite_site", None)
+            _shopslimsite_site = st.selectbox(
+                "🏪 指定店舖 (Site Code)",
+                options=_site_options,
+                index=0,
+                key="shopslimsite_site",
+                help="只輸出此店舖的 SKU 列，並按 Sold Qty (P90D) 判定該店 Top 80%，"
+                     "以及同 Shop Nature 全部店舖同 SKU 銷量合計的 Top 80%；"
+                     "兩者均以 Adj. SST 分類為母體，每個分類獨立累計。",
+            )
+            st.caption(
+                f"目前設定 → **{_shopslimsite_site}**：輸出該店全部 SKU，另加"
+                f"「是否{_shopslimsite_site}的Top 80%」與「是否同Shop Nature的Top 80%」兩欄；"
+                "Shop Nature 由來源檔該店的值決定（不設 Nature 篩選）；"
+                "兩個 Top 80% 均按 Adj. SST 分類獨立累計——每個分類內累計銷量首次達該分類 80% 即屬 Top 80%。"
+            )
+
         SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
-        if mode in ("Stock Checking", "Forecast Review"):
-            # 調貨分配／Forecast SKU 彙總需要完整涵蓋所有 Shop Nature，此兩個模式不做 Nature 篩選
+        if mode in ("Stock Checking", "Forecast Review", _SHOP_SIMPLIFY_SITE_MODE):
+            # 調貨分配／Forecast SKU 彙總需要完整涵蓋所有 Shop Nature；指定店舖模式由該店 Shop Nature 決定母體，
+            # 三者皆不做 Nature 篩選
             selected_shop_natures = SHOP_NATURE_OPTIONS
         else:
             selected_shop_natures = st.multiselect(
@@ -3045,7 +3079,7 @@ if uploaded_file is not None:
         _is_carry_mode = (mode == "Carry SKU Review")
         # Modes that don't use the Shop Nature Rate sliders (no Safety Qty calculation):
         # Carry SKU Review, SKU 精簡 Review, NDRF 月份對比 (pivot/comparison only).
-        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode == _SHOP_SIMPLIFY_MODE) or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "P90D 0 Sales Review(Shop回覆)") or (mode == "P90D 0 Sales Review(個別店舖)") or (mode == _OP90DT_MODE) or (mode == _NDTR_MODE) or (mode == "Safety Stock 月度變化分析") or (mode in _RAW_CONVERT_MODES)
+        _skip_rates_mode = _is_carry_mode or (mode == "SKU 精簡 Review") or (mode in (_SHOP_SIMPLIFY_MODE, _SHOP_SIMPLIFY_SITE_MODE)) or (mode == "NDRF 月份對比") or (mode == "Stock Checking") or (mode == "Forecast Review") or (mode == "P90D 0 Sales Review(Shop回覆)") or (mode == "P90D 0 Sales Review(個別店舖)") or (mode == _OP90DT_MODE) or (mode == _NDTR_MODE) or (mode == "Safety Stock 月度變化分析") or (mode in _RAW_CONVERT_MODES)
 
         if not _skip_rates_mode:
             _tourist_default = 30 if _is_overstock_mode else 50
@@ -3393,6 +3427,18 @@ if uploaded_file is not None:
                     st.session_state.shopslim_stats = shop_simplify_stats(raw_df)
                     st.session_state.shopslim_excel_data = buf
                     st.session_state.shopslim_warnings = _warnings
+                elif mode == _SHOP_SIMPLIFY_SITE_MODE:
+                    raw_df, _warnings = transform_shop_simplify_site(
+                        df_input,
+                        site_code=_shopslimsite_site,
+                        progress_callback=_cb_transform,
+                    )
+                    buf = generate_excel_shop_simplify(raw_df, progress_callback=_cb_excel)
+                    st.session_state.shopslimsite_processed = True
+                    st.session_state.shopslimsite_raw_df = raw_df
+                    st.session_state.shopslimsite_stats = shop_simplify_site_stats(raw_df, _shopslimsite_site)
+                    st.session_state.shopslimsite_excel_data = buf
+                    st.session_state.shopslimsite_warnings = _warnings
             except Exception as e:
                 _prog2.empty()
                 _tb = traceback.format_exc()
@@ -5144,6 +5190,96 @@ if uploaded_file is not None:
                 type="primary",
                 width='stretch',
                 key="dl_bottom_shopslim",
+            )
+
+        if mode == _SHOP_SIMPLIFY_SITE_MODE and st.session_state.shopslimsite_processed:
+            raw_df = st.session_state.shopslimsite_raw_df
+            _stats = st.session_state.shopslimsite_stats or {}
+            excel_data = st.session_state.shopslimsite_excel_data
+            _site = str(_stats.get("site") or "").strip()
+            _site_top80_col = _shop_simplify_site_top80_column(_site)
+            _nature_label = str(_stats.get("nature") or "（未能判定）")
+
+            st.markdown(
+                f'<div class="section-banner"><h3>✂️ 店舖精簡 SKU 分析摘要（指定店舖：{_site}）</h3></div>',
+                unsafe_allow_html=True,
+            )
+            _top_download_button(
+                excel_data,
+                f"I14 店舖精簡SKU模式_{_site}_指定店舖",
+                "dl_top_shopslimsite",
+            )
+
+            _site_cards = [
+                ("指定店舖 SKU 數", _stats.get("rows", 0), f"只輸出 {_site} 的 SKU；其他店舖不列入", "#3b82f6"),
+                (f"{_site} Top 80%", _stats.get("site_top80", 0), "每個 Adj. SST 分類內累計達該分類 80%", "#8b5cf6"),
+                ("同 Shop Nature Top 80%", _stats.get("nature_top80", 0), f"Shop Nature＝{_nature_label}，同 Nature 按 Adj. SST 分類合計", "#10b981"),
+                ("兩項皆非（精簡候選）", _stats.get("neither", 0), "既非店舖 Top 80%，亦非同 Nature Top 80%", "#f59e0b"),
+            ]
+            _site_cols = st.columns(4)
+            for _col, (_title, _value, _desc, _color) in zip(_site_cols, _site_cards):
+                with _col:
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left-color: {_color};">
+                        <div class="metric-title">{_title}</div>
+                        <div class="metric-value" style="color: {_color};">{int(_value):,}</div>
+                        <div class="metric-desc">{_desc}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            st.caption(
+                f"共 {int(_stats.get('rows', 0)):,} 個 SKU（{_site}）、{int(_stats.get('sst_groups', 0)):,} 個 Adj. SST 分類；"
+                f"過去90日無賣 {int(_stats.get('sold_no', 0)):,} 個、無存貨 {int(_stats.get('stock_no', 0)):,} 個。"
+                "Top 80% 以 Adj. SST 分類為母體：每個分類內按 Sold Qty (P90D) 由高至低累計，"
+                "累計銷量首次達該分類 80% 即屬 Top 80%；同一銷量的 SKU 整組納入或整組排除，"
+                "分類之間不互相擠佔（故實際覆蓋率可能略高於 80%）。"
+                "其餘欄位、Item_Shop 解析、刪除 Value 欄與三個回覆欄留空的規則與店舖精簡SKU模式相同。"
+            )
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            _tab_site_all, _tab_site_cut, _tab_site_top = st.tabs([
+                "📄 全部明細（前 200 筆）", "🎯 兩項皆非（前 200 筆）", f"🏆 {_site} Top 80%（前 200 筆）",
+            ])
+            with _tab_site_all:
+                if raw_df is not None and not raw_df.empty:
+                    st.dataframe(raw_df.head(200), width='stretch', hide_index=True)
+                    st.caption(f"僅顯示前 200 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料")
+            with _tab_site_cut:
+                _cut_df = raw_df
+                if raw_df is not None and _site_top80_col in raw_df.columns:
+                    _cut_df = raw_df[
+                        (raw_df[_site_top80_col].astype(str).str.strip() == _SHOP_SIMPLIFY_TOP80_NO)
+                        & (raw_df[_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN].astype(str).str.strip() == _SHOP_SIMPLIFY_TOP80_NO)
+                    ]
+                if _cut_df is not None and not _cut_df.empty:
+                    st.dataframe(_cut_df.head(200), width='stretch', hide_index=True)
+                    st.caption(f"共 {len(_cut_df):,} 個精簡候選；僅顯示前 200 筆，完整資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料（沒有兩個 Top 80% 皆非的 SKU）")
+            with _tab_site_top:
+                _top_df = raw_df
+                if raw_df is not None and _site_top80_col in raw_df.columns:
+                    _top_df = raw_df[raw_df[_site_top80_col].astype(str).str.strip() == _SHOP_SIMPLIFY_TOP80_YES]
+                if _top_df is not None and not _top_df.empty:
+                    st.dataframe(_top_df.head(200), width='stretch', hide_index=True)
+                    st.caption(f"共 {len(_top_df):,} 個 SKU 屬 {_site} Top 80%；僅顯示前 200 筆，完整資料將包含在下載的 Excel 報表中。")
+                else:
+                    st.info("無符合資料")
+
+            st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+
+            _hk_time_site = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            st.download_button(
+                label=f"📥 下載店舖精簡SKU報表（{_site}）(.xlsx)",
+                data=excel_data,
+                file_name=f"I14 店舖精簡SKU模式_{_site}_指定店舖_{_hk_time_site}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch',
+                key="dl_bottom_shopslimsite",
             )
 
         # 兩變體共用同一份結果；輸出模式須與當前模式一致，避免切換模式後顯示另一變體的舊結果
