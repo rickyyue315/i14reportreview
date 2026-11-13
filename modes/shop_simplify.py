@@ -25,19 +25,21 @@ Export（回覆明細）兩個工作表；Export 套用店舖精簡回覆表範�
 前後空白；RP Type 的紅色底會蓋過該欄的綠色），兩個模式共用同一匯出引擎。
 
 另有「指定店舖」變體（`transform_shop_simplify_site`）：只輸出指定店舖（如 HA21）
-的 SKU 列，同時輸出件數與金額兩組 Top N% 判定（共四欄；N 可選 80%（預設）或 70%）——
+的 SKU 列，同時輸出件數與金額兩組 Top N% 判定（四欄＋兩欄對比；N 可選 80%（預設）或 70%）——
 
 - 件數：是否{店舖}的Top N%（件數）／是否同Shop Nature的Top N%（件數），按 Sold Qty (P90D)；
 - 金額：是否{店舖}的Top N%（金額）／是否同Shop Nature的Top N%（金額），按 Net Sales (P{N}D)＝
   Net Sales (M-2)＋(M-1)＋(CM - MTD)（負數視為 0），N 由數據截止日（T-1）的 MTD 日數＋
   兩個整月日數決定。
+- 對比：{店舖} vs 同Nature Top N%（件數）／（金額），值為「兩者皆是／僅店舖／僅同Nature／
+  兩者皆非」，一眼看出該 SKU 在兩邊是否同為核心。
 
-四欄均以 Adj. SST 分類為母體，分類之間不互相擠佔；來源缺 Adj. SST 時退回
-全店／全 Nature 單一分組並列 warning，缺三個月 Net Sales 欄時只輸出件數兩欄。
+六欄均以 Adj. SST 分類為母體，分類之間不互相擠佔；來源缺 Adj. SST 時退回
+全店／全 Nature 單一分組並列 warning，缺三個月 Net Sales 欄時只輸出件數兩欄（兩欄對比）。
 欄名隨比例與視窗改變（如 Top 80%／Net Sales (P73D)），故切換重跑不會留下舊欄。
 原模式（多店輸出）只有件數一種口徑，欄名維持「是否該店的Top 80%」不加後綴。
 
-四個判定欄只加在指定店舖的列上，其餘計算、清理、解析與回覆欄留空規則與原模式相同。
+六個判定欄只加在指定店舖的列上，其餘計算、清理、解析與回覆欄留空規則與原模式相同。
 """
 import calendar
 import datetime
@@ -77,7 +79,14 @@ __all__ = [
     "_SHOP_SIMPLIFY_TOP80_SHARE",
     "_SHOP_SIMPLIFY_TOP_RATIO_OPTIONS",
     "_SHOP_SIMPLIFY_NET_SALES_COLUMNS",
+    "_SHOP_SIMPLIFY_QTY_SUFFIX",
     "_SHOP_SIMPLIFY_VALUE_SUFFIX",
+    "_SHOP_SIMPLIFY_COMPARE_BOTH",
+    "_SHOP_SIMPLIFY_COMPARE_SHOP_ONLY",
+    "_SHOP_SIMPLIFY_COMPARE_NATURE_ONLY",
+    "_SHOP_SIMPLIFY_COMPARE_NEITHER",
+    "_SHOP_SIMPLIFY_COMPARE_LABELS",
+    "_SHOP_SIMPLIFY_COMPARE_TEMPLATE",
     "_SHOP_SIMPLIFY_SITE_TOP80_TEMPLATE",
     "_SHOP_SIMPLIFY_NATURE_TOP80_TEMPLATE",
     "_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN",
@@ -93,6 +102,10 @@ __all__ = [
     "_shop_simplify_net_sales_column",
     "_shop_simplify_net_sales_window",
     "_shop_simplify_net_sales_series",
+    "_shop_simplify_compare_column",
+    "_shop_simplify_compare_labels",
+    "_is_shop_simplify_compare_column",
+    "_is_shop_simplify_value_compare_column",
     "_is_shop_simplify_value_top_column",
     "_shop_simplify_top_share",
     "_shop_simplify_ratio_percent",
@@ -142,6 +155,19 @@ _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN = (
 )
 _SHOP_SIMPLIFY_TOP80_YES = "是"
 _SHOP_SIMPLIFY_TOP80_NO = "否"
+# 店舖 vs 同 Nature 的對比（四象限），讓 SCT 一眼分辨「兩邊都核心」、「只有本店賣得動」、
+# 「只有同 Nature 其他店賣得動」與「兩邊都不是核心」
+_SHOP_SIMPLIFY_COMPARE_BOTH = "兩者皆是"
+_SHOP_SIMPLIFY_COMPARE_SHOP_ONLY = "僅店舖"
+_SHOP_SIMPLIFY_COMPARE_NATURE_ONLY = "僅同Nature"
+_SHOP_SIMPLIFY_COMPARE_NEITHER = "兩者皆非"
+_SHOP_SIMPLIFY_COMPARE_LABELS = (
+    _SHOP_SIMPLIFY_COMPARE_BOTH,
+    _SHOP_SIMPLIFY_COMPARE_SHOP_ONLY,
+    _SHOP_SIMPLIFY_COMPARE_NATURE_ONLY,
+    _SHOP_SIMPLIFY_COMPARE_NEITHER,
+)
+_SHOP_SIMPLIFY_COMPARE_TEMPLATE = "{site} vs 同Nature Top {pct}%"
 # 金額口徑：來源只有月欄（M-2／M-1／CM-MTD），三者相加即「MTD 日數＋兩個整月」的實際覆蓋日數
 # （例如數據截止 11 月 12 日 → 12＋31＋30＝73 日，欄名標示 Net Sales (P73D)）。
 _SHOP_SIMPLIFY_NET_SALES_COLUMNS = ("Net Sales (M-2)", "Net Sales (M-1)", "Net Sales (CM - MTD)")
@@ -284,6 +310,7 @@ def shop_simplify_site_stats(df: pd.DataFrame, site_code: str, top_ratio=None) -
         "site_top80": 0, "nature_top80": 0, "neither": 0,
         "value_site_top80": 0, "value_nature_top80": 0, "value_neither": 0,
         "value_available": False, "window": "",
+        "compare_qty": {}, "compare_value": {},
         "site": site, "nature": "", "ratio": _shop_simplify_ratio_percent(top_ratio),
     }
     if df is None or len(df) == 0:
@@ -338,6 +365,21 @@ def shop_simplify_site_stats(df: pd.DataFrame, site_code: str, top_ratio=None) -
         stats["value_neither"] = int(
             ((value_site_flag == _SHOP_SIMPLIFY_TOP80_NO) & (value_nature_flag == _SHOP_SIMPLIFY_TOP80_NO)).sum()
         )
+
+    # 店舖 vs 同 Nature 的四象限計數（件數／金額各一組）
+    compare_columns = [c for c in df.columns if _is_shop_simplify_compare_column(c)]
+    compare_qty_columns = [c for c in compare_columns if not _is_shop_simplify_value_compare_column(c)]
+    compare_value_columns = [c for c in compare_columns if _is_shop_simplify_value_compare_column(c)]
+    if compare_qty_columns:
+        flags = _flag(compare_qty_columns[0])
+        stats["compare_qty"] = {
+            label: int((flags == label).sum()) for label in _SHOP_SIMPLIFY_COMPARE_LABELS
+        }
+    if compare_value_columns:
+        flags = _flag(compare_value_columns[0])
+        stats["compare_value"] = {
+            label: int((flags == label).sum()) for label in _SHOP_SIMPLIFY_COMPARE_LABELS
+        }
     for c in df.columns:
         if isinstance(c, str) and c.strip().startswith("Net Sales (P") and c.strip().endswith("D)"):
             stats["window"] = c.strip()[len("Net Sales ("):-1]
@@ -514,6 +556,44 @@ def _shop_simplify_nature_top_column(ratio=None) -> str:
     return _shop_simplify_nature_top_base(ratio) + _SHOP_SIMPLIFY_QTY_SUFFIX
 
 
+def _shop_simplify_compare_column(site_code: str, ratio=None, suffix: str = _SHOP_SIMPLIFY_QTY_SUFFIX) -> str:
+    """店舖 vs 同 Nature 對比欄名（80%、件數 →「HA21 vs 同Nature Top 80%（件數）」）。"""
+    return (
+        _SHOP_SIMPLIFY_COMPARE_TEMPLATE.format(
+            site=str(site_code or "").strip(),
+            pct=_shop_simplify_ratio_percent(ratio),
+        )
+        + suffix
+    )
+
+
+def _shop_simplify_compare_labels(shop_flags: pd.Series, nature_flags: pd.Series, available: bool = True) -> pd.Series:
+    """把兩組布林旗標合成四象限標籤；Nature 不可用時整欄留空。"""
+    if not available:
+        return pd.Series("", index=shop_flags.index, dtype=object)
+    shop = shop_flags.fillna(False).to_numpy(dtype=bool)
+    nature = nature_flags.fillna(False).to_numpy(dtype=bool)
+    labels = np.select(
+        [shop & nature, shop & ~nature, ~shop & nature],
+        [
+            _SHOP_SIMPLIFY_COMPARE_BOTH,
+            _SHOP_SIMPLIFY_COMPARE_SHOP_ONLY,
+            _SHOP_SIMPLIFY_COMPARE_NATURE_ONLY,
+        ],
+        default=_SHOP_SIMPLIFY_COMPARE_NEITHER,
+    )
+    return pd.Series(labels, index=shop_flags.index, dtype=object)
+
+
+def _is_shop_simplify_compare_column(name) -> bool:
+    """是否「店舖 vs 同 Nature」對比欄（件數／金額兩個口徑都認）。"""
+    return isinstance(name, str) and " vs 同Nature Top " in name.strip()
+
+
+def _is_shop_simplify_value_compare_column(name) -> bool:
+    return _is_shop_simplify_compare_column(name) and name.strip().endswith(_SHOP_SIMPLIFY_VALUE_SUFFIX)
+
+
 def _is_shop_simplify_top80_column(name) -> bool:
     """是否本模式的 Top N% 判定欄（含指定店舖動態欄名、Nature 欄、70% 與金額變體）。"""
     if not isinstance(name, str):
@@ -633,6 +713,8 @@ def _shop_simplify_drop_existing_columns(df: pd.DataFrame) -> pd.DataFrame:
         if resolved is not None:
             drop.append(resolved)
     drop.extend(c for c in df.columns if _is_shop_simplify_top80_column(c) and c not in drop)
+    # 店舖 vs 同 Nature 對比欄同樣屬衍生欄，換比例重跑時一併移除
+    drop.extend(c for c in df.columns if _is_shop_simplify_compare_column(c) and c not in drop)
     # 舊結果的 Net Sales (PxxD) 屬衍生欄，重跑時一併移除，避免與本次視窗並存
     drop.extend(
         c for c in df.columns
@@ -815,9 +897,11 @@ def transform_shop_simplify_site(
     """指定店舖模式：只輸出該店舖（Site Code）的 SKU 列，並加兩組（件數／金額）Top N% 判定欄。
 
     - 件數：「是否{店舖}的Top N%（件數）」與「是否同Shop Nature的Top N%（件數）」，按 Sold Qty (P90D)；
-    - 金額：「是否{店舖}的Top N%（金額）」與「是否同Shop Nature的Top N%（金額）」，
-      按 Net Sales (P{N}D)＝`Net Sales (M-2)`＋`Net Sales (M-1)`＋`Net Sales (CM - MTD)`
-      （負數先 clip 為 0），N 由 MTD 日數＋兩個整月日數決定（例如 11 月 12 日 → 73 日）。
+- 金額：「是否{店舖}的Top N%（金額）」與「是否同Shop Nature的Top N%（金額）」，
+  按 Net Sales (P{N}D)＝`Net Sales (M-2)`＋`Net Sales (M-1)`＋`Net Sales (CM - MTD)`
+  （負數先 clip 為 0），N 由 MTD 日數＋兩個整月日數決定（例如 11 月 12 日 → 73 日）。
+- 對比：`{店舖} vs 同Nature Top N%（件數）`／`（金額）`，值為「兩者皆是／僅店舖／
+  僅同Nature／兩者皆非」，直接看兩邊是否同為核心；Nature 不可用時整欄留空。
 
     兩種口徑都按 Adj. SST 分類，在每個分類內累計至該分類 N%，同一銷量／金額整組納入或排除；
     分類之間不互相擠佔。來源缺 Shop Nature 時 Nature 欄留空、缺 Adj. SST 時退回單一分組，
@@ -1018,6 +1102,8 @@ def transform_shop_simplify_site(
         np.where(nature_flags, _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO)
         if nature_available else ""
     )
+    compare_qty_column = _shop_simplify_compare_column(matched_site, share, _SHOP_SIMPLIFY_QTY_SUFFIX)
+    shop_df[compare_qty_column] = _shop_simplify_compare_labels(shop_flags, nature_flags, nature_available)
 
     shop_net = None
     if net_available:
@@ -1053,14 +1139,18 @@ def transform_shop_simplify_site(
             np.where(nature_value_flags, _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO)
             if nature_available else ""
         )
+        compare_value_column = _shop_simplify_compare_column(matched_site, share, _SHOP_SIMPLIFY_VALUE_SUFFIX)
+        shop_df[compare_value_column] = _shop_simplify_compare_labels(
+            shop_value_flags, nature_value_flags, nature_available
+        )
 
     # 判定欄緊接「過去90日有無存貨」（件數在前、金額在後），三個回覆欄維持最後；
-    # Net Sales (PxxD) 緊接 Sold Qty (P90D)，方便與件數對照
+    # 每個口徑依次為：店舖 Top、同 Nature Top、兩者對比；Net Sales (PxxD) 緊接 Sold Qty (P90D)
     cols = list(shop_df.columns)
     insert_at = cols.index(_SHOP_SIMPLIFY_STOCK_COLUMN) + 1
-    flag_columns = [site_top_column, nature_column]
+    flag_columns = [site_top_column, nature_column, compare_qty_column]
     if net_available:
-        flag_columns += [value_site_column, value_nature_column]
+        flag_columns += [value_site_column, value_nature_column, compare_value_column]
     for name in flag_columns:
         cols.remove(name)
         cols.insert(insert_at, name)
@@ -1217,6 +1307,9 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> B
 
         letter = get_column_letter(col_idx)
         width = _SHOP_SIMPLIFY_COLUMN_WIDTHS.get(name)
+        if width is None and _is_shop_simplify_compare_column(name):
+            # 對比欄名較長（HA21 vs 同Nature Top 80%（件數））
+            width = 26.0
         if width is None and _is_shop_simplify_top80_column(name):
             # 指定店舖變體的判定欄較長（…Top 80%（件數）／（金額））；原模式的「是否該店的Top 80%」不加闊
             text = str(name).strip()

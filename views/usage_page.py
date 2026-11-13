@@ -117,20 +117,22 @@ MODES = [
 - 只輸出指定店舖（Site Code，例如 HA21）的 SKU 列，其他店舖不列入
 - 側欄「🎯 Top 比例」可選 Top 80%（預設）或 Top 70%；「📅 數據截止日（T-1）」預設昨日
 - 同時輸出**件數**（Sold Qty (P90D)）與**金額**（Net Sales MTD＋M-1＋M-2，欄名如 P73D）兩組判定，共四欄；件數欄以「（件數）」結尾、金額欄以「（金額）」結尾
+- 另加兩欄「店舖 vs 同Nature Top N%」四象限對比：兩者皆是／僅店舖／僅同Nature／兩者皆非，直接看兩邊是否同為核心
 - 金額母體日數＝MTD 日數＋M-1 全月＋M-2 全月（例：11 月 12 日 → 12＋31＋30＝73 日）
 - 「兩項皆非」即精簡候選；其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則同店舖精簡SKU模式
-- 輸出：Summary＋Export（Sold Qty 後加 Net Sales (PxxD)，存貨判定欄後加四欄判定，回覆欄維持最後）
+- 輸出：Summary＋Export（Sold Qty 後加 Net Sales (PxxD)，存貨判定欄後加四欄判定＋兩欄對比，回覆欄維持最後）
      """,
      """
 1. **件數口徑** — `是否{店舖}的Top N%（件數）` 與 `是否同Shop Nature的Top N%（件數）`：按 Adj. SST 分類，在每個分類內按 Sold Qty (P90D) 由高至低累計，累計銷量首次達該分類總銷量 N% 的 SKU 為「是」，其餘「否」；同一銷量整組納入或排除（實際覆蓋率可能略高於 N%）
 2. **金額口徑** — `是否{店舖}的Top N%（金額）` 與 `是否同Shop Nature的Top N%（金額）`：按 `Net Sales (P{N}D)`（＝Net Sales (M-2)＋(M-1)＋(CM - MTD)，負數視為 0）；同一分類內累計至該分類金額 N% 即屬 Top N%
 3. **數據截止日與視窗** — 來源數據為 T-1，側欄預設昨日；系統自動計 MTD 日數＋M-1 全月＋M-2 全月，例如 11 月 13 日執行 → 截止 11 月 12 日 → 12＋31＋30＝73 日 → 欄名 `Net Sales (P73D)`。上傳舊月份檔案時請改選該檔的數據截止日
-4. **Top 比例可選** — 側欄可選 Top 80%（預設）或 Top 70%；四欄欄名隨比例改變，切換比例或日期後須重新執行；同一份來源重跑會自動移除舊比例與舊視窗的欄位，不會兩套並存
-5. **Adj. SST 分類為母體** — 件數與金額都在每個分類內獨立累計（Local、Private Label、Sole Agent 等各自有自己的 N% 線）；來源缺 Adj. SST → 退回全店／全 Nature 單一分組並列 warning
-6. **母體與範圍** — 只有指定店舖的列會輸出，四欄判定亦只加在這些列；Summary 只計該店 SKU
-7. **特殊情況** — 缺三個月 Net Sales 欄 → 只輸出件數兩欄並列 warning；缺 Shop Nature 或該店 Nature 空白 → Nature 欄留空；任一母體合計為 0 → 該組全部「否」並列 warning；同 Nature 只有一間店舖 → 列 warning；指定店舖不存在 → 停止並提示
-8. **沿用規則** — 清理（剔除合計列與 117 - Marketing）、Item_Shop 解析 SKU Desc／Shop Name、刪除欄名含 Value 的欄位、Brand／SKU 排序、SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 三欄留空，全部與店舖精簡SKU模式相同；原模式的「是否該店的Top 80%」不另加
-9. **紅色底標示** — Export 的 Item Status＝Discontinued、RP Type＝ND、過去90日有無存貨＝無存貨 三類值以紅色底標示（比對忽略大小寫與前後空白；RP Type 的紅色底蓋過該欄綠色；兩個模式共用同一匯出引擎）
+4. **Top 比例可選** — 側欄可選 Top 80%（預設）或 Top 70%；六欄欄名隨比例改變，切換比例或日期後須重新執行；同一份來源重跑會自動移除舊比例與舊視窗的欄位，不會兩套並存
+5. **店舖 vs 同 Nature 四象限** — `{店舖} vs 同Nature Top N%（件數）`／`（金額）`：`兩者皆是`（兩邊核心，優先保留）／`僅店舖`（本店特色）／`僅同Nature`（同 Nature 核心但本店未達，可考慮補貨）／`兩者皆非`（精簡候選）；結果頁有四象限計數表，件數／金額並排
+6. **Adj. SST 分類為母體** — 件數與金額都在每個分類內獨立累計（Local、Private Label、Sole Agent 等各自有自己的 N% 線）；來源缺 Adj. SST → 退回全店／全 Nature 單一分組並列 warning
+7. **母體與範圍** — 只有指定店舖的列會輸出，六欄判定亦只加在這些列；Summary 只計該店 SKU
+8. **特殊情況** — 缺三個月 Net Sales 欄 → 只輸出件數兩欄（連同件數對比欄）並列 warning；缺 Shop Nature 或該店 Nature 空白 → Nature 欄留空；任一母體合計為 0 → 該組全部「否」並列 warning；同 Nature 只有一間店舖 → 列 warning；指定店舖不存在 → 停止並提示
+9. **沿用規則** — 清理（剔除合計列與 117 - Marketing）、Item_Shop 解析 SKU Desc／Shop Name、刪除欄名含 Value 的欄位、Brand／SKU 排序、SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 三欄留空，全部與店舖精簡SKU模式相同；原模式的「是否該店的Top 80%」不另加
+10. **紅色底標示** — Export 的 Item Status＝Discontinued、RP Type＝ND、過去90日有無存貨＝無存貨 三類值以紅色底標示（比對忽略大小寫與前後空白；RP Type 的紅色底蓋過該欄綠色；兩個模式共用同一匯出引擎）
      """),
 
     ("📊 NDRF 月份對比",

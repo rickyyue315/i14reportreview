@@ -51,6 +51,13 @@ from transformer import (
     _shop_simplify_ratio_percent,
     _shop_simplify_top80_mask,
     _shop_simplify_top80_keys,
+    _shop_simplify_compare_column,
+    _SHOP_SIMPLIFY_QTY_SUFFIX,
+    _SHOP_SIMPLIFY_VALUE_SUFFIX,
+    _SHOP_SIMPLIFY_COMPARE_BOTH,
+    _SHOP_SIMPLIFY_COMPARE_SHOP_ONLY,
+    _SHOP_SIMPLIFY_COMPARE_NATURE_ONLY,
+    _SHOP_SIMPLIFY_COMPARE_NEITHER,
 )
 
 BASE = {
@@ -720,7 +727,12 @@ def test_site_top80_column_name_and_order_before_reply_columns():
     assert site_col == "是否HA21的Top 80%（件數）"
     cols = list(raw.columns)
     index = cols.index(_SHOP_SIMPLIFY_STOCK_COLUMN)
-    assert cols[index + 1:index + 4] == [site_col, _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN, _SHOP_SIMPLIFY_SCT_COLUMN]
+    assert cols[index + 1:index + 5] == [
+        site_col,
+        _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN,
+        _shop_simplify_compare_column("HA21"),
+        _SHOP_SIMPLIFY_SCT_COLUMN,
+    ]
     assert cols[-3:] == _SHOP_SIMPLIFY_REPLY_COLUMNS
     for col in _SHOP_SIMPLIFY_REPLY_COLUMNS:
         assert list(raw[col]) == [""] * len(raw)
@@ -800,14 +812,15 @@ def test_site_mode_excel_headers_widths_and_summary():
     headers = [c.value for c in ws[1]]
     site_col = _shop_simplify_site_top80_column("HA21")
     assert headers == list(raw.columns)
-    assert headers[-5:] == [
-        site_col, _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN,
+    assert headers[-6:] == [
+        site_col, _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN, _shop_simplify_compare_column("HA21"),
         *_SHOP_SIMPLIFY_REPLY_COLUMNS,
     ]
     # 指定店舖變體不加原模式的「是否該店的Top 80%」，避免兩個同義欄並存
     assert _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN not in headers
     assert round(ws.column_dimensions[get_column_letter(headers.index(site_col) + 1)].width, 2) == 22.0
     assert round(ws.column_dimensions[get_column_letter(headers.index(_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN) + 1)].width, 2) == 26.0
+    assert round(ws.column_dimensions[get_column_letter(headers.index(_shop_simplify_compare_column("HA21")) + 1)].width, 2) == 26.0
     assert ws.freeze_panes == f"{get_column_letter(headers.index('SKU Desc') + 2)}2"
     assert wb.sheetnames == ["Summary", "Export"]
 
@@ -1024,9 +1037,11 @@ def test_site_mode_70_excel_headers_and_widths():
     headers = [c.value for c in ws[1]]
     site_col = _shop_simplify_site_top80_column("HA21", 0.7)
     nature_col = _shop_simplify_nature_top_column(0.7)
-    assert headers[-5:] == [site_col, nature_col, *_SHOP_SIMPLIFY_REPLY_COLUMNS]
+    compare_col = _shop_simplify_compare_column("HA21", 0.7)
+    assert headers[-6:] == [site_col, nature_col, compare_col, *_SHOP_SIMPLIFY_REPLY_COLUMNS]
     assert round(ws.column_dimensions[get_column_letter(headers.index(site_col) + 1)].width, 2) == 22.0
     assert round(ws.column_dimensions[get_column_letter(headers.index(nature_col) + 1)].width, 2) == 26.0
+    assert round(ws.column_dimensions[get_column_letter(headers.index(compare_col) + 1)].width, 2) == 26.0
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 金額口徑（Net Sales MTD＋M-1＋M-2 → P{N}D）與四欄判定
@@ -1077,11 +1092,13 @@ def test_site_mode_net_sales_column_and_four_flags():
     assert net_col in raw.columns
     cols = list(raw.columns)
     assert cols.index(net_col) == cols.index("Sold Qty (P90D)") + 1
-    assert cols[-7:] == [
+    assert cols[-9:] == [
         _shop_simplify_site_top80_column("HA21"),
         _shop_simplify_nature_top_column(),
+        _shop_simplify_compare_column("HA21"),
         _shop_simplify_value_site_top_column("HA21"),
         _shop_simplify_value_nature_top_column(),
+        _shop_simplify_compare_column("HA21", suffix=_SHOP_SIMPLIFY_VALUE_SUFFIX),
         *_SHOP_SIMPLIFY_REPLY_COLUMNS,
     ]
     assert dict(zip(raw["SKU"], raw[net_col]))["A"] == 7000.0
@@ -1103,11 +1120,13 @@ def test_site_mode_four_flag_columns_carry_measure_suffix():
     raw, _ = transform_shop_simplify_site(
         _df(_site_rows_with_net()), "HA21", data_date=date(2026, 11, 12)
     )
-    assert list(raw.columns[-7:-3]) == [
+    assert list(raw.columns[-9:-3]) == [
         "是否HA21的Top 80%（件數）",
         "是否同Shop Nature的Top 80%（件數）",
+        "HA21 vs 同Nature Top 80%（件數）",
         "是否HA21的Top 80%（金額）",
         "是否同Shop Nature的Top 80%（金額）",
+        "HA21 vs 同Nature Top 80%（金額）",
     ]
     assert not [c for c in raw.columns if "（件數）（金額）" in str(c)]
     # 原模式（多店輸出）只有件數一種口徑，維持不加後綴
@@ -1127,9 +1146,10 @@ def test_site_mode_missing_net_sales_only_qty_columns_and_warning():
     raw, warnings = transform_shop_simplify_site(_df(_site_rows()), "HA21")
     assert not [_c for _c in raw.columns if str(_c).startswith("Net Sales (P")]
     assert not [_c for _c in raw.columns if _is_value_top_column(_c)]
-    assert list(raw.columns[-5:]) == [
+    assert list(raw.columns[-6:]) == [
         _shop_simplify_site_top80_column("HA21"),
         _shop_simplify_nature_top_column(),
+        _shop_simplify_compare_column("HA21"),
         *_SHOP_SIMPLIFY_REPLY_COLUMNS,
     ]
     assert any("未能計算金額口徑" in x for x in warnings)
@@ -1170,15 +1190,21 @@ def test_site_value_excel_headers_and_widths():
     headers = [c.value for c in ws[1]]
     value_site = _shop_simplify_value_site_top_column("HA21")
     value_nature = _shop_simplify_value_nature_top_column()
-    assert headers[-7:] == [
+    compare_qty = _shop_simplify_compare_column("HA21")
+    compare_value = _shop_simplify_compare_column("HA21", suffix=_SHOP_SIMPLIFY_VALUE_SUFFIX)
+    assert headers[-9:] == [
         _shop_simplify_site_top80_column("HA21"),
         _shop_simplify_nature_top_column(),
+        compare_qty,
         value_site,
         value_nature,
+        compare_value,
         *_SHOP_SIMPLIFY_REPLY_COLUMNS,
     ]
     assert round(ws.column_dimensions[get_column_letter(headers.index(value_site) + 1)].width, 1) == 22.0
     assert round(ws.column_dimensions[get_column_letter(headers.index(value_nature) + 1)].width, 1) == 26.0
+    assert round(ws.column_dimensions[get_column_letter(headers.index(compare_qty) + 1)].width, 1) == 26.0
+    assert round(ws.column_dimensions[get_column_letter(headers.index(compare_value) + 1)].width, 1) == 26.0
     assert round(ws.column_dimensions[get_column_letter(headers.index("Net Sales (P73D)") + 1)].width, 1) == 14.0
 
 
@@ -1194,3 +1220,84 @@ def test_site_mode_rerun_with_new_window_replaces_net_sales_column():
         _shop_simplify_value_site_top_column("HA21"),
         _shop_simplify_value_nature_top_column(),
     ]
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 店舖 vs 同 Nature 的四象限對比
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _compare_rows():
+    """HA21：A10／B10／C0／D0 → 店舖 Top 為 A、B；同 Nature 加 HA20 後
+    A100／B1／C100／D1 → 同 Nature Top 為 A、C。故四態齊備：
+    A 兩者皆是、B 僅店舖、C 僅同Nature、D 兩者皆非。"""
+    return [
+        {"SKU": "A", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 10},
+        {"SKU": "B", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 10},
+        {"SKU": "C", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 0},
+        {"SKU": "D", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 0},
+        {"SKU": "A", "Site Code": "HA20", "Shop Nature": "Non Tourist", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 100},
+        {"SKU": "B", "Site Code": "HA20", "Shop Nature": "Non Tourist", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 1},
+        {"SKU": "C", "Site Code": "HA20", "Shop Nature": "Non Tourist", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 100},
+        {"SKU": "D", "Site Code": "HA20", "Shop Nature": "Non Tourist", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 1},
+    ]
+
+
+def test_site_compare_column_covers_four_states():
+    raw, _ = transform_shop_simplify_site(_df(_compare_rows()), "HA21")
+    column = _shop_simplify_compare_column("HA21")
+    assert column in raw.columns
+    flags = dict(zip(raw["SKU"], raw[column]))
+    assert flags == {
+        "A": _SHOP_SIMPLIFY_COMPARE_BOTH,
+        "B": _SHOP_SIMPLIFY_COMPARE_SHOP_ONLY,
+        "C": _SHOP_SIMPLIFY_COMPARE_NATURE_ONLY,
+        "D": _SHOP_SIMPLIFY_COMPARE_NEITHER,
+    }
+
+
+def test_site_compare_column_uses_value_flags_for_value_measure():
+    raw, _ = transform_shop_simplify_site(
+        _df(_site_rows_with_net()), "HA21", data_date=date(2026, 11, 12)
+    )
+    column = _shop_simplify_compare_column("HA21", suffix=_SHOP_SIMPLIFY_VALUE_SUFFIX)
+    flags = dict(zip(raw["SKU"], raw[column]))
+    # 金額：HA21 只有 A 入選；同 Nature 亦只有 A（跨店 217,000）→ A 兩者皆是，其餘皆非
+    assert flags["A"] == _SHOP_SIMPLIFY_COMPARE_BOTH
+    assert {flags[k] for k in "BCDE"} == {_SHOP_SIMPLIFY_COMPARE_NEITHER}
+
+
+def test_site_compare_column_blank_when_shop_nature_missing():
+    df = _df(_compare_rows()).drop(columns=["Shop Nature"])
+    raw, warnings = transform_shop_simplify_site(df, "HA21")
+    column = _shop_simplify_compare_column("HA21")
+    assert column in raw.columns
+    assert list(raw[column]) == [""] * len(raw)
+    assert any("缺少「Shop Nature」" in x for x in warnings)
+
+
+def test_site_stats_compare_counts():
+    raw, _ = transform_shop_simplify_site(_df(_compare_rows()), "HA21")
+    stats = shop_simplify_site_stats(raw, "HA21")
+    assert stats["compare_qty"] == {
+        _SHOP_SIMPLIFY_COMPARE_BOTH: 1,
+        _SHOP_SIMPLIFY_COMPARE_SHOP_ONLY: 1,
+        _SHOP_SIMPLIFY_COMPARE_NATURE_ONLY: 1,
+        _SHOP_SIMPLIFY_COMPARE_NEITHER: 1,
+    }
+    # 無金額欄時不提供金額對比
+    assert stats["compare_value"] == {}
+
+
+def test_site_compare_column_replaced_when_ratio_changes():
+    raw80, _ = transform_shop_simplify_site(_df(_compare_rows()), "HA21")
+    assert _shop_simplify_compare_column("HA21", 0.8) in raw80.columns
+    raw70, _ = transform_shop_simplify_site(raw80, "HA21", top_ratio=0.7)
+    compare_columns = [c for c in raw70.columns if " vs 同Nature Top " in str(c)]
+    assert compare_columns == [_shop_simplify_compare_column("HA21", 0.7)]
+    assert _shop_simplify_compare_column("HA21", 0.8) not in raw70.columns
+
+
+def test_site_compare_missing_without_net_sales_only_qty():
+    raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21")
+    compare_columns = [c for c in raw.columns if " vs 同Nature Top " in str(c)]
+    assert compare_columns == [_shop_simplify_compare_column("HA21")]
+    assert not [c for c in compare_columns if str(c).endswith(_SHOP_SIMPLIFY_VALUE_SUFFIX)]

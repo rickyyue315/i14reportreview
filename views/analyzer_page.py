@@ -75,6 +75,7 @@ from transformer import (
     _SHOP_SIMPLIFY_SOLD_COLUMN, _SHOP_SIMPLIFY_STOCK_COLUMN,
     _SHOP_SIMPLIFY_SOLD_NO, _SHOP_SIMPLIFY_STOCK_NO,
     _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO,
+    _SHOP_SIMPLIFY_COMPARE_LABELS,
     _shop_simplify_site_top80_column, _shop_simplify_nature_top_column,
     _shop_simplify_value_site_top_column, _shop_simplify_value_nature_top_column,
     _shop_simplify_net_sales_window,
@@ -319,7 +320,7 @@ MODE_DESCRIPTIONS = {
     "Carry SKU Review": "統計各店舖實際經營品項數量與結構。",
     "SKU 精簡 Review": "針對不可補貨品項，建議退倉安排。",
     "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去90日有無存貨（LLM／LM／CM 任一 > 0＝有存貨，LLM 欄自 2026-10-26 起來源報表提供），另判定「是否該店的Top 80%」（每間店按 Adj. SST 分類各自累計 80%，同一銷量整組納入或排除，分類之間不互相擠佔；不設同 Nature 判定），並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
-    "店舖精簡SKU模式(指定店舖)": "只列指定店舖（如 HA21）的 SKU，可自選 Top 80%（預設）或 Top 70%，並同時輸出件數與金額兩組判定（共四欄，欄名末端註明「（件數）」／「（金額）」）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D，負數視為 0），各自判定「是否該店的Top N%」及「是否同Shop Nature的Top N%」——均按 Adj. SST 分類，在每個分類內由高至低累計，首次達該分類母體（該店／同 Nature 全部店舖）總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數。其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則與店舖精簡SKU模式相同。",
+    "店舖精簡SKU模式(指定店舖)": "只列指定店舖（如 HA21）的 SKU，可自選 Top 80%（預設）或 Top 70%，同時輸出件數與金額兩組判定（四欄，欄名末端註明「（件數）」／「（金額）」）及兩欄「{店舖} vs 同Nature Top N%」對比（值為兩者皆是／僅店舖／僅同Nature／兩者皆非）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D，負數視為 0），各自判定「是否該店的Top N%」及「是否同Shop Nature的Top N%」——均按 Adj. SST 分類，在每個分類內由高至低累計，首次達該分類母體（該店／同 Nature 全部店舖）總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數。其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則與店舖精簡SKU模式相同。",
     "NDRF 月份對比": "對比兩個月份各店舖經營與不可補貨品項變化。",
     "Safety Stock Review": "全面審查安全庫存設定，計算平衡建議值。",
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
@@ -2988,9 +2989,10 @@ if uploaded_file is not None:
             _slim_pct = _shopslimsite_pct
             st.caption(
                 f"目前設定 → **{_slim_site}**、**Top {_slim_pct}%**、金額 **{_shopslimsite_window['label']}**："
-                "輸出該店全部 SKU，並加四欄判定——"
+                "輸出該店全部 SKU，並加四欄判定與兩欄對比——"
                 f"「是否{_slim_site}的Top {_slim_pct}%（件數）」、「是否同Shop Nature的Top {_slim_pct}%（件數）」、"
-                f"「是否{_slim_site}的Top {_slim_pct}%（金額）」、「是否同Shop Nature的Top {_slim_pct}%（金額）」；"
+                f"「是否{_slim_site}的Top {_slim_pct}%（金額）」、「是否同Shop Nature的Top {_slim_pct}%（金額）」，"
+                f"以及「{_slim_site} vs 同Nature Top {_slim_pct}%（件數）」、「…（金額）」；"
                 "Shop Nature 由來源檔該店的值決定（不設 Nature 篩選）；"
                 f"每個 Adj. SST 分類內累計首次達該分類 {_slim_pct}% 即屬 Top {_slim_pct}%（同一銷量／金額整組納入或排除）。"
             )
@@ -5336,6 +5338,25 @@ if uploaded_file is not None:
                     "本次只輸出件數判定；如需金額口徑，請補回這些欄位再上傳。"
                 )
 
+            # 店舖 vs 同 Nature 四象限：件數／金額並排，直接看該 SKU 兩邊是否同為核心
+            _cmp_qty = _stats.get("compare_qty") or {}
+            _cmp_val = _stats.get("compare_value") or {}
+            if _cmp_qty:
+                st.markdown(f"##### 🔀 {_site} vs 同Nature 對比（Top {_pct_used}%）")
+                _cmp_rows = []
+                for _label in _SHOP_SIMPLIFY_COMPARE_LABELS:
+                    _cmp_row = {"對比結果": _label, "件數 SKU 數": int(_cmp_qty.get(_label, 0))}
+                    if _value_ok:
+                        _cmp_row["金額 SKU 數"] = int(_cmp_val.get(_label, 0))
+                    _cmp_rows.append(_cmp_row)
+                st.dataframe(pd.DataFrame(_cmp_rows), width="stretch", hide_index=True)
+                st.caption(
+                    "「兩者皆是」＝店舖與同 Nature 都是 Top（核心，優先保留）；"
+                    "「僅店舖」＝本店賣得動、同 Nature 其他店不普及（本店特色）；"
+                    "「僅同Nature」＝同 Nature 核心但本店未達（可考慮補貨／引入）；"
+                    "「兩者皆非」＝兩邊都不是核心（精簡候選）。"
+                )
+
             st.caption(
                 f"共 {int(_stats.get('rows', 0)):,} 個 SKU（{_site}）、{int(_stats.get('sst_groups', 0)):,} 個 Adj. SST 分類；"
                 f"過去90日無賣 {int(_stats.get('sold_no', 0)):,} 個、無存貨 {int(_stats.get('stock_no', 0)):,} 個。"
@@ -5345,6 +5366,10 @@ if uploaded_file is not None:
                     f"金額口徑＝MTD＋M-1＋M-2 三個月 Net Sales 相加（負數視為 0），"
                     f"欄名 {_window_used} 代表實際覆蓋日數；與真正的滾動 90 日略有差異。"
                     if _value_ok else ""
+                )
+                + (
+                    f"另附「{_site} vs 同Nature Top {_pct_used}%」對比欄（件數／金額），"
+                    "值為兩者皆是／僅店舖／僅同Nature／兩者皆非。"
                 )
                 + "其餘欄位、Item_Shop 解析、刪除 Value 欄與三個回覆欄留空的規則與店舖精簡SKU模式相同。"
             )
