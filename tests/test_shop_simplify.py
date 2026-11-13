@@ -42,6 +42,9 @@ from transformer import (
     _SHOP_SIMPLIFY_RED,
     _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN,
     _shop_simplify_site_top80_column,
+    _shop_simplify_nature_top_column,
+    _shop_simplify_top_share,
+    _shop_simplify_ratio_percent,
     _shop_simplify_top80_mask,
     _shop_simplify_top80_keys,
 )
@@ -931,3 +934,92 @@ def test_site_mode_only_parses_selected_shop_rows(monkeypatch):
     ]
     transform_shop_simplify_site(_df(rows), "HA21")
     assert calls == [2]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Top 比例可選（70%／80%）
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_top_ratio_accepts_ratio_percent_and_string_forms():
+    assert _shop_simplify_top_share(None) == 0.8
+    assert _shop_simplify_top_share(0.7) == 0.7
+    assert _shop_simplify_top_share(70) == 0.7
+    assert _shop_simplify_top_share("70%") == 0.7
+    assert _shop_simplify_ratio_percent(0.75) == 75
+
+
+@pytest.mark.parametrize("bad", [0, -0.2, 150, "abc", "0%"])
+def test_top_ratio_invalid_raises(bad):
+    with pytest.raises(ValueError):
+        transform_shop_simplify_site(_df(_site_rows()), "HA21", top_ratio=bad)
+
+
+def test_site_top_ratio_70_column_names_and_flags():
+    raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21", top_ratio=0.7)
+    site_col = _shop_simplify_site_top80_column("HA21", 0.7)
+    nature_col = _shop_simplify_nature_top_column(0.7)
+    assert site_col == "是否HA21的Top 70%"
+    assert nature_col == "是否同Shop Nature的Top 70%"
+    assert site_col in raw.columns and nature_col in raw.columns
+    assert "是否HA21的Top 80%" not in raw.columns
+    assert "是否同Shop Nature的Top 80%" not in raw.columns
+    # 全店 100 件：70% 門檻 70 → 只有 A；80% 時 A＋B 才達 80，C 同銷量一併納入
+    flags = dict(zip(raw["SKU"], raw[site_col]))
+    assert flags == {"A": _SHOP_SIMPLIFY_TOP80_YES, "B": _SHOP_SIMPLIFY_TOP80_NO,
+                     "C": _SHOP_SIMPLIFY_TOP80_NO, "D": _SHOP_SIMPLIFY_TOP80_NO,
+                     "E": _SHOP_SIMPLIFY_TOP80_NO}
+
+
+def test_site_top_ratio_70_nature_aggregates_same_nature_only():
+    raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21", top_ratio=0.7)
+    flags = dict(zip(raw["SKU"], raw[_shop_simplify_nature_top_column(0.7)]))
+    # Non Tourist 合計 1100、70% 門檻 770 → 只有 A（HA19 的 E 9999 不得計入）
+    assert flags == {"A": _SHOP_SIMPLIFY_TOP80_YES, "B": _SHOP_SIMPLIFY_TOP80_NO,
+                     "C": _SHOP_SIMPLIFY_TOP80_NO, "D": _SHOP_SIMPLIFY_TOP80_NO,
+                     "E": _SHOP_SIMPLIFY_TOP80_NO}
+
+
+def test_top80_keys_share_parameter_per_group():
+    groups = pd.Series(["G1", "G1", "G1", "G2", "G2"])
+    skus = pd.Series(["A", "B", "C", "D", "E"])
+    qty = pd.Series([70.0, 20.0, 10.0, 60.0, 40.0])
+    keys80 = _shop_simplify_top80_keys(groups, skus, qty, share=0.8)
+    keys70 = _shop_simplify_top80_keys(groups, skus, qty, share=0.7)
+    assert keys80 == {("G1", "A"), ("G1", "B"), ("G2", "D"), ("G2", "E")}
+    assert keys70 == {("G1", "A"), ("G2", "D"), ("G2", "E")}
+
+
+def test_site_top_ratio_change_rerun_drops_old_columns():
+    raw80, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21")
+    raw70, _ = transform_shop_simplify_site(raw80, "HA21", top_ratio=0.7)
+    top_cols = [c for c in raw70.columns if str(c).startswith("是否") and "Top " in str(c)]
+    assert top_cols == [
+        _shop_simplify_site_top80_column("HA21", 0.7),
+        _shop_simplify_nature_top_column(0.7),
+    ]
+    assert len(raw70) == 5
+
+
+def test_site_stats_report_ratio_from_output_columns():
+    raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21", top_ratio=0.7)
+    stats = shop_simplify_site_stats(raw, "HA21", 0.7)
+    assert stats["ratio"] == 70
+    assert stats["site_top80"] == 1
+    assert stats["nature_top80"] == 1
+    assert stats["neither"] == 4
+    # 介面參數與結果檔不一致時，以結果檔的欄名為準
+    assert shop_simplify_site_stats(raw, "HA21", 0.8)["ratio"] == 70
+
+
+def test_site_mode_70_excel_headers_and_widths():
+    from openpyxl.utils import get_column_letter
+
+    raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21", top_ratio=0.7)
+    wb = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))
+    ws = wb["Export"]
+    headers = [c.value for c in ws[1]]
+    site_col = _shop_simplify_site_top80_column("HA21", 0.7)
+    nature_col = _shop_simplify_nature_top_column(0.7)
+    assert headers[-5:] == [site_col, nature_col, *_SHOP_SIMPLIFY_REPLY_COLUMNS]
+    assert round(ws.column_dimensions[get_column_letter(headers.index(site_col) + 1)].width, 2) == 14.0
+    assert round(ws.column_dimensions[get_column_letter(headers.index(nature_col) + 1)].width, 2) == 16.0

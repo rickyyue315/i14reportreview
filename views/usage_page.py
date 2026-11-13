@@ -115,19 +115,21 @@ MODES = [
     ("🏪 店舖精簡SKU模式(指定店舖)",
      """
 - 只輸出指定店舖（Site Code，例如 HA21）的 SKU 列，其他店舖不列入
-- 判定「是否該店的Top 80%」：按 Adj. SST 分類，每個分類內 Sold Qty (P90D) 由高至低累計達該分類 80%
-- 判定「是否同Shop Nature的Top 80%」：同 Nature 全部店舖按 Adj. SST 分類加總，各分類內累計 80%
+- 側欄「🎯 Top 比例」可選 Top 80%（預設）或 Top 70%，判定門檻與欄名同步改變
+- 判定「是否該店的Top N%」：按 Adj. SST 分類，每個分類內 Sold Qty (P90D) 由高至低累計達該分類 N%
+- 判定「是否同Shop Nature的Top N%」：同 Nature 全部店舖按 Adj. SST 分類加總，各分類內累計 N%
 - 「兩項皆非」即精簡候選；其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則同店舖精簡SKU模式
 - 輸出：Summary＋Export（存貨判定欄之後多兩個判定欄，回覆欄維持最後）
      """,
      """
-1. **是否{店舖}的Top 80%** = 按 Adj. SST 分類，在該店每個分類內按 Sold Qty (P90D) 由高至低累計，累計銷量首次達該分類總銷量 80% 的 SKU 為「是」，其餘「否」；同一銷量的 SKU 整組納入或整組排除，避免同銷量被隨意切開（實際覆蓋率可能略高於 80%）
-2. **是否同Shop Nature的Top 80%** = 以該店 Shop Nature 為準，來源檔內同 Nature 全部店舖的同 SKU 銷量按 Adj. SST 分類加總後，在每個分類內按同一累計 80% 準則判定；其他 Nature 的銷量不計入
-3. **Adj. SST 分類為母體** — 兩個判定都在每個分類內獨立累計，分類之間不互相擠佔（Local、Private Label、Sole Agent 等各自有自己的 80% 線）；來源缺 Adj. SST → 退回全店／全 Nature 單一分組並列 warning
-4. **母體與範圍** — 只有指定店舖的列會輸出，兩個判定欄亦只加在這些列；Summary 只計該店 SKU
-5. **特殊情況** — 缺 Shop Nature 或該店 Nature 空白 → Nature 欄留空並列 warning；該店 Sold Qty (P90D) 合計為 0 → 兩個判定欄全部「否」並列 warning；同 Nature 只有一間店舖 → 列 warning（Nature 判定與店舖判定相同）；指定店舖不存在 → 停止並提示
-6. **沿用規則** — 清理（剔除合計列與 117 - Marketing）、Item_Shop 解析 SKU Desc／Shop Name、刪除欄名含 Value 的欄位、Brand／SKU 排序、SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 三欄留空，全部與店舖精簡SKU模式相同；原模式的「是否該店的Top 80%」不另加，改由下列兩個判定欄取代
-7. **紅色底標示** — Export 的 Item Status＝Discontinued、RP Type＝ND、過去90日有無存貨＝無存貨 三類值以紅色底標示（比對忽略大小寫與前後空白；RP Type 的紅色底蓋過該欄綠色；兩個模式共用同一匯出引擎）
+1. **是否{店舖}的Top N%** = 按 Adj. SST 分類，在該店每個分類內按 Sold Qty (P90D) 由高至低累計，累計銷量首次達該分類總銷量 N% 的 SKU 為「是」，其餘「否」；同一銷量的 SKU 整組納入或整組排除，避免同銷量被隨意切開（實際覆蓋率可能略高於 N%）
+2. **是否同Shop Nature的Top N%** = 以該店 Shop Nature 為準，來源檔內同 Nature 全部店舖的同 SKU 銷量按 Adj. SST 分類加總後，在每個分類內按同一累計 N% 準則判定；其他 Nature 的銷量不計入
+3. **Top 比例可選** — 側欄可選 Top 80%（預設）或 Top 70%；欄名隨比例改變（`是否HA21的Top 80%`／`是否HA21的Top 70%`），切換後須重新執行；同一份來源重跑會自動移除舊比例欄，不會兩套並存
+4. **Adj. SST 分類為母體** — 兩個判定都在每個分類內獨立累計，分類之間不互相擠佔（Local、Private Label、Sole Agent 等各自有自己的 N% 線）；來源缺 Adj. SST → 退回全店／全 Nature 單一分組並列 warning
+5. **母體與範圍** — 只有指定店舖的列會輸出，兩個判定欄亦只加在這些列；Summary 只計該店 SKU
+6. **特殊情況** — 缺 Shop Nature 或該店 Nature 空白 → Nature 欄留空並列 warning；該店 Sold Qty (P90D) 合計為 0 → 兩個判定欄全部「否」並列 warning；同 Nature 只有一間店舖 → 列 warning（Nature 判定與店舖判定相同）；指定店舖不存在 → 停止並提示
+7. **沿用規則** — 清理（剔除合計列與 117 - Marketing）、Item_Shop 解析 SKU Desc／Shop Name、刪除欄名含 Value 的欄位、Brand／SKU 排序、SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 三欄留空，全部與店舖精簡SKU模式相同；原模式的「是否該店的Top 80%」不另加，改由下列兩個判定欄取代
+8. **紅色底標示** — Export 的 Item Status＝Discontinued、RP Type＝ND、過去90日有無存貨＝無存貨 三類值以紅色底標示（比對忽略大小寫與前後空白；RP Type 的紅色底蓋過該欄綠色；兩個模式共用同一匯出引擎）
      """),
 
     ("📊 NDRF 月份對比",
@@ -471,7 +473,7 @@ st.markdown("""
         <li>✅ <b>Forecast Review</b> <span style="color:#0369a1;font-size:0.84em">(Site Code／Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Sold Qty (P90D)／Shop Stock Qty (CM))</span></li>
         <li>✅ <b>Safety Stock 月度變化分析</b> <span style="color:#0369a1;font-size:0.84em">(MONTH／YEAR（尾部欄位，恒為必要）／Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM))</span></li>
         <li>✅ <b>店舖精簡SKU模式</b> <span style="color:#0369a1;font-size:0.84em">(Sold Qty (P90D)／Shop Stock Qty (LLM)、(LM) 或 (CM) 至少一個；三者同時缺失才停止)</span></li>
-        <li>✅ <b>店舖精簡SKU模式(指定店舖)</b> <span style="color:#0369a1;font-size:0.84em">(同上＋Site Code；Shop Nature 缺失時 Nature 判定欄留空並列 warning，不停止；Adj. SST 缺失時 Top 80% 退回單一分組並列 warning)</span></li>
+        <li>✅ <b>店舖精簡SKU模式(指定店舖)</b> <span style="color:#0369a1;font-size:0.84em">(同上＋Site Code；Top 比例可選 70%／80%；Shop Nature 缺失時 Nature 判定欄留空並列 warning，不停止；Adj. SST 缺失時 Top N% 退回單一分組並列 warning)</span></li>
         <li>✅ <b>RAW 明細轉化</b>／<b>RAW 明細轉化 (不含 Value)</b> <span style="color:#0369a1;font-size:0.84em">(無額外必要欄位，沿用共用必要欄位；Item_Shop 缺欄時 SKU Desc／Shop Name 留空並列 warning；兩變體只差在是否刪除欄名含「Value」的欄位)</span></li>
     </ul>
     <p style="font-weight: 600; color: #1e293b; margin-top: 1rem; margin-bottom: 0.4rem;">OOS Review 額外建議欄位（非必要，缺少時將顯示提示）：</p>

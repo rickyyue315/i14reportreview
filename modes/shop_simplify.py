@@ -25,15 +25,16 @@ Export（回覆明細）兩個工作表；Export 套用店舖精簡回覆表範�
 前後空白；RP Type 的紅色底會蓋過該欄的綠色），兩個模式共用同一匯出引擎。
 
 另有「指定店舖」變體（`transform_shop_simplify_site`）：只輸出指定店舖（如 HA21）
-的 SKU 列，並在存貨判定欄之後加兩個 Top 80% 判定欄——
+的 SKU 列，並在存貨判定欄之後加兩個 Top N% 判定欄（N 可選 80%（預設）或 70%）——
 
-- 是否{店舖}的Top 80%：按 Adj. SST 分類，在每個分類內按 Sold Qty (P90D) 由高至低
-  累計，累計銷量首次達該分類總銷量 80% 的 SKU（同一銷量的 SKU 整組納入或整組排除）；
-- 是否同Shop Nature的Top 80%：以該店舖的 Shop Nature 為準，把來源檔內同 Nature
-  全部店舖的同 SKU 銷量按 Adj. SST 分類加總，再按同一分類內累計 80% 準則判定。
+- 是否{店舖}的Top N%：按 Adj. SST 分類，在每個分類內按 Sold Qty (P90D) 由高至低
+  累計，累計銷量首次達該分類總銷量 N% 的 SKU（同一銷量的 SKU 整組納入或整組排除）；
+- 是否同Shop Nature的Top N%：以該店舖的 Shop Nature 為準，把來源檔內同 Nature
+  全部店舖的同 SKU 銷量按 Adj. SST 分類加總，再按同一分類內累計 N% 準則判定。
 
 兩個判定欄均以 Adj. SST 分類為母體，分類之間不互相擠佔；來源缺 Adj. SST 時退回
-全店／全 Nature 單一分組並列 warning。
+全店／全 Nature 單一分組並列 warning。欄名隨比例改變（Top 70%／Top 80%），
+故切換比例重跑不會留下舊比例的欄位。
 
 兩個判定欄只加在指定店舖的列上，其餘計算、清理、解析與回覆欄留空規則與原模式相同。
 """
@@ -72,7 +73,9 @@ __all__ = [
     "_SHOP_SIMPLIFY_EXPORT_SHEET",
     "_SHOP_SIMPLIFY_SUMMARY_SHEET",
     "_SHOP_SIMPLIFY_TOP80_SHARE",
+    "_SHOP_SIMPLIFY_TOP_RATIO_OPTIONS",
     "_SHOP_SIMPLIFY_SITE_TOP80_TEMPLATE",
+    "_SHOP_SIMPLIFY_NATURE_TOP80_TEMPLATE",
     "_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN",
     "_SHOP_SIMPLIFY_TOP80_YES",
     "_SHOP_SIMPLIFY_TOP80_NO",
@@ -80,6 +83,9 @@ __all__ = [
     "_SHOP_SIMPLIFY_RED",
     "_SHOP_SIMPLIFY_RED_RULES",
     "_shop_simplify_site_top80_column",
+    "_shop_simplify_nature_top_column",
+    "_shop_simplify_top_share",
+    "_shop_simplify_ratio_percent",
     "_shop_simplify_top80_mask",
     "_shop_simplify_top80_keys",
     "shop_simplify_stats",
@@ -110,11 +116,14 @@ _SHOP_SIMPLIFY_SOLD_NO = "無賣"
 _SHOP_SIMPLIFY_STOCK_YES = "有存貨"
 _SHOP_SIMPLIFY_STOCK_NO = "無存貨"
 
-# ── 指定店舖模式的 Top 80% 判定（欄名固定，測試與匯出檔依賴）──
-# 累計銷量達該母體（指定店舖／同 Shop Nature 全部店舖）總銷量的 80% 即屬 Top 80%；
+# ── 指定店舖模式的 Top N% 判定（預設 80%，介面可選 70%）──
+# 累計銷量達該母體（指定店舖／同 Shop Nature 全部店舖）總銷量的 N% 即屬 Top N%；
 # 同一銷量的 SKU 整組納入或整組排除，避免同銷量被隨意切開。
 _SHOP_SIMPLIFY_TOP80_SHARE = 0.8
-_SHOP_SIMPLIFY_SITE_TOP80_TEMPLATE = "是否{site}的Top 80%"
+# 介面可選的比例（0.8＝Top 80%、0.7＝Top 70%）；原模式（多店輸出）固定 80%
+_SHOP_SIMPLIFY_TOP_RATIO_OPTIONS = (0.8, 0.7)
+_SHOP_SIMPLIFY_SITE_TOP80_TEMPLATE = "是否{site}的Top {pct}%"
+_SHOP_SIMPLIFY_NATURE_TOP80_TEMPLATE = "是否同Shop Nature的Top {pct}%"
 _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN = "是否同Shop Nature的Top 80%"
 _SHOP_SIMPLIFY_TOP80_YES = "是"
 _SHOP_SIMPLIFY_TOP80_NO = "否"
@@ -244,13 +253,17 @@ def shop_simplify_stats(df: pd.DataFrame) -> dict:
     return stats
 
 
-def shop_simplify_site_stats(df: pd.DataFrame, site_code: str) -> dict:
-    """指定店舖模式的結果頁指標：列數、SKU 數、Adj. SST 分類數、兩個 Top 80% 命中數、兩項皆非、無賣／無存貨。"""
+def shop_simplify_site_stats(df: pd.DataFrame, site_code: str, top_ratio=None) -> dict:
+    """指定店舖模式的結果頁指標：列數、SKU 數、Adj. SST 分類數、兩個 Top N% 命中數、兩項皆非、無賣／無存貨。
+
+    `top_ratio` 只在判定欄不存在時作後備；正常情況由欄名（「…Top 70%」）取回實際比例，
+    故同一份結果不論介面當前選哪個比例，統計都反映該檔實際使用的比例。
+    """
     site = str(site_code or "").strip()
     stats = {
         "rows": 0, "skus": 0, "sst_groups": 0, "sold_no": 0, "stock_no": 0,
         "site_top80": 0, "nature_top80": 0, "neither": 0,
-        "site": site, "nature": "",
+        "site": site, "nature": "", "ratio": _shop_simplify_ratio_percent(top_ratio),
     }
     if df is None or len(df) == 0:
         return stats
@@ -262,13 +275,23 @@ def shop_simplify_site_stats(df: pd.DataFrame, site_code: str) -> dict:
 
     sold_no = _flag(_SHOP_SIMPLIFY_SOLD_COLUMN) == _SHOP_SIMPLIFY_SOLD_NO
     stock_no = _flag(_SHOP_SIMPLIFY_STOCK_COLUMN) == _SHOP_SIMPLIFY_STOCK_NO
+    nature_columns = [
+        c for c in df.columns
+        if isinstance(c, str) and c.strip().startswith("是否同Shop Nature的Top ")
+    ]
     site_columns = [
         c for c in df.columns
-        if _is_shop_simplify_top80_column(c) and c != _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN
+        if _is_shop_simplify_top80_column(c) and c not in nature_columns
     ]
-    site_column = site_columns[0] if len(site_columns) == 1 else _shop_simplify_site_top80_column(site)
+    site_column = site_columns[0] if len(site_columns) == 1 else _shop_simplify_site_top80_column(site, top_ratio)
+    nature_column = nature_columns[0] if len(nature_columns) == 1 else _shop_simplify_nature_top_column(top_ratio)
     site_flag = _flag(site_column)
-    nature_flag = _flag(_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN)
+    nature_flag = _flag(nature_column)
+    stats["ratio"] = (
+        _shop_simplify_top_column_percent(site_column)
+        or _shop_simplify_top_column_percent(nature_column)
+        or _shop_simplify_ratio_percent(top_ratio)
+    )
 
     stats["rows"] = int(len(df))
     stats["sold_no"] = int(sold_no.sum())
@@ -332,26 +355,76 @@ def _shop_simplify_launch_int(value):
     return np.nan
 
 
-def _shop_simplify_site_top80_column(site_code: str) -> str:
-    """指定店舖模式的店舖層 Top 80% 欄名（如 HA21 →「是否HA21的Top 80%」）。"""
-    return _SHOP_SIMPLIFY_SITE_TOP80_TEMPLATE.format(site=str(site_code or "").strip())
+def _shop_simplify_top_share(ratio=None) -> float:
+    """正規化 Top 比例：接受 0.7／70／"70%"；必須在 (0, 1] 之內，否則拋 ValueError。
+
+    未提供時回傳預設 0.8（Top 80%），故舊呼叫端的行為與欄名完全不變。
+    """
+    if ratio is None:
+        return _SHOP_SIMPLIFY_TOP80_SHARE
+    value = ratio
+    if isinstance(value, str):
+        text = value.strip().replace("%", "")
+        try:
+            value = float(text)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Top 比例「{ratio}」無法識別，請提供 0 至 1 的比例（如 0.7）或百分比（如 70）。"
+            )
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Top 比例「{ratio!r}」不是數值，請提供 0 至 1 的比例（如 0.7）或百分比（如 70）。")
+    if value > 1:
+        value = value / 100.0
+    if not 0 < value <= 1:
+        raise ValueError(f"Top 比例必須大於 0 且不超過 100%（收到 {ratio!r}）。")
+    return value
+
+
+def _shop_simplify_ratio_percent(ratio=None) -> int:
+    """比例轉整數百分比（0.7 → 70），用於欄名與文案。"""
+    return int(round(_shop_simplify_top_share(ratio) * 100))
+
+
+def _shop_simplify_top_column_percent(name) -> int | None:
+    """從欄名取回百分比（「是否HA21的Top 70%」→ 70）；不是 Top 欄時回傳 None。"""
+    if not isinstance(name, str):
+        return None
+    match = re.search(r"Top\s*(\d{1,3})%\s*$", name.strip())
+    return int(match.group(1)) if match else None
+
+
+def _shop_simplify_site_top80_column(site_code: str, ratio=None) -> str:
+    """指定店舖模式的店舖層 Top N% 欄名（HA21、80% →「是否HA21的Top 80%」）。"""
+    return _SHOP_SIMPLIFY_SITE_TOP80_TEMPLATE.format(
+        site=str(site_code or "").strip(),
+        pct=_shop_simplify_ratio_percent(ratio),
+    )
+
+
+def _shop_simplify_nature_top_column(ratio=None) -> str:
+    """同 Shop Nature 的 Top N% 欄名（80% →「是否同Shop Nature的Top 80%」）。"""
+    return _SHOP_SIMPLIFY_NATURE_TOP80_TEMPLATE.format(pct=_shop_simplify_ratio_percent(ratio))
 
 
 def _is_shop_simplify_top80_column(name) -> bool:
-    """是否本模式的 Top 80% 判定欄（含指定店舖的動態欄名與 Nature 欄）。"""
+    """是否本模式的 Top N% 判定欄（含指定店舖的動態欄名、Nature 欄與 70% 變體）。"""
     if not isinstance(name, str):
         return False
     text = name.strip()
-    return text.startswith("是否") and text.endswith("Top 80%")
+    return text.startswith("是否") and re.search(r"Top\s*\d{1,3}%\s*$", text) is not None
 
 
-def _shop_simplify_top80_mask(qty: pd.Series) -> pd.Series:
-    """按銷量由高至低累計，回傳「累計首次達總銷量 80%」的 SKU 布林標記。
+def _shop_simplify_top80_mask(qty: pd.Series, share: float = _SHOP_SIMPLIFY_TOP80_SHARE) -> pd.Series:
+    """按銷量由高至低累計，回傳「累計首次達總銷量 N%」的 SKU 布林標記。
 
     - 以索引為 SKU 鍵（呼叫方先按 SKU 彙總）；
+    - `share` 為累計比例（0.8＝Top 80%、0.7＝Top 70%）；
     - 同一銷量的 SKU 整組納入或整組排除，避免同銷量被任意切開；
     - 總銷量為 0（或全為空白／負數）時全部回傳 False。
     """
+    share = _shop_simplify_top_share(share)
     values = pd.to_numeric(qty, errors="coerce").fillna(0.0).clip(lower=0.0)
     mask = pd.Series(False, index=values.index, dtype=bool)
     if values.empty:
@@ -361,7 +434,7 @@ def _shop_simplify_top80_mask(qty: pd.Series) -> pd.Series:
         return mask
     ordered = values.sort_values(ascending=False, kind="stable")
     cumulative = ordered.cumsum().to_numpy(dtype=float)
-    reached = np.flatnonzero(cumulative >= total * _SHOP_SIMPLIFY_TOP80_SHARE)
+    reached = np.flatnonzero(cumulative >= total * share)
     if reached.size == 0:
         return mask
     cutoff = float(ordered.iloc[int(reached[0])])
@@ -372,8 +445,9 @@ def _shop_simplify_top80_keys(
     groups: pd.Series,
     skus: pd.Series,
     qty: pd.Series,
+    share: float = _SHOP_SIMPLIFY_TOP80_SHARE,
 ) -> set[tuple[str, str]]:
-    """按分類（Adj. SST）分組，回傳各組累計 80% 的 (分類, SKU) 集合。
+    """按分類（Adj. SST）分組，回傳各組累計 N% 的 (分類, SKU) 集合。
 
     每個分類獨立累計，分類之間不互相擠佔；同一 SKU 在同一分類內重複出現時先加總。
     """
@@ -387,7 +461,7 @@ def _shop_simplify_top80_keys(
     totals = frame.groupby(["group", "sku"], sort=False)["qty"].sum()
     keys: set[tuple[str, str]] = set()
     for group, series in totals.groupby(level=0, sort=False):
-        mask = _shop_simplify_top80_mask(series.droplevel(0))
+        mask = _shop_simplify_top80_mask(series.droplevel(0), share=share)
         keys.update((str(group), str(sku)) for sku in mask.index[mask.to_numpy()])
     return keys
 
@@ -397,8 +471,9 @@ def _shop_simplify_shop_top80_flags(
     sold: pd.Series,
     site_col: str | None,
     sst_col: str | None,
+    share: float = _SHOP_SIMPLIFY_TOP80_SHARE,
 ) -> pd.Series:
-    """每列是否屬「該店 × 該 Adj. SST 分類」累計 80% 內的 SKU（原模式多店輸出用）。
+    """每列是否屬「該店 × 該 Adj. SST 分類」累計 N% 內的 SKU（原模式多店輸出用）。
 
     以 (Site Code, Adj. SST) 為母體鍵，母體之間互不擠佔；缺 Site Code 時全表視為
     單一店舖（"(全部店舖)"），缺 Adj. SST 時每店單一分組（"(全部)"）。
@@ -420,7 +495,7 @@ def _shop_simplify_shop_top80_flags(
     # 以不可見分隔符併成單一母體鍵，重用按分類累計 80% 的同一判定
     body_keys = sites.astype(str) + "\u0000" + groups.astype(str)
     skus = _cached_safe_sku_series(df["SKU"]).astype(str).str.strip()
-    keys = _shop_simplify_top80_keys(body_keys, skus, sold)
+    keys = _shop_simplify_top80_keys(body_keys, skus, sold, share=share)
     return pd.Series(
         [(group, sku) in keys for group, sku in zip(body_keys, skus)],
         index=index,
@@ -610,14 +685,18 @@ def transform_shop_simplify_site(
     df_input: pd.DataFrame,
     site_code: str,
     progress_callback=None,
+    top_ratio=None,
 ):
-    """指定店舖模式：只輸出該店舖（Site Code）的 SKU 列，並加兩個 Top 80% 判定欄。
+    """指定店舖模式：只輸出該店舖（Site Code）的 SKU 列，並加兩個 Top N% 判定欄。
 
-    - 「是否{店舖}的Top 80%」：按 Adj. SST 分類，在每個分類內按 Sold Qty (P90D)
-      由高至低累計，累計銷量首次達該分類總銷量 80% 的 SKU（同一銷量整組納入／排除）；
-    - 「是否同Shop Nature的Top 80%」：以該店舖 Shop Nature 為準，同 Nature 全部店舖的
-      同 SKU 銷量按 Adj. SST 分類加總後，按同一分類內累計 80% 準則判定；
+    - 「是否{店舖}的Top N%」：按 Adj. SST 分類，在每個分類內按 Sold Qty (P90D)
+      由高至低累計，累計銷量首次達該分類總銷量 N% 的 SKU（同一銷量整組納入／排除）；
+    - 「是否同Shop Nature的Top N%」：以該店舖 Shop Nature 為準，同 Nature 全部店舖的
+      同 SKU 銷量按 Adj. SST 分類加總後，按同一分類內累計 N% 準則判定；
       來源缺 Shop Nature 或該店 Nature 空白時該欄留空並列 warning。
+
+    `top_ratio` 為累計比例：0.8（預設，欄名「Top 80%」）或 0.7（欄名「Top 70%」）；
+    亦接受 70、"70%" 等寫法。欄名隨比例改變，故同一份來源切換比例重跑不會留下舊欄。
 
     兩個判定均以 Adj. SST 分類為母體，分類之間不互相擠佔；來源缺 Adj. SST 時退回
     全店／全 Nature 單一分組並列 warning。
@@ -629,6 +708,8 @@ def transform_shop_simplify_site(
     site = str(site_code or "").strip()
     if not site:
         raise ValueError("未提供指定店舖（Site Code），無法執行指定店舖模式。")
+    share = _shop_simplify_top_share(top_ratio)
+    pct = _shop_simplify_ratio_percent(share)
 
     missing = validate_input(df_input)
     if missing:
@@ -641,7 +722,7 @@ def transform_shop_simplify_site(
     sku_col = _resolve_column_name("SKU", avail)
     sold_col = _resolve_column_name("Sold Qty (P90D)", avail)
     if sku_col is None or sold_col is None:
-        raise ValueError("來源檔案缺少「SKU」或「Sold Qty (P90D)」，無法計算 Top 80%。")
+        raise ValueError(f"來源檔案缺少「SKU」或「Sold Qty (P90D)」，無法計算 Top {pct}%。")
     sst_col = _resolve_column_name("Adj. SST", avail)
     nature_col = _resolve_column_name("Shop Nature", avail)
 
@@ -668,15 +749,18 @@ def transform_shop_simplify_site(
 
     shop_raw = df_clean[sites == matched_site].copy()
     if shop_raw.empty:
-        raise ValueError(f"指定店舖「{matched_site}」在清理後沒有資料列，無法計算 Top 80%。")
+        raise ValueError(f"指定店舖「{matched_site}」在清理後沒有資料列，無法計算 Top {pct}%。")
+
+    site_top_column = _shop_simplify_site_top80_column(matched_site, share)
+    nature_column = _shop_simplify_nature_top_column(share)
 
     if sst_col is None:
         warnings.append(
-            "來源檔案缺少「Adj. SST」，Top 80% 未能按 Adj. SST 分類，"
+            f"來源檔案缺少「Adj. SST」，Top {pct}% 未能按 Adj. SST 分類，"
             "改以全店／全 Nature 單一分組計算。"
         )
 
-    # ── 同 Shop Nature 的 Top 80%：先在清理後全表按 (Adj. SST, SKU) 算好，
+    # ── 同 Shop Nature 的 Top N%：先在清理後全表按 (Adj. SST, SKU) 算好，
     #    稍後映射到指定店舖的列；其他 Nature 不計入母體 ──
     nature_available = False
     nature_value = ""
@@ -686,7 +770,7 @@ def transform_shop_simplify_site(
     if nature_col is None:
         warnings.append(
             "來源檔案缺少「Shop Nature」，未能判定「"
-            f"{_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN}」，該欄留空。"
+            f"{nature_column}」，該欄留空。"
         )
     else:
         row_natures = shop_raw[nature_col].fillna("").astype(str).str.strip()
@@ -694,7 +778,7 @@ def transform_shop_simplify_site(
         if row_natures.empty:
             warnings.append(
                 f"指定店舖「{matched_site}」的 Shop Nature 空白，未能判定「"
-                f"{_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN}」，該欄留空。"
+                f"{nature_column}」，該欄留空。"
             )
         else:
             nature_value = str(row_natures.mode().iloc[0])
@@ -714,7 +798,7 @@ def transform_shop_simplify_site(
             else:
                 nature_sst = nature_df[sst_col].fillna("").astype(str).str.strip()
                 nature_sst = nature_sst.mask(nature_sst == "", "(空白)")
-            nature_keys = _shop_simplify_top80_keys(nature_sst, nature_sku, nature_qty)
+            nature_keys = _shop_simplify_top80_keys(nature_sst, nature_sku, nature_qty, share=share)
 
             nature_sites = nature_df[site_col].fillna("").astype(str).str.strip()
             nature_sites = nature_sites[nature_sites != ""]
@@ -726,9 +810,9 @@ def transform_shop_simplify_site(
     del df_clean, sites
     gc.collect()
 
-    def _site_progress(pct, msg):
+    def _site_progress(fraction, msg):
         if progress_callback:
-            progress_callback(0.2 + 0.65 * float(pct), msg)
+            progress_callback(0.2 + 0.65 * float(fraction), msg)
 
     if progress_callback:
         progress_callback(0.2, f"整理 {matched_site} 的店舖×SKU 明細...")
@@ -741,7 +825,7 @@ def transform_shop_simplify_site(
     warnings = list(base_warnings) + warnings
 
     if progress_callback:
-        progress_callback(0.88, f"計算 {matched_site} 的 Top 80%（按 Adj. SST 分類）...")
+        progress_callback(0.88, f"計算 {matched_site} 的 Top {pct}%（按 Adj. SST 分類）...")
     shop_sku = _cached_safe_sku_series(shop_df[sku_col]).astype(str).str.strip()
     shop_qty = _safe_numeric(shop_df[sold_col])
     if sst_col is None:
@@ -750,7 +834,7 @@ def transform_shop_simplify_site(
         shop_sst = shop_df[sst_col].fillna("").astype(str).str.strip()
         shop_sst = shop_sst.mask(shop_sst == "", "(空白)")
 
-    shop_keys = _shop_simplify_top80_keys(shop_sst, shop_sku, shop_qty)
+    shop_keys = _shop_simplify_top80_keys(shop_sst, shop_sku, shop_qty, share=share)
     shop_flags = pd.Series(
         [(group, sku) in shop_keys for group, sku in zip(shop_sst, shop_sku)],
         index=shop_df.index,
@@ -766,23 +850,22 @@ def transform_shop_simplify_site(
     if float(shop_qty.sum()) <= 0:
         warnings.append(
             f"指定店舖「{matched_site}」的 Sold Qty (P90D) 合計為 0，"
-            f"「{_shop_simplify_site_top80_column(matched_site)}」全部標示為「{_SHOP_SIMPLIFY_TOP80_NO}」。"
+            f"「{site_top_column}」全部標示為「{_SHOP_SIMPLIFY_TOP80_NO}」。"
         )
     if nature_available:
         if nature_shop_count <= 1:
             warnings.append(
                 f"同 Shop Nature「{nature_value}」在來源檔只有 1 間店舖（即指定店舖），"
-                f"「{_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN}」與店舖 Top 80% 結果相同。"
+                f"「{nature_column}」與店舖 Top {pct}% 結果相同。"
             )
         if nature_total <= 0:
             warnings.append(
                 f"同 Shop Nature「{nature_value}」的 Sold Qty (P90D) 合計為 0，"
-                f"「{_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN}」全部標示為「{_SHOP_SIMPLIFY_TOP80_NO}」。"
+                f"「{nature_column}」全部標示為「{_SHOP_SIMPLIFY_TOP80_NO}」。"
             )
 
-    site_top80_column = _shop_simplify_site_top80_column(matched_site)
-    shop_df[site_top80_column] = np.where(shop_flags, _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO)
-    shop_df[_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN] = (
+    shop_df[site_top_column] = np.where(shop_flags, _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO)
+    shop_df[nature_column] = (
         np.where(nature_flags, _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO)
         if nature_available else ""
     )
@@ -790,14 +873,14 @@ def transform_shop_simplify_site(
     # 兩個判定欄緊接「過去90日有無存貨」，三個回覆欄維持最後
     cols = list(shop_df.columns)
     insert_at = cols.index(_SHOP_SIMPLIFY_STOCK_COLUMN) + 1
-    for name in (site_top80_column, _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN):
+    for name in (site_top_column, nature_column):
         cols.remove(name)
         cols.insert(insert_at, name)
         insert_at += 1
     shop_df = shop_df[cols].reset_index(drop=True)
 
     if progress_callback:
-        progress_callback(0.85, f"完成 {matched_site} 的 Top 80% 判定...")
+        progress_callback(0.85, f"完成 {matched_site} 的 Top {pct}% 判定...")
     return shop_df, warnings
 
 
@@ -944,8 +1027,8 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> B
         letter = get_column_letter(col_idx)
         width = _SHOP_SIMPLIFY_COLUMN_WIDTHS.get(name)
         if width is None and _is_shop_simplify_top80_column(name):
-            # 指定店舖模式的動態欄名（是否{店舖}的Top 80%）用同一欄寬
-            width = 14.0
+            # 指定店舖模式的動態欄名（是否{店舖}的Top N%／是否同Shop Nature的Top N%）
+            width = 16.0 if str(name).strip().startswith("是否同Shop Nature的Top ") else 14.0
         if width is not None:
             ws.column_dimensions[letter].width = width
         if name in _SHOP_SIMPLIFY_HIDDEN_COLUMNS:
