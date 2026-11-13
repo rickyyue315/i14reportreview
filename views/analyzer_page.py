@@ -76,6 +76,7 @@ from transformer import (
     _SHOP_SIMPLIFY_SOLD_NO, _SHOP_SIMPLIFY_STOCK_NO,
     _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO,
     _SHOP_SIMPLIFY_COMPARE_LABELS,
+    _SHOP_SIMPLIFY_COMPARE_BOTH, _SHOP_SIMPLIFY_COMPARE_NEITHER,
     _shop_simplify_site_top80_column, _shop_simplify_nature_top_column,
     _shop_simplify_value_site_top_column, _shop_simplify_value_nature_top_column,
     _shop_simplify_net_sales_window,
@@ -5394,6 +5395,23 @@ if uploaded_file is not None:
                     return df
                 return df[df[column].astype(str).str.strip() == _SHOP_SIMPLIFY_TOP80_YES]
 
+            def _compare_css(value):
+                text = "" if pd.isna(value) else str(value).strip()
+                if text == _SHOP_SIMPLIFY_COMPARE_BOTH:
+                    return "background-color: #99E6CC"
+                if text == _SHOP_SIMPLIFY_COMPARE_NEITHER:
+                    return "background-color: #FFC7CE"
+                return ""
+
+            def _style_compare(df):
+                """預覽時把對比欄按與 Excel 相同的規則著色（兩者皆是青綠、兩者皆非粉紅）。"""
+                if df is None or df.empty:
+                    return df
+                columns = [c for c in df.columns if " vs 同Nature Top " in str(c)]
+                if not columns:
+                    return df
+                return df.style.map(_compare_css, subset=columns)
+
             _tab_labels = [
                 "📄 全部明細（前 200 筆）",
                 f"🎯 件數兩項皆非（前 200 筆）",
@@ -5408,7 +5426,7 @@ if uploaded_file is not None:
 
             with _tab_objs[0]:
                 if raw_df is not None and not raw_df.empty:
-                    st.dataframe(raw_df.head(200), width='stretch', hide_index=True)
+                    st.dataframe(_style_compare(raw_df.head(200)), width='stretch', hide_index=True)
                     st.caption(f"僅顯示前 200 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
                 else:
                     st.info("無符合資料")
@@ -5416,7 +5434,7 @@ if uploaded_file is not None:
             with _tab_objs[1]:
                 _cut_df = _two_no(raw_df, _site_qty_col, _nature_qty_col)
                 if _cut_df is not None and not _cut_df.empty:
-                    st.dataframe(_cut_df.head(200), width='stretch', hide_index=True)
+                    st.dataframe(_style_compare(_cut_df.head(200)), width='stretch', hide_index=True)
                     st.caption(f"共 {len(_cut_df):,} 個精簡候選；僅顯示前 200 筆，完整資料將包含在下載的 Excel 報表中。")
                 else:
                     st.info(f"無符合資料（沒有件數兩個 Top {_pct_used}% 皆非的 SKU）")
@@ -5424,7 +5442,7 @@ if uploaded_file is not None:
             with _tab_objs[2]:
                 _top_df = _yes(raw_df, _site_qty_col)
                 if _top_df is not None and not _top_df.empty:
-                    st.dataframe(_top_df.head(200), width='stretch', hide_index=True)
+                    st.dataframe(_style_compare(_top_df.head(200)), width='stretch', hide_index=True)
                     st.caption(f"共 {len(_top_df):,} 個 SKU 屬 {_site} 件數 Top {_pct_used}%；僅顯示前 200 筆，完整資料將包含在下載的 Excel 報表中。")
                 else:
                     st.info("無符合資料")
@@ -5433,7 +5451,7 @@ if uploaded_file is not None:
                 with _tab_objs[3]:
                     _vcut_df = _two_no(raw_df, _site_value_col, _nature_value_col)
                     if _vcut_df is not None and not _vcut_df.empty:
-                        st.dataframe(_vcut_df.head(200), width='stretch', hide_index=True)
+                        st.dataframe(_style_compare(_vcut_df.head(200)), width='stretch', hide_index=True)
                         st.caption(
                             f"共 {len(_vcut_df):,} 個金額精簡候選（{_window_used}）；僅顯示前 200 筆，"
                             "完整資料將包含在下載的 Excel 報表中。"
@@ -5443,7 +5461,7 @@ if uploaded_file is not None:
                 with _tab_objs[4]:
                     _vtop_df = _yes(raw_df, _site_value_col)
                     if _vtop_df is not None and not _vtop_df.empty:
-                        st.dataframe(_vtop_df.head(200), width='stretch', hide_index=True)
+                        st.dataframe(_style_compare(_vtop_df.head(200)), width='stretch', hide_index=True)
                         st.caption(
                             f"共 {len(_vtop_df):,} 個 SKU 屬 {_site} 金額 Top {_pct_used}%（{_window_used}）；"
                             "僅顯示前 200 筆，完整資料將包含在下載的 Excel 報表中。"

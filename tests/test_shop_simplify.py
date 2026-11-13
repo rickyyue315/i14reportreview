@@ -58,6 +58,8 @@ from transformer import (
     _SHOP_SIMPLIFY_COMPARE_SHOP_ONLY,
     _SHOP_SIMPLIFY_COMPARE_NATURE_ONLY,
     _SHOP_SIMPLIFY_COMPARE_NEITHER,
+    _SHOP_SIMPLIFY_COMPARE_BOTH_FILL,
+    _SHOP_SIMPLIFY_COMPARE_NEITHER_FILL,
 )
 
 BASE = {
@@ -1301,3 +1303,41 @@ def test_site_compare_missing_without_net_sales_only_qty():
     compare_columns = [c for c in raw.columns if " vs 同Nature Top " in str(c)]
     assert compare_columns == [_shop_simplify_compare_column("HA21")]
     assert not [c for c in compare_columns if str(c).endswith(_SHOP_SIMPLIFY_VALUE_SUFFIX)]
+
+def test_site_compare_fill_colors_in_export():
+    """對比欄：兩者皆是＝青綠底、兩者皆非＝粉紅底；僅店舖／僅同Nature 不著色。"""
+    raw, _ = transform_shop_simplify_site(_df(_compare_rows()), "HA21")
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
+    headers = [c.value for c in ws[1]]
+    column = headers.index(_shop_simplify_compare_column("HA21")) + 1
+    sku_column = headers.index("SKU") + 1
+    rows = {ws.cell(row=r, column=sku_column).value: r for r in range(2, ws.max_row + 1)}
+
+    def rgb(sku):
+        return str(ws.cell(row=rows[sku], column=column).fill.start_color.rgb)[-6:]
+
+    assert rgb("A") == _SHOP_SIMPLIFY_COMPARE_BOTH_FILL
+    assert rgb("D") == _SHOP_SIMPLIFY_COMPARE_NEITHER_FILL
+    for sku in ("B", "C"):
+        assert rgb(sku) not in (
+            _SHOP_SIMPLIFY_COMPARE_BOTH_FILL,
+            _SHOP_SIMPLIFY_COMPARE_NEITHER_FILL,
+        )
+
+
+def test_site_compare_fill_colors_for_value_measure():
+    raw, _ = transform_shop_simplify_site(
+        _df(_site_rows_with_net()), "HA21", data_date=date(2026, 11, 12)
+    )
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
+    headers = [c.value for c in ws[1]]
+    column = headers.index(_shop_simplify_compare_column("HA21", suffix=_SHOP_SIMPLIFY_VALUE_SUFFIX)) + 1
+    sku_column = headers.index("SKU") + 1
+    rows = {ws.cell(row=r, column=sku_column).value: r for r in range(2, ws.max_row + 1)}
+
+    def rgb(sku):
+        return str(ws.cell(row=rows[sku], column=column).fill.start_color.rgb)[-6:]
+
+    # 金額口徑：A 兩者皆是、其餘兩者皆非
+    assert rgb("A") == _SHOP_SIMPLIFY_COMPARE_BOTH_FILL
+    assert {rgb(k) for k in "BCDE"} == {_SHOP_SIMPLIFY_COMPARE_NEITHER_FILL}

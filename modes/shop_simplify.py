@@ -87,6 +87,8 @@ __all__ = [
     "_SHOP_SIMPLIFY_COMPARE_NEITHER",
     "_SHOP_SIMPLIFY_COMPARE_LABELS",
     "_SHOP_SIMPLIFY_COMPARE_TEMPLATE",
+    "_SHOP_SIMPLIFY_COMPARE_BOTH_FILL",
+    "_SHOP_SIMPLIFY_COMPARE_NEITHER_FILL",
     "_SHOP_SIMPLIFY_SITE_TOP80_TEMPLATE",
     "_SHOP_SIMPLIFY_NATURE_TOP80_TEMPLATE",
     "_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN",
@@ -187,6 +189,9 @@ _SHOP_SIMPLIFY_NO_SALE_PINK = "F2DCDB"
 
 # 紅色底（醒目紅底；比「無賣」的淡紅 F2DCDB 明顯，故兩者不會混淆）
 _SHOP_SIMPLIFY_RED = "FF9999"
+# 對比欄底色：兩者皆是＝青綠（核心，優先保留）；兩者皆非＝粉紅（精簡候選）
+_SHOP_SIMPLIFY_COMPARE_BOTH_FILL = "99E6CC"
+_SHOP_SIMPLIFY_COMPARE_NEITHER_FILL = "FFC7CE"
 # 紅色底判定：欄名 → 觸發值（比對前去除前後空白、忽略大小寫；欄位不存在時略過該條件）
 _SHOP_SIMPLIFY_RED_RULES = (
     ("Item Status", "discontinued"),
@@ -1260,8 +1265,9 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> B
     """產生兩個工作表：Summary（Adj. MCH1 × Item Status 計數）與 Export（回覆明細）。
 
     Export 沿用店舖精簡回覆表範本的格式：Brand／SKU 排序、凍結 F2、指定欄寬與隱藏欄、
-    數字格式、綠色／紫色重點欄、「無賣」列的淡紅標示，以及三類紅色底標示
-    （Item Status＝Discontinued、RP Type＝ND、過去90日有無存貨＝無存貨）。
+    數字格式、綠色／紫色重點欄、「無賣」列的淡紅標示、三類紅色底標示
+    （Item Status＝Discontinued、RP Type＝ND、過去90日有無存貨＝無存貨），
+    以及對比欄底色（兩者皆是＝青綠、兩者皆非＝粉紅）。
     """
     wb = Workbook()
     ws_summary = wb.active
@@ -1290,6 +1296,14 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> B
     fill_purple = PatternFill(start_color=_SHOP_SIMPLIFY_PURPLE, end_color=_SHOP_SIMPLIFY_PURPLE, fill_type="solid")
     fill_pink = PatternFill(start_color=_SHOP_SIMPLIFY_NO_SALE_PINK, end_color=_SHOP_SIMPLIFY_NO_SALE_PINK, fill_type="solid")
     fill_red = PatternFill(start_color=_SHOP_SIMPLIFY_RED, end_color=_SHOP_SIMPLIFY_RED, fill_type="solid")
+    fill_compare_both = PatternFill(
+        start_color=_SHOP_SIMPLIFY_COMPARE_BOTH_FILL, end_color=_SHOP_SIMPLIFY_COMPARE_BOTH_FILL, fill_type="solid"
+    )
+    fill_compare_neither = PatternFill(
+        start_color=_SHOP_SIMPLIFY_COMPARE_NEITHER_FILL,
+        end_color=_SHOP_SIMPLIFY_COMPARE_NEITHER_FILL,
+        fill_type="solid",
+    )
 
     # 表頭：粗體、指定底色、細框、置中置頂、自動換行；列高 70.5
     ws.row_dimensions[1].height = 70.5
@@ -1336,6 +1350,17 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> B
         for name, target in _SHOP_SIMPLIFY_RED_RULES
         if name in headers and name in df.columns
     ]
+    # 對比欄：兩者皆是＝青綠底、兩者皆非＝粉紅底，其餘（僅店舖／僅同Nature）不著色
+    compare_rules = []
+    for name in headers:
+        if not _is_shop_simplify_compare_column(name) or name not in df.columns:
+            continue
+        text = df[name].fillna("").astype(str).str.strip()
+        compare_rules.append((
+            headers.index(name) + 1,
+            text.eq(_SHOP_SIMPLIFY_COMPARE_BOTH).to_numpy(dtype=bool),
+            text.eq(_SHOP_SIMPLIFY_COMPARE_NEITHER).to_numpy(dtype=bool),
+        ))
     number_formats = [
         (i, _SHOP_SIMPLIFY_NUMBER_FORMATS[name])
         for i, name in enumerate(headers, start=1)
@@ -1350,6 +1375,11 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> B
             sold_cell = ws.cell(row=row_idx, column=sold_col_idx)
             if sold_cell.value == _SHOP_SIMPLIFY_SOLD_NO:
                 sold_cell.fill = fill_pink
+        for col_idx, both_mask, neither_mask in compare_rules:
+            if both_mask[row_idx - 2]:
+                ws.cell(row=row_idx, column=col_idx).fill = fill_compare_both
+            elif neither_mask[row_idx - 2]:
+                ws.cell(row=row_idx, column=col_idx).fill = fill_compare_neither
         # 紅色底最後套用，故 RP Type＝ND 會蓋過該欄的綠色
         for col_idx, mask in red_rules:
             if mask[row_idx - 2]:
