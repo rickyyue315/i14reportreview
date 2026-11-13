@@ -27,15 +27,17 @@ Export（回覆明細）兩個工作表；Export 套用店舖精簡回覆表範�
 另有「指定店舖」變體（`transform_shop_simplify_site`）：只輸出指定店舖（如 HA21）
 的 SKU 列，同時輸出件數與金額兩組 Top N% 判定（共四欄；N 可選 80%（預設）或 70%）——
 
-- 件數：是否{店舖}的Top N%／是否同Shop Nature的Top N%，按 Sold Qty (P90D)；
-- 金額：同上加「（金額）」後綴，按 Net Sales (P{N}D)＝Net Sales (M-2)＋(M-1)＋
-  (CM - MTD)（負數視為 0），N 由數據截止日（T-1）的 MTD 日數＋兩個整月日數決定。
+- 件數：是否{店舖}的Top N%（件數）／是否同Shop Nature的Top N%（件數），按 Sold Qty (P90D)；
+- 金額：是否{店舖}的Top N%（金額）／是否同Shop Nature的Top N%（金額），按 Net Sales (P{N}D)＝
+  Net Sales (M-2)＋(M-1)＋(CM - MTD)（負數視為 0），N 由數據截止日（T-1）的 MTD 日數＋
+  兩個整月日數決定。
 
 四欄均以 Adj. SST 分類為母體，分類之間不互相擠佔；來源缺 Adj. SST 時退回
 全店／全 Nature 單一分組並列 warning，缺三個月 Net Sales 欄時只輸出件數兩欄。
 欄名隨比例與視窗改變（如 Top 80%／Net Sales (P73D)），故切換重跑不會留下舊欄。
+原模式（多店輸出）只有件數一種口徑，欄名維持「是否該店的Top 80%」不加後綴。
 
-兩個判定欄只加在指定店舖的列上，其餘計算、清理、解析與回覆欄留空規則與原模式相同。
+四個判定欄只加在指定店舖的列上，其餘計算、清理、解析與回覆欄留空規則與原模式相同。
 """
 import calendar
 import datetime
@@ -132,13 +134,17 @@ _SHOP_SIMPLIFY_TOP80_SHARE = 0.8
 _SHOP_SIMPLIFY_TOP_RATIO_OPTIONS = (0.8, 0.7)
 _SHOP_SIMPLIFY_SITE_TOP80_TEMPLATE = "是否{site}的Top {pct}%"
 _SHOP_SIMPLIFY_NATURE_TOP80_TEMPLATE = "是否同Shop Nature的Top {pct}%"
-_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN = "是否同Shop Nature的Top 80%"
+# 指定店舖變體同時輸出件數與金額兩種口徑，故四欄一律加註口徑，避免同名混淆
+_SHOP_SIMPLIFY_QTY_SUFFIX = "（件數）"
+_SHOP_SIMPLIFY_VALUE_SUFFIX = "（金額）"
+_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN = (
+    _SHOP_SIMPLIFY_NATURE_TOP80_TEMPLATE.format(pct=80) + _SHOP_SIMPLIFY_QTY_SUFFIX
+)
 _SHOP_SIMPLIFY_TOP80_YES = "是"
 _SHOP_SIMPLIFY_TOP80_NO = "否"
 # 金額口徑：來源只有月欄（M-2／M-1／CM-MTD），三者相加即「MTD 日數＋兩個整月」的實際覆蓋日數
 # （例如數據截止 11 月 12 日 → 12＋31＋30＝73 日，欄名標示 Net Sales (P73D)）。
 _SHOP_SIMPLIFY_NET_SALES_COLUMNS = ("Net Sales (M-2)", "Net Sales (M-1)", "Net Sales (CM - MTD)")
-_SHOP_SIMPLIFY_VALUE_SUFFIX = "（金額）"
 # 原模式（多店輸出）每店各自的 Top 80% 欄名；指定店舖變體改用「是否{店舖}的Top 80%」
 _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN = "是否該店的Top 80%"
 
@@ -224,7 +230,7 @@ _SHOP_SIMPLIFY_COLUMN_WIDTHS = {
     "Shop Pending Receive (±7 days)": 13.42578125,
     _SHOP_SIMPLIFY_SOLD_COLUMN: 10.85546875,
     _SHOP_SIMPLIFY_STOCK_COLUMN: 10.85546875,
-    _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN: 16.0,
+    _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN: 26.0,
     _SHOP_SIMPLIFY_NDRF_COLUMN: 8.42578125,
     _SHOP_SIMPLIFY_SAFETY_COLUMN: 9.7109375,
 }
@@ -463,14 +469,27 @@ def _shop_simplify_net_sales_window(data_date=None) -> dict:
     }
 
 
+def _shop_simplify_site_top_base(site_code: str, ratio=None) -> str:
+    """店舖層 Top N% 的基礎欄名（不含口徑後綴）：HA21、80% →「是否HA21的Top 80%」。"""
+    return _SHOP_SIMPLIFY_SITE_TOP80_TEMPLATE.format(
+        site=str(site_code or "").strip(),
+        pct=_shop_simplify_ratio_percent(ratio),
+    )
+
+
+def _shop_simplify_nature_top_base(ratio=None) -> str:
+    """同 Shop Nature 的基礎欄名（不含口徑後綴）：80% →「是否同Shop Nature的Top 80%」。"""
+    return _SHOP_SIMPLIFY_NATURE_TOP80_TEMPLATE.format(pct=_shop_simplify_ratio_percent(ratio))
+
+
 def _shop_simplify_value_site_top_column(site_code: str, ratio=None) -> str:
     """金額口徑的店舖層欄名（80% →「是否HA21的Top 80%（金額）」）。"""
-    return _shop_simplify_site_top80_column(site_code, ratio) + _SHOP_SIMPLIFY_VALUE_SUFFIX
+    return _shop_simplify_site_top_base(site_code, ratio) + _SHOP_SIMPLIFY_VALUE_SUFFIX
 
 
 def _shop_simplify_value_nature_top_column(ratio=None) -> str:
     """金額口徑的同 Nature 欄名（80% →「是否同Shop Nature的Top 80%（金額）」）。"""
-    return _shop_simplify_nature_top_column(ratio) + _SHOP_SIMPLIFY_VALUE_SUFFIX
+    return _shop_simplify_nature_top_base(ratio) + _SHOP_SIMPLIFY_VALUE_SUFFIX
 
 
 def _shop_simplify_net_sales_column(label: str) -> str:
@@ -486,16 +505,13 @@ def _is_shop_simplify_value_top_column(name) -> bool:
 
 
 def _shop_simplify_site_top80_column(site_code: str, ratio=None) -> str:
-    """指定店舖模式的店舖層 Top N% 欄名（HA21、80% →「是否HA21的Top 80%」）。"""
-    return _SHOP_SIMPLIFY_SITE_TOP80_TEMPLATE.format(
-        site=str(site_code or "").strip(),
-        pct=_shop_simplify_ratio_percent(ratio),
-    )
+    """指定店舖模式的件數店舖層欄名（HA21、80% →「是否HA21的Top 80%（件數）」）。"""
+    return _shop_simplify_site_top_base(site_code, ratio) + _SHOP_SIMPLIFY_QTY_SUFFIX
 
 
 def _shop_simplify_nature_top_column(ratio=None) -> str:
-    """同 Shop Nature 的 Top N% 欄名（80% →「是否同Shop Nature的Top 80%」）。"""
-    return _SHOP_SIMPLIFY_NATURE_TOP80_TEMPLATE.format(pct=_shop_simplify_ratio_percent(ratio))
+    """件數口徑的同 Shop Nature 欄名（80% →「是否同Shop Nature的Top 80%（件數）」）。"""
+    return _shop_simplify_nature_top_base(ratio) + _SHOP_SIMPLIFY_QTY_SUFFIX
 
 
 def _is_shop_simplify_top80_column(name) -> bool:
@@ -798,7 +814,7 @@ def transform_shop_simplify_site(
 ):
     """指定店舖模式：只輸出該店舖（Site Code）的 SKU 列，並加兩組（件數／金額）Top N% 判定欄。
 
-    - 件數：「是否{店舖}的Top N%」與「是否同Shop Nature的Top N%」，按 Sold Qty (P90D)；
+    - 件數：「是否{店舖}的Top N%（件數）」與「是否同Shop Nature的Top N%（件數）」，按 Sold Qty (P90D)；
     - 金額：「是否{店舖}的Top N%（金額）」與「是否同Shop Nature的Top N%（金額）」，
       按 Net Sales (P{N}D)＝`Net Sales (M-2)`＋`Net Sales (M-1)`＋`Net Sales (CM - MTD)`
       （負數先 clip 為 0），N 由 MTD 日數＋兩個整月日數決定（例如 11 月 12 日 → 73 日）。
@@ -1201,12 +1217,14 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> B
 
         letter = get_column_letter(col_idx)
         width = _SHOP_SIMPLIFY_COLUMN_WIDTHS.get(name)
-        if width is None and _is_shop_simplify_value_top_column(name):
-            # 金額口徑欄名較長（是否同Shop Nature的Top 80%（金額））
-            width = 26.0 if str(name).strip().startswith("是否同Shop Nature的Top ") else 22.0
-        elif width is None and _is_shop_simplify_top80_column(name):
-            # 指定店舖模式的動態欄名（是否{店舖}的Top N%／是否同Shop Nature的Top N%）
-            width = 16.0 if str(name).strip().startswith("是否同Shop Nature的Top ") else 14.0
+        if width is None and _is_shop_simplify_top80_column(name):
+            # 指定店舖變體的判定欄較長（…Top 80%（件數）／（金額））；原模式的「是否該店的Top 80%」不加闊
+            text = str(name).strip()
+            is_nature = text.startswith("是否同Shop Nature的Top ")
+            if text.endswith(_SHOP_SIMPLIFY_VALUE_SUFFIX) or text.endswith(_SHOP_SIMPLIFY_QTY_SUFFIX):
+                width = 26.0 if is_nature else 22.0
+            else:
+                width = 16.0 if is_nature else 14.0
         if width is None and isinstance(name, str) and re.fullmatch(r"Net Sales \(P\d+D\)", name.strip()):
             # 金額母體欄（Net Sales (P73D)）
             width = 14.0

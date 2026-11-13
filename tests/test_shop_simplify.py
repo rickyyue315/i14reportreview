@@ -717,7 +717,7 @@ def test_top80_mask_zero_and_negative_sales_all_false():
 def test_site_top80_column_name_and_order_before_reply_columns():
     raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21")
     site_col = _shop_simplify_site_top80_column("HA21")
-    assert site_col == "是否HA21的Top 80%"
+    assert site_col == "是否HA21的Top 80%（件數）"
     cols = list(raw.columns)
     index = cols.index(_SHOP_SIMPLIFY_STOCK_COLUMN)
     assert cols[index + 1:index + 4] == [site_col, _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN, _SHOP_SIMPLIFY_SCT_COLUMN]
@@ -806,8 +806,8 @@ def test_site_mode_excel_headers_widths_and_summary():
     ]
     # 指定店舖變體不加原模式的「是否該店的Top 80%」，避免兩個同義欄並存
     assert _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN not in headers
-    assert round(ws.column_dimensions[get_column_letter(headers.index(site_col) + 1)].width, 2) == 14.0
-    assert round(ws.column_dimensions[get_column_letter(headers.index(_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN) + 1)].width, 2) == 16.0
+    assert round(ws.column_dimensions[get_column_letter(headers.index(site_col) + 1)].width, 2) == 22.0
+    assert round(ws.column_dimensions[get_column_letter(headers.index(_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN) + 1)].width, 2) == 26.0
     assert ws.freeze_panes == f"{get_column_letter(headers.index('SKU Desc') + 2)}2"
     assert wb.sheetnames == ["Summary", "Export"]
 
@@ -962,11 +962,11 @@ def test_site_top_ratio_70_column_names_and_flags():
     raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21", top_ratio=0.7)
     site_col = _shop_simplify_site_top80_column("HA21", 0.7)
     nature_col = _shop_simplify_nature_top_column(0.7)
-    assert site_col == "是否HA21的Top 70%"
-    assert nature_col == "是否同Shop Nature的Top 70%"
+    assert site_col == "是否HA21的Top 70%（件數）"
+    assert nature_col == "是否同Shop Nature的Top 70%（件數）"
     assert site_col in raw.columns and nature_col in raw.columns
-    assert "是否HA21的Top 80%" not in raw.columns
-    assert "是否同Shop Nature的Top 80%" not in raw.columns
+    assert "是否HA21的Top 80%（件數）" not in raw.columns
+    assert "是否同Shop Nature的Top 80%（件數）" not in raw.columns
     # 全店 100 件：70% 門檻 70 → 只有 A；80% 時 A＋B 才達 80，C 同銷量一併納入
     flags = dict(zip(raw["SKU"], raw[site_col]))
     assert flags == {"A": _SHOP_SIMPLIFY_TOP80_YES, "B": _SHOP_SIMPLIFY_TOP80_NO,
@@ -1025,8 +1025,8 @@ def test_site_mode_70_excel_headers_and_widths():
     site_col = _shop_simplify_site_top80_column("HA21", 0.7)
     nature_col = _shop_simplify_nature_top_column(0.7)
     assert headers[-5:] == [site_col, nature_col, *_SHOP_SIMPLIFY_REPLY_COLUMNS]
-    assert round(ws.column_dimensions[get_column_letter(headers.index(site_col) + 1)].width, 2) == 14.0
-    assert round(ws.column_dimensions[get_column_letter(headers.index(nature_col) + 1)].width, 2) == 16.0
+    assert round(ws.column_dimensions[get_column_letter(headers.index(site_col) + 1)].width, 2) == 22.0
+    assert round(ws.column_dimensions[get_column_letter(headers.index(nature_col) + 1)].width, 2) == 26.0
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 金額口徑（Net Sales MTD＋M-1＋M-2 → P{N}D）與四欄判定
@@ -1096,6 +1096,24 @@ def test_site_mode_net_sales_column_and_four_flags():
         _SHOP_SIMPLIFY_TOP80_NO, _SHOP_SIMPLIFY_TOP80_NO,
     ]
     assert not any("缺少「Net Sales" in x for x in warnings)
+
+
+def test_site_mode_four_flag_columns_carry_measure_suffix():
+    """四欄須明確標示口徑，避免同名混淆；且不得出現「（件數）（金額）」疊字。"""
+    raw, _ = transform_shop_simplify_site(
+        _df(_site_rows_with_net()), "HA21", data_date=date(2026, 11, 12)
+    )
+    assert list(raw.columns[-7:-3]) == [
+        "是否HA21的Top 80%（件數）",
+        "是否同Shop Nature的Top 80%（件數）",
+        "是否HA21的Top 80%（金額）",
+        "是否同Shop Nature的Top 80%（金額）",
+    ]
+    assert not [c for c in raw.columns if "（件數）（金額）" in str(c)]
+    # 原模式（多店輸出）只有件數一種口徑，維持不加後綴
+    original, _ = transform_shop_simplify(_df(_site_rows()))
+    assert _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN in original.columns
+    assert not [c for c in original.columns if str(c).endswith("（件數）")]
 
 
 def test_site_mode_net_sales_negative_clipped_to_zero():

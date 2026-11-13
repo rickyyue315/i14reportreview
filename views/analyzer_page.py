@@ -319,7 +319,7 @@ MODE_DESCRIPTIONS = {
     "Carry SKU Review": "統計各店舖實際經營品項數量與結構。",
     "SKU 精簡 Review": "針對不可補貨品項，建議退倉安排。",
     "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去90日有無存貨（LLM／LM／CM 任一 > 0＝有存貨，LLM 欄自 2026-10-26 起來源報表提供），另判定「是否該店的Top 80%」（每間店按 Adj. SST 分類各自累計 80%，同一銷量整組納入或排除，分類之間不互相擠佔；不設同 Nature 判定），並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
-    "店舖精簡SKU模式(指定店舖)": "只列指定店舖（如 HA21）的 SKU，可自選 Top 80%（預設）或 Top 70%，並同時輸出件數與金額兩組判定（共四欄）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D，負數視為 0），各自判定「是否該店的Top N%」及「是否同Shop Nature的Top N%」——均按 Adj. SST 分類，在每個分類內由高至低累計，首次達該分類母體（該店／同 Nature 全部店舖）總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數。其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則與店舖精簡SKU模式相同。",
+    "店舖精簡SKU模式(指定店舖)": "只列指定店舖（如 HA21）的 SKU，可自選 Top 80%（預設）或 Top 70%，並同時輸出件數與金額兩組判定（共四欄，欄名末端註明「（件數）」／「（金額）」）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D，負數視為 0），各自判定「是否該店的Top N%」及「是否同Shop Nature的Top N%」——均按 Adj. SST 分類，在每個分類內由高至低累計，首次達該分類母體（該店／同 Nature 全部店舖）總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數。其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則與店舖精簡SKU模式相同。",
     "NDRF 月份對比": "對比兩個月份各店舖經營與不可補貨品項變化。",
     "Safety Stock Review": "全面審查安全庫存設定，計算平衡建議值。",
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
@@ -2984,11 +2984,15 @@ if uploaded_file is not None:
                      "件數用 Sold Qty (P90D)、金額用 Net Sales（MTD＋M-1＋M-2）；"
                      "兩者均以 Adj. SST 分類為母體，每個分類獨立累計。",
             )
+            _slim_site = _shopslimsite_site
+            _slim_pct = _shopslimsite_pct
             st.caption(
-                f"目前設定 → **{_shopslimsite_site}**、**Top {_shopslimsite_pct}%**、金額 **{_shopslimsite_window['label']}**："
-                "輸出該店全部 SKU，並加四欄判定（件數：店舖／同 Nature；金額：店舖／同 Nature）；"
+                f"目前設定 → **{_slim_site}**、**Top {_slim_pct}%**、金額 **{_shopslimsite_window['label']}**："
+                "輸出該店全部 SKU，並加四欄判定——"
+                f"「是否{_slim_site}的Top {_slim_pct}%（件數）」、「是否同Shop Nature的Top {_slim_pct}%（件數）」、"
+                f"「是否{_slim_site}的Top {_slim_pct}%（金額）」、「是否同Shop Nature的Top {_slim_pct}%（金額）」；"
                 "Shop Nature 由來源檔該店的值決定（不設 Nature 篩選）；"
-                f"每個 Adj. SST 分類內累計首次達該分類 {_shopslimsite_pct}% 即屬 Top {_shopslimsite_pct}%（同一銷量／金額整組納入或排除）。"
+                f"每個 Adj. SST 分類內累計首次達該分類 {_slim_pct}% 即屬 Top {_slim_pct}%（同一銷量／金額整組納入或排除）。"
             )
 
         SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
@@ -5314,8 +5318,8 @@ if uploaded_file is not None:
             st.markdown("##### 📦 件數口徑（Sold Qty (P90D)）")
             _render_cards([
                 ("指定店舖 SKU 數", _stats.get("rows", 0), f"只輸出 {_site} 的 SKU；其他店舖不列入", "#3b82f6"),
-                (f"{_site} Top {_pct_used}%", _stats.get("site_top80", 0), f"每個 Adj. SST 分類內累計達該分類 {_pct_used}%", "#8b5cf6"),
-                (f"同 Nature Top {_pct_used}%", _stats.get("nature_top80", 0), f"Shop Nature＝{_nature_label}，同 Nature 按 Adj. SST 分類合計", "#10b981"),
+                (f"{_site} 件數 Top {_pct_used}%", _stats.get("site_top80", 0), f"每個 Adj. SST 分類內累計達該分類 {_pct_used}%", "#8b5cf6"),
+                (f"同 Nature 件數 Top {_pct_used}%", _stats.get("nature_top80", 0), f"Shop Nature＝{_nature_label}，同 Nature 按 Adj. SST 分類合計", "#10b981"),
                 ("件數兩項皆非", _stats.get("neither", 0), f"既非店舖 Top {_pct_used}%，亦非同 Nature Top {_pct_used}%", "#f59e0b"),
             ])
 
