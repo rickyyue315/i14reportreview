@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import calendar
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from transformer import (
     transform, generate_excel, validate_input, _resolve_column_name,
@@ -76,6 +76,8 @@ from transformer import (
     _SHOP_SIMPLIFY_SOLD_NO, _SHOP_SIMPLIFY_STOCK_NO,
     _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO,
     _shop_simplify_site_top80_column, _shop_simplify_nature_top_column,
+    _shop_simplify_value_site_top_column, _shop_simplify_value_nature_top_column,
+    _shop_simplify_net_sales_window,
 )
 import time
 import traceback
@@ -317,7 +319,7 @@ MODE_DESCRIPTIONS = {
     "Carry SKU Review": "統計各店舖實際經營品項數量與結構。",
     "SKU 精簡 Review": "針對不可補貨品項，建議退倉安排。",
     "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去90日有無存貨（LLM／LM／CM 任一 > 0＝有存貨，LLM 欄自 2026-10-26 起來源報表提供），另判定「是否該店的Top 80%」（每間店按 Adj. SST 分類各自累計 80%，同一銷量整組納入或排除，分類之間不互相擠佔；不設同 Nature 判定），並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
-    "店舖精簡SKU模式(指定店舖)": "只列指定店舖（如 HA21）的 SKU，可自選 Top 80%（預設）或 Top 70%，額外判定「是否該店的Top N%」及「是否同Shop Nature的Top N%」——兩者均按 Adj. SST 分類，在每個分類內按 Sold Qty (P90D) 由高至低累計，累計銷量首次達該分類母體（該店／同 Nature 全部店舖）總銷量 N% 即屬 Top N%（同一銷量整組納入或排除，分類之間不互相擠佔）；欄名隨比例改變（Top 70%／Top 80%），其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則與店舖精簡SKU模式相同。",
+    "店舖精簡SKU模式(指定店舖)": "只列指定店舖（如 HA21）的 SKU，可自選 Top 80%（預設）或 Top 70%，並同時輸出件數與金額兩組判定（共四欄）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D，負數視為 0），各自判定「是否該店的Top N%」及「是否同Shop Nature的Top N%」——均按 Adj. SST 分類，在每個分類內由高至低累計，首次達該分類母體（該店／同 Nature 全部店舖）總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數。其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則與店舖精簡SKU模式相同。",
     "NDRF 月份對比": "對比兩個月份各店舖經營與不可補貨品項變化。",
     "Safety Stock Review": "全面審查安全庫存設定，計算平衡建議值。",
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
@@ -2932,6 +2934,8 @@ if uploaded_file is not None:
 
         _shopslimsite_site = None
         _shopslimsite_ratio = 0.8
+        _shopslimsite_data_date = None
+        _shopslimsite_window = None
         if mode == _SHOP_SIMPLIFY_SITE_MODE:
             st.markdown("#### 🏪 指定店舖（Top 比例與判定）")
             _SHOPSLIM_RATIO_OPTIONS = {"Top 80%（預設）": 0.8, "Top 70%": 0.7}
@@ -2941,11 +2945,28 @@ if uploaded_file is not None:
                 index=0,
                 horizontal=True,
                 key="shopslimsite_top_ratio",
-                help="決定兩個判定欄的累計門檻：Top 80% 為預設；Top 70% 門檻更緊、保留的 SKU 更少，"
-                     "精簡力度更大。兩者都以 Adj. SST 分類為母體獨立累計，同一銷量的 SKU 整組納入或整組排除。",
+                help="決定四條判定欄的累計門檻：Top 80% 為預設；Top 70% 門檻更緊、保留的 SKU 更少，"
+                     "精簡力度更大。件數與金額兩組都以 Adj. SST 分類為母體獨立累計，"
+                     "同一銷量／金額的 SKU 整組納入或整組排除。",
             )
             _shopslimsite_ratio = _SHOPSLIM_RATIO_OPTIONS[_shopslimsite_ratio_label]
             _shopslimsite_pct = int(round(_shopslimsite_ratio * 100))
+            _shopslimsite_data_date = st.date_input(
+                "📅 數據截止日（T-1）",
+                value=date.today() - timedelta(days=1),
+                max_value=date.today() - timedelta(days=1),
+                key="shopslimsite_data_date",
+                help="來源報表數據為 T-1，預設昨日（例如 11 月 13 日執行 → 數據截止 11 月 12 日）。"
+                     "金額口徑＝MTD 日數＋M-1 全月＋M-2 全月，系統會自動換算實際覆蓋日數並寫入欄名，"
+                     "如上例 12＋31＋30＝73 日 → Net Sales (P73D)。如上傳舊月份檔案，請改選該檔的數據截止日。",
+            )
+            _shopslimsite_window = _shop_simplify_net_sales_window(_shopslimsite_data_date)
+            st.caption(
+                f"📅 金額母體：MTD **{_shopslimsite_window['mtd_days']}** 日 ＋ "
+                f"**{int(_shopslimsite_window['m1'].split('-')[1])} 月 {_shopslimsite_window['m1_days']}** 日 ＋ "
+                f"**{int(_shopslimsite_window['m2'].split('-')[1])} 月 {_shopslimsite_window['m2_days']}** 日 "
+                f"＝ **Net Sales ({_shopslimsite_window['label']})**（合共 {_shopslimsite_window['total_days']} 日）"
+            )
             _site_options = canonical_site_codes(
                 df_input["Site Code"] if "Site Code" in df_input.columns else []
             )
@@ -2959,16 +2980,15 @@ if uploaded_file is not None:
                 options=_site_options,
                 index=0,
                 key="shopslimsite_site",
-                help=f"只輸出此店舖的 SKU 列，並按 Sold Qty (P90D) 判定該店 Top {_shopslimsite_pct}%，"
-                     "以及同 Shop Nature 全部店舖同 SKU 銷量合計的 Top "
-                     f"{_shopslimsite_pct}%；兩者均以 Adj. SST 分類為母體，每個分類獨立累計。",
+                help=f"只輸出此店舖的 SKU 列，並判定該店與同 Shop Nature 的 Top {_shopslimsite_pct}%，"
+                     "件數用 Sold Qty (P90D)、金額用 Net Sales（MTD＋M-1＋M-2）；"
+                     "兩者均以 Adj. SST 分類為母體，每個分類獨立累計。",
             )
             st.caption(
-                f"目前設定 → **{_shopslimsite_site}**、**Top {_shopslimsite_pct}%**：輸出該店全部 SKU，另加"
-                f"「是否{_shopslimsite_site}的Top {_shopslimsite_pct}%」與「是否同Shop Nature的Top {_shopslimsite_pct}%」兩欄；"
+                f"目前設定 → **{_shopslimsite_site}**、**Top {_shopslimsite_pct}%**、金額 **{_shopslimsite_window['label']}**："
+                "輸出該店全部 SKU，並加四欄判定（件數：店舖／同 Nature；金額：店舖／同 Nature）；"
                 "Shop Nature 由來源檔該店的值決定（不設 Nature 篩選）；"
-                f"兩個 Top {_shopslimsite_pct}% 均按 Adj. SST 分類獨立累計——"
-                f"每個分類內累計銷量首次達該分類 {_shopslimsite_pct}% 即屬 Top {_shopslimsite_pct}%。"
+                f"每個 Adj. SST 分類內累計首次達該分類 {_shopslimsite_pct}% 即屬 Top {_shopslimsite_pct}%（同一銷量／金額整組納入或排除）。"
             )
 
         SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
@@ -3474,6 +3494,7 @@ if uploaded_file is not None:
                         site_code=_shopslimsite_site,
                         progress_callback=_cb_transform,
                         top_ratio=_shopslimsite_ratio,
+                        data_date=_shopslimsite_data_date,
                     )
                     buf = generate_excel_shop_simplify(raw_df, progress_callback=_cb_excel)
                     st.session_state.shopslimsite_processed = True
@@ -5242,15 +5263,22 @@ if uploaded_file is not None:
             _stats = st.session_state.shopslimsite_stats or {}
             excel_data = st.session_state.shopslimsite_excel_data
             _site = str(_stats.get("site") or "").strip()
-            # 比例以結果檔的欄名為準（上次執行時的比例），避免切換比例後把舊結果當新結果解讀
+            # 比例與金額視窗都以結果檔的欄名為準（上次執行時的設定），避免切換後把舊結果當新結果
             _pct_used = int(_stats.get("ratio") or 80)
             _pct_selected = int(round(float(_shopslimsite_ratio or 0.8) * 100))
-            _site_top80_col = _shop_simplify_site_top80_column(_site, _pct_used / 100)
-            _nature_col = _shop_simplify_nature_top_column(_pct_used / 100)
+            _window_used = str(_stats.get("window") or "")
+            _window_selected = str((_shopslimsite_window or {}).get("label") or "")
+            _value_ok = bool(_stats.get("value_available"))
+            _site_qty_col = _shop_simplify_site_top80_column(_site, _pct_used / 100)
+            _nature_qty_col = _shop_simplify_nature_top_column(_pct_used / 100)
+            _site_value_col = _shop_simplify_value_site_top_column(_site, _pct_used / 100)
+            _nature_value_col = _shop_simplify_value_nature_top_column(_pct_used / 100)
             _nature_label = str(_stats.get("nature") or "（未能判定）")
 
+            _window_txt = f"、金額 {_window_used}" if _value_ok and _window_used else ""
             st.markdown(
-                f'<div class="section-banner"><h3>✂️ 店舖精簡 SKU 分析摘要（指定店舖：{_site}、Top {_pct_used}%）</h3></div>',
+                f'<div class="section-banner"><h3>✂️ 店舖精簡 SKU 分析摘要'
+                f'（指定店舖：{_site}、Top {_pct_used}%{_window_txt}）</h3></div>',
                 unsafe_allow_html=True,
             )
             if _pct_selected != _pct_used:
@@ -5258,83 +5286,150 @@ if uploaded_file is not None:
                     f"下方結果為 **Top {_pct_used}%**（上次執行時的比例）；目前側欄已選 **Top {_pct_selected}%**。"
                     "請按「⚙️ 執行報表轉換與分析」重新計算，才會產生新的判定欄與 Excel。"
                 )
+            if _value_ok and _window_selected and _window_used and _window_selected != _window_used:
+                st.warning(
+                    f"下方金額口徑為 **{_window_used}**（上次執行時的數據截止日）；目前側欄為 **{_window_selected}**。"
+                    "請按「⚙️ 執行報表轉換與分析」重新計算，金額欄與（金額）判定才會更新。"
+                )
             _top_download_button(
                 excel_data,
-                f"I14 店舖精簡SKU模式_{_site}_Top{_pct_used}_指定店舖",
+                f"I14 店舖精簡SKU模式_{_site}_Top{_pct_used}"
+                + (f"_{_window_used}" if _value_ok and _window_used else "")
+                + "_指定店舖",
                 "dl_top_shopslimsite",
             )
 
-            _site_cards = [
+            def _render_cards(cards, columns=4):
+                _cols = st.columns(columns)
+                for _col, (_title, _value, _desc, _color) in zip(_cols, cards):
+                    with _col:
+                        st.markdown(f"""
+                        <div class="metric-card" style="border-left-color: {_color};">
+                            <div class="metric-title">{_title}</div>
+                            <div class="metric-value" style="color: {_color};">{int(_value):,}</div>
+                            <div class="metric-desc">{_desc}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+            st.markdown("##### 📦 件數口徑（Sold Qty (P90D)）")
+            _render_cards([
                 ("指定店舖 SKU 數", _stats.get("rows", 0), f"只輸出 {_site} 的 SKU；其他店舖不列入", "#3b82f6"),
                 (f"{_site} Top {_pct_used}%", _stats.get("site_top80", 0), f"每個 Adj. SST 分類內累計達該分類 {_pct_used}%", "#8b5cf6"),
-                (f"同 Shop Nature Top {_pct_used}%", _stats.get("nature_top80", 0), f"Shop Nature＝{_nature_label}，同 Nature 按 Adj. SST 分類合計", "#10b981"),
-                ("兩項皆非（精簡候選）", _stats.get("neither", 0), f"既非店舖 Top {_pct_used}%，亦非同 Nature Top {_pct_used}%", "#f59e0b"),
-            ]
-            _site_cols = st.columns(4)
-            for _col, (_title, _value, _desc, _color) in zip(_site_cols, _site_cards):
-                with _col:
-                    st.markdown(f"""
-                    <div class="metric-card" style="border-left-color: {_color};">
-                        <div class="metric-title">{_title}</div>
-                        <div class="metric-value" style="color: {_color};">{int(_value):,}</div>
-                        <div class="metric-desc">{_desc}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                (f"同 Nature Top {_pct_used}%", _stats.get("nature_top80", 0), f"Shop Nature＝{_nature_label}，同 Nature 按 Adj. SST 分類合計", "#10b981"),
+                ("件數兩項皆非", _stats.get("neither", 0), f"既非店舖 Top {_pct_used}%，亦非同 Nature Top {_pct_used}%", "#f59e0b"),
+            ])
+
+            if _value_ok:
+                st.markdown(f"##### 💰 金額口徑（Net Sales ({_window_used})）")
+                _render_cards([
+                    (f"{_site} 金額 Top {_pct_used}%", _stats.get("value_site_top80", 0), f"每個 Adj. SST 分類內累計達該分類 {_pct_used}% 金額", "#0ea5e9"),
+                    (f"同 Nature 金額 Top {_pct_used}%", _stats.get("value_nature_top80", 0), f"Shop Nature＝{_nature_label}，同 Nature 按 Adj. SST 分類合計", "#14b8a6"),
+                    ("金額兩項皆非", _stats.get("value_neither", 0), f"既非店舖金額 Top {_pct_used}%，亦非同 Nature 金額 Top {_pct_used}%", "#f97316"),
+                ], columns=3)
+            else:
+                st.info(
+                    "來源檔缺少三個月 Net Sales 欄（`Net Sales (M-2)`／`(M-1)`／`(CM - MTD)`），"
+                    "本次只輸出件數判定；如需金額口徑，請補回這些欄位再上傳。"
+                )
 
             st.caption(
                 f"共 {int(_stats.get('rows', 0)):,} 個 SKU（{_site}）、{int(_stats.get('sst_groups', 0)):,} 個 Adj. SST 分類；"
                 f"過去90日無賣 {int(_stats.get('sold_no', 0)):,} 個、無存貨 {int(_stats.get('stock_no', 0)):,} 個。"
-                f"Top {_pct_used}% 以 Adj. SST 分類為母體：每個分類內按 Sold Qty (P90D) 由高至低累計，"
-                f"累計銷量首次達該分類 {_pct_used}% 即屬 Top {_pct_used}%；同一銷量的 SKU 整組納入或整組排除，"
-                f"分類之間不互相擠佔（故實際覆蓋率可能略高於 {_pct_used}%）。"
-                "其餘欄位、Item_Shop 解析、刪除 Value 欄與三個回覆欄留空的規則與店舖精簡SKU模式相同。"
+                f"件數與金額都以 Adj. SST 分類為母體：每個分類內由高至低累計，首次達該分類 {_pct_used}% 即屬 Top {_pct_used}%；"
+                "同一銷量／金額的 SKU 整組納入或整組排除，分類之間不互相擠佔（故實際覆蓋率可能略高於門檻）。"
+                + (
+                    f"金額口徑＝MTD＋M-1＋M-2 三個月 Net Sales 相加（負數視為 0），"
+                    f"欄名 {_window_used} 代表實際覆蓋日數；與真正的滾動 90 日略有差異。"
+                    if _value_ok else ""
+                )
+                + "其餘欄位、Item_Shop 解析、刪除 Value 欄與三個回覆欄留空的規則與店舖精簡SKU模式相同。"
             )
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-            _tab_site_all, _tab_site_cut, _tab_site_top = st.tabs([
-                "📄 全部明細（前 200 筆）", "🎯 兩項皆非（前 200 筆）", f"🏆 {_site} Top {_pct_used}%（前 200 筆）",
-            ])
-            with _tab_site_all:
+            def _two_no(df, site_column, nature_column):
+                if df is None or df.empty or site_column not in df.columns:
+                    return df
+                _nat = (
+                    df[nature_column].astype(str).str.strip()
+                    if nature_column in df.columns
+                    else pd.Series("", index=df.index, dtype=object)
+                )
+                return df[
+                    (df[site_column].astype(str).str.strip() == _SHOP_SIMPLIFY_TOP80_NO)
+                    & (_nat == _SHOP_SIMPLIFY_TOP80_NO)
+                ]
+
+            def _yes(df, column):
+                if df is None or df.empty or column not in df.columns:
+                    return df
+                return df[df[column].astype(str).str.strip() == _SHOP_SIMPLIFY_TOP80_YES]
+
+            _tab_labels = [
+                "📄 全部明細（前 200 筆）",
+                f"🎯 件數兩項皆非（前 200 筆）",
+                f"🏆 {_site} 件數 Top {_pct_used}%（前 200 筆）",
+            ]
+            if _value_ok:
+                _tab_labels += [
+                    "🎯 金額兩項皆非（前 200 筆）",
+                    f"💰 {_site} 金額 Top {_pct_used}%（前 200 筆）",
+                ]
+            _tab_objs = st.tabs(_tab_labels)
+
+            with _tab_objs[0]:
                 if raw_df is not None and not raw_df.empty:
                     st.dataframe(raw_df.head(200), width='stretch', hide_index=True)
                     st.caption(f"僅顯示前 200 筆，完整 {len(raw_df):,} 筆資料將包含在下載的 Excel 報表中。")
                 else:
                     st.info("無符合資料")
-            with _tab_site_cut:
-                _cut_df = raw_df
-                if raw_df is not None and _site_top80_col in raw_df.columns:
-                    _nature_flags = (
-                        raw_df[_nature_col].astype(str).str.strip()
-                        if _nature_col in raw_df.columns
-                        else pd.Series("", index=raw_df.index, dtype=object)
-                    )
-                    _cut_df = raw_df[
-                        (raw_df[_site_top80_col].astype(str).str.strip() == _SHOP_SIMPLIFY_TOP80_NO)
-                        & (_nature_flags == _SHOP_SIMPLIFY_TOP80_NO)
-                    ]
+
+            with _tab_objs[1]:
+                _cut_df = _two_no(raw_df, _site_qty_col, _nature_qty_col)
                 if _cut_df is not None and not _cut_df.empty:
                     st.dataframe(_cut_df.head(200), width='stretch', hide_index=True)
                     st.caption(f"共 {len(_cut_df):,} 個精簡候選；僅顯示前 200 筆，完整資料將包含在下載的 Excel 報表中。")
                 else:
-                    st.info(f"無符合資料（沒有兩個 Top {_pct_used}% 皆非的 SKU）")
-            with _tab_site_top:
-                _top_df = raw_df
-                if raw_df is not None and _site_top80_col in raw_df.columns:
-                    _top_df = raw_df[raw_df[_site_top80_col].astype(str).str.strip() == _SHOP_SIMPLIFY_TOP80_YES]
+                    st.info(f"無符合資料（沒有件數兩個 Top {_pct_used}% 皆非的 SKU）")
+
+            with _tab_objs[2]:
+                _top_df = _yes(raw_df, _site_qty_col)
                 if _top_df is not None and not _top_df.empty:
                     st.dataframe(_top_df.head(200), width='stretch', hide_index=True)
-                    st.caption(f"共 {len(_top_df):,} 個 SKU 屬 {_site} Top {_pct_used}%；僅顯示前 200 筆，完整資料將包含在下載的 Excel 報表中。")
+                    st.caption(f"共 {len(_top_df):,} 個 SKU 屬 {_site} 件數 Top {_pct_used}%；僅顯示前 200 筆，完整資料將包含在下載的 Excel 報表中。")
                 else:
                     st.info("無符合資料")
+
+            if _value_ok:
+                with _tab_objs[3]:
+                    _vcut_df = _two_no(raw_df, _site_value_col, _nature_value_col)
+                    if _vcut_df is not None and not _vcut_df.empty:
+                        st.dataframe(_vcut_df.head(200), width='stretch', hide_index=True)
+                        st.caption(
+                            f"共 {len(_vcut_df):,} 個金額精簡候選（{_window_used}）；僅顯示前 200 筆，"
+                            "完整資料將包含在下載的 Excel 報表中。"
+                        )
+                    else:
+                        st.info(f"無符合資料（沒有金額兩個 Top {_pct_used}% 皆非的 SKU）")
+                with _tab_objs[4]:
+                    _vtop_df = _yes(raw_df, _site_value_col)
+                    if _vtop_df is not None and not _vtop_df.empty:
+                        st.dataframe(_vtop_df.head(200), width='stretch', hide_index=True)
+                        st.caption(
+                            f"共 {len(_vtop_df):,} 個 SKU 屬 {_site} 金額 Top {_pct_used}%（{_window_used}）；"
+                            "僅顯示前 200 筆，完整資料將包含在下載的 Excel 報表中。"
+                        )
+                    else:
+                        st.info("無符合資料")
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
             _hk_time_site = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
+            _dl_suffix = f"_Top{_pct_used}" + (f"_{_window_used}" if _value_ok and _window_used else "")
             st.download_button(
-                label=f"📥 下載店舖精簡SKU報表（{_site}、Top {_pct_used}%）(.xlsx)",
+                label=f"📥 下載店舖精簡SKU報表（{_site}、Top {_pct_used}%{('、' + _window_used) if _value_ok and _window_used else ''}）(.xlsx)",
                 data=excel_data,
-                file_name=f"I14 店舖精簡SKU模式_{_site}_Top{_pct_used}_指定店舖_{_hk_time_site}.xlsx",
+                file_name=f"I14 店舖精簡SKU模式_{_site}{_dl_suffix}_指定店舖_{_hk_time_site}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
                 width='stretch',

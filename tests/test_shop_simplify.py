@@ -12,6 +12,7 @@
 import warnings
 warnings.filterwarnings("ignore")
 import importlib
+from datetime import date
 from io import BytesIO
 
 import numpy as np
@@ -43,6 +44,9 @@ from transformer import (
     _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN,
     _shop_simplify_site_top80_column,
     _shop_simplify_nature_top_column,
+    _shop_simplify_value_site_top_column,
+    _shop_simplify_value_nature_top_column,
+    _shop_simplify_net_sales_window,
     _shop_simplify_top_share,
     _shop_simplify_ratio_percent,
     _shop_simplify_top80_mask,
@@ -1023,3 +1027,152 @@ def test_site_mode_70_excel_headers_and_widths():
     assert headers[-5:] == [site_col, nature_col, *_SHOP_SIMPLIFY_REPLY_COLUMNS]
     assert round(ws.column_dimensions[get_column_letter(headers.index(site_col) + 1)].width, 2) == 14.0
     assert round(ws.column_dimensions[get_column_letter(headers.index(nature_col) + 1)].width, 2) == 16.0
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 金額口徑（Net Sales MTD＋M-1＋M-2 → P{N}D）與四欄判定
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _site_rows_with_net():
+    """在 _site_rows 上加三個月 Net Sales：HA21 的 A 7,000、B/C 各 300、D/E 各 150；
+    HA20 的 A 210,000（同 Nature 母體）；HA19（Tourist）不計入。"""
+    rows = _site_rows()
+    net = {
+        ("HA21", "A"): (3000, 3000, 1000),
+        ("HA21", "B"): (100, 100, 100),
+        ("HA21", "C"): (100, 100, 100),
+        ("HA21", "D"): (50, 50, 50),
+        ("HA21", "E"): (50, 50, 50),
+        ("HA20", "A"): (90000, 90000, 30000),
+        ("HA19", "E"): (9999, 0, 0),
+    }
+    for r in rows:
+        m2, m1, mtd = net[(r["Site Code"], r["SKU"])]
+        r["Net Sales (M-2)"] = m2
+        r["Net Sales (M-1)"] = m1
+        r["Net Sales (CM - MTD)"] = mtd
+    return rows
+
+
+def test_net_sales_window_days_and_label():
+    w = _shop_simplify_net_sales_window(date(2026, 11, 12))
+    assert (w["mtd_days"], w["m1_days"], w["m2_days"], w["total_days"]) == (12, 31, 30, 73)
+    assert w["label"] == "P73D" and w["m1"] == "2026-10" and w["m2"] == "2026-09"
+    # 3 月 1 日：MTD 1 日＋2 月＋1 月；2026 非閏年 28 日、2024 閏年 29 日
+    assert _shop_simplify_net_sales_window(date(2026, 3, 1))["label"] == "P60D"
+    assert _shop_simplify_net_sales_window(date(2024, 3, 1))["label"] == "P61D"
+    # 1 月 1 日：MTD 1＋上年 12 月 31＋11 月 30
+    assert _shop_simplify_net_sales_window(date(2026, 1, 1))["label"] == "P62D"
+
+
+def test_net_sales_window_rejects_non_date():
+    with pytest.raises(ValueError):
+        _shop_simplify_net_sales_window("2026-11-12")
+
+
+def test_site_mode_net_sales_column_and_four_flags():
+    raw, warnings = transform_shop_simplify_site(
+        _df(_site_rows_with_net()), "HA21", data_date=date(2026, 11, 12)
+    )
+    net_col = "Net Sales (P73D)"
+    assert net_col in raw.columns
+    cols = list(raw.columns)
+    assert cols.index(net_col) == cols.index("Sold Qty (P90D)") + 1
+    assert cols[-7:] == [
+        _shop_simplify_site_top80_column("HA21"),
+        _shop_simplify_nature_top_column(),
+        _shop_simplify_value_site_top_column("HA21"),
+        _shop_simplify_value_nature_top_column(),
+        *_SHOP_SIMPLIFY_REPLY_COLUMNS,
+    ]
+    assert dict(zip(raw["SKU"], raw[net_col]))["A"] == 7000.0
+    # 金額：HA21 的 A 7,000 佔全店 7,900 的 88.6% → 只有 A；同 Nature（合計 217,900）
+    # 80% 門檻 174,320 → 也只有 A（A 跨店合計 217,000）
+    assert list(raw[_shop_simplify_value_site_top_column("HA21")]) == [
+        _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO, _SHOP_SIMPLIFY_TOP80_NO,
+        _SHOP_SIMPLIFY_TOP80_NO, _SHOP_SIMPLIFY_TOP80_NO,
+    ]
+    assert list(raw[_shop_simplify_value_nature_top_column()]) == [
+        _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO, _SHOP_SIMPLIFY_TOP80_NO,
+        _SHOP_SIMPLIFY_TOP80_NO, _SHOP_SIMPLIFY_TOP80_NO,
+    ]
+    assert not any("缺少「Net Sales" in x for x in warnings)
+
+
+def test_site_mode_net_sales_negative_clipped_to_zero():
+    rows = _site_rows_with_net()
+    rows[0]["Net Sales (M-2)"] = -500  # A：退貨／負數視為 0
+    raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12))
+    assert dict(zip(raw["SKU"], raw["Net Sales (P73D)"]))["A"] == 4000.0
+
+
+def test_site_mode_missing_net_sales_only_qty_columns_and_warning():
+    raw, warnings = transform_shop_simplify_site(_df(_site_rows()), "HA21")
+    assert not [_c for _c in raw.columns if str(_c).startswith("Net Sales (P")]
+    assert not [_c for _c in raw.columns if _is_value_top_column(_c)]
+    assert list(raw.columns[-5:]) == [
+        _shop_simplify_site_top80_column("HA21"),
+        _shop_simplify_nature_top_column(),
+        *_SHOP_SIMPLIFY_REPLY_COLUMNS,
+    ]
+    assert any("未能計算金額口徑" in x for x in warnings)
+
+
+def _is_value_top_column(name):
+    return isinstance(name, str) and name.startswith("是否") and name.endswith("（金額）")
+
+
+def test_site_mode_net_sales_zero_total_all_no_and_warning():
+    rows = _site_rows_with_net()
+    for r in rows:
+        r["Net Sales (M-2)"] = r["Net Sales (M-1)"] = r["Net Sales (CM - MTD)"] = 0
+    raw, warnings = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12))
+    assert list(raw[_shop_simplify_value_site_top_column("HA21")]) == [_SHOP_SIMPLIFY_TOP80_NO] * 5
+    assert any("Net Sales (P73D) 合計為 0" in x for x in warnings)
+
+
+def test_site_stats_value_counts_and_window():
+    raw, _ = transform_shop_simplify_site(
+        _df(_site_rows_with_net()), "HA21", data_date=date(2026, 11, 12)
+    )
+    stats = shop_simplify_site_stats(raw, "HA21")
+    assert stats["value_available"] is True
+    assert stats["window"] == "P73D"
+    assert (stats["value_site_top80"], stats["value_nature_top80"], stats["value_neither"]) == (1, 1, 4)
+    assert (stats["site_top80"], stats["nature_top80"], stats["neither"]) == (3, 1, 2)
+
+
+def test_site_value_excel_headers_and_widths():
+    from openpyxl.utils import get_column_letter
+
+    raw, _ = transform_shop_simplify_site(
+        _df(_site_rows_with_net()), "HA21", data_date=date(2026, 11, 12)
+    )
+    wb = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))
+    ws = wb["Export"]
+    headers = [c.value for c in ws[1]]
+    value_site = _shop_simplify_value_site_top_column("HA21")
+    value_nature = _shop_simplify_value_nature_top_column()
+    assert headers[-7:] == [
+        _shop_simplify_site_top80_column("HA21"),
+        _shop_simplify_nature_top_column(),
+        value_site,
+        value_nature,
+        *_SHOP_SIMPLIFY_REPLY_COLUMNS,
+    ]
+    assert round(ws.column_dimensions[get_column_letter(headers.index(value_site) + 1)].width, 1) == 22.0
+    assert round(ws.column_dimensions[get_column_letter(headers.index(value_nature) + 1)].width, 1) == 26.0
+    assert round(ws.column_dimensions[get_column_letter(headers.index("Net Sales (P73D)") + 1)].width, 1) == 14.0
+
+
+def test_site_mode_rerun_with_new_window_replaces_net_sales_column():
+    first, _ = transform_shop_simplify_site(
+        _df(_site_rows_with_net()), "HA21", data_date=date(2026, 11, 12)
+    )
+    second, _ = transform_shop_simplify_site(first, "HA21", data_date=date(2026, 11, 5))
+    net_cols = [c for c in second.columns if str(c).startswith("Net Sales (P")]
+    assert net_cols == ["Net Sales (P66D)"]
+    value_cols = [c for c in second.columns if _is_value_top_column(c)]
+    assert value_cols == [
+        _shop_simplify_value_site_top_column("HA21"),
+        _shop_simplify_value_nature_top_column(),
+    ]
