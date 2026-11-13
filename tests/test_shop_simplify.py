@@ -4,8 +4,8 @@
 - 過去90日有無賣過：Sold Qty (P90D) > 0 →「有」，其餘（0／負數／空白）→「無賣」；
 - 過去90日有無存貨（v1.93.0 起；前名「過去60日有無存貨」）：Shop Stock Qty (LLM)／(LM)／(CM) 任一 > 0 →「有存貨」，三者同時為 0 →「無存貨」；
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 一律留空；
-- 是否該店的Top 80%：每間店以 Adj. SST 分類為母體，每個分類各自一條 80% 線
-  （指定店舖變體改用「是否{店舖}的Top 80%」與「是否同Shop Nature的Top 80%」，不設本欄）；
+- 是否該店的Top 80%：每間店以 MC（品類）分類為母體，每個分類各自一條 80% 線
+  （缺 MC 時退回 Adj. SST；指定店舖變體改用「是否{店舖}的Top 80%」與「是否同Shop Nature的Top 80%」，不設本欄）；
 - 不篩選列，保留來源欄序，六個輸出欄固定排最後；輸出 Summary＋Export 兩個工作表，
   並依 Brand／SKU（文字）排序、套用範本欄寬／隱藏欄／數字格式與顏色標示。
 """
@@ -42,6 +42,14 @@ from transformer import (
     _SHOP_SIMPLIFY_TOP80_NO,
     _SHOP_SIMPLIFY_RED,
     _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN,
+    _SHOP_SIMPLIFY_SHOP_VALUE_TOP80_COLUMN,
+    _SHOP_SIMPLIFY_SHOP_COMPARE80_COLUMN,
+    _SHOP_SIMPLIFY_MEASURE_COMPARE_QTY_ONLY,
+    _SHOP_SIMPLIFY_MEASURE_COMPARE_VALUE_ONLY,
+    _SHOP_SIMPLIFY_MEASURE_COMPARE_LABELS,
+    _shop_simplify_shop_qty_top_column,
+    _shop_simplify_shop_value_top_column,
+    _shop_simplify_shop_compare_column,
     _shop_simplify_site_top80_column,
     _shop_simplify_nature_top_column,
     _shop_simplify_value_site_top_column,
@@ -363,7 +371,7 @@ def test_shop_top80_uses_each_shops_own_ball_line():
     assert [flags[("HA20", s)] for s in "ABCDE"] == ["是", "否", "否", "否", "否"]
 
 
-def test_shop_top80_sst_groups_do_not_crowd_each_other():
+def test_shop_top80_fallback_sst_groups_do_not_crowd_each_other():
     """同一店兩個 Adj. SST 各自一條線：Local A100/B5 → 只有 A；Private Label C10/D9 → C、D。
     若不分類（全店合計 124、線 99.2）只會剩 A，故本測試同時驗證分類母體。"""
     rows = [
@@ -384,15 +392,79 @@ def test_shop_top80_zero_sales_all_no():
     assert list(raw[_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN]) == ["否", "否"]
 
 
-def test_shop_top80_missing_sst_falls_back_to_single_group_per_shop():
+def test_shop_top80_missing_group_columns_falls_back_to_single_group():
+    """MCH2／MC／Adj. SST 全缺時每店單一分組，並列 warning。"""
     df = _df([
         {"SKU": "A", "Site Code": "HA21", "Sold Qty (P90D)": 10},
         {"SKU": "B", "Site Code": "HA21", "Sold Qty (P90D)": 1},
     ])
-    assert "Adj. SST" not in df.columns
+    assert not {"Adj. SST", "MC", "MCH2"} & set(df.columns)
     raw, warnings = transform_shop_simplify(df)
     assert list(raw[_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN]) == ["是", "否"]
-    assert any("缺少「Adj. SST」" in x and "Top 80%" in x for x in warnings)
+    assert any("缺少「MCH2」「MC」「Adj. SST」" in x and "Top 80%" in x for x in warnings)
+
+
+def _group_rows():
+    """同一 MCH2（0101）、同一 MC（0101004），Adj. SST 分兩類：
+    A100／B5 屬 Local（80% 線 84 → A）；C10／D9 屬 Private Label（線 15.2 → C、D）。
+    MCH2 單一母體（合計 124、線 99.2）→ 只有 A；MC 單一母體亦只有 A。"""
+    def row(sku, sst, sold, mc="0101004 - AMPOULES & SERUM"):
+        return {"SKU": sku, "Site Code": "HA21", "MCH2": "0101 - FACE & NECK",
+                "MC": mc, "Adj. SST": sst, "Sold Qty (P90D)": sold}
+
+    return [
+        row("A", "01 - Local", 100),
+        row("B", "01 - Local", 5),
+        row("C", "03 - Private Label", 10),
+        row("D", "03 - Private Label", 9),
+    ]
+
+
+def test_shop_top80_defaults_to_mch2():
+    """預設母體為 MCH2：整組只有一條線（合計 124、線 99.2 → 只有 A）。"""
+    raw, warnings = transform_shop_simplify(_df(_group_rows()))
+    assert list(raw[_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN]) == ["是", "否", "否", "否"]
+    assert not any("改以「" in x and "分類計算" in x for x in warnings)
+
+
+def test_shop_top80_group_by_mc():
+    """選 MC 時以 MC 為母體：同一份資料 MC 只有一個分類，結果與 MCH2 相同但走 MC 欄。"""
+    rows = _group_rows()
+    for r in rows:
+        r["MC"] = "0101004 - AMPOULES & SERUM" if r["SKU"] in ("A", "B") else "0204003 - LIPSTICK"
+    raw, warnings = transform_shop_simplify(_df(rows), group_by="MC")
+    assert list(raw[_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN]) == ["是", "否", "是", "是"]
+    assert not any("改以「" in x and "分類計算" in x for x in warnings)
+
+
+def test_shop_top80_group_by_adj_sst():
+    """選 Adj. SST 時按陳列分類分組：Local 只有 A、Private Label 有 C、D。"""
+    raw, warnings = transform_shop_simplify(_df(_group_rows()), group_by="Adj. SST")
+    assert list(raw[_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN]) == ["是", "否", "是", "是"]
+    assert not any("改以「" in x and "分類計算" in x for x in warnings)
+
+
+def test_shop_top80_missing_selected_group_falls_back_in_chain():
+    """選 MCH2 但 MCH2 與 MC 都缺、只剩 Adj. SST：按 MCH2 → MC → Adj. SST 退回並列 warning。"""
+    rows = [{k: v for k, v in r.items() if k not in ("MCH2", "MC")} for r in _group_rows()]
+    raw, warnings = transform_shop_simplify(_df(rows))
+    assert list(raw[_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN]) == ["是", "否", "是", "是"]
+    assert any("缺少「MCH2」" in x and "改以「Adj. SST」分類計算" in x for x in warnings)
+
+
+def test_group_column_selection_and_fallback_chain():
+    from modes.shop_simplify import _shop_simplify_group_choice, _shop_simplify_group_column
+
+    assert _shop_simplify_group_column(["MCH2", "MC", "Adj. SST"], "MCH2") == ("MCH2", "MCH2")
+    assert _shop_simplify_group_column(["MCH2", "MC", "Adj. SST"], "MC") == ("MC", "MC")
+    assert _shop_simplify_group_column(["MCH2", "MC", "Adj. SST"], "Adj. SST") == ("Adj. SST", "Adj. SST")
+    assert _shop_simplify_group_column(["MC", "Adj. SST"], "MCH2") == ("MC", "MC")
+    assert _shop_simplify_group_column(["Adj. SST"], "MC") == ("Adj. SST", "Adj. SST")
+    assert _shop_simplify_group_column([], "MCH2") == (None, "MCH2")
+    assert _shop_simplify_group_choice("mc") == "MC"
+    assert _shop_simplify_group_choice(" Adj. SST ") == "Adj. SST"
+    assert _shop_simplify_group_choice("unknown") == "MCH2"
+    assert _shop_simplify_group_choice(None) == "MCH2"
 
 
 def test_shop_top80_missing_site_code_falls_back_to_whole_table():
@@ -408,22 +480,39 @@ def test_shop_top80_missing_site_code_falls_back_to_whole_table():
 def test_shop_top80_column_export_width_and_no_nature_column():
     from openpyxl.utils import get_column_letter
 
-    raw, _ = transform_shop_simplify(_df([{"SKU": "A", "Sold Qty (P90D)": 3}]))
+    raw, _ = transform_shop_simplify(_df([{
+        "SKU": "A", "Sold Qty (P90D)": 3,
+        "Net Sales (M-2)": 10, "Net Sales (M-1)": 10, "Net Sales (CM - MTD)": 10,
+    }]), data_date=date(2026, 11, 12))
     assert _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN not in raw.columns
-    assert raw.columns[-4] == _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN
+    # 件數、金額、對比三欄緊接存貨欄；回覆欄維持最後
+    assert list(raw.columns[-6:]) == [
+        _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN,
+        _SHOP_SIMPLIFY_SHOP_VALUE_TOP80_COLUMN,
+        _SHOP_SIMPLIFY_SHOP_COMPARE80_COLUMN,
+        *_SHOP_SIMPLIFY_REPLY_COLUMNS,
+    ]
     ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
     headers = [c.value for c in ws[1]]
-    letter = get_column_letter(headers.index(_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN) + 1)
-    assert round(ws.column_dimensions[letter].width, 2) == 14.0
+    for column, expected in [
+        (_SHOP_SIMPLIFY_SHOP_TOP80_COLUMN, 22.0),
+        (_SHOP_SIMPLIFY_SHOP_VALUE_TOP80_COLUMN, 22.0),
+        (_SHOP_SIMPLIFY_SHOP_COMPARE80_COLUMN, 26.0),
+    ]:
+        letter = get_column_letter(headers.index(column) + 1)
+        assert round(ws.column_dimensions[letter].width, 2) == expected
 
 
 def test_excel_has_summary_and_export_sheets():
     df = _df([
-        {"SKU": 1, "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active"},
-        {"SKU": 2, "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Discontinued"},
-        {"SKU": 3, "Adj. MCH1": "02 - MAKE UP", "Item Status": "Active"},
+        {"SKU": 1, "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+         "Net Sales (M-2)": 10, "Net Sales (M-1)": 10, "Net Sales (CM - MTD)": 10},
+        {"SKU": 2, "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Discontinued",
+         "Net Sales (M-2)": 10, "Net Sales (M-1)": 10, "Net Sales (CM - MTD)": 10},
+        {"SKU": 3, "Adj. MCH1": "02 - MAKE UP", "Item Status": "Active",
+         "Net Sales (M-2)": 10, "Net Sales (M-1)": 10, "Net Sales (CM - MTD)": 10},
     ])
-    raw, _ = transform_shop_simplify(df)
+    raw, _ = transform_shop_simplify(df, data_date=date(2026, 11, 12))
     buf = generate_excel_shop_simplify(raw)
     wb = load_workbook(BytesIO(buf.getvalue()))
     assert wb.sheetnames == ["Summary", "Export"]
@@ -433,8 +522,10 @@ def test_excel_has_summary_and_export_sheets():
     headers = [c.value for c in ws[1]]
     assert headers == list(raw.columns)
     assert "SKU Desc" in headers and "Shop Name" in headers
-    assert headers[-6:] == [
-        "過去90日有無賣過", "過去90日有無存貨", "是否該店的Top 80%",
+    assert headers[-8:] == [
+        "過去90日有無賣過", "過去90日有無存貨",
+        "是否該店的Top 80%（件數）", "是否該店的Top 80%（金額）",
+        "該店 件數 vs 該店 金額 Top 80%",
         "SCT建議", "Shop 回覆新的NDRF", "如果RF的Safety Qty",
     ]
     assert ws.max_row == 1 + len(raw)
@@ -912,20 +1003,63 @@ def test_nature_top80_isolated_per_adj_sst_across_shops():
     }
 
 
-def test_site_mode_stats_include_adj_sst_group_count():
+def test_site_mode_stats_include_group_count():
     raw, _ = transform_shop_simplify_site(_df(_sst_rows()), "HA21")
     stats = shop_simplify_site_stats(raw, "HA21")
     assert stats["rows"] == 8
     assert stats["skus"] == 8
-    assert stats["sst_groups"] == 2
+    assert stats["group_count"] == 2
+    assert stats["group_column"] == "Adj. SST"  # 測試資料無 MC，屬退回舊口徑
     assert stats["site_top80"] == 5
     assert stats["nature_top80"] == 2
     assert stats["neither"] == 1
 
 
-def test_site_mode_missing_adj_sst_falls_back_and_warns():
+def test_site_mode_missing_group_columns_falls_back_and_warns():
     _, warnings = transform_shop_simplify_site(_df(_site_rows()), "HA21")
-    assert any("缺少「Adj. SST」" in x for x in warnings)
+    assert any("缺少「MCH2」「MC」「Adj. SST」" in x for x in warnings)
+
+
+def test_site_mode_group_by_switch_changes_pool():
+    """母體選擇直接影響判定：同一份資料用 MCH2（單一組）只有 E；改用 MC（兩組）則 C、D 亦入選。"""
+    mc1, mc2 = "0101004 - AMPOULES & SERUM", "0204003 - LIPSTICK"
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Shop Nature": "Non Tourist", "MCH2": "0101 - FACE & NECK", "MC": mc1, "Adj. SST": "01 - Local", "Sold Qty (P90D)": 100},
+        {"SKU": "B", "Site Code": "HA21", "Shop Nature": "Non Tourist", "MCH2": "0101 - FACE & NECK", "MC": mc1, "Adj. SST": "01 - Local", "Sold Qty (P90D)": 5},
+        {"SKU": "E", "Site Code": "HA21", "Shop Nature": "Non Tourist", "MCH2": "0101 - FACE & NECK", "MC": mc1, "Adj. SST": "01 - Local", "Sold Qty (P90D)": 500},
+        {"SKU": "C", "Site Code": "HA21", "Shop Nature": "Non Tourist", "MCH2": "0101 - FACE & NECK", "MC": mc2, "Adj. SST": "01 - Local", "Sold Qty (P90D)": 10},
+        {"SKU": "D", "Site Code": "HA21", "Shop Nature": "Non Tourist", "MCH2": "0101 - FACE & NECK", "MC": mc2, "Adj. SST": "01 - Local", "Sold Qty (P90D)": 9},
+    ]
+    site_col = _shop_simplify_site_top80_column("HA21")
+    raw_mch2, _ = transform_shop_simplify_site(_df(rows), "HA21", include_net_sales=False)
+    assert list(raw_mch2[site_col]) == ["否", "否", "否", "否", "是"]
+    raw_mc, _ = transform_shop_simplify_site(_df(rows), "HA21", include_net_sales=False, group_by="MC")
+    assert list(raw_mc[site_col]) == ["否", "否", "是", "是", "是"]
+
+
+def test_site_mode_uses_mc_groups_for_shop_and_nature_pools():
+    """選 MC 時，店舖與同 Nature 兩組母體都以 MC 分組。
+
+    HA21：MC1 A100／B5／E500、MC2 C10／D9；HA20（同 Nature）MC1 A1000；HA19（Tourist）MC1 B9999。
+    店舖 MC1 合計 605、線 484 → 只有 E；MC2 合計 19、線 15.2 → C、D。
+    同 Nature MC1（HA21＋HA20）A1100／E500／B5 合計 1605、線 1284 → A、E。
+    """
+    mc1, mc2 = "0101004 - AMPOULES & SERUM", "0204003 - LIPSTICK"
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Shop Nature": "Non Tourist", "MCH2": "0101 - FACE & NECK", "MC": mc1, "Adj. SST": "01 - Local", "Sold Qty (P90D)": 100},
+        {"SKU": "B", "Site Code": "HA21", "Shop Nature": "Non Tourist", "MCH2": "0101 - FACE & NECK", "MC": mc1, "Adj. SST": "01 - Local", "Sold Qty (P90D)": 5},
+        {"SKU": "E", "Site Code": "HA21", "Shop Nature": "Non Tourist", "MCH2": "0101 - FACE & NECK", "MC": mc1, "Adj. SST": "01 - Local", "Sold Qty (P90D)": 500},
+        {"SKU": "C", "Site Code": "HA21", "Shop Nature": "Non Tourist", "MCH2": "0101 - FACE & NECK", "MC": mc2, "Adj. SST": "01 - Local", "Sold Qty (P90D)": 10},
+        {"SKU": "D", "Site Code": "HA21", "Shop Nature": "Non Tourist", "MCH2": "0101 - FACE & NECK", "MC": mc2, "Adj. SST": "01 - Local", "Sold Qty (P90D)": 9},
+        {"SKU": "A", "Site Code": "HA20", "Shop Nature": "Non Tourist", "MCH2": "0101 - FACE & NECK", "MC": mc1, "Adj. SST": "01 - Local", "Sold Qty (P90D)": 1000},
+        {"SKU": "B", "Site Code": "HA19", "Shop Nature": "Tourist", "MCH2": "0101 - FACE & NECK", "MC": mc1, "Adj. SST": "01 - Local", "Sold Qty (P90D)": 9999},
+    ]
+    raw, warnings = transform_shop_simplify_site(_df(rows), "HA21", include_net_sales=False, group_by="MC")
+    site_col = _shop_simplify_site_top80_column("HA21")
+    nature_col = _shop_simplify_nature_top_column(0.8)
+    assert list(raw[site_col]) == ["否", "否", "是", "是", "是"]
+    assert list(raw[nature_col]) == ["是", "否", "是", "是", "是"]
+    assert not any("改以「" in x and "分類計算" in x for x in warnings)
 
 
 def test_site_mode_only_parses_selected_shop_rows(monkeypatch):
@@ -1131,10 +1265,13 @@ def test_site_mode_four_flag_columns_carry_measure_suffix():
         "HA21 vs 同Nature Top 80%（金額）",
     ]
     assert not [c for c in raw.columns if "（件數）（金額）" in str(c)]
-    # 原模式（多店輸出）只有件數一種口徑，維持不加後綴
-    original, _ = transform_shop_simplify(_df(_site_rows()))
+    # 原模式（多店輸出）同樣有件數、金額兩個判定與一欄對比
+    original, _ = transform_shop_simplify(
+        _df(_site_rows_with_net()), data_date=date(2026, 11, 12)
+    )
     assert _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN in original.columns
-    assert not [c for c in original.columns if str(c).endswith("（件數）")]
+    assert _SHOP_SIMPLIFY_SHOP_VALUE_TOP80_COLUMN in original.columns
+    assert _SHOP_SIMPLIFY_SHOP_COMPARE80_COLUMN in original.columns
 
 
 def test_site_mode_net_sales_negative_clipped_to_zero():
@@ -1341,3 +1478,167 @@ def test_site_compare_fill_colors_for_value_measure():
     # 金額口徑：A 兩者皆是、其餘兩者皆非
     assert rgb("A") == _SHOP_SIMPLIFY_COMPARE_BOTH_FILL
     assert {rgb(k) for k in "BCDE"} == {_SHOP_SIMPLIFY_COMPARE_NEITHER_FILL}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 11. 原模式（多店輸出）：金額判定與「件數 vs 金額」對比
+# ──────────────────────────────────────────────────────────────────────────────
+def _shop_net_rows():
+    """HA21：A 件數 100／金額 2,000；B 10／100；C 1／1,900；D 50／50。
+    件數合計 161、80% 門檻 128.8 → A、D；金額合計 4,050、80% 門檻 3,240 → A、C。
+    HA20 的 E 件數 100、三個月 Net Sales 全 0 → 件數「是」、金額全「否」。
+    """
+    return [
+        {"SKU": "A", "Site Code": "HA21", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 100,
+         "Net Sales (M-2)": 800, "Net Sales (M-1)": 700, "Net Sales (CM - MTD)": 500},
+        {"SKU": "B", "Site Code": "HA21", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 10,
+         "Net Sales (M-2)": 50, "Net Sales (M-1)": 50, "Net Sales (CM - MTD)": 0},
+        {"SKU": "C", "Site Code": "HA21", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 1,
+         "Net Sales (M-2)": 600, "Net Sales (M-1)": 700, "Net Sales (CM - MTD)": 600},
+        {"SKU": "D", "Site Code": "HA21", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 50,
+         "Net Sales (M-2)": 0, "Net Sales (M-1)": 50, "Net Sales (CM - MTD)": 0},
+        {"SKU": "E", "Site Code": "HA20", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 100,
+         "Net Sales (M-2)": 0, "Net Sales (M-1)": 0, "Net Sales (CM - MTD)": 0},
+    ]
+
+
+def test_shop_mode_value_flags_and_measure_compare_four_states():
+    raw, warnings = transform_shop_simplify(_df(_shop_net_rows()), data_date=date(2026, 11, 12))
+    qty_col = _shop_simplify_shop_qty_top_column()
+    value_col = _shop_simplify_shop_value_top_column()
+    compare_col = _shop_simplify_shop_compare_column()
+    assert list(raw.columns[-6:]) == [qty_col, value_col, compare_col, *_SHOP_SIMPLIFY_REPLY_COLUMNS]
+
+    flags = {
+        (site, sku): (qty, value, compare)
+        for site, sku, qty, value, compare in zip(
+            raw["Site Code"], raw["SKU"], raw[qty_col], raw[value_col], raw[compare_col]
+        )
+    }
+    assert flags[("HA21", "A")] == ("是", "是", _SHOP_SIMPLIFY_COMPARE_BOTH)
+    assert flags[("HA21", "B")] == ("否", "否", _SHOP_SIMPLIFY_COMPARE_NEITHER)
+    assert flags[("HA21", "C")] == ("否", "是", _SHOP_SIMPLIFY_MEASURE_COMPARE_VALUE_ONLY)
+    assert flags[("HA21", "D")] == ("是", "否", _SHOP_SIMPLIFY_MEASURE_COMPARE_QTY_ONLY)
+    # 每間店各自一條金額線：HA20 三個月全 0 → 全部「否」
+    assert flags[("HA20", "E")] == ("是", "否", _SHOP_SIMPLIFY_MEASURE_COMPARE_QTY_ONLY)
+    assert any("有 1 間店的 Net Sales (P73D) 合計為 0" in x for x in warnings)
+
+
+def test_shop_mode_net_sales_column_after_sold_and_label_follows_window():
+    raw, _ = transform_shop_simplify(_df(_shop_net_rows()), data_date=date(2026, 11, 5))
+    net_col = "Net Sales (P66D)"
+    assert net_col in raw.columns
+    cols = list(raw.columns)
+    assert cols.index(net_col) == cols.index("Sold Qty (P90D)") + 1
+
+
+def test_shop_mode_net_sales_negative_clipped_to_zero():
+    rows = _shop_net_rows()
+    rows[0]["Net Sales (M-2)"] = -500  # A：退貨／負數視為 0 → 700＋500＝1,200
+    raw, _ = transform_shop_simplify(_df(rows), data_date=date(2026, 11, 12))
+    assert dict(zip(raw["SKU"], raw["Net Sales (P73D)"]))["A"] == 1200.0
+
+
+def test_shop_mode_missing_net_sales_only_qty_column_and_warning():
+    raw, warnings = transform_shop_simplify(_df(_shop_net_rows()).drop(
+        columns=["Net Sales (M-2)", "Net Sales (M-1)", "Net Sales (CM - MTD)"]
+    ))
+    qty_col = _shop_simplify_shop_qty_top_column()
+    assert qty_col in raw.columns
+    assert _shop_simplify_shop_value_top_column() not in raw.columns
+    assert _shop_simplify_shop_compare_column() not in raw.columns
+    assert not [c for c in raw.columns if str(c).startswith("Net Sales (P")]
+    assert list(raw.columns[-6:]) == [
+        _SHOP_SIMPLIFY_SOLD_COLUMN,
+        _SHOP_SIMPLIFY_STOCK_COLUMN,
+        qty_col,
+        *_SHOP_SIMPLIFY_REPLY_COLUMNS,
+    ]
+    assert any("未能計算金額口徑" in x for x in warnings)
+
+
+def test_shop_mode_top_ratio_70_changes_names_and_flags():
+    rows = [{"SKU": s, "Site Code": "HA21", "Adj. SST": "01 - Local", "Sold Qty (P90D)": q}
+            for s, q in zip("ABCDEFG", (50, 14, 10, 9, 8, 7, 2))]
+    raw80, _ = transform_shop_simplify(_df(rows))
+    assert list(raw80[_shop_simplify_shop_qty_top_column(0.8)]) == ["是", "是", "是", "是", "否", "否", "否"]
+    raw70, _ = transform_shop_simplify(_df(rows), top_ratio=0.7)
+    assert _shop_simplify_shop_qty_top_column(0.8) not in raw70.columns
+    assert list(raw70[_shop_simplify_shop_qty_top_column(0.7)]) == ["是", "是", "是", "否", "否", "否", "否"]
+
+
+def test_shop_mode_rerun_replaces_old_ratio_and_window_columns():
+    first, _ = transform_shop_simplify(_df(_shop_net_rows()), data_date=date(2026, 11, 12))
+    assert _shop_simplify_shop_compare_column(0.8) in first.columns
+    second, _ = transform_shop_simplify(first, data_date=date(2026, 11, 5), top_ratio=0.7)
+    assert [c for c in second.columns if str(c).startswith("Net Sales (P")] == ["Net Sales (P66D)"]
+    assert _shop_simplify_shop_qty_top_column(0.8) not in second.columns
+    assert _shop_simplify_shop_value_top_column(0.8) not in second.columns
+    assert _shop_simplify_shop_compare_column(0.8) not in second.columns
+    assert _shop_simplify_shop_qty_top_column(0.7) in second.columns
+    assert _shop_simplify_shop_value_top_column(0.7) in second.columns
+    assert _shop_simplify_shop_compare_column(0.7) in second.columns
+
+
+def test_shop_stats_qty_value_and_compare_counts():
+    raw, _ = transform_shop_simplify(_df(_shop_net_rows()), data_date=date(2026, 11, 12))
+    stats = shop_simplify_stats(raw)
+    assert stats["value_available"] is True
+    assert stats["window"] == "P73D"
+    assert stats["ratio"] == 80
+    assert stats["qty_top80"] == 3          # HA21 A、D ＋ HA20 E
+    assert stats["value_top80"] == 2        # HA21 A、C
+    assert stats["compare"] == {
+        _SHOP_SIMPLIFY_COMPARE_BOTH: 1,
+        _SHOP_SIMPLIFY_MEASURE_COMPARE_QTY_ONLY: 2,
+        _SHOP_SIMPLIFY_MEASURE_COMPARE_VALUE_ONLY: 1,
+        _SHOP_SIMPLIFY_COMPARE_NEITHER: 1,
+    }
+
+
+def test_shop_compare_fill_colors_in_export():
+    raw, _ = transform_shop_simplify(_df(_shop_net_rows()), data_date=date(2026, 11, 12))
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
+    headers = [c.value for c in ws[1]]
+    column = headers.index(_shop_simplify_shop_compare_column()) + 1
+    sku_column = headers.index("SKU") + 1
+    rows = {ws.cell(row=r, column=sku_column).value: r for r in range(2, ws.max_row + 1)}
+
+    def rgb(sku):
+        return str(ws.cell(row=rows[sku], column=column).fill.start_color.rgb)[-6:]
+
+    assert rgb("A") == _SHOP_SIMPLIFY_COMPARE_BOTH_FILL
+    assert rgb("B") == _SHOP_SIMPLIFY_COMPARE_NEITHER_FILL
+    for sku in ("C", "D", "E"):
+        assert rgb(sku) not in (
+            _SHOP_SIMPLIFY_COMPARE_BOTH_FILL,
+            _SHOP_SIMPLIFY_COMPARE_NEITHER_FILL,
+        )
+
+
+def test_shop_measure_compare_labels_contract():
+    assert _SHOP_SIMPLIFY_MEASURE_COMPARE_LABELS == (
+        "兩者皆是", "僅店舖件數", "僅店舖金額", "兩者皆非",
+    )
+
+
+def test_shop_mode_value_line_isolated_per_shop():
+    """金額母體按每間店分開：HA21 A 1,000／B 100 → 只有 A；HA20 A 100／B 900 → 只有 B。
+    若兩店合併累計（A 1,100、B 1,000、門檻 1,680）會兩者皆是，故本測試同時驗證逐店母體。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Sold Qty (P90D)": 10,
+         "Net Sales (M-2)": 500, "Net Sales (M-1)": 500, "Net Sales (CM - MTD)": 0},
+        {"SKU": "B", "Site Code": "HA21", "Sold Qty (P90D)": 10,
+         "Net Sales (M-2)": 100, "Net Sales (M-1)": 0, "Net Sales (CM - MTD)": 0},
+        {"SKU": "A", "Site Code": "HA20", "Sold Qty (P90D)": 10,
+         "Net Sales (M-2)": 100, "Net Sales (M-1)": 0, "Net Sales (CM - MTD)": 0},
+        {"SKU": "B", "Site Code": "HA20", "Sold Qty (P90D)": 10,
+         "Net Sales (M-2)": 400, "Net Sales (M-1)": 500, "Net Sales (CM - MTD)": 0},
+    ]
+    raw, _ = transform_shop_simplify(_df(rows), data_date=date(2026, 11, 12))
+    value_col = _shop_simplify_shop_value_top_column()
+    flags = dict(zip(zip(raw["Site Code"], raw["SKU"]), raw[value_col]))
+    assert flags[("HA21", "A")] == _SHOP_SIMPLIFY_TOP80_YES
+    assert flags[("HA21", "B")] == _SHOP_SIMPLIFY_TOP80_NO
+    assert flags[("HA20", "A")] == _SHOP_SIMPLIFY_TOP80_NO
+    assert flags[("HA20", "B")] == _SHOP_SIMPLIFY_TOP80_YES

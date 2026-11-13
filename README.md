@@ -1,6 +1,6 @@
 # I14 報表轉換與分析系統
 
-自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**店舖精簡SKU模式**（店舖×SKU 精簡回覆表，含每店 Top 80%；另設指定店舖變體）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）、**Safety Stock 月度變化分析**（每月 Safety 變化對生意影響）與 **Forecast Review**（SKU 級建議訂貨量）、**RAW 明細轉化**（純粹轉化 RAW 明細，分「含 Value」與「不含 Value」兩個變體）等多種模式。
+自動化 I14 庫存報表轉換與多維度數據分析工具，支援 **Overstock Review**（庫存過賸審查）、**OOS Review**（缺貨審查）、**Carry SKU Review**（在售品項盤點）、**SKU 精簡 Review**（ND SKU 退倉建議）、**店舖精簡SKU模式**（店舖×SKU 精簡回覆表，含每店件數／金額 Top N% 與四象限對比；另設指定店舖變體）、**Safety Stock Review**（安全庫存審查）、**Safety Stock x NetStock Review**（調貨事件 Review Safety 設定）、**Safety Stock 月度變化分析**（每月 Safety 變化對生意影響）與 **Forecast Review**（SKU 級建議訂貨量）、**RAW 明細轉化**（純粹轉化 RAW 明細，分「含 Value」與「不含 Value」兩個變體）等多種模式。
 
 ## 功能概述
 
@@ -12,7 +12,7 @@
 | Overstock 分析 | 篩選 P90D 零銷售及超過月均兩倍之庫存過賸品項 |
 | OOS 分析 | 篩選缺貨（0 Stock）、潛在缺貨（Turnday < 7）及 Safety Qty 不足 |
 | SKU 精簡分析 | 針對 RP Type = ND 的 SKU 建議退倉（Warehouse 可退倉、Vendor 另有安排），依 Supply Source × Shop Stock Status 雙層分類 |
-| 店舖精簡 Top 80% | 原模式每間店各自判定「是否該店的Top 80%」：按 **Adj. SST 分類**在每個分類內以 Sold Qty (P90D) 累計，每店每個分類各自一條 80% 線（同一銷量整組納入或排除、分類之間不互相擠佔），不設同 Nature 判定；指定店舖（如 HA21）變體只輸出該店 SKU，可自選 **Top 80%／Top 70%**，同時輸出**件數**（Sold Qty (P90D)）與**金額**（Net Sales MTD＋M-1＋M-2，欄名如 `Net Sales (P73D)`）兩組判定：「是否該店 Top N%（件數）」「是否同 Shop Nature Top N%（件數）」及兩欄同名加「（金額）」（同 Nature 全部店舖按 Adj. SST 分類加總），再加兩欄「店舖 vs 同 Nature」四象限對比（兩者皆是／僅店舖／僅同Nature／兩者皆非）；每組「兩項皆非」即精簡候選 |
+| 店舖精簡 Top 80% | 原模式每間店各自判定「是否該店的Top N%」：按所選母體（**MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類**）在每個分類內以 Sold Qty (P90D) 累計，每店每個分類各自一條線（同一銷量整組納入或排除、分類之間不互相擠佔），不設同 Nature 判定；可自選 **Top 80%（預設）／Top 70%**，同時輸出**件數**（Sold Qty (P90D)）與**金額**（Net Sales MTD＋M-1＋M-2，欄名如 `Net Sales (P73D)`）兩組判定，再加一欄「該店 件數 vs 該店 金額 Top N%」四象限對比（兩者皆是／僅店舖件數／僅店舖金額／兩者皆非）；指定店舖（如 HA21）變體只輸出該店 SKU，同樣可選 Top 比例，判定改為「是否該店 Top N%（件數）」＋「是否同 Shop Nature Top N%（件數）」及兩欄同名加「（金額）」（同 Nature 全部店舖按 MC 分類加總，缺 MC 時退回 Adj. SST），再加兩欄「店舖 vs 同 Nature」四象限對比（兩者皆是／僅店舖／僅同Nature／兩者皆非）；每組「兩項皆非」即精簡候選 |
 | Stock Checking 分析 | D001 倉庫少貨且 Tourist 店舖 Turnday < 門檻 → 標示調貨需求，從 Mix / Non Tourist 店舖分配可轉出貨量（Non Tourist 優先）；Summary 另以佔比差額標示「存貨偏重」的 Nature（存貨集中但銷量不高，偏重數值以醒目橘底加強顯示，偏低數值以淺藍底標示）；RAW 按可讀性重排欄序，不顯示 Item_Shop 與 Value 金額欄；另附「店舖問題 SKU」（每間店舖需行動列：需要調入／可轉出供應，問題＋建議方法；建議方法只計涉及來源店舖數量，不重複列出店號）；可選擇**分類維度**（七選一，與 Safety Stock x NetStock Review 同一組選項；只改 Summary 分組，調貨計算不變）；RAW／店舖問題 SKU 恆附「銷量帶」與「銷量存貨分類」顯示欄 |
 | Safety Stock x NetStock | 沿用 Stock Checking 調貨引擎，以 **Safety 基準周轉天數（按 Nature，預設 Tourist 10 / Mix 9 / Non Tourist 7，可調 7–10）** Review 調貨事件是否因 Safety Stock 設定不足／過高，輸出店舖×SKU Review 主表與建議調整量（下調建議補底 3 件——SAP MOQ 下 Safety 1–2 件難補貨；現有 1–2 件不強制上調、零銷售歸零不受保底）；Safety 基準與調貨的 14 日線互相獨立；調貨分不限OM與同OM兩套對照（OM 限制不影響 Safety 建議）；可選擇**分類維度**（預設 Shop Nature，可改 RP Type、Shop Nature＋RP Type、OM、Shop Nature＋OM、銷量（高銷／中銷／低銷／零銷四帶）或銷量＋Shop Nature（Nature×銷量帶 12 組）；OM／銷量／銷量＋Shop Nature 維度計算與預設相同、僅分組顯示不同；ND 列一律不作調貨需求方、仍可作供應）；可勾選「允許雙向調貨」讓任何 Nature 缺貨皆可調入、遊客區店舖亦可轉出；可勾選「ND 優先轉出」（同一 Shop Nature 池內 ND 店先於 RF 店轉出，池間順序與轉出資格不變，不影響 Safety Review 與建議調整量）；可勾選「啟用銷量再平衡」（高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可調入、積壓列提供來源，跟隨單向／雙向框架，守衛不放寬，預設關閉）；可勾選「建議退D001」（退貨基準為 Safety Stock (現時)：中銷／低銷／零銷列退回超出 Safety 的庫存；高銷列原則上不退，僅當庫存 ≥ 3×Safety（高於 Safety 200%）時退至 2×Safety；調貨優先、需要調貨列不退；接收目標 D001 Warehouse 可無限接收，故不跑分配；不影響調貨分配與 Safety 計算；開啟時 Excel 另加「退D001 建議」工作表，預設關閉）；RAW／主表恆附「銷量帶」與「銷量存貨分類」顯示欄（同 SKU 內排名分帶＋店舖周轉日數門檻判定）；「Review 摘要」另提供 **Safety 調整方向分類**（增加／減少／不變）、**SKU 級 Safety 調整明細**與**銷量 × 存貨分類交叉表**（母體為全部列）；另附**全列預防性 Safety 設定建議**（母體為全部店舖×SKU 列，不依賴調貨事件，建議一次過設定，減少日後調貨次數；Excel 另加「Safety 設定建議 (全列)」工作表） |
 | 自定義參數 | Shop Nature 過濾、安全庫存倍率、Safety Qty 計算模式、調貨門檻、Safety 基準周轉天數（按 Nature）、分類維度（Shop Nature／RP Type／Shop Nature＋RP Type／OM／Shop Nature＋OM／銷量／銷量＋Shop Nature）、允許雙向調貨、ND 優先轉出、建議退D001、缺貨深度優先、池健康度排除 ND 死庫存、有貨可調改用實際可轉出量 |
@@ -104,7 +104,7 @@ Safety Stock x NetStock Review 另建議包含 `RP Type`（RF＝可補貨／ND�
 
 Forecast Review 額外必要欄位（缺少時停止並提示）：`Site Code／Sold Qty (M-2)／Sold Qty (M-1)／Sold Qty (CM - MTD)／Sold Qty (P90D)／Shop Stock Qty (CM)`；`Shop Stock Qty (M-2)／Shop Stock Qty (M-1)` 為選填（缺欄時該期缺貨還原略過並列 warning）；`D001 On Order PO Qty (CM)／Shop On Order PO Qty (CM)／Shop Pending Receive (±7 days)` 缺欄時計 0 並列 warning。
 
-店舖精簡SKU模式（含指定店舖變體）額外必要欄位（缺少時停止並提示）：`Sold Qty (P90D)`、以及 `Shop Stock Qty (LLM)／(LM)／(CM)` 至少一個（三個庫存欄同時缺失才停止；缺其中任何欄位列 warning，以其餘欄位判定）。指定店舖變體另須 `Site Code`；`Shop Nature` 缺失時 Nature 判定欄留空並列 warning，`Adj. SST` 缺失時 Top N% 退回單一分組，兩者皆不停止。金額口徑須 `Net Sales (M-2)`／`(M-1)`／`(CM - MTD)` 三欄齊全，缺任一欄時只輸出件數兩欄並列 warning。
+店舖精簡SKU模式（含指定店舖變體）額外必要欄位（缺少時停止並提示）：`Sold Qty (P90D)`、以及 `Shop Stock Qty (LLM)／(LM)／(CM)` 至少一個（三個庫存欄同時缺失才停止；缺其中任何欄位列 warning，以其餘欄位判定）。指定店舖變體另須 `Site Code`；兩個模式均以所選母體為 Top N% 分組（`MCH2` 中類為預設，可選 `MC` 小類或 `Adj. SST` 陳列分類），所選欄缺欄時按 `MCH2` → `MC` → `Adj. SST` 退回並列 warning，三者皆缺才退回單一分組（不停止）；指定店舖變體另於 `Shop Nature` 缺失時把 Nature 判定欄留空。金額口徑須 `Net Sales (M-2)`／`(M-1)`／`(CM - MTD)` 三欄齊全，缺任一欄時只輸出件數判定並列 warning（指定店舖變體為件數兩欄＋件數對比）。
 
 Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）：`MONTH／YEAR`（位於來源檔案尾部，日後此模式恒為必要欄位）`／Site Code／Adj. Safety Stock／RP Type／Sold Qty (CM - MTD)／Net Sales (CM - MTD)／Shop Stock Qty (CM)`；`Adj. MCH1／Adj. SST` 為選填（缺欄時對應樞紐以「空白」列示並列 warning）。
 
@@ -144,33 +144,36 @@ Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）�
 
 ### 店舖精簡SKU模式
 
-按店舖×SKU 列出精簡回覆表，保留來源檔全部欄位，並在最後附加六個固定欄位，供 SCT 與店舖填寫：
+按店舖×SKU 列出精簡回覆表，保留來源檔全部欄位，並在最後附加八個固定欄位（另加一個金額母體欄），供 SCT 與店舖填寫。側欄可自選 **Top 80%（預設）** 或 **Top 70%**、**Top N% 母體**（MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類），並選數據截止日決定金額視窗：
 
 1. **過去90日有無賣過** — `Sold Qty (P90D) > 0` →「有」；等於 0、負數或空白 →「無賣」
 2. **過去90日有無存貨** — `Shop Stock Qty (LLM)`、`(LM)` 或 `(CM)` 任一 `> 0` →「有存貨」；三者同時為 0（或空白／負數）→「無存貨」（LLM 欄自 2026-10-26 起來源報表提供，舊檔缺欄時以其餘庫存欄判定並列 warning；v1.92 前本欄為「過去60日有無存貨」，只以 LM／CM 判定）
-3. **是否該店的Top 80%** — 每間店以 `Adj. SST` 分類為母體，在每個分類內按 `Sold Qty (P90D)` 由高至低累計，累計銷量首次達該店該分類總銷量 80% 的 SKU 為「是」；同一銷量的 SKU 整組納入或整組排除，分類之間不互相擠佔；缺 `Site Code` 時全表單一分組、缺 `Adj. SST` 時每店單一分組，均列 warning（本模式不設同 Shop Nature 判定）
-4. **SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty** — 一律留空；來源檔已有這些欄位時以本次結果覆蓋，舊回覆不會保留（範本檔中的 SCT建議 值由 SCT 另行填寫）
-5. **不篩選列** — 全店全 SKU 輸出；清理規則與其他模式一致（剔除合計列與 117 - Marketing），Shop Nature 篩選為選填
-6. **SKU Desc／Shop Name** — 由 `Item_Shop` 以 `Site Code` 解析；`SKU Desc` 排於 `Brand` 之後、`Shop Name` 排於 `Site Code` 之後，`Item_Shop` 缺欄時兩欄留空並列 warning
-7. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄，如 `Shop Stock Value (LM)`／`(CM)`、`Excess Stock Value`）一律刪除；判定為大小寫敏感的「含 Value」字串比對，故 `Valuation Class` 不會被刪除
-8. **排序與輸出** — 依 `Brand`、`SKU`（文字）升序；輸出 `Summary`（`Adj. MCH1` × `Item Status` 的 SKU 列數，含總計）＋ `Export`（回覆明細，六個固定欄位排最後）兩個工作表
-9. **Export 格式** — 凍結 F2、縮放 85%、指定欄寬與隱藏欄；表頭列高 70.5 並自動換行；`RP Type`／`Shop Stock Qty (CM)` 綠色、`Sold Qty (P90D)` 紫色、「無賣」列淡紅、`Item Status`＝`Discontinued`／`RP Type`＝`ND`／`過去90日有無存貨`＝`無存貨` 紅色底（比對忽略大小寫與前後空白，ND 的紅色底蓋過該欄綠色）；`Shop Monthly Sold Qty (P90D)`、`Safety VS Monthly Sold Qty`、`Turnday`、`Sold Qty (M-2／M-1／CM - MTD)`、`Net Sales (M-2／M-1／CM - MTD)` 套用指定數字格式
-10. **來源工作表** — 多工作表檔案優先讀取 `Export`；沒有 Export 時沿用第一個工作表（例如手動另加樞紐的 HA20 工作檔可直接上傳）
+3. **是否該店的Top N%（件數）** — 每間店以所選母體（`MCH2` 中類為預設／`MC` 小類／`Adj. SST` 陳列分類）為分組，在每個分類內按 `Sold Qty (P90D)` 由高至低累計，累計銷量首次達該店該分類總銷量 N% 的 SKU 為「是」；同一銷量的 SKU 整組納入或整組排除，分類之間不互相擠佔；缺 `Site Code` 時全表單一分組，所選母體缺欄時按 `MCH2` → `MC` → `Adj. SST` 退回並列 warning（本模式不設同 Shop Nature 判定）
+4. **是否該店的Top N%（金額）** — 同一母體與同一 N%，改按 `Net Sales (P{N}D)`＝`Net Sales (M-2)`＋`Net Sales (M-1)`＋`Net Sales (CM - MTD)` 累計，負數（退貨）視為 0；金額欄緊接 `Sold Qty (P90D)`，`N` 由數據截止日決定（MTD 日數＋M-1 全月＋M-2 全月；例：11 月 12 日 → 12＋31＋30＝73 日 → 欄名 `Net Sales (P73D)`）
+5. **該店 件數 vs 該店 金額 Top N%** — 由同一間店的上述兩個判定合成四象限：`兩者皆是`（兩種口徑同為核心，優先保留）／`僅店舖件數`（賣得多但金額貢獻未達門檻）／`僅店舖金額`（金額貢獻高但件數不多，高單價）／`兩者皆非`（兩種口徑都不是核心，精簡候選）；缺三個月 Net Sales 欄時不加入金額欄與對比欄
+6. **SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty** — 一律留空；來源檔已有這些欄位時以本次結果覆蓋，舊回覆不會保留（範本檔中的 SCT建議 值由 SCT 另行填寫）
+7. **不篩選列** — 全店全 SKU 輸出；清理規則與其他模式一致（剔除合計列與 117 - Marketing），Shop Nature 篩選為選填
+8. **SKU Desc／Shop Name** — 由 `Item_Shop` 以 `Site Code` 解析；`SKU Desc` 排於 `Brand` 之後、`Shop Name` 排於 `Site Code` 之後，`Item_Shop` 缺欄時兩欄留空並列 warning
+9. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄，如 `Shop Stock Value (LM)`／`(CM)`、`Excess Stock Value`）一律刪除；判定為大小寫敏感的「含 Value」字串比對，故 `Valuation Class` 不會被刪除
+10. **排序與輸出** — 依 `Brand`、`SKU`（文字）升序；輸出 `Summary`（`Adj. MCH1` × `Item Status` 的 SKU 列數，含總計）＋ `Export`（回覆明細，八個固定欄位排最後）兩個工作表
+11. **Export 格式** — 凍結 F2、縮放 85%、指定欄寬與隱藏欄；表頭列高 70.5 並自動換行；`RP Type`／`Shop Stock Qty (CM)` 綠色、`Sold Qty (P90D)` 紫色、「無賣」列淡紅、`Item Status`＝`Discontinued`／`RP Type`＝`ND`／`過去90日有無存貨`＝`無存貨` 紅色底（比對忽略大小寫與前後空白，ND 的紅色底蓋過該欄綠色）；對比欄 `兩者皆是` 青綠底、`兩者皆非` 粉紅底；`Shop Monthly Sold Qty (P90D)`、`Safety VS Monthly Sold Qty`、`Turnday`、`Sold Qty (M-2／M-1／CM - MTD)`、`Net Sales (M-2／M-1／CM - MTD／P{N}D)` 套用指定數字格式
+12. **比例與視窗切換** — 欄名隨 Top 比例與數據截止日改變，重跑會自動移除舊判定欄與舊 `Net Sales (PxxD)`，不會兩套並存；已執行後在側欄改設定但未重算時，結果頁以結果檔欄名標示並提示重新執行
+13. **來源工作表** — 多工作表檔案優先讀取 `Export`；沒有 Export 時沿用第一個工作表（例如手動另加樞紐的 HA20 工作檔可直接上傳）
 
 ### 店舖精簡SKU模式（指定店舖）
 
 在店舖精簡SKU模式的基礎上，只輸出一個指定店舖（`Site Code`，例如 HA21）的 SKU 列，同時輸出**件數**與**金額**兩組 Top N% 判定（四欄；件數欄以「（件數）」結尾、金額欄以「（金額）」結尾），再加兩欄「店舖 vs 同 Nature」四象限對比；側欄可自選 **Top 80%（預設）** 或 **Top 70%**，並可選數據截止日決定金額視窗：
 
 1. **Top 比例與數據截止日** — 「🎯 Top 比例」可選 Top 80%（預設）或 Top 70%；「📅 數據截止日（T-1）」預設昨日，系統按截止日自動計出 MTD 日數＋M-1 全月＋M-2 全月（例：11 月 13 日執行 → 截止 11 月 12 日 → 12＋31＋30＝**73 日**，金額欄名 `Net Sales (P73D)`）。切換比例或日期後須按「⚙️ 執行報表轉換與分析」重新計算；結果頁會以實際欄名標示已算出的比例與視窗並提示
-2. **件數口徑** — `是否{店舖}的Top N%（件數）`／`是否同Shop Nature的Top N%（件數）`，按 `Sold Qty (P90D)`；每個 `Adj. SST` 分類內由高至低累計，首次達該分類銷量 N% 即屬 Top N%，同一銷量整組納入或排除
+2. **件數口徑** — `是否{店舖}的Top N%（件數）`／`是否同Shop Nature的Top N%（件數）`，按 `Sold Qty (P90D)`；每個所選母體分類內由高至低累計（`MCH2` 預設／`MC`／`Adj. SST`），首次達該分類銷量 N% 即屬 Top N%，同一銷量整組納入或排除
 3. **金額口徑** — `是否{店舖}的Top N%（金額）`／`是否同Shop Nature的Top N%（金額）`，按 `Net Sales (P{N}D)`＝`Net Sales (M-2)`＋`Net Sales (M-1)`＋`Net Sales (CM - MTD)`（負數視為 0）；同一分類內累計至該分類金額 N% 即屬 Top N%。金額欄緊接 `Sold Qty (P90D)`，方便與件數對照
 4. **店舖 vs 同 Nature 對比** — `{店舖} vs 同Nature Top N%（件數）`／`（金額）`，由同口徑的兩個判定欄合成四象限：`兩者皆是`（兩邊都核心，優先保留）／`僅店舖`（本店賣得動、同 Nature 其他店不普及）／`僅同Nature`（同 Nature 核心但本店未達，可考慮補貨或引入）／`兩者皆非`（兩邊都不是核心，精簡候選）；同口徑比例相同（同為 Top N%），故可直接比較。結果頁另設四象限計數表，件數／金額並排；Excel 與預覽的對比欄以底色標示：`兩者皆是`＝青綠（#99E6CC）、`兩者皆非`＝粉紅（#FFC7CE），其餘兩態不著色
-5. **Adj. SST 分類為母體** — 兩組判定都在每個 `Adj. SST` 分類內獨立累計，分類之間不互相擠佔（例如 Local 與 Private Label 各自有自己的 N% 線）；來源缺 `Adj. SST` 時退回全店／全 Nature 單一分組並列 warning
-6. **輸出範圍** — 只輸出指定店舖的列，其他店舖不列入；其餘清理、`Item_Shop` 解析、刪除 Value 欄、`Brand／SKU` 排序、`Summary`＋`Export` 兩個工作表與三個回覆欄留空規則，與店舖精簡SKU模式完全相同；原模式的「是否該店的Top 80%」不另加
+5. **母體可選（MCH2／MC／Adj. SST）** — 兩組判定都在每個所選母體分類內獨立累計，分類之間不互相擠佔（`MCH2` 如 FACE & NECK、`MC` 如 AMPOULES & SERUM、`Adj. SST` 如 Local 各自有自己的 N% 線）；所選欄缺欄時按 `MCH2` → `MC` → `Adj. SST` 退回並列 warning，三者皆缺則退回全店／全 Nature 單一分組
+6. **輸出範圍** — 只輸出指定店舖的列，其他店舖不列入；其餘清理、`Item_Shop` 解析、刪除 Value 欄、`Brand／SKU` 排序、`Summary`＋`Export` 兩個工作表與三個回覆欄留空規則，與店舖精簡SKU模式完全相同；原模式的「是否該店的Top N%」與「該店 件數 vs 該店 金額」不另加（避免重複）
 7. **欄序** — `Sold Qty (P90D)`／`Net Sales (P{N}D)`（新增）／…／`過去90日有無存貨`／件數店舖 Top／件數同 Nature Top／`{店舖} vs 同Nature Top N%（件數）`／金額店舖 Top／金額同 Nature Top／`{店舖} vs 同Nature Top N%（金額）`／`SCT建議`／`Shop 回覆新的NDRF`／`如果RF的Safety Qty`
 8. **特殊情況** — 缺三個月 Net Sales 欄時只輸出件數兩欄（連同件數對比欄）並列 warning（金額欄不加入）；缺 `Shop Nature` 或該店 Nature 空白 → Nature 與對比欄留空；任一母體合計為 0 → 該組判定全部「否」並列 warning；同 Nature 只有一間店舖 → 列 warning；指定店舖不存在 → 停止並提示
 9. **判定用途** — 件數與金額可交叉比對（HA21 實測 Top 80%：件數 1,205、金額 1,089，只有 808 個重疊）；四象限再細分為兩者皆是 1,052／僅店舖 153／僅同Nature 431／兩者皆非 2,197（件數），金額則為 946／143／555／2,189。結果頁設「件數兩項皆非／件數 Top／金額兩項皆非／金額 Top」四個預覽分頁，下載檔名為 `I14 店舖精簡SKU模式_{店舖}_Top{N}_{PxxD}_指定店舖_{YYYYMMDD_HHMM}.xlsx`
-10. **大檔效能** — 全表只做向量化清理（Site Code／SKU／Shop Nature／Adj. SST／Sold Qty／三個月 Net Sales），`Item_Shop` 逐列解析與排序只套用在指定店舖的列；83.7 萬行模擬轉換約 6.7 秒（另加讀檔時間，8.37 萬行／22.5MB 約 2.5 秒，線性外推 80 萬行約 25 秒）。上傳上限已放寬至 **300MB**（80 萬行以現有欄位密度估算約 200–220MB）
+10. **大檔效能** — 全表只做向量化清理（Site Code／SKU／Shop Nature／MCH2／MC／Sold Qty／三個月 Net Sales），`Item_Shop` 逐列解析與排序只套用在指定店舖的列；83.7 萬行模擬轉換約 6.7 秒（另加讀檔時間，8.37 萬行／22.5MB 約 2.5 秒，線性外推 80 萬行約 25 秒）。上傳上限已放寬至 **300MB**（80 萬行以現有欄位密度估算約 200–220MB）
 11. **底色標示** — 對比欄：`兩者皆是` 青綠底、`兩者皆非` 粉紅底；`Item Status`＝`Discontinued`、`RP Type`＝`ND`、`過去90日有無存貨`＝`無存貨` 三類值以紅色底標示，方便一眼挑出精簡對象；與店舖精簡SKU模式共用同一匯出引擎（該模式一併生效）
 
 ### Safety Stock Review
@@ -321,7 +324,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 |--------|------|
 | 說明 | 首頁導讀（混合模式、Safety Stock Review、Stock Checking 與 Forecast Review）— 列出本次執行參數、講解模式核心邏輯（如調貨段 14 日線／Review 段 Safety 基準／銷量帶與銷量存貨分類／0 Sales 轉 ND），並逐頁說明各工作表內容與建議留意的部分；開啟 Excel 時預設顯示本頁 |
 | RAW | 完整明細資料（含所有原始及計算欄位；Stock Checking 與混合模式另重排欄序，不顯示 Item_Shop 與 Value 金額欄） |
-| Export | 店舖精簡SKU模式 — 店舖×SKU 明細（已刪除含 Value 的欄位；來源欄位＋SKU Desc／Shop Name（由 Item_Shop 解析）＋六個固定欄位：過去90日有無賣過／過去90日有無存貨／是否該店的Top 80%／SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty；依 Brand／SKU 排序，六個固定欄位排最後，凍結 F2）；指定店舖變體只含該店列，不設「是否該店的Top 80%」，另加 `Net Sales (P{N}D)`（緊接 Sold Qty (P90D)，＝三個月 Net Sales 相加、負數視為 0）及四欄判定：`是否{店舖}的Top N%（件數）`／`是否同Shop Nature的Top N%（件數）`／`是否{店舖}的Top N%（金額）`／`是否同Shop Nature的Top N%（金額）`，再加兩欄對比：`{店舖} vs 同Nature Top N%（件數）`／`（金額）`（值為兩者皆是／僅店舖／僅同Nature／兩者皆非；N＝執行時所選的 70 或 80；三個月欄缺失時只加件數兩欄及件數對比） |
+| Export | 店舖精簡SKU模式 — 店舖×SKU 明細（已刪除含 Value 的欄位；來源欄位＋SKU Desc／Shop Name（由 Item_Shop 解析）＋`Net Sales (P{N}D)`（緊接 Sold Qty (P90D)，＝三個月 Net Sales 相加、負數視為 0）＋八個固定欄位：過去90日有無賣過／過去90日有無存貨／是否該店的Top N%（件數）／是否該店的Top N%（金額）／該店 件數 vs 該店 金額 Top N%／SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty；依 Brand／SKU 排序，固定欄位排最後，凍結 F2；N＝執行時所選的 70 或 80，三個月欄缺失時只加件數判定）；指定店舖變體只含該店列，不設原模式的店舖判定，另加 `Net Sales (P{N}D)` 及四欄判定：`是否{店舖}的Top N%（件數）`／`是否同Shop Nature的Top N%（件數）`／`是否{店舖}的Top N%（金額）`／`是否同Shop Nature的Top N%（金額）`，再加兩欄對比：`{店舖} vs 同Nature Top N%（件數）`／`（金額）`（值為兩者皆是／僅店舖／僅同Nature／兩者皆非；三個月欄缺失時只加件數兩欄及件數對比） |
 | Summary | 店舖精簡SKU模式 — `Adj. MCH1` × `Item Status` 的 SKU 列數（含總計；零值留空）；指定店舖變體只計該店 SKU |
 | 店舖問題 SKU | 每間店舖需行動列（問題＋建議方法；Stock Checking／Safety Stock Review／混合模式；Safety Stock Review 與混合模式的建議方法附建議值周轉日數，建議值受最低 3 件保底影響時另加註保底原因；Stock Checking 與 Safety Stock Review 表末另附「銷量帶」「銷量存貨分類」兩欄） |
 | Shop Stock Status | 採購人員 x 品牌之庫存異常交叉統計表 |
