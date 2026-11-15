@@ -114,23 +114,25 @@ def test_turnday_increase_only_never_decreases():
 
 
 def test_turnday_floor3():
+    # 舊品零銷量不保底：Sold 0、非新品 → 所需量 0、建議 0
     df = _df([
         {"SKU": "1", "Shop Nature": "Tourist", "Sold Qty (P90D)": 0,
          "Shop Monthly Sold Qty (P90D)": 6, "Adj. Safety Stock": 0},
     ])
     out = _turn(df, safety_mode="allow_both")
-    assert out["Safety 周轉所需量"].tolist() == [3]
-    assert out["Recommend Safety Stock"].tolist() == [3]
-    assert bool(out["_safety_floor3"].tolist()[0]) is True
+    assert out["Safety 周轉所需量"].tolist() == [0]
+    assert out["Recommend Safety Stock"].tolist() == [0]
+    assert bool(out["_safety_floor3"].tolist()[0]) is False
 
 
 def test_turnday_negative_p90d_as_zero():
+    # 負數按 0 計：舊品零銷量不保底 → 0
     df = _df([
         {"SKU": "1", "Shop Nature": "Tourist", "Sold Qty (P90D)": -50, "Adj. Safety Stock": 0},
     ])
     out = _turn(df, safety_mode="allow_both")
-    assert out["Safety 周轉所需量"].tolist() == [3]
-    assert out["Recommend Safety Stock"].tolist() == [3]
+    assert out["Safety 周轉所需量"].tolist() == [0]
+    assert out["Recommend Safety Stock"].tolist() == [0]
 
 
 def test_turnday_nd_override_allow_both():
@@ -238,8 +240,9 @@ def test_transform_combined_backward_compat_and_clamp_warning():
 
 
 def test_turnday_shop_issues_floor_note():
+    # 小銷量觸發保底：Sold 9 → 所需 1，保底至 3，建議方法加註保底原因
     df = _df([
-        {"SKU": "1", "Site Code": "S01", "Shop Nature": "Tourist", "Sold Qty (P90D)": 0,
+        {"SKU": "1", "Site Code": "S01", "Shop Nature": "Tourist", "Sold Qty (P90D)": 9,
          "Shop Monthly Sold Qty (P90D)": 6, "Adj. Safety Stock": 0},
     ])
     _, raw, _, _ = transform_combined(

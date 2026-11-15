@@ -274,6 +274,39 @@ def test_rebalance_unidirectional_keeps_direction_framework():
     assert stats_bi["sales_need_rows"] == 1
 
 
+def test_rebalance_ignores_own_nature_excess():
+    """高銷缺貨 Mix 店：若只有同為 Mix 的積壓店有超額，不得因自身 Nature 超額而標示需要調貨
+    （分配層「同 Nature 除外」守衛會全數攔截，造成實際調入 0 的假陽性）。"""
+    rows = [
+        {"SKU": 530, "Site Code": "MH", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 400.0, "Shop Stock Qty (CM)": 0.0,
+         "Shop Monthly Sold Qty (P90D)": 135.56, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 530, "Site Code": "MX1", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 100.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
+        {"SKU": 530, "Site Code": "MX2", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 30.0, "Shop Stock Qty (CM)": 50.0,
+         "Shop Monthly Sold Qty (P90D)": 10.17},
+        {"SKU": 530, "Site Code": "MX3", "Shop Nature": "Mix",
+         "Sold Qty (P90D)": 30.0, "Shop Stock Qty (CM)": 50.0,
+         "Shop Monthly Sold Qty (P90D)": 10.17},
+        {"SKU": 530, "Site Code": "N531", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 0.0, "Shop Stock Qty (CM)": 0.0,
+         "Shop Monthly Sold Qty (P90D)": 0.0},
+    ]
+    # Mix 池健康（超額 176 件）但全部同 Nature；其他 Nature 無供應 → 不應標示需要調貨
+    raw_bi, _, _, _, _, stats_bi, _ = transform_hybrid(
+        _df(rows), sales_rebalance=True, bidirectional=True)
+    assert raw_bi[raw_bi["Site Code"] == "MH"].iloc[0]["需要調貨"] != "是"
+    assert stats_bi["sales_need_rows"] == 0
+    # rp 維度允許同 Nature 店間再平衡 → 同一情境可真正調入
+    raw_rp, _, _, _, _, stats_rp, _ = transform_hybrid(
+        _df(rows), sales_rebalance=True, bidirectional=True, dimension="rp")
+    mh = raw_rp[raw_rp["Site Code"] == "MH"].iloc[0]
+    assert mh["需要調貨"] == "是" and int(mh["實際調入量"]) > 0
+    assert stats_rp["sales_need_rows"] == 1
+
+
 def test_rebalance_nd_never_demand():
     rows = [
         {"SKU": 520, "Site Code": "TD", "Shop Nature": "Tourist", "RP Type": "ND",

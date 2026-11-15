@@ -252,8 +252,9 @@ def test_nd_rows_can_return():
         r["RP Type"] = "ND" if r["Site Code"] == "N01" else "RF"
     raw, *_rest, stats, _warn = transform_hybrid(_df(rows), return_to_d001=True)
     assert str(_get(raw, "N01", "RP Type")) == "ND"
-    assert int(_get(raw, "N01", _HYBRID_RETURN_D001_COLUMN)) == 11
-    assert stats["return_units"] == 22
+    # ND 死貨不保留舊 Safety（保留線 0）：可退 30 − 已轉出 9 = 21
+    assert int(_get(raw, "N01", _HYBRID_RETURN_D001_COLUMN)) == 21
+    assert stats["return_units"] == 32
 
 
 def test_return_independent_of_rp_column_and_dimension():

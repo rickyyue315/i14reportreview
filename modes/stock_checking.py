@@ -106,10 +106,13 @@ def _write_stock_checking_guide_sheet(ws, stats):
     logic = [
         f"觸發條件（SKU 級，同時符合才標示）：該 SKU 的「Tourist 加總 TurnDay」"
         f"（各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5）< {td} 日，"
-        f"且 D001 Net Stock Qty (CM) < {d001} 件，且 Mix／Non Tourist 至少一個 Nature 的加總 TurnDay ≥ {td} 日（有貨可調）。",
+        f"且 D001 Net Stock Qty (CM) < {d001} 件，且 Mix／Non Tourist 至少一個 Nature 的加總 TurnDay ≥ {td} 日（有貨可調）。"
+        "調入需求方只限 RF 店舖；RP Type＝ND 店舖已停補貨，即使缺貨亦不標示需要調貨（仍可作來源）。",
         "調入需求量 = ceil(P90D ÷ 90 × 14) − Shop Stock Qty (CM)（補到 14 日周轉）；"
         "只為已標示 SKU 且個別 Tourist 店需求 > 0 的列計算。",
-        "可轉出貨量（來源店）= max(0, Shop Stock Qty (CM) − P90D ÷ 90 × 14)；「無銷售但有存貨」全數可釋放；"
+        "可轉出貨量（來源店）= max(0, Shop Stock Qty (CM) − P90D ÷ 90 × 14)；"
+        "「無銷售但有存貨」須符合 90 日真坐貨（M-2／M-1／CM 皆無銷售、LM／LLM 有貨、非 90 日內新品）才全數可釋放，"
+        "否則按 0 計（避免把剛調入／新品的貨當成死貨轉走）；"
         "RF 與 ND 店皆可作來源；該 Nature 的 SKU 級加總 TurnDay < 門檻時視為無貨可調（可轉出量歸零）。",
         "分配：按 SKU 彙總需求，Non Tourist 店優先轉出、不足由 Mix 店補足；需求量大→小依序分配；"
         "來源店與需求店同為一店（Site Code 相同）一律排除，防止自我調貨。",
@@ -219,8 +222,10 @@ def transform_stock_checking(
       加總 TurnDay ≥ 門檻的 SKU 一律無須調貨；Mix 與 Non Tourist 加總 TurnDay 皆低於門檻時視為無貨可調，不標示。
     - 需求端：已標示 SKU 的 Tourist 店列，補到 14 日周轉的需求 > 0
       → 標示「需要調貨」，調入需求量 = ceil(P90D / 90 × 14) − Shop Stock Qty (CM)；RAW 只為已標示 SKU 計算調貨數量。
+      調入需求方只限 RF 店舖；RP Type＝ND 店舖已停補貨，即使缺貨亦不標示需要調貨（仍可作來源）。
     - 供應端：Mix / Non Tourist 店列的可轉出貨量（14 日超額標準，與 Stock Impact 模式一致）：
-      可轉出 = max(0, Shop Stock Qty (CM) − P90D / 90 × 14)；「無銷售但有存貨」全數可釋放。
+      可轉出 = max(0, Shop Stock Qty (CM) − P90D / 90 × 14)；「無銷售但有存貨」須符合 90 日真坐貨
+      （M-2／M-1／CM 皆無銷售、LM／LLM 有貨、非 90 日內新品）才全數可釋放，否則按 0 計。
       該 Nature 的 SKU 級加總 TurnDay < 門檻時，該 Nature 視為無貨可調（可轉出量歸零）。RP Type 為 RF 與 ND 皆可作為來源。
     - 分配：按 SKU 彙總需求，Non Tourist 店優先，不足再由 Mix 店補足；需求列按需求量大→小依序分配；
       來源店與需求店同為一店（Site Code 相同）時一律排除，防止重複列資料異常造成自我調貨。
@@ -272,7 +277,51 @@ def transform_stock_checking(
     is_tourist = (nature == "Tourist").to_numpy()
     cm_stock_val = cm_stock.to_numpy(dtype=float)
     sold_val = sold_p90d.to_numpy(dtype=float)
+    # RP Type＝ND 店舖不作調入需求方（仍可作供應方）；缺欄時全部按可補貨處理。
+    # 空白或其他值沿用既有行為（視為可補貨），另列 warning 提醒核對，避免靜默改變需求方。
+    if "RP Type" in df.columns:
+        _rp_sc = df["RP Type"].fillna("").astype(str).str.strip().str.upper().to_numpy(dtype=object)
+        is_rf = (_rp_sc != "ND")
+        _n_rp_blank = int((_rp_sc == "").sum())
+        if _n_rp_blank:
+            warnings.append(
+                f"有 {_n_rp_blank} 列「RP Type」空白，已按可補貨（非 ND）處理並可作調入需求方；"
+                "請確認該等店舖的補貨設定是否正確。"
+            )
+    else:
+        is_rf = np.ones(len(df), dtype=bool)
     no_sale_has_stock = (sold_val <= 0) & (cm_stock_val > 0)
+    # 90 日真坐貨（全數可轉出的前提；與 Safety Stock x NetStock Review 同一口徑）：
+    # 四個銷售期皆 ≤ 0；Shop Stock Qty (LM)／(LLM) 欄存在時另須 > 0；
+    # Launch Date 欄存在時排除 90 天內新品；欄不存在時視為準則成立（舊檔行為不變）。
+    _avail_sc = set(df.columns)
+    _true_zero = np.ones(len(df), dtype=bool)
+    for _zc in ("Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)"):
+        _zc_col = _resolve_column_name(_zc, _avail_sc)
+        if _zc_col is not None:
+            _true_zero &= _safe_numeric(df[_zc_col]).fillna(0.0).to_numpy(dtype=float) <= 0
+    _lm_sc = _resolve_column_name("Shop Stock Qty (LM)", _avail_sc)
+    _llm_sc = _resolve_column_name("Shop Stock Qty (LLM)", _avail_sc)
+    if _lm_sc is not None:
+        _true_zero &= _safe_numeric(df[_lm_sc]).fillna(0.0).to_numpy(dtype=float) > 0
+    if _llm_sc is not None:
+        _true_zero &= _safe_numeric(df[_llm_sc]).fillna(0.0).to_numpy(dtype=float) > 0
+    _launch_sc = _resolve_column_name("Launch Date", _avail_sc)
+    if _launch_sc is not None:
+        try:
+            from modes.common import _parse_launch_dates as _parse_ld, _normalize_ref_date as _norm_rd
+            _ld = _parse_ld(df[_launch_sc].fillna("").astype(str).str.strip())
+            _ref = _norm_rd(None)
+            _is_new_sc = _ld.notna() & (_ld >= pd.Timestamp(_ref) - pd.Timedelta(days=90))
+            _true_zero &= ~_is_new_sc.to_numpy(dtype=bool)
+        except Exception:
+            pass
+    _zero_excluded_sc = no_sale_has_stock & ~_true_zero
+    if int(_zero_excluded_sc.sum()):
+        warnings.append(
+            f"有 {int(_zero_excluded_sc.sum())} 列 0 Sales 且有庫存不符合「90 日有貨／非新品」準則，"
+            "不視為真坐貨：不適用全數可轉出，可轉出貨量按 0 計算。"
+        )
     ideal_14d = sold_val / 90.0 * 14
 
     # ── SKU 級各 Nature 加總 TurnDay（與 Summary 同一準則：加總庫存 ÷ 加總月銷 × 30.5）──
@@ -307,9 +356,11 @@ def transform_stock_checking(
         agg_stock = s_stock.groupby(sku_key).transform("sum")
         agg_msold = s_msold.groupby(sku_key).transform("sum")
         with np.errstate(divide="ignore", invalid="ignore"):
-            return np.where(agg_msold.to_numpy() > 0,
-                            agg_stock.to_numpy() / agg_msold.to_numpy() * 30.5,
-                            np.inf)
+            _st = agg_stock.to_numpy(dtype=float)
+            _ms = agg_msold.to_numpy(dtype=float)
+            # 月銷 > 0 → 正常周轉；月銷 0 但有庫存 → inf（有貨無銷售，可釋放）；
+            # 月銷 0 且無庫存（該 Nature 無店或全無貨）→ 0（無貨可調，不令門檻空過）
+            return np.where(_ms > 0, _st / _ms * 30.5, np.where(_st > 0, np.inf, 0.0))
 
     sku_tourist_turnday = _sku_nature_turnday(is_tourist)
     sku_mix_turnday = _sku_nature_turnday(is_mix)
@@ -318,10 +369,16 @@ def transform_stock_checking(
         df[f"{label} 加總 TurnDay"] = np.round(np.where(np.isfinite(td), td, np.nan), 2)
 
     # 供應門檻：Nature 加總 TurnDay < 門檻 → 該 Nature 理論上無貨可調，可轉出量歸零
-    mix_pool_ok = sku_mix_turnday >= turnday_threshold   # inf（無銷售）→ 有存貨可釋放
+    # 真坐貨全數可轉出；0 零售但非真坐貨（剛調入／派貨、新品）按 0 計
+    _per_row_excess_sc = np.where(
+        no_sale_has_stock & _true_zero,
+        cm_stock_val,
+        np.where(_zero_excluded_sc, 0.0, np.maximum(0, cm_stock_val - ideal_14d)),
+    )
+    mix_pool_ok = sku_mix_turnday >= turnday_threshold   # inf（有貨無銷售）→ 有存貨可釋放；0（無店／無貨）→ 無貨可調
     nt_pool_ok = sku_nt_turnday >= turnday_threshold
-    mix_excess = np.where(mix_pool_ok, np.where(is_mix, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0), 0)
-    nt_excess = np.where(nt_pool_ok, np.where(is_nt, np.where(no_sale_has_stock, cm_stock_val, np.maximum(0, cm_stock_val - ideal_14d)), 0), 0)
+    mix_excess = np.where(mix_pool_ok, np.where(is_mix, _per_row_excess_sc, 0), 0)
+    nt_excess = np.where(nt_pool_ok, np.where(is_nt, _per_row_excess_sc, 0), 0)
     df["可轉出貨量 (Mix)"] = mix_excess.astype(int)
     df["可轉出貨量 (Non Tourist)"] = nt_excess.astype(int)
 
@@ -330,6 +387,7 @@ def transform_stock_checking(
     ttd_np = pd.Series(sku_tourist_turnday, index=df.index).to_numpy(dtype=float)
     need_mask = (
         is_tourist
+        & is_rf
         & (ttd_np < turnday_threshold)   # Tourist 加總 TurnDay ≥ 門檻（含月銷 0 → inf、NaN）→ 無須調貨
         & (d001_np < d001_threshold)
         & (demand > 0)

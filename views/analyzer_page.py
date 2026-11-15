@@ -323,10 +323,10 @@ MODE_DESCRIPTIONS = {
     "OOS Review": "篩選缺貨與潛在缺貨品項，偵測安全庫存不足。",
     "Carry SKU Review": "統計各店舖實際經營品項數量與結構。",
     "SKU 精簡 Review": "針對不可補貨品項，建議退倉安排。",
-    "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去90日有無存貨（LLM／LM／CM 任一 > 0＝有存貨，LLM 欄自 2026-10-26 起來源報表提供），可自選 Top 80%（預設）或 Top 70%，同時輸出件數與金額兩組判定（欄名末端註明「（件數）」／「（金額）」）及一欄「該店 件數 vs 該店 金額 Top N%」對比（值為兩者皆是／僅店舖件數／僅店舖金額／兩者皆非）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D，負數視為 0），兩者均以所選母體（MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類）為分組，在每個分類內由高至低累計，首次達該店該分類總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔；不設同 Nature 判定；所選母體缺欄時按 MCH2 → MC → Adj. SST 退回並列 warning）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數，並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
-    "店舖精簡SKU模式(指定店舖)": "只列指定店舖（如 HA21）的 SKU，可自選 Top 80%（預設）或 Top 70%，同時輸出件數與金額兩組判定（四欄，欄名末端註明「（件數）」／「（金額）」）及兩欄「{店舖} vs 同Nature Top N%」對比（值為兩者皆是／僅店舖／僅同Nature／兩者皆非）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D，負數視為 0），各自判定「是否該店的Top N%」及「是否同Shop Nature的Top N%」——均按所選母體（MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類）分組，在每個分類內由高至低累計，首次達該分類母體（該店／同 Nature 全部店舖）總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔；所選母體缺欄時按 MCH2 → MC → Adj. SST 退回並列 warning）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數。其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則與店舖精簡SKU模式相同。",
+    "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去90日有無存貨（LLM／LM／CM 任一 > 0＝有存貨，LLM 欄自 2026-10-26 起來源報表提供），可自選 Top 80%（預設）或 Top 70%，同時輸出件數與金額兩組判定（欄名末端註明「（件數）」／「（金額）」）及一欄「該店 件數 vs 該店 金額 Top N%」對比（值為兩者皆是／僅店舖件數／僅店舖金額／兩者皆非）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D；三個月先按原值相加，容許退貨抵銷同品項其他月份銷貨，總和下限為 0），兩者均以所選母體（MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類）為分組，在每個分類內由高至低累計，首次達該店該分類總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔；若達標點落在僅 1 件的長尾且整組納入會令分類 100% 入選，則只保留高於 1 件者，避免精簡失效；不設同 Nature 判定；所選母體缺欄時按 MCH2 → MC → Adj. SST 退回並列 warning）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數，並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
+    "店舖精簡SKU模式(指定店舖)": "只列指定店舖（如 HA21）的 SKU，可自選 Top 80%（預設）或 Top 70%，同時輸出件數與金額兩組判定（四欄，欄名末端註明「（件數）」／「（金額）」）及兩欄「{店舖} vs 同Nature Top N%」對比（值為兩者皆是／僅店舖／僅同Nature／兩者皆非）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D；三個月先按原值相加，容許退貨抵銷同品項其他月份銷貨，總和下限為 0），各自判定「是否該店的Top N%」及「是否同Shop Nature的Top N%」——均按所選母體（MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類）分組，在每個分類內由高至低累計，首次達該分類母體（該店／同 Nature 全部店舖）總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔；若達標點落在僅 1 件的長尾且整組納入會令分類 100% 入選，則只保留高於 1 件者，避免精簡失效；所選母體缺欄時按 MCH2 → MC → Adj. SST 退回並列 warning）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數。其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則與店舖精簡SKU模式相同。",
     "NDRF 月份對比": "對比兩個月份各店舖經營與不可補貨品項變化。",
-    "Safety Stock Review": "全面審查安全庫存設定，計算平衡建議值。",
+    "Safety Stock Review": "全面審查安全庫存設定，計算平衡建議值（最低 3 件保底只適用於有銷量或 90 天內上市的新品；舊品零銷量維持 0，避免為滯銷品項設定安全庫存）。",
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
     "Stock Impact Analysis (簡化)": "快速檢視各品項三期存貨與銷售趨勢。",
     "Past 90 Days 0 Sales": "篩選過去 90 天零銷售但仍有存貨的記錄。",
@@ -334,9 +334,9 @@ MODE_DESCRIPTIONS = {
     "P90D 0 Sales Review(個別店舖)": "供個別店舖查閱自身 P90D 0 Sales 情況（Shop Stock Qty (LM) 及 (CM) 須大於 0；LLM 欄存在時（2026-10-26 起來源報表）另須 (LLM) 大於 0——三個月快照皆有貨才算 90 日真坐貨），分類固定以 MAKE UP 分類統計；輸出各店全部 SKU 明細（ALL SKU，包括 MAKE UP 與 Non-MAKE UP，不設列數上限與店舖回覆欄，按庫存由大至小排序），以及 Shop Nature 與 OM 分佈，另按 SKU 統計出現店舖數、店舖總數（分母）及佔比，並按 Buyer 統計出現店舖數。",
     "P90D 0 Sales Review(轉貨模式)": "先指定轉出店舖（0 Sales 且有庫存），其 0 Sales 有庫存列全數轉出，分配予同 SKU 有銷售記錄的店舖（不分 OM；預設按件數自動集中——3 件或以下集中 1 間、4–6 件 2 間，10–30 件最多 5 間、之後每 30 件加 1 間，0302 - MINIATURE 每間 4 件，減少每店只收 1 件與出貨分箱，可改為不限／固定 1–2 間／3–4 間；轉出總量力求全數接收）。",
     "ND SKU with Stock Review(轉貨模式)": "先指定轉出店舖（RP Type＝ND 且有庫存），其 ND 有庫存列全數轉出，分配予同 SKU 有銷售記錄（Sold Qty (P90D) > 0）的 RF 店舖（不分 OM；預設按件數自動集中——3 件或以下集中 1 間、4–6 件 2 間，10–30 件最多 5 間、之後每 30 件加 1 間，0302 - MINIATURE 每間 4 件，減少每店只收 1 件與出貨分箱，可改為不限／固定 1–2 間／3–4 間；轉出總量力求全數接收）。",
-    "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足。",
+    "Stock Checking": "檢查遊客區缺貨，並由其他區域調貨補足（ND 店舖不作調入需求方，仍可作來源）；0 銷售有庫存須符合 90 日真坐貨（三個月快照皆無銷售、LM／LLM 有貨、非 90 天內新品）才全數可轉出。",
     "Safety Stock x NetStock Review": "以調貨事件審查安全庫存設定是否合理。",
-    "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數。",
+    "Forecast Review": "按品項計算建議訂貨量，並檢視店舖覆蓋日數（店舖覆蓋與缺貨／風險店數只計 RF 店舖，ND 店已停補貨不納入）。",
     "Safety Stock 月度變化分析": "追蹤店舖每月 Safety Stock 原始值變化對生意的影響（須含 MONTH／YEAR）。",
     "RAW 明細轉化": "純粹把來源檔轉化為 RAW 明細，保留全部欄位並由 Item_Shop 解析 SKU Desc 與 Shop Name，不作 OOS／Overstock／P90D 0 Sales 等統計或篩選。",
     "RAW 明細轉化 (不含 Value)": "與 RAW 明細轉化相同，但刪除所有欄名含「Value」的欄位（金額欄），輸出不含 Value 的 RAW 明細。",
@@ -925,9 +925,9 @@ if uploaded_file is not None:
 
         with st.expander("⚙️ 自定義 Shop Nature Rate (進階設定)", expanded=False):
             st.info(
-                "**倍率如何影響建議值**（月銷倍率基準：建議 Safety Stock = max(Y, Z 若 Z ≤ X，否則 X)；其中 X＝Overstock Cap（庫存上限）、Y＝OOS Floor（缺貨底線）、Z＝現有 Safety 設定（Safety Stock (現時)）；周轉天數基準：建議值 = Safety 周轉所需量，計算結果最低 3 件——最低 3 件為保障自動補貨的保底，受保底影響的建議會在「店舖問題 SKU」建議方法加註；建議值周轉日數見 RAW 的「Recommend Safety Stock Turnday」，店舖問題建議方法亦會顯示）\n\n"
+                "**倍率如何影響建議值**（月銷倍率基準：建議 Safety Stock = max(Y, Z 若 Z ≤ X，否則 X)；其中 X＝Overstock Cap（庫存上限）、Y＝OOS Floor（缺貨底線）、Z＝現有 Safety 設定（Safety Stock (現時)）；周轉天數基準：建議值 = Safety 周轉所需量，有銷量或 90 天內上市的新品時最低 3 件（舊品零銷量維持 0，不為滯銷品項設安全庫存）——最低 3 件為保障自動補貨的保底，受保底影響的建議會在「店舖問題 SKU」建議方法加註；建議值周轉日數見 RAW 的「Recommend Safety Stock Turnday」，店舖問題建議方法亦會顯示）\n\n"
                 "- **X（Overstock Cap，庫存上限）**：X = floor(P90D 月均銷售 × Rate)，上限不超過現有 Safety 設定；代表按銷量判斷合理的庫存上限\n"
-                "- **Y（OOS Floor，缺貨底線）**：Y = ceil(月銷預估 × Rate)，最低 3 件；代表按銷量判斷不可低於的缺貨保護線\n"
+                "- **Y（OOS Floor，缺貨底線）**：Y = ceil(月銷預估 × Rate)，有銷量或 90 天內上市的新品時最低 3 件，舊品零銷量維持 0；代表按銷量判斷不可低於的缺貨保護線\n"
                 "- **Z（現有 Safety 設定）**：即來源檔案的 Adj. Safety Stock（報表顯示為 Safety Stock (現時)）\n"
                 "- 公式解讀：Z 若在上限 X 之內，建議值取 Y 與 Z 較大者（只補不足、不壓上限內設定）；Z 若超出上限 X，建議值取 Y 與 X 較大者（壓回上限、同時守住底線）\n\n"
                 "- **Overstock Rate（庫存上限 X 的倍率）**：X = floor(P90D 月均銷售 × Rate)。Rate 30% ≈ 保留 9 日銷售量（30% × 30 日）；數值越低，建議上限越低，越積極壓縮庫存\n"
@@ -1279,7 +1279,7 @@ if uploaded_file is not None:
 
             with tab3:
                 st.markdown("#### 每間店舖需行動 SKU（問題＋建議方法）")
-                st.markdown("只收錄需行動列（Safety 需增加／減少、ND 退場），按店舖分組、店內按嚴重度排序；建議方法附建議值周轉日數，受 OOS 底線最低 3 件保底影響時另加註保底原因：")
+                st.markdown("只收錄需行動列（Safety 需增加／減少、ND 退場），按店舖分組、店內按嚴重度排序；建議方法附建議值周轉日數，受最低 3 件保底影響時另加註保底原因（保底只適用於有銷量或 90 天內上市的新品，舊品零銷量維持 0）：")
                 try:
                     _ss_issues = _build_combined_shop_issues(raw_df)
                 except Exception:
@@ -1504,6 +1504,8 @@ if uploaded_file is not None:
                  "中銷／低銷／零銷列退回超出 Safety 的庫存（庫存 − Safety）；"
                  "高銷列原則上不退，僅當 Safety > 0 且庫存 ≥ 3×Safety（高於 Safety 200%）時退至 2×Safety。"
                  "調貨優先：先扣已轉出量，需要調貨列一律不退。"
+                 "只有 Supply Source＝Warehouse 的列納入退倉（Vendor 直送不經 D001，空白或其他值同告排除）；"
+                 "RP Type＝ND 列不保留舊 Safety，庫存全數可退。"
                  "本欄只作退倉建議，不影響調貨分配、Safety Review 與建議調整量。"
         )
         hy_ref_date = st.date_input(
@@ -1558,6 +1560,8 @@ if uploaded_file is not None:
                 "**中銷／低銷／零銷**列退回超出 Safety 的庫存（庫存 − Safety）；"
                 "**高銷**列原則上不退，僅當 Safety > 0 且**庫存 ≥ 3×Safety（高於 Safety 200%）**時退至 2×Safety。"
                 "調貨優先：建議退D001 量＝可退D001 貨量 − 轉出量（不限OM），需要調貨列一律不退。"
+                "只納入 Supply Source＝Warehouse 的列（Vendor 直送不經 D001，空白或其他值同告排除）；"
+                "RP Type＝ND 列不保留舊 Safety，庫存全數可退。"
                 "本欄只作退倉建議，不影響調貨分配、Safety Review 與建議調整量；"
                 "OM 限制與分類維度均不影響本欄。"
             )
@@ -3227,15 +3231,15 @@ if uploaded_file is not None:
                 with _rate_cols[0]:
                     rate_tourist = st.slider("Tourist Rate (%)", 0, 100, _tourist_default, 1,
                         key="oo_rate_tourist",
-                        help="Tourist 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
+                        help="Tourist 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3（OOS Review 只為有銷量或 90 天內上市的新品保底，舊品零銷量維持 0）")
                 with _rate_cols[1]:
                     rate_mix = st.slider("Mix Rate (%)", 0, 100, _mix_default, 1,
                         key="oo_rate_mix",
-                        help="Mix 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
+                        help="Mix 類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3（OOS Review 只為有銷量或 90 天內上市的新品保底，舊品零銷量維持 0）")
                 with _rate_cols[2]:
                     rate_non_tourist = st.slider("Non Tourist Rate (%)", 0, 100, _non_tourist_default, 1,
                         key="oo_rate_non_tourist",
-                        help="Non Tourist 及其他類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3")
+                        help="Non Tourist 及其他類型：安全庫存建議 = floor(Monthly Sold × Rate)，最低 3（OOS Review 只為有銷量或 90 天內上市的新品保底，舊品零銷量維持 0）")
                 st.caption(f"目前設定 → Tourist: **{rate_tourist}%** | Mix: **{rate_mix}%** | Non Tourist: **{rate_non_tourist}%**")
 
             rates = {
@@ -5374,7 +5378,7 @@ if uploaded_file is not None:
                 f"首次達該分類 {_pct_used}% 即屬 Top {_pct_used}%；同一銷量／金額的 SKU 整組納入或整組排除，"
                 "分類之間不互相擠佔（故實際覆蓋率可能略高於門檻）。"
                 + (
-                    f"金額口徑＝MTD＋M-1＋M-2 三個月 Net Sales 相加（負數視為 0），"
+                    f"金額口徑＝MTD＋M-1＋M-2 三個月 Net Sales 相加（可跨月抵銷退貨，總和下限為 0），"
                     f"欄名 {_window_used} 代表實際覆蓋日數。"
                     if _value_ok else ""
                 )
@@ -5573,7 +5577,7 @@ if uploaded_file is not None:
                 f"件數與金額都以 {_group_used} 分類為母體：每個分類內由高至低累計，首次達該分類 {_pct_used}% 即屬 Top {_pct_used}%；"
                 "同一銷量／金額的 SKU 整組納入或整組排除，分類之間不互相擠佔（故實際覆蓋率可能略高於門檻）。"
                 + (
-                    f"金額口徑＝MTD＋M-1＋M-2 三個月 Net Sales 相加（負數視為 0），"
+                    f"金額口徑＝MTD＋M-1＋M-2 三個月 Net Sales 相加（可跨月抵銷退貨，總和下限為 0），"
                     f"欄名 {_window_used} 代表實際覆蓋日數；與真正的滾動 90 日略有差異。"
                     if _value_ok else ""
                 )

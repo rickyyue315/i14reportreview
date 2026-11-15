@@ -737,6 +737,36 @@ def test_receiver_cap_off_keeps_full_allocation():
     assert int(plan.iloc[0]["接收店 14 日需求 (件)"]) == 14
 
 
+def test_receiver_cap_excludes_full_receiver_before_concentrating():
+    # A01 銷量最高但已滿倉（14 日需求 0），集中選店不可只挑中它；
+    # 應改為選尚有空間的 B01，令 6 件中的 1 件成功分配。
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=6),
+        _row("A01", sku=1, sales=90, stock=20),
+        _row("B01", sku=1, sales=2, stock=0),
+    ])
+    plan, _, _, sku_df, _, stats, _ = transform_p90d_transfer(
+        df, ["S01"], receiver_limit="auto", receiver_cap=True)
+    assert _lines(plan) == {("S01", "1", "B01"): 1}
+    assert stats["alloc_qty"] == 1 and stats["unalloc_qty"] == 5
+    body = sku_df[sku_df["Brand"] != "總計"].iloc[0]
+    assert body["狀態"] == "接收店 14 日需求已滿（保留原店）"
+
+
+def test_receiver_cap_all_full_keeps_capped_status():
+    # 全部候選店皆滿倉：仍按原集中規則選店，狀態應為「14 日需求已滿」而非「無接收店舖」
+    df = _df([
+        _row("S01", sku=1, sales=0, stock=6),
+        _row("A01", sku=1, sales=90, stock=20),
+        _row("B01", sku=1, sales=80, stock=20),
+    ])
+    _, _, _, sku_df, _, stats, _ = transform_p90d_transfer(
+        df, ["S01"], receiver_limit="auto", receiver_cap=True)
+    assert stats["alloc_qty"] == 0 and stats["unalloc_qty"] == 6
+    body = sku_df[sku_df["Brand"] != "總計"].iloc[0]
+    assert body["狀態"] == "接收店 14 日需求已滿（保留原店）"
+
+
 def test_allocate_with_caps_invariants():
     from modes.transfer_p90d import _allocate_with_caps
     alloc, unalloc = _allocate_with_caps(60, [1.0, 100.0], [28, 2])

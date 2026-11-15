@@ -109,9 +109,12 @@ def test_on_keeps_genuine_shortage():
 
 
 def test_on_removes_empty_pool_vacuous_pass():
+    # 空 Nature 池不再空過（加總 TurnDay 無店／無貨時為 0，不達門檻）：
+    # EMPTY_POOL 的 Mix 池為空 → mix_ok 為 False，NT 池 TurnDay 5 < 14 → nt_ok 為 False，
+    # 故即使不開啟閘門亦不標示需要調貨（假陽性已於池層消除）；開啟閘門維持不標示。
     off, *_ = transform_hybrid(_df(_EMPTY_POOL))
     on, *_ = transform_hybrid(_df(_EMPTY_POOL), real_supply_gate=True)
-    assert _get(off, "T1", "需要調貨") == "是"
+    assert _get(off, "T1", "需要調貨") != "是"
     assert _get(on, "T1", "需要調貨") != "是"
 
 
@@ -135,7 +138,9 @@ def test_rp_dimension_unchanged_by_switch():
 
 
 def test_bidirectional_removes_false_positive():
-    """Mix 池整體缺貨（13.3 日 < 14，池級歸零）且 NT 池零超額 → 無真實供給。"""
+    """Mix 池整體缺貨（13.3 日 < 14，池級歸零）且 NT 池零超額 → 無真實供給。
+    空 Tourist 池不再空過（為 0，不達門檻），故即使不開啟閘門亦不標示；
+    開啟閘門維持不標示。"""
     rows = [
         _row("SKU-B", "Mix", "M1", "OM1", 40, 180, 10),
         _row("SKU-B", "Mix", "M2", "OM1", 0, 90, 10),
@@ -143,6 +148,22 @@ def test_bidirectional_removes_false_positive():
     ]
     off, *_ = transform_hybrid(_df(rows), bidirectional=True)
     on, *_ = transform_hybrid(_df(rows), bidirectional=True, real_supply_gate=True)
+    assert _get(off, "M2", "需要調貨") != "是"
+    assert _get(on, "M2", "需要調貨") != "是"
+
+
+def test_gate_excludes_own_nature_excess_with_pool_nd_exclude():
+    """Mix 池的 ND 死庫存（100 件）在供給側計入池門檻，令 Mix 池看似健康；
+    但同一 Mix 需求店的自身 Nature 超額不可作供給（分配層同 Nature 守衛會攔截），
+    其他 Nature 又零超額 → 開啟閘門後不應再標示需要調貨。"""
+    rows = [
+        _row("SKU-G", "Mix", "M1", "OM1", 100, 0, 10, rp="ND"),
+        _row("SKU-G", "Mix", "M2", "OM1", 0, 90, 10),
+        _row("SKU-G", "Non Tourist", "N1", "OM1", 14, 90, 10),
+    ]
+    off, *_ = transform_hybrid(_df(rows), bidirectional=True, pool_nd_exclude=True)
+    on, *_ = transform_hybrid(_df(rows), bidirectional=True, pool_nd_exclude=True,
+                              real_supply_gate=True)
     assert _get(off, "M2", "需要調貨") == "是"
     assert int(_get(off, "M2", "實際調入量")) == 0
     assert _get(on, "M2", "需要調貨") != "是"

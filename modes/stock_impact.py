@@ -311,6 +311,28 @@ def _classify_d001_status(d001_cm: float) -> str:
 
 
 
+def _resolve_period_stock_column(df: pd.DataFrame, period: str) -> str | None:
+    """回傳該期店舖庫存應採用的實際欄名（缺欄時以 LLM／LM 代理）。
+
+    - ``M-2``：``Shop Stock Qty (M-2)``，缺欄時退用 ``Shop Stock Qty (LLM)``
+    - ``M-1``：``Shop Stock Qty (M-1)``，缺欄時退用 ``Shop Stock Qty (LM)``
+    - ``CM``：``Shop Stock Qty (CM)``
+
+    標準 I14 By SKUxShop 報表以 LLM／LM 表示上上月／上月快照，故缺 M-2／M-1 欄時
+    必須以代理欄取數；兩者皆缺時回傳 ``None``（呼叫端應視為該期無資料，不應當作 0 庫存）。
+    """
+    if period == "M-2":
+        candidates = ("Shop Stock Qty (M-2)", "Shop Stock Qty (LLM)")
+    elif period == "M-1":
+        candidates = ("Shop Stock Qty (M-1)", "Shop Stock Qty (LM)")
+    else:
+        return "Shop Stock Qty (CM)" if "Shop Stock Qty (CM)" in df.columns else None
+    for cand in candidates:
+        if cand in df.columns:
+            return cand
+    return None
+
+
 def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | None = None) -> pd.DataFrame:
     """by-SKU 缺貨 Review 表（Tourist + Mix + Non Tourist 缺貨 SKU）。
 
@@ -345,12 +367,21 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | Non
     focus = raw.loc[focus_mask].copy()
 
     # 補上需要的數值欄位
+    # {Nature}_P90D總量(90日) 須為 90 日總量：優先以 Sold Qty (P90D)（90 日總量）加總，
+    # 缺欄時才以 Shop Monthly Sold Qty (P90D)（月均）× 90 ÷ 30.5 換算。
     focus["_loss_p90d"] = _safe_numeric(focus.get("Max Sales Loss (P90D)", pd.Series(dtype=float, index=focus.index)))
     focus["_loss_m2"] = _safe_numeric(focus.get("Max Sales Loss (M-2)", pd.Series(dtype=float, index=focus.index)))
     focus["_cm_sold"] = _safe_numeric(focus.get("Sold Qty (CM - MTD)", pd.Series(dtype=float, index=focus.index)))
-    focus["_p90d"] = _safe_numeric(focus.get("Shop Monthly Sold Qty (P90D)", pd.Series(dtype=float, index=focus.index)))
-    for label, col in [("M-2", "Shop Stock Qty (M-2)"), ("M-1", "Shop Stock Qty (M-1)"), ("CM", "Shop Stock Qty (CM)")]:
-        focus[f"_shop_stock_{label}"] = _safe_numeric(focus.get(col, pd.Series(dtype=float, index=focus.index)))
+    if "Sold Qty (P90D)" in focus.columns:
+        focus["_p90d"] = _safe_numeric(focus.get("Sold Qty (P90D)", pd.Series(dtype=float, index=focus.index)))
+    else:
+        focus["_p90d"] = _safe_numeric(focus.get("Shop Monthly Sold Qty (P90D)", pd.Series(dtype=float, index=focus.index))) / 30.5 * 90.0
+    for label in ("M-2", "M-1", "CM"):
+        _stock_col = _resolve_period_stock_column(focus, label)
+        focus[f"_shop_stock_{label}"] = _safe_numeric(
+            focus.get(_stock_col, pd.Series(dtype=float, index=focus.index))
+            if _stock_col else pd.Series(dtype=float, index=focus.index)
+        )
     for label, col in [("M-2", "D001 Stock Qty (M-2)"), ("M-1", "D001 Stock Qty (M-1)"), ("CM", "D001 Stock Qty (CM)")]:
         focus[f"_d001_{label}"] = _safe_numeric(focus.get(col, pd.Series(dtype=float, index=focus.index)))
 
@@ -2280,7 +2311,8 @@ def generate_excel_stock_impact_simplified(
 def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     """計算每列的缺貨狀態、缺貨模式與銷售損失（雙基準並列）。
 
-    缺貨定義採嚴格標準：Shop Stock Qty = 0。
+    缺貨定義採嚴格標準：Shop Stock Qty = 0（M-2／M-1 缺欄時以 LLM／LM 代理；
+    原生與代理皆缺時該期不計缺貨）。
     損失基準並列：(1) Sold Qty (M-2) 需求基準；(2) Shop Monthly Sold Qty (P90D) 月均銷售。
     """
     df = df.copy()
@@ -2301,10 +2333,16 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
         return s
 
     # ── 缺貨判定（Shop Stock = 0）──────────────────────────────────────────────
+    # M-2／M-1 庫存欄缺欄時以 LLM／LM 代理（與 Forecast 缺貨還原同一口徑）；
+    # 原生與代理皆缺時該期不計缺貨（is_oos 全 False），避免缺欄被誤判為全表缺貨。
     oos_flags = {}
     for label, stock_col, _sold_col in _STOCK_SOLD_PERIODS:
-        stock = _cached_numeric(stock_col)
-        is_oos = stock <= 0
+        resolved = _resolve_period_stock_column(df, label)
+        if resolved is None:
+            is_oos = pd.Series(False, index=idx)
+        else:
+            stock = _cached_numeric(resolved)
+            is_oos = stock <= 0
         df[f"Is OOS ({label})"] = is_oos
         oos_flags[label] = is_oos
 
@@ -2403,8 +2441,13 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["Mix Turnday Band"] = mix_band
 
     # Mix 可釋放存貨：超過 14 日標準的部分；無銷售但有存貨者全數可釋放
-    # 理想存貨 = P90D / 90 × 14（P90D為90日總量）；可釋放 = max(0, 實際存貨 − 理想存貨)
-    ideal_14d = p90d.values / 90.0 * 14
+    # 理想存貨 = 90 日總量 ÷ 90 × 14；Shop Monthly Sold Qty (P90D) 為月均（30.5 日），
+    # 故優先以 Sold Qty (P90D)（90 日總量）計算，缺欄時才以月均 ÷ 30.5 × 14 換算（兩者等價）。
+    _sold_total = _cached_numeric("Sold Qty (P90D)") if "Sold Qty (P90D)" in df.columns else None
+    if _sold_total is not None:
+        ideal_14d = _sold_total.to_numpy(dtype=float) / 90.0 * 14
+    else:
+        ideal_14d = p90d.values / 30.5 * 14
     excess = np.where(
         mix_mask,
         np.where(no_sale_has_stock, cm_stock_val.values, np.maximum(0, cm_stock_val.values - ideal_14d)),
@@ -2608,11 +2651,14 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 1000, 
     if extra_from_lookup:
         result = result.merge(sku_lookup[["SKU"] + extra_from_lookup], on="SKU", how="left")
 
-    # ── 不分 Nature 的週期存貨/銷售欄位（M-2, M-1 D001/ShopStock；Sold M-2, M-1, MTD） ──
+    # ── 不分 Nature 的週期存貨/銷售欄位（M-2, M-1 D001/ShopStock；Sold M-2, M-1, MTD）──
+    # 店舖 M-2／M-1 缺欄時以 LLM／LM 代理（與缺貨判定同一口徑），確保標準報表仍有數值
+    _shop_m2_col = _resolve_period_stock_column(raw, "M-2")
+    _shop_m1_col = _resolve_period_stock_column(raw, "M-1")
     d001_m2 = _safe_numeric(raw["D001 Stock Qty (M-2)"]) if "D001 Stock Qty (M-2)" in raw.columns else _safe_default_series(0, raw.index)
     d001_m1 = _safe_numeric(raw["D001 Stock Qty (M-1)"]) if "D001 Stock Qty (M-1)" in raw.columns else _safe_default_series(0, raw.index)
-    shop_m2 = _safe_numeric(raw.get("Shop Stock Qty (M-2)", _safe_default_series(0, raw.index)))
-    shop_m1 = _safe_numeric(raw.get("Shop Stock Qty (M-1)", _safe_default_series(0, raw.index)))
+    shop_m2 = _safe_numeric(raw[_shop_m2_col]) if _shop_m2_col else _safe_default_series(0, raw.index)
+    shop_m1 = _safe_numeric(raw[_shop_m1_col]) if _shop_m1_col else _safe_default_series(0, raw.index)
     sold_m2 = _safe_numeric(raw.get("Sold Qty (M-2)", _safe_default_series(0, raw.index)))
     sold_m1 = _safe_numeric(raw.get("Sold Qty (M-1)", _safe_default_series(0, raw.index)))
     sold_mtd = _safe_numeric(raw.get("Sold Qty (CM - MTD)", _safe_default_series(0, raw.index)))

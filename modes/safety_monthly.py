@@ -382,12 +382,16 @@ def transform_safety_monthly(
     factor = round(float(factor), 4)
 
     is_latest = (df["_safm_ym_key"].to_numpy() == latest_key)
-    sold_adj = np.where(is_latest, np.round(sold_val * factor), sold_val).astype(int)
+    # 月化先保留浮點精度，逐列不取整；彙總至月度粒度後才四捨五入取整，
+    # 避免 1 件長尾品項因逐列取整而失真（1×1.4286→1 增幅 0%，1×1.5789→2 增幅 100%）。
+    _sold_adj_float = np.where(is_latest, sold_val * factor, sold_val)
+    sold_adj = np.round(_sold_adj_float).astype(int)
     net_adj = np.where(is_latest, np.round(net_val * factor, 2), np.round(net_val, 2))
 
     df["_safm_safety"] = safety_val
     df["_safm_sold_raw"] = sold_val.astype(int)
     df["_safm_sold_adj"] = sold_adj
+    df["_safm_sold_adj_float"] = _sold_adj_float
     df["_safm_net_raw"] = np.round(net_val, 2)
     df["_safm_net_adj"] = net_adj
     df["_safm_stock"] = stock_val.astype(int)
@@ -415,7 +419,7 @@ def transform_safety_monthly(
     tmp = pd.DataFrame({
         "_site": site_s, "_sku": sku_s, "_ym": df["_safm_ym_key"],
         "_safety": df["_safm_safety"], "_sold_raw": df["_safm_sold_raw"],
-        "_sold_adj": df["_safm_sold_adj"], "_net_raw": df["_safm_net_raw"],
+        "_sold_adj": df["_safm_sold_adj_float"], "_net_raw": df["_safm_net_raw"],
         "_net_adj": df["_safm_net_adj"], "_stock": df["_safm_stock"],
         "_rp": df["_safm_rp"], "_brand": brand_s, "_buyer": buyer_s,
         "_mch1": mch1_s, "_sst": sst_s,
@@ -455,6 +459,11 @@ def transform_safety_monthly(
         shop=("_shop", "first"),
         desc=("_desc", "first"),
     ).reset_index()
+    # 月度 Sold 月化合計於加總後才四捨五入取整（逐列先取整會令 1 件長尾失真）
+    monthly["sold_adj"] = np.round(monthly["sold_adj"]).astype(int)
+    monthly["sold_raw"] = monthly["sold_raw"].astype(int)
+    monthly["stock"] = monthly["stock"].astype(int)
+    monthly["safety"] = monthly["safety"].astype(int)
     monthly[["brand", "buyer", "mch1", "sst", "shop", "desc"]] = (
         monthly[["brand", "buyer", "mch1", "sst", "shop", "desc"]].fillna("")
     )

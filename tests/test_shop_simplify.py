@@ -814,6 +814,15 @@ def test_top80_mask_zero_and_negative_sales_all_false():
     assert list(_shop_simplify_top80_mask(pd.Series(dtype=float))) == []
 
 
+def test_top80_mask_long_tail_protection():
+    # 全部 SKU 同為 1 件（沒有更高銷量者）→ 維持全組納入，不清空分類
+    qty_same = pd.Series([1.0, 1.0, 1.0], index=["A", "B", "C"])
+    assert list(_shop_simplify_top80_mask(qty_same)) == [True, True, True]
+    # 有高銷量者且達標點落在 1 件長尾：只保留 > 1 件者，避免整個分類 100% 入選
+    qty_tail = pd.Series([10.0, 1.0, 1.0, 1.0, 1.0, 1.0], index=list("ABCDEF"))
+    assert list(_shop_simplify_top80_mask(qty_tail)) == [True, False, False, False, False, False]
+
+
 def test_site_top80_column_name_and_order_before_reply_columns():
     raw, _ = transform_shop_simplify_site(_df(_site_rows()), "HA21")
     site_col = _shop_simplify_site_top80_column("HA21")
@@ -1276,9 +1285,9 @@ def test_site_mode_four_flag_columns_carry_measure_suffix():
 
 def test_site_mode_net_sales_negative_clipped_to_zero():
     rows = _site_rows_with_net()
-    rows[0]["Net Sales (M-2)"] = -500  # A：退貨／負數視為 0
+    rows[0]["Net Sales (M-2)"] = -500  # A：跨月退貨抵銷：-500＋3000＋1000＝3500（總和下限 0）
     raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12))
-    assert dict(zip(raw["SKU"], raw["Net Sales (P73D)"]))["A"] == 4000.0
+    assert dict(zip(raw["SKU"], raw["Net Sales (P73D)"]))["A"] == 3500.0
 
 
 def test_site_mode_missing_net_sales_only_qty_columns_and_warning():
@@ -1534,9 +1543,9 @@ def test_shop_mode_net_sales_column_after_sold_and_label_follows_window():
 
 def test_shop_mode_net_sales_negative_clipped_to_zero():
     rows = _shop_net_rows()
-    rows[0]["Net Sales (M-2)"] = -500  # A：退貨／負數視為 0 → 700＋500＝1,200
+    rows[0]["Net Sales (M-2)"] = -500  # A：跨月退貨抵銷：-500＋700＋500＝700（總和下限 0）
     raw, _ = transform_shop_simplify(_df(rows), data_date=date(2026, 11, 12))
-    assert dict(zip(raw["SKU"], raw["Net Sales (P73D)"]))["A"] == 1200.0
+    assert dict(zip(raw["SKU"], raw["Net Sales (P73D)"]))["A"] == 700.0
 
 
 def test_shop_mode_missing_net_sales_only_qty_column_and_warning():

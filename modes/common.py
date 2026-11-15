@@ -573,9 +573,9 @@ def _extract_shop_name(item_shop, site_code) -> str:
 # 必須在任何統計前剔除，否則會被當成一間店舖／一個 SKU 計入。
 # 品項欄只認純「Total」「Grand Total」（可帶冒號）與「Applied filters」，避免把
 # 「Total Care 洗髮水」這類以 Total 開頭的商品名誤刪；Buyer 欄沿用原有寬鬆比對。
-_FOOTER_TEXT_RE = re.compile(
-    r"^(?:grand\s+)?total\s*[:：]?\s*$|^applied\s+filters", re.IGNORECASE
-)
+# 註：pandas Series.str.match 傳入已編譯正則時會忽略 IGNORECASE，
+# 故此處以小寫比對實現不分大小寫，避免「Total」首字母大寫時漏剔除。
+_FOOTER_TEXT_RE = r"^(?:grand\s+)?total\s*[:：]?\s*$|^applied\s+filters"
 
 
 def _footer_row_mask(df: pd.DataFrame) -> pd.Series:
@@ -594,7 +594,7 @@ def _footer_row_mask(df: pd.DataFrame) -> pd.Series:
     if len(df.columns) and df.columns[0] not in set(_item_cols) | {"Buyer"}:
         _item_cols.append(df.columns[0])
     for col in _item_cols:
-        text = df[col].astype(str).str.strip()
+        text = df[col].astype(str).str.strip().str.lower()
         mask = mask | text.str.match(_FOOTER_TEXT_RE).fillna(False)
     return mask
 

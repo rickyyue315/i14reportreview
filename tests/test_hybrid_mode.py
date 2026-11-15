@@ -468,6 +468,9 @@ def test_d001_column_fallback():
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
          "Turnday (P90D Qty)": 13.0, "D001 Stock Qty (CM)": 50.0},
+        {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "D001 Stock Qty (CM)": 50.0},
     ]).drop(columns=["D001 Net Stock Qty (CM)"])
     _, sc_summary, _, _, _, stats, _ = transform_hybrid(df)
     assert stats["need_rows"] == 1
@@ -477,6 +480,9 @@ def test_missing_d001_warns():
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
          "Turnday (P90D Qty)": 13.0},
+        {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5},
     ]).drop(columns=["D001 Net Stock Qty (CM)", "D001 Stock Qty (CM)"])
     _, sc_summary, _, _, _, stats, warns = transform_hybrid(df)
     assert stats["need_rows"] == 1

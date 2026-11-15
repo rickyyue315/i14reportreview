@@ -647,15 +647,23 @@ def transform_forecast(
         oos_m1 = _safe_numeric(df[m1_stock_col]).to_numpy(dtype=float) <= 0
     else:
         oos_m1 = df.get("Is OOS (M-1)", _safe_default_series(False, idx)).to_numpy(dtype=bool)
-    r2_m2 = m2_arr if m2_stock_col is None else np.where(
-        oos_m2 & is_rf & (p90d_arr > 0), np.maximum(m2_arr, p90d_arr), m2_arr)
-    r2_m1 = m1_arr if m1_stock_col is None else np.where(
-        oos_m1 & is_rf & (p90d_arr > 0), np.maximum(m1_arr, p90d_arr), m1_arr)
+    # 開賣日折算先於缺貨還原：M-2／M-1 屬部分月份實績時先按有效日數折算為整月規模，
+    # 再與月均基準（已屬整月規模）取孰高還原；避免「還原為整月月均後又乘折算因子」的重複放大。
+    _f_m2_np = factor_m2.to_numpy(dtype=float)
+    _f_m1_np = factor_m1.to_numpy(dtype=float)
+    _m2_scaled = m2_arr * _f_m2_np
+    _m1_scaled = m1_arr * _f_m1_np
+    r2_m2 = _m2_scaled if m2_stock_col is None else np.where(
+        oos_m2 & is_rf & (p90d_arr > 0), np.maximum(_m2_scaled, p90d_arr), _m2_scaled)
+    r2_m1 = _m1_scaled if m1_stock_col is None else np.where(
+        oos_m1 & is_rf & (p90d_arr > 0), np.maximum(_m1_scaled, p90d_arr), _m1_scaled)
     df["FC M-2 還原值"] = np.round(r2_m2, 1)
     df["FC M-1 還原值"] = np.round(r2_m1, 1)
     df["FC MTD 還原月化"] = np.round(r2_cm, 1)
-    restored_rows_m2 = int(np.sum(r2_m2 > m2_arr + 1e-9))
-    restored_rows_m1 = int(np.sum(r2_m1 > m1_arr + 1e-9))
+    # 還原列數只計「真正因缺貨而被提升」的列：與折算後實績比較，
+    # 避免開賣日折算（m × factor > m）被誤計為缺貨還原。
+    restored_rows_m2 = int(np.sum(r2_m2 > _m2_scaled + 1e-9))
+    restored_rows_m1 = int(np.sum(r2_m1 > _m1_scaled + 1e-9))
     restored_rows_cm = int(np.sum(r2_cm > mtd_ann_row + 1e-9))
 
     # ── Supply Source 正規化＋同 SKU 眾數 ──
@@ -747,6 +755,7 @@ def transform_forecast(
     })
     grp = work.groupby("_sku", sort=False)
     # P0（個別模式）：單次 agg 取代 9 次同鍵 groupby 掃描；合計／首值／列數口徑不變
+    # M-2／M-1 已於逐列開賣折算＋缺貨還原（_r2_m2／_r2_m1 即整月規模），此處直接加總，不再另乘因子
     _rf_count_pre = None
     _row_count_pre = None
     try:
@@ -765,8 +774,8 @@ def transform_forecast(
         sku_mtd = _sku_agg["_mtd_sum"]
         sku_p90d = _sku_agg["_sold_p90d_sum"]
         B_sku = _sku_agg["_p90d_m_sum"]
-        S2 = _sku_agg["_r2_m2_sum"] * _sku_agg["_f_m2_first"]
-        S1 = _sku_agg["_r2_m1_sum"] * _sku_agg["_f_m1_first"]
+        S2 = _sku_agg["_r2_m2_sum"]
+        S1 = _sku_agg["_r2_m1_sum"]
         sku_r2_cm = _sku_agg["_r2_cm_sum"]
         _rf_count_pre = _sku_agg["_is_rf_sum"]
         _row_count_pre = _sku_agg["_cnt"]
@@ -774,9 +783,9 @@ def transform_forecast(
         sku_mtd = grp["_mtd"].sum()
         sku_p90d = grp["_sold_p90d"].sum()
         B_sku = grp["_p90d_m"].sum()
-        # v2：SKU 聚合後才做情境；M-2／M-1 先按 SKU 折算，CM 月化已在逐列用有效日數處理
-        S2 = grp["_r2_m2"].sum() * grp["_f_m2"].first()
-        S1 = grp["_r2_m1"].sum() * grp["_f_m1"].first()
+        # v2：SKU 聚合後才做情境；M-2／M-1 已於逐列折算＋還原，CM 月化已在逐列用有效日數處理
+        S2 = grp["_r2_m2"].sum()
+        S1 = grp["_r2_m1"].sum()
         sku_r2_cm = grp["_r2_cm"].sum()
         _rf_count_pre = None
         _row_count_pre = None
@@ -975,11 +984,14 @@ def transform_forecast(
     if progress_callback:
         progress_callback(0.65, "計算店舖覆蓋...")
 
-    # ── 風險店數（SKU 級）：可用日數 ≤7 日店數（RF／ND 皆計）、現已缺貨店數、鋪貨店數 ──
+    # ── 風險店數（SKU 級）：可用日數 ≤7 日店數（只計 RF）、現已缺貨店數（只計 RF）、鋪貨店數（只計 RF）──
+    # RP Type＝ND 店舖已停補貨，庫存為 0 屬正常（維持 0 件），不得計入缺貨／風險／鋪貨統計，
+    # 亦不納入「店舖覆蓋」工作表（避免誤導向已停補貨的 ND 店派貨）。
+    _is_rf_series = pd.Series(np.asarray(is_rf, dtype=bool), index=df.index)
     df["_fc_daily"] = np.where(
         (mtd_arr > 0) & (mtd_denom > 0),
         mtd_arr / np.maximum(mtd_denom, 1e-9),
-        np.where(sold_p90d.to_numpy(dtype=float) > 0, sold_p90d.to_numpy(dtype=float) / 30.5, np.nan),
+        np.where(sold_p90d.to_numpy(dtype=float) > 0, sold_p90d.to_numpy(dtype=float) / 90.0, np.nan),
     )
     df["_fc_avail"] = cm_stock.to_numpy(dtype=float) + pending
     df["_fc_days"] = df["_fc_avail"] / df["_fc_daily"]
@@ -992,11 +1004,13 @@ def transform_forecast(
     mask_7 = (risk_flag == "") & df["_fc_days"].notna() & (df["_fc_days"] <= _FC_COVERAGE_RISK_DAYS)
     risk_flag[mask_7] = _FC_RISK_7D
     df["FC 風險旗"] = risk_flag.values
-    risk_cnt = risk_flag.isin([_FC_RISK_OOS, _FC_RISK_7D]).groupby(sku_key.values).sum()
-    oos_cnt = (cm_stock.to_numpy(dtype=float) <= 0)
+    _risk_is = risk_flag.isin([_FC_RISK_OOS, _FC_RISK_7D]) & _is_rf_series
+    risk_cnt = _risk_is.groupby(sku_key.values).sum()
+    oos_cnt = (cm_stock.to_numpy(dtype=float) <= 0) & _is_rf_series.to_numpy(dtype=bool)
     oos_cnt_s = pd.Series(oos_cnt, index=df.index).groupby(sku_key.values).sum()
     site = df["Site Code"].fillna("").astype(str).str.strip() if "Site Code" in df.columns else _safe_default_series("", idx)
-    shop_cnt = site[site != ""].groupby(sku_key[site != ""].values).nunique()
+    _rf_site_mask = _is_rf_series & (site != "")
+    shop_cnt = site[_rf_site_mask].groupby(sku_key[_rf_site_mask].values).nunique()
     main["FC 缺貨風險店數"] = main["SKU"].map(risk_cnt).fillna(0).astype(int).values
     main["FC 現已缺貨店數"] = main["SKU"].map(oos_cnt_s).fillna(0).astype(int).values
     main["FC 鋪貨店數"] = main["SKU"].map(shop_cnt).fillna(0).astype(int).values
@@ -1013,9 +1027,13 @@ def transform_forecast(
             main[_cc] = "" if _cc in _fc_text_cols else 0
     main = main[_FORECAST_MAIN_COLUMNS]
 
-    # ── 店舖覆蓋表（母體：建議訂量＞0 的 SKU，每店一列）──
+    # ── 店舖覆蓋表（母體：建議訂量＞0 的 SKU，每店一列；只收錄 RF 店舖）──
     order_skus = set(main.loc[main["FC 建議訂量"] > 0, "SKU"])
     cov = df[df["SKU"].isin(order_skus)].copy()
+    # RP Type＝ND 店舖已停補貨，不應向其派貨，故不納入覆蓋表
+    if not cov.empty:
+        _rf_cov_mask = _is_rf_series.reindex(cov.index).fillna(False).to_numpy(dtype=bool)
+        cov = cov[_rf_cov_mask].copy()
     if cov.empty:
         coverage = pd.DataFrame(columns=[
             "SKU", "Brand", "Buyer", "Site Code", "Shop Name", "Shop Nature", "RP Type",
@@ -1305,8 +1323,10 @@ def _write_forecast_guide_sheet(ws, stats):
     _bullet("缺口與上限：目標覆蓋量——平穩類＝ceil(月預估 ÷ 30.5 × 目標覆蓋天數)，爆升類（新起量／加速中／爆升）＝ceil(月預估 × 爆升目標覆蓋月數)；"
             "缺口＝max(0, 目標覆蓋量 − 位置)；上限空間＝max(0, ceil(月預估 × 上限月數) − 位置)；"
             "建議訂量＝min(缺口, 上限空間)；缺口大於上限空間時狀態標「建議訂貨（已封頂）」。全 ND 的 SKU 建議訂量為 0。")
-    _bullet("店舖覆蓋：店舖日銷＝MTD ÷ MTD 日數（無 MTD 銷售時退回 P90D ÷ 30.5）；"
+    _bullet("店舖覆蓋：店舖日銷＝MTD ÷ MTD 日數（無 MTD 銷售時退回 Sold Qty (P90D) ÷ 90）；只計 RF 店舖，ND 店不納入覆蓋表；"
             "可用日數＝(店舖庫存＋該店在途) ÷ 店舖日銷；風險旗：已缺貨（庫存 0）／≤7日／≤目標天數（平穩類用目標覆蓋天數、爆升類用爆升目標覆蓋月數）／足夠。")
+    _bullet("風險店數與鋪貨店數：缺貨風險店數（可用日數 ≤7 日）、現已缺貨店數、鋪貨店數只計 RF 店舖；"
+            "ND 店已停補貨，庫存為 0 屬正常，不計入上述統計。")
 
     # ── ③ 工作表導讀 ──
     _sec("③ 工作表導讀（先看哪一頁、應留意什麼）")

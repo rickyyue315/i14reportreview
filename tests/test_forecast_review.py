@@ -628,7 +628,7 @@ def test_coverage_target_flag_uses_surge_cover():
 
 
 def test_coverage_daily_fallback_p90d():
-    # MTD=0 的列 → 日銷＝P90D÷30.5
+    # MTD=0 的列 → 日銷＝Sold Qty (P90D)÷90（90 日總量換算日均）
     df = _df([
         {"Sold Qty (M-2)": 0.0, "Sold Qty (M-1)": 0.0,
          "Sold Qty (CM - MTD)": 76.0, "Shop Monthly Sold Qty (P90D)": 10.0,
@@ -645,7 +645,7 @@ def test_coverage_daily_fallback_p90d():
     main, cov, _, _, _, _ = _run(df)
     assert _main_row(main)["FC 建議訂量"] > 0
     by_site = {r["Site Code"]: r for _, r in cov.iterrows()}
-    assert by_site["S02"]["FC 店舖日銷"] == pytest.approx(round(1800.0 / 30.5, 2), rel=1e-6)
+    assert by_site["S02"]["FC 店舖日銷"] == pytest.approx(round(1800.0 / 90.0, 2), rel=1e-6)
     assert by_site["S02"]["FC 風險旗"] == _FC_RISK_7D
 
 
@@ -677,8 +677,49 @@ def test_coverage_ok_flag():
     main, cov, _, _, _, _ = _run(df)
     assert _main_row(main)["FC 建議訂量"] > 0
     by_site = {r["Site Code"]: r for _, r in cov.iterrows()}
-    # S02 日銷=300/30.5≈9.84, 可用=700/9.84≈71.2 日 > 爆升類門檻 61 日 → 足夠
+    # S02 日銷=300/90≈3.33, 可用=700/3.33≈210 日 > 爆升類門檻 61 日 → 足夠
     assert by_site["S02"]["FC 風險旗"] == _FC_RISK_OK
+
+
+def test_nd_shops_excluded_from_risk_counts_and_coverage():
+    """RP Type＝ND 已停補貨：不計入缺貨／風險／鋪貨店數，亦不納入店舖覆蓋表。"""
+    df = _df([
+        {"Sold Qty (M-2)": 10.0, "Sold Qty (M-1)": 10.0, "Sold Qty (CM - MTD)": 8.0,
+         "Shop Monthly Sold Qty (P90D)": 300.0, "Sold Qty (P90D)": 900.0,
+         "Shop Stock Qty (CM)": 0.0, "Site Code": "S01", "RP Type": "RF",
+         "Item_Shop": "Prod-S01-ShopHK",
+         "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0},
+        {"Sold Qty (M-2)": 10.0, "Sold Qty (M-1)": 10.0, "Sold Qty (CM - MTD)": 8.0,
+         "Shop Monthly Sold Qty (P90D)": 300.0, "Sold Qty (P90D)": 900.0,
+         "Shop Stock Qty (CM)": 0.0, "Site Code": "S02", "RP Type": "ND",
+         "Item_Shop": "Prod-S02-ShopND",
+         "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0},
+    ])
+    main, cov, _, _, _, _ = _run(df)
+    row = _main_row(main)
+    assert row["FC 建議訂量"] > 0
+    assert int(row["FC 現已缺貨店數"]) == 1
+    assert int(row["FC 缺貨風險店數"]) == 1
+    assert int(row["FC 鋪貨店數"]) == 1
+    assert set(cov["Site Code"]) == {"S01"}
+
+
+def test_launch_proration_not_double_counted_in_m2_restore():
+    """開賣日折算先於缺貨還原：先折算再與月均取孰高，還原後不再乘折算因子。"""
+    df = _df([
+        # M-2＝2026-07（31 日），7 月 16 日開賣 → 有效 16 日，折算因子 31/16＝1.9375；
+        # M-2 缺貨、月均基準 100 → 還原為 100（而非 100×1.9375＝193.75）。
+        {"Launch Date": "2026-07-16",
+         "Sold Qty (M-2)": 10.0, "Sold Qty (M-1)": 100.0, "Sold Qty (CM - MTD)": 100.0,
+         "Shop Monthly Sold Qty (P90D)": 100.0, "Sold Qty (P90D)": 300.0,
+         "Shop Stock Qty (M-2)": 0.0, "Shop Stock Qty (M-1)": 50.0,
+         "Shop Stock Qty (CM)": 50.0,
+         "D001 Net Stock Qty (CM)": 0.0, "D001 On Order PO Qty (CM)": 0.0},
+    ])
+    main, _, _, _, stats, _ = _run(df, mtd_date=MTD_DATE)
+    row = _main_row(main)
+    assert row["FC M-2 合計"] == pytest.approx(100.0, abs=1e-6)
+    assert stats["restored_rows_m2"] == 1
 
 
 # ── 8. Buyer 彙總與 stats ───────────────────────────────────────────────────

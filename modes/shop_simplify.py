@@ -12,7 +12,8 @@
   SKU 為「是」（同一銷量整組納入或整組排除；分類之間不互相擠佔；缺 Site Code 時
   全表單一分組；所選母體缺欄時按 MCH2 → MC → Adj. SST 退回並列 warning，全缺則每店單一分組）；
 - 是否該店的Top N%（金額）：同一母體與同一 N%，改按 Net Sales (P{N}D)＝
-  Net Sales (M-2)＋(M-1)＋(CM - MTD)（負數視為 0）累計；
+  Net Sales (M-2)＋(M-1)＋(CM - MTD)（先按原值相加，容許退貨抵銷同品項其他月份銷貨，
+  總和下限為 0）累計；
 - 該店 件數 vs 該店 金額 Top N%：由上述兩個判定合成四象限——「兩者皆是」／
   「僅店舖件數」／「僅店舖金額」／「兩者皆非」，一眼看出同一間店的件數與金額
   是否同為核心（缺三個月 Net Sales 欄時整欄不加入）；
@@ -36,7 +37,8 @@ Export（回覆明細）兩個工作表；Export 套用店舖精簡回覆表範�
 
 - 件數：是否{店舖}的Top N%（件數）／是否同Shop Nature的Top N%（件數），按 Sold Qty (P90D)；
 - 金額：是否{店舖}的Top N%（金額）／是否同Shop Nature的Top N%（金額），按 Net Sales (P{N}D)＝
-  Net Sales (M-2)＋(M-1)＋(CM - MTD)（負數視為 0），N 由數據截止日（T-1）的 MTD 日數＋
+  Net Sales (M-2)＋(M-1)＋(CM - MTD)（先按原值相加，容許退貨抵銷同品項其他月份銷貨，
+  總和下限為 0），N 由數據截止日（T-1）的 MTD 日數＋
   兩個整月日數決定。
 - 對比：{店舖} vs 同Nature Top N%（件數）／（金額），值為「兩者皆是／僅店舖／僅同Nature／
   兩者皆非」，一眼看出該 SKU 在兩邊是否同為核心。
@@ -757,7 +759,12 @@ def _shop_simplify_top80_mask(qty: pd.Series, share: float = _SHOP_SIMPLIFY_TOP8
     - 以索引為 SKU 鍵（呼叫方先按 SKU 彙總）；
     - `share` 為累計比例（0.8＝Top 80%、0.7＝Top 70%）；
     - 同一數值的 SKU 整組納入或整組排除，避免同值被任意切開；
-    - 總量為 0（或全為空白／負數）時全部回傳 False。
+    - 總量為 0（或全為空白／負數）時全部回傳 False；
+    - 長尾保護：若達標點落在僅售 1 件的長尾（cutoff ≤ 1）且整組納入會令全部分類
+      100% 入選（即該分類最低銷量亦為 1），則改為僅保留 > cutoff（排除 1 件長尾），
+      避免「每間店每個分類全部 SKU 皆為 Top」而喪失精簡意義；
+      但若分類內全部 SKU 同為 1 件（無更高銷量者），排除後會一併清空，
+      故此時維持整組納入（唯一／同值 SKU 仍屬該分類核心）。
     """
     share = _shop_simplify_top_share(share)
     values = pd.to_numeric(qty, errors="coerce").fillna(0.0).clip(lower=0.0)
@@ -773,6 +780,12 @@ def _shop_simplify_top80_mask(qty: pd.Series, share: float = _SHOP_SIMPLIFY_TOP8
     if reached.size == 0:
         return mask
     cutoff = float(ordered.iloc[int(reached[0])])
+    if (
+        cutoff <= 1.0
+        and bool((values >= cutoff).all())
+        and bool((values > cutoff).any())
+    ):
+        return values > cutoff
     return values >= cutoff
 
 
@@ -828,15 +841,16 @@ def _shop_simplify_top80_keys(
 
 
 def _shop_simplify_net_sales_series(df: pd.DataFrame, net_columns) -> pd.Series:
-    """三個月 Net Sales 相加成金額母體；負數（退貨）先 clip 為 0，缺值當 0。
+    """三個月 Net Sales 相加成金額母體；先按原始值相加，最後才將總和下限為 0，
+    令跨月退貨可抵銷原銷貨（避免逐月先 clip 為 0 導致退貨月份被忽略）；缺值當 0。
 
     `net_columns` 為 [(實際欄名, 標準欄名), ...]；實際欄名為 None 時略過該月。
     """
     total = pd.Series(0.0, index=df.index, dtype=float)
     for actual, _standard in net_columns:
         if actual is not None and actual in df.columns:
-            total = total.add(_safe_numeric(df[actual]).clip(lower=0.0), fill_value=0.0)
-    return total.fillna(0.0)
+            total = total.add(_safe_numeric(df[actual]), fill_value=0.0)
+    return total.fillna(0.0).clip(lower=0.0)
 
 
 def _shop_simplify_shop_top_flags(

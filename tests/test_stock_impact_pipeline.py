@@ -234,14 +234,14 @@ def test_warehouse_filter():
 # ──────────────────────────────────────────────────────────────────────────────
 def test_mix_turnday_banding():
     df = _df([
-        # r0: Mix, Turnday 60日 → >30日(過剩), 存貨200, P90D=300 (90日總量)
+        # r0: Mix, Turnday 60日 → >30日(過剩), 存貨200, 90日總量300（月均約101.7）
         #   理想=300/90*14=46.7, 可釋放=200-46.7=153
         {"SKU": "1", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 200,
-         "Shop Monthly Sold Qty (P90D)": 300.0, "Turnday (P90D Qty)": 60},
-        # r1: Mix, Turnday 10日 → 7-14日(理想), P90D=360 (90日總量)
+         "Sold Qty (P90D)": 300.0, "Shop Monthly Sold Qty (P90D)": 101.7, "Turnday (P90D Qty)": 60},
+        # r1: Mix, Turnday 10日 → 7-14日(理想), 90日總量360（月均約122）
         #   理想=360/90*14=56, 可釋放=0
         {"SKU": "2", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 40,
-         "Shop Monthly Sold Qty (P90D)": 360.0, "Turnday (P90D Qty)": 10},
+         "Sold Qty (P90D)": 360.0, "Shop Monthly Sold Qty (P90D)": 122.0, "Turnday (P90D Qty)": 10},
         # r2: Mix, P90D=0 有存貨 → 無銷售有存貨(純囤積), 全數50可釋放
         {"SKU": "3", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 50,
          "Shop Monthly Sold Qty (P90D)": 0.0, "Turnday (P90D Qty)": float("inf")},
@@ -682,6 +682,38 @@ def test_generate_excel_stock_impact_simplified():
     title = ws_dash.cell(row=1, column=1).value
     assert title and "Stock Impact Dashboard" in str(title), f"unexpected title: {title}"
     print("OK generate_excel_stock_impact_simplified（4 sheets, marker col present）")
+
+
+def test_oos_uses_llm_lm_proxy_when_period_columns_missing():
+    # 標準 I14 報表以 LLM／LM 表示上上月／上月快照：缺 M-2／M-1 欄時以代理欄判定缺貨
+    df = _df([
+        {"SKU": "1", "Shop Stock Qty (LLM)": 0, "Shop Stock Qty (LM)": 3, "Shop Stock Qty (CM)": 5},
+        {"SKU": "2", "Shop Stock Qty (LLM)": 4, "Shop Stock Qty (LM)": 0, "Shop Stock Qty (CM)": 5},
+    ]).drop(columns=["Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)"])
+    raw = _add_stock_impact_columns(df)
+    assert raw.iloc[0]["Is OOS (M-2)"] == True
+    assert raw.iloc[0]["Is OOS (M-1)"] == False
+    assert raw.iloc[1]["Is OOS (M-2)"] == False
+    assert raw.iloc[1]["Is OOS (M-1)"] == True
+
+
+def test_oos_period_missing_without_proxy_not_counted():
+    # 原生與代理欄皆缺 → 該期不計缺貨（不可把缺欄誤判為 0 庫存全表缺貨）
+    df = _df([{"SKU": "1"}]).drop(columns=["Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)"])
+    raw = _add_stock_impact_columns(df)
+    assert raw.iloc[0]["Is OOS (M-2)"] == False
+    assert raw.iloc[0]["Is OOS (M-1)"] == False
+
+
+def test_mix_excess_falls_back_to_monthly_when_p90d_total_missing():
+    # 缺 Sold Qty (P90D) 欄時以月均 ÷ 30.5 × 14 計理想線：30.5 → 14，可釋放 100 − 14 = 86
+    df = _df([{
+        "SKU": "1", "Shop Nature": "Mix", "Shop Stock Qty (CM)": 100.0,
+        "Shop Monthly Sold Qty (P90D)": 30.5, "Turnday (P90D Qty)": 100,
+    }])
+    assert "Sold Qty (P90D)" not in df.columns
+    raw = _add_stock_impact_columns(df)
+    assert int(raw.iloc[0]["Mix Excess Stock"]) == 86
 
 
 if __name__ == "__main__":

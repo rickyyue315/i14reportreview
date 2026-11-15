@@ -160,6 +160,25 @@ def test_full_month_factor_one():
     assert change.iloc[0]["本月 Sold Qty 月化"] == 10
 
 
+def test_latest_month_annualized_after_monthly_aggregation():
+    # 同月同店同 SKU 兩列各 1 件；6 月 30 日、截止 6 月 21 日 → 係數 30/21 ≈ 1.4286。
+    # 先彙總後取整：2 × 1.4286 ≈ 2.857 → 3（逐列先取整會得 1 + 1 = 2）。
+    change, *_rest, stats, _ = _run(
+        [
+            {"SKU": 1, "Month": 5, "Sold Qty (CM - MTD)": 10.0},
+            {"SKU": 1, "Month": 5, "Sold Qty (CM - MTD)": 10.0},
+            {"SKU": 1, "Month": 6, "Sold Qty (CM - MTD)": 1.0},
+            {"SKU": 1, "Month": 6, "Sold Qty (CM - MTD)": 1.0},
+        ],
+        ref_date=datetime.date(2026, 6, 21),
+    )
+    assert stats["annual_factor"] == round(30 / 21, 4)
+    row = change.iloc[0]
+    assert row["上月 Sold Qty 月化"] == 20
+    assert row["本月 Sold Qty 月化"] == 3
+    assert row["Sold Qty 變化量(月化基準)"] == -17
+
+
 # ── 4. 樞紐與 Excel ──────────────────────────────────────────────────
 def test_pivots_three_blocks_four_metrics():
     change, mch1, sst, cross, shop, raw, stats, _ = _run([

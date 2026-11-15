@@ -100,12 +100,38 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
 
     recommended = np.zeros(len(df), dtype=int)
 
+    # 最低 3 件保底只適用於有預估銷量或新品的列；舊品零銷量（projected ≤ 0）時維持 0，不上調
+    # 新品即使零銷量仍保留 3 件（需有庫存可售，否則新品永無補貨）
+    _proj_arr = np.asarray(projected, dtype=float)
+    if "Launch Date" in df.columns:
+        try:
+            _ld_raw = df["Launch Date"].fillna("").astype(str).str.strip()
+            _ld_dt = _parse_launch_dates(_ld_raw)
+            _is_new_oos = (
+                _ld_dt.notna()
+                & (_ld_dt >= pd.Timestamp(datetime.date.today()) - pd.Timedelta(days=90))
+            ).to_numpy(dtype=bool)
+        except Exception:
+            _is_new_oos = np.zeros(len(df), dtype=bool)
+    else:
+        _is_new_oos = np.zeros(len(df), dtype=bool)
     if is_rf.any():
-        rec_rf = np.ceil(projected[is_rf] * rate_arr[is_rf]).clip(min=3).astype(int)
+        _rf_proj = _proj_arr[is_rf]
+        _rf_rate = rate_arr[is_rf]
+        _rf_new = _is_new_oos[is_rf]
+        rec_rf = np.zeros(int(is_rf.sum()), dtype=int)
+        _pos = (_rf_proj > 0) | _rf_new
+        # 新品零銷量時 ceil(0×rate)=0，clip(min=3) 後為 3（保留保底）
+        rec_rf[_pos] = np.ceil(np.maximum(_rf_proj[_pos], 0) * _rf_rate[_pos]).clip(min=3).astype(int)
         recommended[is_rf] = rec_rf
 
     if is_other.any():
-        rec_other = np.ceil(projected[is_other] * rate_arr[is_other]).clip(min=3).astype(int)
+        _other_proj = _proj_arr[is_other]
+        _other_rate = rate_arr[is_other]
+        _other_new = _is_new_oos[is_other]
+        rec_other = np.zeros(int(is_other.sum()), dtype=int)
+        _pos_o = (_other_proj > 0) | _other_new
+        rec_other[_pos_o] = np.ceil(np.maximum(_other_proj[_pos_o], 0) * _other_rate[_pos_o]).clip(min=3).astype(int)
         ad_other = adj_ss_arr[is_other]
         over_adj = rec_other > ad_other
         rec_other[over_adj] = ad_other[over_adj]

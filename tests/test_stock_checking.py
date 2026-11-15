@@ -50,8 +50,11 @@ def _df(rows):
 def test_trigger_condition():
     # 無 Shop Monthly Sold Qty (P90D) 欄位 → 以 P90D/90×30.5 換算月銷
     # P90D=90 → 月銷 30.5 → Tourist 加總 TurnDay = 庫存加總 / 30.5 × 30.5 = 庫存加總
+    # SKU 1 另設 Non Tourist 供應店（有貨可調），否則無供應時不標示需要調貨
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},  # 符合（TurnDay 5 < 14，D001 99 < 100）
+        {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0, "D001 Net Stock Qty (CM)": 99.0},
         {"SKU": 2, "Site Code": "S02", "Shop Stock Qty (CM)": 14.0, "D001 Net Stock Qty (CM)": 99.0},  # 加總 TurnDay = 14（門檻邊界）→ 不觸發
         {"SKU": 3, "Site Code": "S03", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 100.0},  # D001 = 門檻 → 不觸發
         {"SKU": 4, "Site Code": "S04", "Shop Nature": "Mix"},  # 非 Tourist → 不觸發
@@ -81,17 +84,21 @@ def test_aggregate_tourist_turnday_gates_trigger():
 
 def test_aggregate_tourist_turnday_below_threshold_flags_all_short_rows():
     # 加總 TurnDay = 10/61×30.5 = 5 < 14 且 D001 < 100 → 兩間缺貨 Tourist 店均標示
+    # 另設 Non Tourist 供應店（有貨可調）
     df = _df([
         {"SKU": 501, "Site Code": "TA", "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
          "Shop Monthly Sold Qty (P90D)": 30.5, "Turnday (P90D Qty)": 5.0, "D001 Net Stock Qty (CM)": 10.0},
         {"SKU": 501, "Site Code": "TB", "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
          "Shop Monthly Sold Qty (P90D)": 30.5, "Turnday (P90D Qty)": 5.0, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 501, "Site Code": "N501", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "D001 Net Stock Qty (CM)": 10.0},
     ])
     raw, _, stats, _ = transform_stock_checking(df)
     assert stats["need_rows"] == 2
     assert stats["need_skus"] == 1
     assert (raw.loc[raw["Shop Nature"] == "Tourist", "需要調貨"] == "是").all()
-    assert (raw["調入需求量 (補到14日)"] == 9).all()
+    assert (raw.loc[raw["Shop Nature"] == "Tourist", "調入需求量 (補到14日)"] == 9).all()
 
 
 def test_turnday_invalid_flag_not_trigger():
@@ -170,9 +177,13 @@ def test_demand_positive_required():
 # ──────────────────────────────────────────────────────────────────────────────
 def test_demand_calculation():
     # P90D=90 → 日均 1 → 14 日理想 = 14；庫存 5 → 需求 = 14 − 5 = 9
+    # 另設 Non Tourist 供應店（有貨可調），否則無供應時不標示需要調貨
     df = _df([
         {"SKU": 1, "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 5.0,
          "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+        {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "D001 Net Stock Qty (CM)": 99.0},
     ])
     raw, _, stats, _ = transform_stock_checking(df)
     row = raw.iloc[0]
@@ -182,9 +193,13 @@ def test_demand_calculation():
 
 def test_demand_ceil():
     # P90D=89 → 日均 0.9889 → 14 日理想 = 13.844 → ceil = 14；庫存 0 → 需求 = 14
+    # 另設 Non Tourist 供應店（有貨可調）
     df = _df([
         {"SKU": 1, "Sold Qty (P90D)": 89.0, "Shop Stock Qty (CM)": 0.0,
          "Turnday (P90D Qty)": 5.0, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "D001 Net Stock Qty (CM)": 10.0},
     ])
     raw, _, stats, _ = transform_stock_checking(df)
     assert int(raw.iloc[0]["調入需求量 (補到14日)"]) == 14
@@ -272,13 +287,41 @@ def test_nd_source_shop_participates():
     assert int(raw[raw["Site Code"] == "N01"].iloc[0]["轉出量"]) == 9
 
 
+def test_nd_demand_shop_never_flagged():
+    # RP Type＝ND 已停補貨：即使 Tourist 缺貨且有其他 Nature 供應，亦不標示需要調貨
+    df = _df([
+        {"SKU": 701, "Site Code": "TND", "Shop Nature": "Tourist", "RP Type": "ND",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 0.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Turnday (P90D Qty)": 0.0,
+         "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 701, "Site Code": "N701", "Shop Nature": "Non Tourist", "RP Type": "RF",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 60.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 702, "Site Code": "TRF", "Shop Nature": "Tourist", "RP Type": "RF",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 0.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "Turnday (P90D Qty)": 0.0,
+         "D001 Net Stock Qty (CM)": 10.0},
+        {"SKU": 702, "Site Code": "N702", "Shop Nature": "Non Tourist", "RP Type": "RF",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 60.0,
+         "Shop Monthly Sold Qty (P90D)": 30.5, "D001 Net Stock Qty (CM)": 10.0},
+    ])
+    raw, _, stats, _ = transform_stock_checking(df)
+    assert list(raw.loc[raw["需要調貨"] == "是", "Site Code"]) == ["TRF"]
+    assert stats["need_rows"] == 1
+    assert int(raw[raw["Site Code"] == "TRF"].iloc[0]["實際調入量"]) == 14
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. 自訂門檻、欄位容錯
 # ──────────────────────────────────────────────────────────────────────────────
 def test_custom_thresholds():
     # 預設月銷 30.5（無 Shop Monthly Sold Qty 欄位時由 P90D 換算）→ 加總 TurnDay = 庫存 = 5
+    # 另設 Non Tourist 供應店（有貨可調）
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Turnday (P90D Qty)": 15.0, "D001 Net Stock Qty (CM)": 200.0},
+        {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "D001 Net Stock Qty (CM)": 200.0},
     ])
     raw, _, stats, _ = transform_stock_checking(df, turnday_threshold=20, d001_threshold=250)
     assert stats["need_rows"] == 1
@@ -288,9 +331,13 @@ def test_custom_thresholds():
 
 def test_d001_column_fallback():
     # 缺少 D001 Net Stock Qty (CM) 時退用 D001 Stock Qty (CM)
+    # 另設 Non Tourist 供應店（有貨可調）
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Turnday (P90D Qty)": 13.0,
          "D001 Net Stock Qty (CM)": np.nan, "D001 Stock Qty (CM)": 50.0},
+        {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0,
+         "D001 Stock Qty (CM)": 50.0},
     ]).drop(columns=["D001 Net Stock Qty (CM)"])
     raw, _, stats, _ = transform_stock_checking(df, d001_threshold=100)
     assert stats["need_rows"] == 1
@@ -298,8 +345,11 @@ def test_d001_column_fallback():
 
 
 def test_missing_d001_warns_and_treated_as_zero():
+    # 另設 Non Tourist 供應店（有貨可調）
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Turnday (P90D Qty)": 13.0},
+        {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0},
     ]).drop(columns=["D001 Net Stock Qty (CM)", "D001 Stock Qty (CM)"])
     raw, _, stats, warnings_list = transform_stock_checking(df)
     assert stats["need_rows"] == 1
@@ -677,10 +727,17 @@ def test_generate_excel_raw_hides_item_shop_and_value_columns():
 # Buyer 需調貨 SKU 統計
 # ──────────────────────────────────────────────────────────────────────────────
 def test_buyer_need_skus_stats():
+    # 各 SKU 另設 Non Tourist 供應店（有貨可調），否則無供應時不標示需要調貨
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Buyer": "B1", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+        {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist", "Buyer": "B1",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0, "D001 Net Stock Qty (CM)": 99.0},
         {"SKU": 2, "Site Code": "S02", "Buyer": "B2", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+        {"SKU": 2, "Site Code": "N02", "Shop Nature": "Non Tourist", "Buyer": "B2",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0, "D001 Net Stock Qty (CM)": 99.0},
         {"SKU": 3, "Site Code": "S03", "Buyer": "B1", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+        {"SKU": 3, "Site Code": "N03", "Shop Nature": "Non Tourist", "Buyer": "B1",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0, "D001 Net Stock Qty (CM)": 99.0},
         {"SKU": 4, "Site Code": "S04", "Buyer": "B3", "Shop Stock Qty (CM)": 20.0, "D001 Net Stock Qty (CM)": 99.0},  # TurnDay 20 ≥ 14 → 不觸發
     ])
     raw, _, stats, _ = transform_stock_checking(df)
@@ -691,6 +748,8 @@ def test_buyer_need_skus_stats():
 def test_buyer_need_skus_stats_empty_buyer():
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Buyer": "", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+        {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist", "Buyer": "",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0, "D001 Net Stock Qty (CM)": 99.0},
     ])
     raw, _, stats, _ = transform_stock_checking(df)
     assert stats["buyer_need_skus"] == [("(未填 Buyer)", 1)]
@@ -708,7 +767,11 @@ def test_buyer_need_skus_stats_none_triggered():
 def test_generate_excel_buyer_stats_table():
     df = _df([
         {"SKU": 1, "Site Code": "S01", "Buyer": "B1", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+        {"SKU": 1, "Site Code": "N01", "Shop Nature": "Non Tourist", "Buyer": "B1",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0, "D001 Net Stock Qty (CM)": 99.0},
         {"SKU": 2, "Site Code": "S02", "Buyer": "B2", "Turnday (P90D Qty)": 13.0, "D001 Net Stock Qty (CM)": 99.0},
+        {"SKU": 2, "Site Code": "N02", "Shop Nature": "Non Tourist", "Buyer": "B2",
+         "Sold Qty (P90D)": 90.0, "Shop Stock Qty (CM)": 30.0, "D001 Net Stock Qty (CM)": 99.0},
     ])
     raw, summary, stats, _ = transform_stock_checking(df)
     for buf in (generate_excel_stock_checking(raw, summary, stats),
