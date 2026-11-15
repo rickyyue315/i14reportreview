@@ -1,5 +1,76 @@
 # 版本記錄
 
+## v1.106.0 (2026-11-15)
+
+全模式邏輯審查後的批次修復（高風險數字失真、口徑矛盾、說明文字與實作不一致），並新增 17 項回歸測試（`tests/test_v106_fixes.py`）；Excel 表頭、欄名、工作表名等資料契約不變。
+
+### OOS Review（高風險修復）
+
+- 修復「新品保底 3 件」從未生效：`_parse_launch_dates` 漏 import 令 NameError 被靜默吞掉、新品判定恆為 False——90 天內上市零銷量新品曾被建議把 Safety 清零，現恢復保留 3 件
+- 新品判定新增 `ref_date` 參數（預設今天），`transform_oos` 由 UI 的 MTD 日期傳入，與 Safety Stock Review 同源
+- Shop Nature 比對前先去前後空格（帶空格的「 Tourist 」不再誤套 default 倍率）；`Projected Monthly Sold Qty` 負值下限 0
+
+### Stock Impact Analysis（含簡化）
+
+- 修復簡化版「New」工作表三期店舖SOH Tier 區塊欄名碰撞：三期欄名相同令 merge 後 M-2／M-1 區塊恆顯示 CM 期數值，現欄名一律帶期別後綴（如 `a 0 (M-2)`）
+- D001 倉庫與 Joseph 擴充欄的 M-2／M-1 改經 `_resolve_period_stock_column`（新增 `prefix` 參數）以 LLM／LM 代理：`Total Stock Qty (M-2/M-1)`、`D001_Stock_M2/M1`、`有貨店舖 (M-2/M-1)`、`SOH Tier (M-2/M-1)` 不再恆為 0／空白
+- OOS Impact Detail 明細改為只計 RF 店舖，與 Dashboard／彙總同一口徑；RAW／明細納入 `Shop Stock Qty (LLM)/(LM)` 供核對
+- B2 對比表邊界統一（缺貨 `<= 0`、過剩 `>= 30` 日）；負庫存不入 SOH Tier（留空）；負 Turnday 不再當「無銷售有存貨」全數計入可釋放；B3 註解、docstring、缺欄 warning（M-2／M-1 與代理欄二擇一才警告）同步修正；`sku_allocation` 死碼不再計算（回傳空表，簽名不變）
+
+### Safety Stock Review／Overstock Review／ND／P90D／Overstock P90D
+
+- Safety Review：Overstock Cap (X) 的最低 3 件保底與 OOS Floor (Y) 統一——只適用於有銷量或新品的列，舊品零銷量 X＝0（可加可減下建議值可歸零）；Shop Nature 與 Shop Stock Status 比對前去空格；刪除死碼 `cond_2x`；「只可增加」模式的 ND 新品標記與「可加可減」一致（ND 列維持 0）；`Projected Monthly Sold Qty` 負值下限 0
+- OOS／Overstock 儀表板「影響採購人員／品牌／SKU 總數」改為只計有異常（總計 > 0）者（與 nd.py 同一準則）
+- ND（SKU 精簡）：ND＋Warehouse 負庫存轉出量下限 0，不再以負數拉低退倉合計
+- Past 90 Days 0 Sales：缺 `Sold Qty (P90D)` 時列 warning（準則退化為三期）
+- P90D 0 Sales Review(Shop回覆)：空白組提示改為獨立檢查，不再被 LLM 排除列的 elif 鏈吞掉
+
+### Safety Stock x NetStock Review（hybrid）／店舖問題 SKU
+
+- Excel「Review 摘要」指標卡支援第 8 排：雙向＋銷量再平衡＋有貨可調＋退D001 全開時，退D001 概況排不再被靜默丟棄（`_write_metric_cards` 新增 `row8_metrics`）
+- 「Safety 建議調整量」合計口徑統一：stats 先逐列捨入至 1 位再合計（事件版與全列版共四處），與交叉表／方向分類／Buyer 統計同一口徑
+- 「無貨可調」成因文字修正：不限OM 分配不受 OM 限制，「同OM 無來源」不可能是其成因，改為「供給被爭用／自我調貨或同 Nature 守衛阻擋」（指標卡、warning、說明頁、README、issues 同步）
+- 「已轉出保留店舖件數」指標卡改為「可退D001 貨量合計 − 建議退D001 合計」（只計本身有可退額度的來源列）
+- 退D001 缺 Supply Source 欄時全視 Warehouse 的行為補入說明文字；店舖問題 SKU 缺 D001 Net 欄時說明欄沿用 Effective→Net→Stock 後援值，不再出現「D001 僅 未能確認 件」與建議自相矛盾
+
+### Stock Checking
+
+- Shop Nature 沿用混合模式正規化（strip＋大小寫不敏感、其他值歸 Non Tourist 並列 warning）：「MIX」等非標準值不再靜默退出供需兩側與全部分組
+- rp／both 維度的 RF／ND 分組改為「只排除 ND」（空白歸 RF），與需求判定同一口徑；說明文字同步為「只排除 RP Type＝ND」
+
+### Forecast Review
+
+- D001 庫存／PO「首個非空值」修復：`fillna(0)` 後才 `groupby.first()` 令首列空白的 SKU 取 0，現保留 NaN 取真正的首個非空值（位置與建議訂量不再被高估）
+- RAW 風險旗只標 RF 列（ND 店庫存 0 屬正常，與說明一致）；內部欄 `_fc_cover_days` 不再泄入 RAW；「建議訂貨（已封頂）」說明補充上限空間為 0 時訂量可為 0 件
+
+### 店舖精簡SKU模式（兩變體）
+
+- SKU 空白（NaN／空字串）的列不再以字串 "nan" 計入 Top N% 母體（分母虛增、判定線被推移），改為剔除並列 warning，該等列判定一律非 Top
+- 長尾保護（cutoff ≤ 1）只套用件數口徑；金額口徑不套用（單位是元，語意不同）；兩處 docstring 修正為「三個月先按原值相加，總和下限為 0」
+
+### Safety Stock 月度變化分析
+
+- Net Sales 月化與 Sold 同一準則：浮點貫穿至月度彙總後才捨入；RAW 的「Sold Qty (CM-月化估算)」改為 1 位小數顯示，令 RAW 加總可與樞紐對平
+- 每月合計表「SKU 數」欄名改為「店舖×SKU 組合數」（與指標卡「涉及 SKU 數」口徑區分）；重複主鍵 warning 加強提示統計會虛增
+- UI 說明修正：月化係數＝當月總日數 ÷ 截止日日號（資料含截止日當日），移除與實作矛盾的「前一日」表述
+
+### NDRF 月份對比
+
+- 缺「Adj. MCH1」欄不再整個模式崩潰：略過該樞紐並列 warning（後備路徑同樣引用缺欄的缺陷一併消除）
+- Month 比對雙端轉字串：數字／日期型月份不再靜默輸出全零對比表；空月份子表列 warning
+- ND 負庫存列不再被樞紐 `default="RF"` 計入 RF_Total；Carry 口徑兩表統一（ND 且庫存 ≤ 0 不算 Carry）
+- 店舖對比以 Site Code 為準合併（店名變更不再拆行）；金額欄先四捨五入再轉整數（不再無條件截斷）
+
+### 轉貨模式（P90D／ND）
+
+- 集中規則帶界文字修正為「31–60 件 6 間、61–90 件 7 間」（實作與 SPEC／golden 一致，原「30–60／60–90」差 1 件）
+- 全滿倉分支註解更正（「可接收店舖數」沿用集中規則入選店數）
+
+### 測試與文件
+
+- 新增 `tests/test_v106_fixes.py`（17 項回歸測試）；README、使用說明、各模式 docstring／說明工作表同步更新
+- Change: `version.py` 1.105.0 → 1.106.0
+
 ## v1.105.0 (2026-11-15)
 
 各模式邏輯修正（第一優先：高風險失真；第二優先：準則矛盾及選項漏洞），並同步更新說明文字與回歸測試；Excel 表頭、欄名、工作表名等資料契約不變。

@@ -27,6 +27,8 @@ from modes.common import (
     _extract_shop_name,
     _iter_header_rows,
     _nature_rate_arr,
+    _normalize_ref_date,
+    _parse_launch_dates,
     _resolve_column_name,
     _safe_default_series,
     _safe_numeric,
@@ -63,11 +65,13 @@ EXCLUDED_STATUSES = ["No Stock (non-Active SKU / ND Shop)"]
 
 
 
-def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safety_mode="allow_both", oos_calc_mode="mtd"):
+def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safety_mode="allow_both", oos_calc_mode="mtd", ref_date=None):
     df = df.copy()
 
     adj_ss = _safe_numeric(df.get("Adj. Safety Stock", _safe_default_series(0.0, df.index)))
-    shop_nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.lower()
+    # Shop Nature 去空白＋小寫（與 _clean_dataframe 同一準則）：帶前後空格的
+    # 「 Tourist」不會誤套 default（Non Tourist）倍率
+    shop_nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.lower()
     rp_type = df.get("RP Type", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.upper()
 
     sold_qty = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0.0, df.index)))
@@ -75,7 +79,8 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
         projected_mtd = (sold_qty / mtd_days) * month_total_days
     else:
         projected_mtd = _safe_default_series(0.0, df.index)
-    df["Projected Monthly Sold Qty"] = np.ceil(projected_mtd).astype(int)
+    # 退貨大於銷售等異常資料可令外推為負：顯示欄一律下限 0（後續計算本就以 > 0 判定有銷量）
+    df["Projected Monthly Sold Qty"] = np.maximum(np.ceil(projected_mtd), 0).astype(int)
     projected_mtd_arr = projected_mtd.values
 
     if oos_calc_mode == "p90d":
@@ -104,15 +109,16 @@ def _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safet
     # 新品即使零銷量仍保留 3 件（需有庫存可售，否則新品永無補貨）
     _proj_arr = np.asarray(projected, dtype=float)
     if "Launch Date" in df.columns:
-        try:
-            _ld_raw = df["Launch Date"].fillna("").astype(str).str.strip()
-            _ld_dt = _parse_launch_dates(_ld_raw)
-            _is_new_oos = (
-                _ld_dt.notna()
-                & (_ld_dt >= pd.Timestamp(datetime.date.today()) - pd.Timedelta(days=90))
-            ).to_numpy(dtype=bool)
-        except Exception:
-            _is_new_oos = np.zeros(len(df), dtype=bool)
+        # 新品判定與 Safety Stock Review 共用同一函數（_parse_launch_dates 內部
+        # errors="coerce"，無法解析的值為 NaT → 非新品）；參考日期預設今天，
+        # 呼叫端（transform_oos）可傳入 MTD 截止日令兩模式同源。
+        _ld_raw = df["Launch Date"].fillna("").astype(str).str.strip()
+        _ld_dt = _parse_launch_dates(_ld_raw)
+        _ref_oos = _normalize_ref_date(ref_date)
+        _is_new_oos = (
+            _ld_dt.notna()
+            & (_ld_dt >= pd.Timestamp(_ref_oos) - pd.Timedelta(days=90))
+        ).to_numpy(dtype=bool)
     else:
         _is_new_oos = np.zeros(len(df), dtype=bool)
     if is_rf.any():
@@ -222,7 +228,7 @@ def _build_oos_by_shop_summary(raw):
 
 
 
-def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=None, mtd_days=None, month_total_days=None, safety_mode="allow_both", oos_calc_mode="mtd"):
+def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=None, mtd_days=None, month_total_days=None, safety_mode="allow_both", oos_calc_mode="mtd", ref_date=None):
     missing = validate_input(df_input)
     if missing:
         raise ValueError(f"缺少必要欄位: {', '.join(missing)}")
@@ -258,7 +264,7 @@ def transform_oos(df_input, progress_callback=None, shop_natures=None, rates=Non
         progress_callback(0.2, "計算庫存建議中...")
 
     df["SKU"] = df["SKU"].apply(_safe_sku)
-    raw = _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safety_mode=safety_mode, oos_calc_mode=oos_calc_mode)
+    raw = _add_oos_recommendation_columns(df, rates, mtd_days, month_total_days, safety_mode=safety_mode, oos_calc_mode=oos_calc_mode, ref_date=ref_date)
 
     if progress_callback:
         progress_callback(0.4, "分類統計中...")
@@ -439,9 +445,15 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None, i
     if _total_row.empty:
         raise ValueError("摘要資料中未找到總計列，無法生成分析儀表板")
     total_oos = int(_total_row["總計"].values[0])
-    total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
-    total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
-    total_skus = raw_df["SKU"].dropna().nunique()
+    # 影響面只計有異常（總計 > 0）的 Buyer／Brand／SKU——summary 母體含全部清理列，
+    # 直接 nunique 會把毫無異常的採購人員／品牌／SKU 一併計入（與 nd.py 同一準則）
+    _det = summary_df[
+        (summary_df["Buyer"] != "總計")
+        & (pd.to_numeric(summary_df["總計"], errors="coerce").fillna(0) > 0)
+    ]
+    total_buyers = len(_det["Buyer"].dropna().unique())
+    total_brands = len(_det["Brand"].dropna().unique())
+    total_skus = len(_det["SKU"].dropna().unique())
 
     cat1_val = int(_total_row[categories[0]].values[0]) if len(categories) > 0 else 0
     cat2_val = int(_total_row[categories[1]].values[0]) if len(categories) > 1 else 0

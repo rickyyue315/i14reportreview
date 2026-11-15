@@ -384,19 +384,25 @@ def transform_safety_monthly(
     is_latest = (df["_safm_ym_key"].to_numpy() == latest_key)
     # 月化先保留浮點精度，逐列不取整；彙總至月度粒度後才四捨五入取整，
     # 避免 1 件長尾品項因逐列取整而失真（1×1.4286→1 增幅 0%，1×1.5789→2 增幅 100%）。
+    # Sold（取整）與 Net Sales（2 位小數）同一準則：逐列只作顯示用途，
+    # 彙總（月度／樞紐／By Shop）一律以浮點欄相加後才捨入。
     _sold_adj_float = np.where(is_latest, sold_val * factor, sold_val)
     sold_adj = np.round(_sold_adj_float).astype(int)
-    net_adj = np.where(is_latest, np.round(net_val * factor, 2), np.round(net_val, 2))
+    _net_adj_float = np.where(is_latest, net_val * factor, net_val)
+    net_adj = np.round(_net_adj_float, 2)
 
     df["_safm_safety"] = safety_val
     df["_safm_sold_raw"] = sold_val.astype(int)
     df["_safm_sold_adj"] = sold_adj
     df["_safm_sold_adj_float"] = _sold_adj_float
     df["_safm_net_raw"] = np.round(net_val, 2)
+    df["_safm_net_adj_float"] = _net_adj_float
     df["_safm_net_adj"] = net_adj
     df["_safm_stock"] = stock_val.astype(int)
     df["_safm_rp"] = rp_disp
-    df[_SAFM_SOLD_ADJ_COLUMN] = sold_adj
+    # RAW 顯示欄輸出 1 位小數的浮點月化估算（件數口徑），令使用者以 RAW 欄加總
+    # 可與樞紐／By Shop 的「彙總後才取整」合計對平（逐列 int 會出現數件差異）
+    df[_SAFM_SOLD_ADJ_COLUMN] = np.round(_sold_adj_float, 1)
     df[_SAFM_NET_ADJ_COLUMN] = net_adj
 
     if progress_callback:
@@ -420,7 +426,7 @@ def transform_safety_monthly(
         "_site": site_s, "_sku": sku_s, "_ym": df["_safm_ym_key"],
         "_safety": df["_safm_safety"], "_sold_raw": df["_safm_sold_raw"],
         "_sold_adj": df["_safm_sold_adj_float"], "_net_raw": df["_safm_net_raw"],
-        "_net_adj": df["_safm_net_adj"], "_stock": df["_safm_stock"],
+        "_net_adj": df["_safm_net_adj_float"], "_stock": df["_safm_stock"],
         "_rp": df["_safm_rp"], "_brand": brand_s, "_buyer": buyer_s,
         "_mch1": mch1_s, "_sst": sst_s,
         "_shop": shop_name_s, "_desc": sku_desc_s,
@@ -429,9 +435,11 @@ def transform_safety_monthly(
     dup_keys = tmp.duplicated(subset=["_site", "_sku", "_ym"]).sum()
     if int(dup_keys):
         warnings.append(
-            f"偵測到「Site Code × SKU × YEAR-MONTH」重複列 {int(dup_keys)} 列；"
-            "同一主鍵多列時，Sold Qty／Net Sales／Net Stock Qty 以加總計，"
-            "Safety Stock Qty／RP Type／Adj. MCH1／Adj. SST 取首個非空值。"
+            f"偵測到「Site Code × SKU × YEAR-MONTH」重複列 {int(dup_keys)} 列"
+            "（正常輸入應為一店×一SKU×一月份一列）；同一主鍵多列時，"
+            "Sold Qty／Net Sales／Net Stock Qty 以加總計（重複列會令統計虛增，"
+            "請先檢查來源檔是否重複上載），Safety Stock Qty／RP Type／"
+            "Adj. MCH1／Adj. SST 取首個非空值。"
         )
 
     # P0：文字欄「首個非空值」改以空字串遮成 NaN＋內建 first 聚合（Cython 路徑）。
@@ -459,8 +467,10 @@ def transform_safety_monthly(
         shop=("_shop", "first"),
         desc=("_desc", "first"),
     ).reset_index()
-    # 月度 Sold 月化合計於加總後才四捨五入取整（逐列先取整會令 1 件長尾失真）
+    # 月度 Sold 月化合計於加總後才四捨五入取整（逐列先取整會令 1 件長尾失真）；
+    # Net Sales 月化合計同樣加總後才捨入至 2 位小數
     monthly["sold_adj"] = np.round(monthly["sold_adj"]).astype(int)
+    monthly["net_adj"] = np.round(monthly["net_adj"], 2)
     monthly["sold_raw"] = monthly["sold_raw"].astype(int)
     monthly["stock"] = monthly["stock"].astype(int)
     monthly["safety"] = monthly["safety"].astype(int)
@@ -1951,7 +1961,9 @@ def generate_excel_safety_monthly(
     if ym_list and shop_pivot is not None and not shop_pivot.empty:
         start_row = 16
         ws_dash.cell(row=start_row, column=1, value="每月合計（全店舖月化基準）").font = Font(bold=True, size=12, color="1E40AF")
-        headers = ["YEAR-MONTH", "SKU 數", "Safety Stock Qty 合計",
+        # 「店舖×SKU 組合數」＝各店舖 SKU 數加總（同一 SKU 於多店出現會重複計），
+        # 與上方指標卡的「涉及 SKU 數」（不重複 SKU）口徑不同，欄名明確標示
+        headers = ["YEAR-MONTH", "店舖×SKU 組合數", "Safety Stock Qty 合計",
                    "Sold Qty 合計 (月化)", "Net Sales 合計 (月化)",
                    "Net Stock Qty 合計", "RF→ND 事件數", "ND→RF 事件數"]
         for col_idx, h in enumerate(headers, 1):
@@ -1982,7 +1994,7 @@ def generate_excel_safety_monthly(
             _ym_label_val = str(r.get(_SAFM_YM_COLUMN, ""))
             _vals = {
                 "YEAR-MONTH": r.get(_SAFM_YM_COLUMN),
-                "SKU 數": r.get("SKU數"),
+                "店舖×SKU 組合數": r.get("SKU數"),
                 "Safety Stock Qty 合計": r.get("SafetyStockQty合計"),
                 "Sold Qty 合計 (月化)": r.get("SoldQty月化合計"),
                 "Net Sales 合計 (月化)": r.get("NetSales月化合計"),

@@ -921,16 +921,20 @@ def transform_forecast(
             d001_net_sum[sku_val] = 0.0
             d001_po_sum[sku_val] = 0.0
     else:
+        # _net 保留 NaN（不可先 fillna(0)）：groupby.first() 只跳過 NaN、不跳過 0.0，
+        # 先填 0 會令「首列空白、其後列有值」的 SKU 取 0 而非首個非空值
         _d001_frame = pd.DataFrame({
             "_sku": work["_sku"].to_numpy(),
-            "_net": d001_net_all.fillna(0.0).to_numpy(dtype=float),
+            "_net": d001_net_all.to_numpy(dtype=float),
             "_po": d001_po,
             "_seq": np.arange(len(work)),
         }).sort_values("_seq", kind="stable")
         _d001_first = _d001_frame.groupby("_sku", sort=False).first()
         for sku_val in _d001_first.index:
-            d001_net_sum[sku_val] = float(_d001_first.loc[sku_val, "_net"])
-            d001_po_sum[sku_val] = float(_d001_first.loc[sku_val, "_po"])
+            _net_first = _d001_first.loc[sku_val, "_net"]
+            _po_first = _d001_first.loc[sku_val, "_po"]
+            d001_net_sum[sku_val] = float(_net_first) if pd.notna(_net_first) else 0.0
+            d001_po_sum[sku_val] = float(_po_first) if pd.notna(_po_first) else 0.0
     # ── D001 一致性 warning：同 SKU 出現多個不同 D001 Net／PO 值時列示 ──
     if d001_net_col is not None:
         _d001_nuniq = _d001_frame.groupby("_sku", sort=False)[["_net", "_po"]].nunique(dropna=False)
@@ -1000,8 +1004,10 @@ def transform_forecast(
         sku_key.map(pd.Series(cover_days, index=S2.index)).fillna(float(target_days))
     )
     risk_flag = pd.Series("", index=df.index, dtype=object)
-    risk_flag[(cm_stock.to_numpy(dtype=float) <= 0)] = _FC_RISK_OOS
-    mask_7 = (risk_flag == "") & df["_fc_days"].notna() & (df["_fc_days"] <= _FC_COVERAGE_RISK_DAYS)
+    # 風險旗只標 RF 列：ND 店已停補貨，庫存為 0 屬正常（與說明表「ND 庫存 0 屬正常」同一口徑）
+    _rf_np = _is_rf_series.to_numpy(dtype=bool)
+    risk_flag[((cm_stock.to_numpy(dtype=float) <= 0) & _rf_np)] = _FC_RISK_OOS
+    mask_7 = (risk_flag == "") & _rf_np & df["_fc_days"].notna() & (df["_fc_days"] <= _FC_COVERAGE_RISK_DAYS)
     risk_flag[mask_7] = _FC_RISK_7D
     df["FC 風險旗"] = risk_flag.values
     _risk_is = risk_flag.isin([_FC_RISK_OOS, _FC_RISK_7D]) & _is_rf_series
@@ -1144,7 +1150,7 @@ def transform_forecast(
         "raw_rows": int(len(df)),
     }
 
-    raw_out = df.drop(columns=["_fc_daily", "_fc_avail", "_fc_days"], errors="ignore")
+    raw_out = df.drop(columns=["_fc_daily", "_fc_avail", "_fc_days", "_fc_cover_days"], errors="ignore")
     if progress_callback:
         progress_callback(1.0, "完成!")
     return main, coverage, buyer_out, raw_out, stats, warnings
@@ -1322,7 +1328,8 @@ def _write_forecast_guide_sheet(ws, stats):
             "建議訂貨：Warehouse（D001）貨由 D001 向 Vendor 下單補貨（D001 PO）；Vendor 貨由店舖向 Vendor 下單（Shop PO）。")
     _bullet("缺口與上限：目標覆蓋量——平穩類＝ceil(月預估 ÷ 30.5 × 目標覆蓋天數)，爆升類（新起量／加速中／爆升）＝ceil(月預估 × 爆升目標覆蓋月數)；"
             "缺口＝max(0, 目標覆蓋量 − 位置)；上限空間＝max(0, ceil(月預估 × 上限月數) − 位置)；"
-            "建議訂量＝min(缺口, 上限空間)；缺口大於上限空間時狀態標「建議訂貨（已封頂）」。全 ND 的 SKU 建議訂量為 0。")
+            "建議訂量＝min(缺口, 上限空間)；缺口大於上限空間時狀態標「建議訂貨（已封頂）」"
+            "（上限空間為 0 時建議訂量可為 0 件——位置已達上限，無法再訂）。全 ND 的 SKU 建議訂量為 0。")
     _bullet("店舖覆蓋：店舖日銷＝MTD ÷ MTD 日數（無 MTD 銷售時退回 Sold Qty (P90D) ÷ 90）；只計 RF 店舖，ND 店不納入覆蓋表；"
             "可用日數＝(店舖庫存＋該店在途) ÷ 店舖日銷；風險旗：已缺貨（庫存 0）／≤7日／≤目標天數（平穩類用目標覆蓋天數、爆升類用爆升目標覆蓋月數）／足夠。")
     _bullet("風險店數與鋪貨店數：缺貨風險店數（可用日數 ≤7 日）、現已缺貨店數、鋪貨店數只計 RF 店舖；"
@@ -1353,7 +1360,8 @@ def _write_forecast_guide_sheet(ws, stats):
     _bullet("「FC 建議訂量」為 SKU 級總量；Warehouse(D001) 貨向 Vendor 下單（替 D001 補貨，D001 PO），"
             "Vendor 貨由店舖向供應商下單（Shop PO）；店舖分配由 Buyer 按店舖覆蓋表安排。")
     _bullet("月初 MTD 日數少時，MTD 調整月化已按已過日數與月均基準混合，樂觀情境再乘趨勢衰減係數；仍建議對照保守情境欄。")
-    _bullet("「建議訂貨（已封頂）」代表需求超過上限月數，訂完仍可能不足，下期複查。")
+    _bullet("「建議訂貨（已封頂）」代表需求超過上限月數，訂完仍可能不足，下期複查"
+            "（上限空間為 0 的列建議訂量可為 0 件——位置已達上限，不代表已訂貨）。")
 
 
 

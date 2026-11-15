@@ -153,27 +153,44 @@ def transform_ndrf_comparison(
 
     shop_stock_value_cm = _safe_numeric(df.get("Shop Stock Value (CM)", _safe_default_series(0, df.index)))
 
-    df["_is_carry"] = ~((rp_type[ndrf_mask] == "ND") & (shop_stock_cm[ndrf_mask] == 0))
+    # Carry＝在售且有貨可賣：ND 且庫存 ≤ 0（零庫存或退貨後的負庫存）不算 Carry；
+    # 與下方樞紐的 ND_With_Stock／RF_Total 分類同一口徑（負庫存屬異常資料，不作可賣計）
+    df["_is_carry"] = ~((rp_type[ndrf_mask] == "ND") & (shop_stock_cm[ndrf_mask] <= 0))
     df["_is_rf"] = (rp_type[ndrf_mask] == "RF").astype(int)
     df["_is_nd_with_stock"] = ((rp_type[ndrf_mask] == "ND") & (shop_stock_cm[ndrf_mask] > 0)).astype(int)
     df["_stock_qty"] = shop_stock_cm[ndrf_mask]
     df["_stock_value"] = shop_stock_value_cm[ndrf_mask]
 
-    month_a_df = df[df["Month"].astype(str).str.strip() == month_a].copy()
-    month_b_df = df[df["Month"].astype(str).str.strip() == month_b].copy()
+    # Month 比對雙端一律轉字串（selectbox 傳入的可能是數字／日期原始值，
+    # 與 astype(str) 比較永不成立會靜默輸出全零對比表）
+    _month_a_key = str(month_a).strip()
+    _month_b_key = str(month_b).strip()
+    month_a_df = df[df["Month"].astype(str).str.strip() == _month_a_key].copy()
+    month_b_df = df[df["Month"].astype(str).str.strip() == _month_b_key].copy()
+    for _month_key, _month_df in ((_month_a_key, month_a_df), (_month_b_key, month_b_df)):
+        if _month_df.empty:
+            warnings.append(f"月份「{_month_key}」在清理後沒有資料列，該月份的統計以 0 計。")
 
     if progress_callback:
         progress_callback(0.2, "建構月份對比表...")
 
-    # 平行化：同時計算 3 個獨立對比表
+    # 平行化：同時計算獨立對比表（Adj. MCH1 屬選用欄，缺欄時略過並列 warning）
     with ThreadPoolExecutor(max_workers=3) as _executor:
         f_shop = _executor.submit(_build_ndrf_shop_comparison, month_a_df, month_b_df, month_a, month_b)
         f_sst = _executor.submit(_build_ndrf_adj_sst_combined_pivot, month_a_df, month_b_df, month_a, month_b)
-        f_mch1 = _executor.submit(_build_ndrf_adj_mch1_combined_pivot, month_a_df, month_b_df, month_a, month_b)
+        f_mch1 = (
+            _executor.submit(_build_ndrf_adj_mch1_combined_pivot, month_a_df, month_b_df, month_a, month_b)
+            if "Adj. MCH1" in df.columns
+            else None
+        )
 
     comparison_by_shop = f_shop.result()
     adj_sst_pivot = f_sst.result()
-    mch2_pivot = f_mch1.result()
+    if f_mch1 is not None:
+        mch2_pivot = f_mch1.result()
+    else:
+        mch2_pivot = pd.DataFrame()
+        warnings.append("來源檔案缺少「Adj. MCH1」欄位，Adj. MCH1 樞紐對比表將留空（其他表不受影響）。")
 
     if progress_callback:
         progress_callback(0.6, "合併 RAW 資料...")
@@ -214,7 +231,30 @@ def _build_ndrf_shop_comparison(df_a: pd.DataFrame, df_b: pd.DataFrame, month_a_
     shop_a = _agg_shop(df_a)
     shop_b = _agg_shop(df_b)
 
-    merged = pd.merge(shop_a, shop_b, on=["Site Code", "Shop Name"], how="outer", suffixes=(f"_{month_a_label}", f"_{month_b_label}"))
+    # 以 Site Code 為準合併（Shop Name 不入鍵）：同一店舖在兩個月改名／名稱解析
+    # 有差異時不會拆成兩列令「變化」欄失真；店名取兩個月首見值
+    _site_to_name: dict[str, str] = {}
+    for _src in (df_a, df_b):
+        if _src.empty:
+            continue
+        _sc = _src["Site Code"].fillna("").astype(str).str.strip()
+        _sn = (
+            _src["Shop Name"].fillna("").astype(str).str.strip()
+            if "Shop Name" in _src.columns
+            else _src["Shop"].fillna("").astype(str).str.strip()
+        )
+        for s, n in zip(_sc.to_numpy(), _sn.to_numpy()):
+            if s and s not in _site_to_name:
+                _site_to_name[s] = n if n else ""
+
+    merged = pd.merge(
+        shop_a.drop(columns=["Shop Name"]),
+        shop_b.drop(columns=["Shop Name"]),
+        on=["Site Code"], how="outer",
+        suffixes=(f"_{month_a_label}", f"_{month_b_label}"),
+    )
+
+    merged.insert(1, "Shop Name", merged["Site Code"].map(_site_to_name).fillna(""))
 
     carry_a_col = f"carry_count_{month_a_label}"
     carry_b_col = f"carry_count_{month_b_label}"
@@ -278,8 +318,11 @@ def _build_ndrf_category_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, 
         df = df.copy()
         rp = df["_rp"]
         stock = df["_stock_qty"]
+        # 分類互斥完整：ND 且庫存 > 0 → ND_With_Stock；其餘 ND（零庫存或負庫存）
+        # → ND_No_Stock；非 ND（RF）→ RF。default 不可籠統歸 RF，否則 ND 負庫存列
+        # 會被計入 RF_Total，與店舖對比表（_is_rf 只認 RP Type）互相矛盾
         df["_cat"] = np.select(
-            [(rp == "ND") & (stock > 0), (rp == "ND") & (stock == 0)],
+            [(rp == "ND") & (stock > 0), (rp == "ND")],
             ["ND_With_Stock", "ND_No_Stock"],
             default="RF"
         )
@@ -296,8 +339,10 @@ def _build_ndrf_category_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, 
             _agg["ND_With_Stock"] = _agg["ND_With_Stock"].fillna(0).astype(int)
             _agg["RF_Total"] = _agg["RF_Total"].fillna(0).astype(int)
             _agg["Carry"] = (_agg["ND_With_Stock"] + _agg["RF_Total"]).astype(int)
+            # 金額欄先四捨五入再轉整數（astype(int) 會無條件截斷小數，兩月分別
+            # 截斷後相減的「變化」欄誤差會疊加）
             for c in ["Stock_Qty", "Stock_Value"]:
-                _agg[c] = _agg[c].fillna(0).astype(int)
+                _agg[c] = np.round(_agg[c].fillna(0)).astype(int)
             keep = ["Site Code", category_col, "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]
             return _agg[keep].sort_values(["Site Code", category_col])
         except Exception:
@@ -315,7 +360,7 @@ def _build_ndrf_category_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, 
             ).reset_index()
             result = wide.merge(stock_agg, on=["Site Code", category_col], how="left")
             for c in ["Stock_Qty", "Stock_Value"]:
-                result[c] = result[c].fillna(0).astype(int)
+                result[c] = np.round(result[c].fillna(0)).astype(int)
             keep = ["Site Code", category_col, "ND_With_Stock", "RF_Total", "Carry", "Stock_Qty", "Stock_Value"]
             return result[keep].sort_values(["Site Code", category_col])
 
@@ -368,7 +413,7 @@ def _build_ndrf_category_combined_pivot(df_a: pd.DataFrame, df_b: pd.DataFrame, 
     for c in _all_a + _all_b:
         if c not in merged.columns:
             merged[c] = 0
-        merged[c] = merged[c].fillna(0).astype(int)
+        merged[c] = np.round(merged[c].fillna(0)).astype(int)
 
     merged = merged.sort_values(["Site Code", category_col]).reset_index(drop=True)
 

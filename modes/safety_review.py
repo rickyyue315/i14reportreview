@@ -211,17 +211,34 @@ def _add_combined_recommendation_columns(
     rates_overstock = rates_overstock or {"default": 0.50, "tourist": 0.30, "mix": 0.40}
     rates_oos = rates_oos or {"default": 0.50, "tourist": 0.50, "mix": 0.50}
 
-    status_col = df["Shop Stock Status"].fillna("")
+    # Shop Stock Status／Shop Nature 先去前後空格（與 overstock_p90d／清理層同一準則），
+    # 帶空格的狀態值／Nature 不會漏觸發歸零 override 或誤套 default 倍率
+    status_col = df["Shop Stock Status"].fillna("").astype(str).str.strip()
     adj_ss = _safe_numeric(df.get("Adj. Safety Stock", _safe_default_series(0, df.index)))
     monthly_sold = _safe_numeric(df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, df.index)))
     sold_qty = _safe_numeric(df.get("Sold Qty (CM - MTD)", _safe_default_series(0.0, df.index)))
-    shop_nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.lower()
+    shop_nature = df.get("Shop Nature", _safe_default_series("", df.index)).fillna("").astype(str).str.strip().str.lower()
 
-    cond_2x = (status_col == "Overstock (>2*Monthly Sold Qty & >2pcs)")
+    # 新品判定（供 X／Y／周轉所需量保底共用）：Launch Date 距參考日期 90 天內視為新品，
+    # 新品即使零銷量仍保留最低 3 件（需有庫存可售，否則新品永無補貨）。
+    # 提前計算，令三處保底共用同一新品定義（與後段 P90D 0 Sales 保護一致）。
+    _ref_early = _normalize_ref_date(ref_date)
+    if "Launch Date" in df.columns:
+        _launch_raw_early = df["Launch Date"].fillna("").astype(str).str.strip()
+        _launch_dt_early = _parse_launch_dates(_launch_raw_early)
+        _is_new_early = (
+            _launch_dt_early.notna()
+            & (_launch_dt_early >= pd.Timestamp(_ref_early) - pd.Timedelta(days=90))
+        ).to_numpy(dtype=bool)
+    else:
+        _is_new_early = np.zeros(len(df), dtype=bool)
 
-    # Overstock cap X — Shop Monthly Sold Qty (P90D) 已是月均，直接乘 rate
-    def _compute_x(monthly_sold_arr, rate_arr, adj_ss_arr):
-        x = np.floor(monthly_sold_arr * rate_arr).clip(min=3).astype(int)
+    # Overstock cap X — Shop Monthly Sold Qty (P90D) 已是月均，直接乘 rate。
+    # 最低 3 件保底與 OOS 底線 Y 同一準則：只適用於「有銷量或新品」的列；
+    # 舊品零銷量（月均 ≤ 0 且非新品）不保底 → X = 0，令「可加可減」下建議值可歸零。
+    def _compute_x(monthly_sold_arr, rate_arr, adj_ss_arr, floor_mask):
+        x_pre = np.floor(monthly_sold_arr * rate_arr)
+        x = np.where(floor_mask, np.maximum(x_pre, 3), np.clip(x_pre, 0, None)).astype(int)
         over_adj = x > adj_ss_arr
         x[over_adj] = adj_ss_arr[over_adj].astype(int)
         return x
@@ -235,7 +252,8 @@ def _add_combined_recommendation_columns(
     # X is the upper bound for "how much safety stock is reasonable"; it applies to
     # every row (so the combined recommendation = max(Y, Z if Z <= X else X) is well
     # defined per row), independent of whether any row currently has Overstock status.
-    x_values = _compute_x(monthly_sold.values, os_rate_arr, adj_ss.values)
+    _x_floor_mask = (monthly_sold.values > 0) | _is_new_early
+    x_values = _compute_x(monthly_sold.values, os_rate_arr, adj_ss.values, _x_floor_mask)
 
     # OOS floor Y — Projected 月銷售採加權混合：
     #   w = mtd_days / month_total_days
@@ -255,27 +273,14 @@ def _add_combined_recommendation_columns(
     else:
         projected = _safe_default_series(0.0, df.index)
 
-    df["Projected Monthly Sold Qty"] = np.ceil(projected).astype(int)
+    # 退貨大於銷售等異常資料可令外推為負：顯示欄一律下限 0（Y 的計算本就以 > 0 判定有銷量）
+    df["Projected Monthly Sold Qty"] = np.maximum(np.ceil(projected), 0).astype(int)
 
     _oos_default = rates_oos.get("default", 0.50)
     _oos_tourist = rates_oos.get("tourist", 0.50)
     _oos_mix = rates_oos.get("mix", 0.50)
 
     oos_rate_arr = _nature_rate_arr(shop_nature, _oos_default, _oos_tourist, _oos_mix)
-
-    # 新品判定（供零銷量保底例外用）：Launch Date 距參考日期 90 天內視為新品，
-    # 新品即使零銷量仍保留最低 3 件（需有庫存可售，否則新品永無補貨）。
-    # 提前計算，令 Y／周轉所需量的保底共用同一新品定義（與後段 P90D 0 Sales 保護一致）。
-    _ref_early = _normalize_ref_date(ref_date)
-    if "Launch Date" in df.columns:
-        _launch_raw_early = df["Launch Date"].fillna("").astype(str).str.strip()
-        _launch_dt_early = _parse_launch_dates(_launch_raw_early)
-        _is_new_early = (
-            _launch_dt_early.notna()
-            & (_launch_dt_early >= pd.Timestamp(_ref_early) - pd.Timedelta(days=90))
-        ).to_numpy(dtype=bool)
-    else:
-        _is_new_early = np.zeros(len(df), dtype=bool)
 
     # y_preclip 保留未套「最低 3 件」保底前的 OOS 底線，供 _safety_floor3 判定用；
     # y_values 為現行輸出值（有預估銷量或新品時 clip min=3；舊品零銷量維持 0，不保底），兩者計算準則完全相同。
@@ -393,9 +398,10 @@ def _add_combined_recommendation_columns(
 
     if safety_mode == "increase_only":
         # 只可增加：無歸零 / ND 退場建議，ND 欄僅保留 New SKU 資訊標記
+        # （ND 列維持「0」——ND 規則不受新品保護影響，與「可加可減」同一口徑）
         nd_rec = np.full(len(df), "", dtype=object)
         if is_new_sku.any():
-            nd_rec[is_new_sku] = "New SKU (3 Month)"
+            nd_rec[is_new_sku & ~is_nd.values] = "New SKU (3 Month)"
     else:
         nd_rec = _build_nd_rec_qty_nd(is_nd, is_p90d_0_override, len(df))
         # New SKU 標記：ND 列維持「0」（ND 規則不受新品保護影響），其餘新品列標記
@@ -424,7 +430,7 @@ def _build_combined_by_shop_summary(raw):
     df["OM"] = df.get("OM", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()
     df["SKU"] = df["SKU"].apply(_safe_sku)
 
-    status_col = df["Shop Stock Status"].fillna("")
+    status_col = df["Shop Stock Status"].fillna("").astype(str).str.strip()
     safety_change = pd.to_numeric(df.get("Safety Qty Change", _safe_default_series(0, df.index)), errors="coerce").fillna(0)
 
     group_cols = ["Site Code", "Shop Name", "OM"]
@@ -1058,7 +1064,7 @@ def _write_combined_guide_sheet(ws, stats, dimension):
         ("Safety Qty 計算模式", mode_txt),
         ("Safety 計算基準", f"{basis_txt}；基準天數：{_sd_label}"),
         ("Overstock Rate",
-         f"Tourist {os_t}%／Mix {os_m}%／Non Tourist {os_n}%（庫存上限 X = floor(月均銷售 × Rate)，上限不超過現有 Safety）"),
+         f"Tourist {os_t}%／Mix {os_m}%／Non Tourist {os_n}%（庫存上限 X = floor(月均銷售 × Rate)，有銷量或新品時另設最低 3 件；上限不超過現有 Safety）"),
         ("OOS Rate",
          f"Tourist {oos_t}%／Mix {oos_m}%／Non Tourist {oos_n}%（缺貨底線 Y = ceil(月銷預估 × Rate)；有銷量或新品時最低 3 件，舊品零銷量維持 0）"),
         ("Safety 基準天數",
@@ -1076,7 +1082,7 @@ def _write_combined_guide_sheet(ws, stats, dimension):
     ]
 
     logic = [
-        "Overstock Cap (X) = floor(月均銷售 × Overstock Rate)，上限不超過現有 Safety 設定"
+        "Overstock Cap (X) = floor(月均銷售 × Overstock Rate)，有銷量或新品時另設最低 3 件（舊品零銷量 X = 0），上限不超過現有 Safety 設定"
         "（Safety Stock (現時)，即來源檔案的 Adj. Safety Stock）。",
         "OOS Floor (Y) = ceil(月銷預估 × OOS Rate)；有銷量或 90 天內上市的新品時最低 3 件，"
         "舊品零銷量維持 0（不為滯銷品項設安全庫存）；月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均"

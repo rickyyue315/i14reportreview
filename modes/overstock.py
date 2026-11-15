@@ -418,9 +418,15 @@ def generate_excel(summary_df: pd.DataFrame, raw_df: pd.DataFrame, categories: l
     if _total_row.empty:
         raise ValueError("摘要資料中未找到總計列，無法生成分析儀表板")
     total_overstock = int(_total_row["總計"].values[0])
-    total_buyers = len(summary_df[summary_df["Buyer"] != "總計"]["Buyer"].dropna().unique())
-    total_brands = len(summary_df[summary_df["Buyer"] != "總計"]["Brand"].dropna().unique())
-    total_skus = raw_df["SKU"].dropna().nunique()
+    # 影響面只計有異常（總計 > 0）的 Buyer／Brand／SKU——raw 不做狀態篩選，
+    # 直接 nunique 會把毫無異常的採購人員／品牌／SKU 一併計入（與 nd.py 同一準則）
+    _det = summary_df[
+        (summary_df["Buyer"] != "總計")
+        & (pd.to_numeric(summary_df["總計"], errors="coerce").fillna(0) > 0)
+    ]
+    total_buyers = len(_det["Buyer"].dropna().unique())
+    total_brands = len(_det["Brand"].dropna().unique())
+    total_skus = len(_det["SKU"].dropna().unique())
     cat1_val = int(_total_row[categories[0]].values[0])
     cat2_val = int(_total_row[categories[1]].values[0])
 

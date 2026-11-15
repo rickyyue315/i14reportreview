@@ -1491,8 +1491,9 @@ if uploaded_file is not None:
                  "來源列亦不進 Review），總調入量與需求／分配演算法不變。\n"
                  "同時新增「**調貨補足狀態**」欄區分三態：已補足（缺口 0）／部分補足／"
                  "無貨可調（實際調入量 0），非需求列留空；開啟後「無貨可調」只剩真實的供給競爭／"
-                 "守衛阻擋（同 SKU 多個需求列爭用同一批貨、同OM 變體無同 OM 來源、自我調貨守衛），"
-                 "「店舖問題 SKU」另列「無貨可調（無來源可調）」問題類型，指標卡加無貨可調概況一排。"
+                 "守衛阻擋（同 SKU 多個需求列爭用同一批貨、自我調貨守衛，非 RP 維度另有同 Nature 守衛），"
+                 "「店舖問題 SKU」的缺口說明按補足狀態分流（無貨可調者改建議由 D001／供應商補貨），"
+                 "指標卡加無貨可調概況一排。"
         )
         return_to_d001 = st.checkbox(
             "📤 建議退D001（中銷／低銷／零銷退回超出 Safety 的庫存；高銷須庫存高於 Safety 200%）",
@@ -2748,7 +2749,7 @@ if uploaded_file is not None:
                 "📅 數據截止日（最新月份月化基準；預設昨日）",
                 value=datetime.now().date() - timedelta(days=1),
                 key="safm_ref_date",
-                help="除上載當月外，其餘月份的 CM - MTD 已是足月實績；上載當月只截至此日期前一日。月化係數＝當月總日數 ÷ 截止日日號，僅套用於最新月份的 Sold Qty 與 Net Sales（兩欄同時月化）；截止日與最新月份不一致時不作月化。",
+                help="除上載當月外，其餘月份的 CM - MTD 已是足月實績；上載當月的 CM - MTD 含至「數據截止日」當日的資料。月化係數＝當月總日數 ÷ 截止日日號，僅套用於最新月份的 Sold Qty 與 Net Sales（兩欄同時月化）；截止日與最新月份不一致時不作月化。",
             )
             try:
                 _safm_mt = calendar.monthrange(safm_ref_date.year, safm_ref_date.month)[1]
@@ -3117,7 +3118,7 @@ if uploaded_file is not None:
                 horizontal=True,
                 key="op90dt_receiver_limit_mode",
                 help="「按件數自動集中」：同 SKU 轉出 3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間；"
-                     "10–30 件最多 5 間，之後每 30 件加 1 間（30–60 件 6 間、60–90 件 7 間）。"
+                     "10–30 件最多 5 間，之後每 30 件加 1 間（31–60 件 6 間、61–90 件 7 間）。"
                      "每間以 2–3 件為目標；MCH2＝0302 - MINIATURE 迷你裝每間 4 件，故 4 件或以下集中 1 間。"
                      "只取 Sold Qty (P90D) 最高的店舖（同銷量以 Site Code 排序），每間先保底 2 件、餘量按銷售比例分配，"
                      "減少每店只收到 1 件、出貨要分多箱的情況。"
@@ -3179,7 +3180,7 @@ if uploaded_file is not None:
                 horizontal=True,
                 key="ndtr_receiver_limit_mode",
                 help="「按件數自動集中」：同 SKU 轉出 3 件或以下集中 1 間、4–6 件 2 間、7–9 件 3 間；"
-                     "10–30 件最多 5 間，之後每 30 件加 1 間（30–60 件 6 間、60–90 件 7 間）。"
+                     "10–30 件最多 5 間，之後每 30 件加 1 間（31–60 件 6 間、61–90 件 7 間）。"
                      "每間以 2–3 件為目標；MCH2＝0302 - MINIATURE 迷你裝每間 4 件，故 4 件或以下集中 1 間。"
                      "只取 Sold Qty (P90D) 最高的 RF 店舖（同銷量以 Site Code 排序），每間先保底 2 件、餘量按銷售比例分配，"
                      "減少每店只收到 1 件、出貨要分多箱的情況。"
@@ -3352,6 +3353,7 @@ if uploaded_file is not None:
                         month_total_days=month_total_days,
                         safety_mode=safety_mode_value,
                         oos_calc_mode=oos_calc_mode_value,
+                        ref_date=mtd_date,
                     )
                     buf = generate_excel_oos(summary_df, raw_df, categories, progress_callback=_cb_excel, include_raw=_include_raw)
                     st.session_state.oos_processed = True

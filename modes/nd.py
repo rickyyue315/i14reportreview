@@ -78,7 +78,8 @@ def _add_nd_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     transfer_values = np.full(len(df), "", dtype=object)
     # Warehouse: transfer all shop stock; Vendor or zero stock: transfer 0.
-    transfer_values[is_warehouse.values] = shop_stock[is_warehouse.values].astype(int).values
+    # 負庫存（盤點／退貨異常）下限 0，避免負數轉出量拉低「預計總退倉量」合計
+    transfer_values[is_warehouse.values] = np.maximum(shop_stock[is_warehouse.values], 0).astype(int).values
     transfer_values[is_vendor.values] = 0
 
     df = df.copy()

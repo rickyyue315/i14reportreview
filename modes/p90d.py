@@ -139,6 +139,12 @@ def transform_p90d_zero_sales(
 
     if progress_callback:
         progress_callback(0.1, "清理資料中...")
+    warnings: list[str] = []
+    if _resolve_column_name("Sold Qty (P90D)", set(df_input.columns)) is None:
+        warnings.append(
+            "來源檔案缺少「Sold Qty (P90D)」，四期零銷售準則退化為三期"
+            "（M-2／M-1／CM-MTD）判定，結果可能較寬鬆，請檢查來源檔。"
+        )
     df = _clean_dataframe(df_input, shop_natures=shop_natures, progress_callback=progress_callback)
 
     if progress_callback:
@@ -176,7 +182,7 @@ def transform_p90d_zero_sales(
         progress_callback(0.35, "建立 Summary by Shop...")
     summary_by_shop = _build_p90d_zero_sales_by_shop_summary(raw)
 
-    warnings = []
+    # warnings 沿用函數開頭建立的列表（含缺 P90D 欄的退化提示），不重新初始化
     if raw.empty:
         warnings.append("沒有符合「Past 90 Days 0 Sales（Sold Qty M-2/M-1/CM-MTD 與 Sold Qty (P90D) 皆 ≤ 0，且 Shop Stock Qty LM/CM 皆 > 0，LLM 欄存在時 (LLM) 亦須 > 0）」的資料。")
     if llm_excluded:

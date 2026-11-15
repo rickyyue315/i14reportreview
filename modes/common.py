@@ -746,7 +746,7 @@ def _write_raw_placeholder(ws, reason="已略過 RAW 明細（匯出選項：只
 
 
 
-def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None, progress_pct=0.95, row3_metrics=None, row4_metrics=None, row5_metrics=None, row6_metrics=None, row7_metrics=None):
+def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc_font, progress_callback=None, progress_pct=0.95, row3_metrics=None, row4_metrics=None, row5_metrics=None, row6_metrics=None, row7_metrics=None, row8_metrics=None):
     ws.merge_cells("A1:D1")
     title_cell = ws.cell(row=1, column=1, value=title)
     title_cell.font = Font(bold=True, size=14, color="1E40AF")
@@ -763,6 +763,8 @@ def _write_metric_cards(ws, title, row1_metrics, row2_metrics, thin_border, desc
         row_offsets.append((23, row6_metrics))
     if row7_metrics:
         row_offsets.append((27, row7_metrics))
+    if row8_metrics:
+        row_offsets.append((31, row8_metrics))
 
     for row_offset, metrics in row_offsets:
         for i, (name, value, desc, color) in enumerate(metrics):

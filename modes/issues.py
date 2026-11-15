@@ -313,6 +313,11 @@ def _build_stock_checking_shop_issues(
         net_col = _resolve_column_name("D001 Net Stock Qty (CM)", set(raw.columns))
         if net_col is not None:
             work["D001 Net Stock Qty (CM)"] = raw[net_col]
+        else:
+            # 來源只有 D001 Stock Qty (CM)（無 Net 欄）時，說明欄沿用與觸發判定／建議方法
+            # 同一的後援值（Effective → Net → Stock），避免說明寫「未能確認」而建議卻
+            # 依後援值給出「D001 尚有 N 件可補貨」的自相矛盾
+            work["D001 Net Stock Qty (CM)"] = _d001_available_qty(raw).loc[work.index]
     need_w = work["需要調貨"].fillna("").astype(str).str.strip() == "是"
     gap_w = _safe_numeric(work.get("調入缺口", _safe_default_series(0, work.index)))
     ttd_w = pd.to_numeric(work.get("Tourist 加總 TurnDay", _safe_default_series(np.nan, work.index)), errors="coerce")
@@ -493,6 +498,11 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
         net_col = _resolve_column_name("D001 Net Stock Qty (CM)", set(raw.columns))
         if net_col is not None:
             work["D001 Net Stock Qty (CM)"] = raw[net_col]
+        else:
+            # 來源只有 D001 Stock Qty (CM)（無 Net 欄）時，說明欄沿用與觸發判定／建議方法
+            # 同一的後援值（Effective → Net → Stock），避免說明寫「未能確認」而建議卻
+            # 依後援值給出「D001 尚有 N 件可補貨」的自相矛盾
+            work["D001 Net Stock Qty (CM)"] = _d001_available_qty(raw).loc[work.index]
     diag_w = work.get("Safety Review", _safe_default_series("", work.index)).fillna("").astype(str)
     days_w = pd.to_numeric(work.get(_HYBRID_SAFETY_DAYS_COLUMN, _safe_default_series(np.nan, work.index)), errors="coerce")
     line_w = pd.to_numeric(work.get(_HYBRID_SAFETY_LINE_COLUMN, _safe_default_series(np.nan, work.index)), errors="coerce")
@@ -530,7 +540,7 @@ def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
         if _HAS_FULFILL and str(ful_w.iloc[i]).strip() == _HYBRID_FULFILL_NONE:
             return (
                 f"；惟本次無任何店舖可調出貨品（需要 {int(demand_w.iloc[i])} 件、實際調入 0 件，"
-                "同 SKU 供給已被其他需求列取用、或同 OM 變體無同 OM 來源），"
+                "同 SKU 供給已被其他需求列取用，或受自我調貨／同 Nature 守衛阻擋），"
                 f"尚缺 {gap_i} 件，無法以店舖間調貨解決——建議改由 D001 或供應商補貨，"
                 "或依上方建議值調整 Safety Stock 以減少日後缺貨"
             )

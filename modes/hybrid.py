@@ -428,7 +428,8 @@ def _build_hybrid_diag_summary(raw: pd.DataFrame, dimension: str = "nature", om_
         return {
             "列數": int(len(sub)),
             "SKU 數": int(sub["SKU"].nunique()) if "SKU" in sub.columns else 0,
-            # 先四捨五入再取整，與「Safety 調整方向分類」／stats 合計準則一致
+            # 對顯示值（已逐列四捨五入至 1 位）合計後取整——與 stats 的
+            # under_inc_total／over_dec_total 及「Safety 調整方向分類」同一口徑
             "建議調整量合計": int(round(float(sub["_chg"].sum()))),
         }
 
@@ -1117,7 +1118,7 @@ def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
     「銷量再平衡」開啟時（stats["sales_rebalance"] 為 True）末尾另加一排銷量分類概況（4 卡；
     無第 5 排時該排為第 5 排，否則為第 6 排）。
     RAW 含「建議退D001 量」欄時（開關可由欄位存在推定）再加一排退D001 建議概況（4 卡）。
-    回傳各排指標 list（4–7 排）供 _write_metric_cards 使用；stats 缺失時由 raw 自動匯總。"""
+    回傳各排指標 list（4–8 排）供 _write_metric_cards 使用；stats 缺失時由 raw 自動匯總。"""
     if stats is None:
         stats = _hybrid_stats_from_raw(raw)
 
@@ -1189,19 +1190,28 @@ def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
         rows.append([
             ("已補足列數", g("fulfill_full_rows"), "標示需要調貨且調入缺口 0 的店舖×SKU 列數", "10b981"),
             ("部分補足列數", g("fulfill_partial_rows"), "標示需要調貨且實際調入量介於 0 與需求量之間的列數", "f59e0b"),
-            ("無貨可調列數", g("no_supply_need_rows"), "標示需要調貨但實際調入量 0（供給被爭用／同OM 無來源／守衛阻擋）", "ef4444"),
+            ("無貨可調列數", g("no_supply_need_rows"), "標示需要調貨但實際調入量 0（供給被爭用／自我調貨或同 Nature 守衛阻擋）", "ef4444"),
             ("無貨可調 SKU 數", g("no_supply_need_skus"), "無貨可調列涉及的不重複 SKU 數（已刪除重複）", "dc2626"),
         ])
     if raw is not None and _HYBRID_RETURN_D001_COLUMN in raw.columns:
         _ret = _safe_numeric(raw[_HYBRID_RETURN_D001_COLUMN]).fillna(0)
         _ret_pos = _ret > 0
         _ret_skus = int(raw.loc[_ret_pos, "SKU"].nunique()) if bool(_ret_pos.any()) else 0
+        # 「調貨優先犧牲額」＝可退毛額 − 建議退量＝Σ min(轉出量, 可退毛額)：
+        # 只計本身有可退額度的來源列，避免把 Safety ≥ 庫存等無可退額度列的轉出量
+        # 誤當成「因調貨優先而放棄的退倉量」（毛額已存於內部欄）
+        _ret_gross = (
+            _safe_numeric(raw.get(_HYBRID_RETURN_D001_GROSS_INTERNAL, _safe_default_series(0, raw.index))).fillna(0)
+            if _HYBRID_RETURN_D001_GROSS_INTERNAL in raw.columns
+            else _ret
+        )
+        _kept_by_transfer = int(max(float(_ret_gross.sum()) - float(_ret.sum()), 0.0))
         rows.append([
             ("退D001 列數", int(_ret_pos.sum()), "有退D001 建議的店舖×SKU 列數（可轉出量扣已轉出後有剩餘）", "0d9488"),
             ("退D001 SKU 數", _ret_skus, "退D001 建議涉及的不重複 SKU 數", "14b8a6"),
             ("退D001 合計件數", int(_ret.sum()), "建議退回 D001（Warehouse）的總件數（件）", "059669"),
-            ("已轉出保留店舖件數", int(_safe_numeric(raw.get("轉出量", _safe_default_series(0, raw.index))).fillna(0).sum()),
-             "同一計算內優先撥予店舖調貨、不退 D001 的件數（件）", "0ea5e9"),
+            ("已轉出保留店舖件數", _kept_by_transfer,
+             "有可退額度的來源列中，優先撥予店舖調貨而不退 D001 的件數（可退貨量 − 建議退D001 量）", "0ea5e9"),
         ])
     return rows
 
@@ -2046,7 +2056,8 @@ def transform_hybrid(
     # 三態以不限OM 分配實績為準（非需求列留空）：
     #   已補足＝缺口 0；部分補足＝0 < 實際調入量 < 需求量；無貨可調＝實際調入量 0。
     # 開啟 real_supply_gate 後「無貨可調」只剩**真實的供給競爭／守衛阻擋**
-    # （同 SKU 多個需求列爭用同一批貨、同OM 變體無同 OM 來源、自我調貨守衛），
+    # （同 SKU 多個需求列爭用同一批貨、自我調貨守衛；非 RP 維度另有同 Nature 守衛。
+    # 不限OM 分配不受 OM 限制，「同OM 無來源」不可能是其成因），
     # SKU 級零供給的假陽性已於觸發階段排除。
     _fulfill_state = np.full(n_rows, "", dtype=object)
     _need_pos = need_mask
@@ -2061,7 +2072,7 @@ def transform_hybrid(
         if _n_none:
             warnings.append(
                 f"📦 調貨補足狀態：{_n_none} 列標示需要調貨但實際調入量為 0"
-                "（同 SKU 供給被其他需求列先用完、同OM 變體無同 OM 來源、或受自我調貨守衛阻擋），"
+                "（同 SKU 供給被其他需求列先用完，或受自我調貨／同 Nature 守衛阻擋），"
                 "已於「調貨補足狀態」欄標示「無貨可調」，與「部分補足」「已補足」分開。"
             )
 
@@ -2208,6 +2219,8 @@ def transform_hybrid(
         if "Supply Source" in df.columns:
             _is_wh_ret = (df["Supply Source"].fillna("").astype(str).str.strip().str.lower() == "warehouse").to_numpy(dtype=bool)
         else:
+            # 缺「Supply Source」欄（舊版來源檔）時全部列視為 Warehouse 納入——
+            # 與其他模式的平台慣例一致（README「Supply Source 缺欄全視 Warehouse」）
             _is_wh_ret = np.ones(n_rows, dtype=bool)
         _ret_gross = np.where(need_mask, 0.0, np.maximum(0.0, cm_stock_val - _ret_keep))
         _ret_gross = np.where(_is_wh_ret, _ret_gross, 0.0)
@@ -2272,18 +2285,18 @@ def transform_hybrid(
         "donor_unused_rows": int(donor_unused_mask.sum()),
         "under_rows": int(under_mask.sum()),
         "under_skus": int(raw.loc[under_mask, "SKU"].nunique()) if under_mask.any() else 0,
-        "under_inc_total": int(round(float(np.nansum(chg[under_mask])))) if under_mask.any() else 0,
+        "under_inc_total": int(round(float(np.nansum(np.round(chg[under_mask], 1))))) if under_mask.any() else 0,
         "over_rows": int(over_mask.sum()),
         "over_skus": int(raw.loc[over_mask, "SKU"].nunique()) if over_mask.any() else 0,
-        "over_dec_total": int(round(float(np.nansum(chg[over_mask])))) if over_mask.any() else 0,
+        "over_dec_total": int(round(float(np.nansum(np.round(chg[over_mask], 1))))) if over_mask.any() else 0,
         "normal_rows": int(in_table.sum()) - int(under_mask.sum()) - int(over_mask.sum()),
         "total_raw_rows": int(n_rows),
         "full_under_rows": int(full_under.sum()),
         "full_under_skus": int(raw.loc[full_under, "SKU"].nunique()) if full_under.any() else 0,
-        "full_under_inc_total": int(round(float(np.nansum(full_chg[full_under])))) if full_under.any() else 0,
+        "full_under_inc_total": int(round(float(np.nansum(np.round(full_chg[full_under], 1))))) if full_under.any() else 0,
         "full_over_rows": int(full_over.sum()),
         "full_over_skus": int(raw.loc[full_over, "SKU"].nunique()) if full_over.any() else 0,
-        "full_over_dec_total": int(round(float(np.nansum(full_chg[full_over])))) if full_over.any() else 0,
+        "full_over_dec_total": int(round(float(np.nansum(np.round(full_chg[full_over], 1))))) if full_over.any() else 0,
         "full_normal_rows": int(n_rows) - int(full_under.sum()) - int(full_over.sum()),
         "full_action_rows": int(full_fix.sum()),
         "full_action_skus": int(raw.loc[full_fix, "SKU"].nunique()) if full_fix.any() else 0,
@@ -2637,8 +2650,8 @@ def _write_hybrid_buyer_combined_table(ws, combined, thin_border, header_fill,
 def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None,
                                      raw: pd.DataFrame, thin_border, desc_font,
                                      progress_callback=None):
-    """Review 摘要工作表：指標卡 4–6 排（第 4 排為同OM調貨對照；雙向調貨時另加第 5 排
-    Tourist 轉出量；銷量再平衡開啟時末尾另加銷量分類概況一排）
+    """Review 摘要工作表：指標卡 4–8 排（第 4 排為同OM調貨對照；雙向調貨時另加第 5 排
+    Tourist 轉出量；銷量再平衡／有貨可調／退D001 開啟時依次另加一排；全部指標排全數寫入）
     ＋ ① Safety Review × 分類維度交叉表（維度由 stats["dimension"] 推定，
     預設 Shop Nature）＋ ② Safety 調整方向分類
     ＋ ③ Safety 調整明細（SKU 級彙總）＋ ④ Buyer 統計（需調貨＋需調整 Safety 合併表）
@@ -2658,6 +2671,7 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
     row5_metrics = _rows[4] if len(_rows) > 4 else None
     row6_metrics = _rows[5] if len(_rows) > 5 else None
     row7_metrics = _rows[6] if len(_rows) > 6 else None
+    row8_metrics = _rows[7] if len(_rows) > 7 else None
     _days = (stats or {}).get("safety_days") or _hybrid_safety_days_from_raw(raw)
     _write_metric_cards(
         ws, f"Safety Stock 設定 Review 摘要 (Transfer Diagnosis Dashboard｜"
@@ -2665,6 +2679,7 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
         _rows[0], _rows[1], thin_border, desc_font, progress_callback,
         progress_pct=0.80, row3_metrics=_rows[2], row4_metrics=_rows[3],
         row5_metrics=row5_metrics, row6_metrics=row6_metrics, row7_metrics=row7_metrics,
+        row8_metrics=row8_metrics,
     )
 
     table_start = 4 * len(_rows) + 4
@@ -2907,8 +2922,8 @@ def _write_hybrid_guide_sheet(ws, stats):
                 "Review），總調入量與需求／分配演算法不變。另新增「**調貨補足狀態**」欄區分三態——"
                 "「已補足」（缺口 0）／「部分補足」（0 < 實際調入量 < 需求量）／「無貨可調」（實際調入量 0），"
                 "非需求列留空；開啟後「無貨可調」只剩真實的供給競爭／守衛阻擋（同 SKU 多個需求列爭用同一批貨、"
-                "同OM 變體無同 OM 來源、自我調貨守衛），「店舖問題 SKU」另列「無貨可調（無來源可調）」問題類型"
-                "並建議改由 D001／供應商補貨。")
+                "自我調貨守衛；非 RP 維度另有同 Nature 守衛——不限OM 分配不受 OM 限制，「同OM 無來源」不可能是"
+                "其成因），「店舖問題 SKU」的缺口說明按補足狀態分流（無貨可調者改建議由 D001／供應商補貨）。")
     if st_.get("return_to_d001"):
         _bullet("建議退D001（本份已開啟）：接收目標 D001＝Warehouse，可無限接收，不跑分配。"
                 "退貨基準為 Safety Stock (現時)（非調貨段的 14 日線，與池級門檻脫鉤）：中銷／低銷／零銷列"

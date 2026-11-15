@@ -1054,7 +1054,8 @@ def transform_overstock_p90d(
             f"有 {_llm_excluded} 列 Shop Stock Status 為 P90D 0 Sales 且 Shop Stock Qty (LM) 大於 0，"
             "但 Shop Stock Qty (LLM) 為 0（M-2 無貨，90 日內非全程有貨），已按 90 日有貨準則排除。"
         )
-    elif breakdown in (_OP90D_BREAKDOWN_MAKEUP_ITEM, _OP90D_BREAKDOWN_MAKEUP_MCH1):
+    # 空白組提示為獨立檢查（不掛在 LLM 排除的 elif 鏈上——兩者並存時提示不得互相吞掉）
+    if breakdown in (_OP90D_BREAKDOWN_MAKEUP_ITEM, _OP90D_BREAKDOWN_MAKEUP_MCH1):
         sub = _op90d_cross_sub(breakdown)
         blank_count = int((_op90d_group_series(raw, sub) == "空白").sum())
         if blank_count:

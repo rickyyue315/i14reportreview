@@ -55,6 +55,7 @@ from modes.framework import (
     _hybrid_skew_hint_text,
     _hybrid_skew_thresholds,
     _hybrid_zero_sales_groups,
+    _normalize_hybrid_nature,
     _transfer_input_consistency_warnings,
 )
 
@@ -107,7 +108,8 @@ def _write_stock_checking_guide_sheet(ws, stats):
         f"觸發條件（SKU 級，同時符合才標示）：該 SKU 的「Tourist 加總 TurnDay」"
         f"（各 Tourist 店 Shop Stock Qty (CM) 加總 ÷ Shop Monthly Sold Qty (P90D) 加總 × 30.5）< {td} 日，"
         f"且 D001 Net Stock Qty (CM) < {d001} 件，且 Mix／Non Tourist 至少一個 Nature 的加總 TurnDay ≥ {td} 日（有貨可調）。"
-        "調入需求方只限 RF 店舖；RP Type＝ND 店舖已停補貨，即使缺貨亦不標示需要調貨（仍可作來源）。",
+        "調入需求方只排除 RP Type＝ND 店舖（ND 已停補貨，即使缺貨亦不標示需要調貨，仍可作來源）；"
+        "RP Type 空白或其他值按可補貨處理並列 warning 提醒核對。",
         "調入需求量 = ceil(P90D ÷ 90 × 14) − Shop Stock Qty (CM)（補到 14 日周轉）；"
         "只為已標示 SKU 且個別 Tourist 店需求 > 0 的列計算。",
         "可轉出貨量（來源店）= max(0, Shop Stock Qty (CM) − P90D ÷ 90 × 14)；"
@@ -252,8 +254,15 @@ def transform_stock_checking(
     warnings: list[str] = []
 
     # ── 欄位正規化 ──────────────────────────────────────────────────────────
-    df["Shop Nature"] = df.get("Shop Nature", _safe_default_series("", idx)).fillna("").astype(str).str.strip()
+    # Shop Nature 與混合模式同一正規化：strip＋大小寫不敏感，其餘值（Other、空白等）
+    # 一律歸 Non Tourist——否則「MIX」等非標準值會靜默退出供需兩側與全部分組
+    df, _nature_mapped = _normalize_hybrid_nature(df)
     nature = df["Shop Nature"]
+    if _nature_mapped:
+        warnings.append(
+            f"有 {_nature_mapped} 列「Shop Nature」為非標準值（非 Tourist／Mix／Non Tourist），"
+            "已按 Non Tourist 計算（與 Safety Stock x NetStock Review 同一準則），請檢查來源檔。"
+        )
     if "SKU" in df.columns:
         df["SKU"] = df["SKU"].apply(_safe_sku)
     warnings.extend(_transfer_input_consistency_warnings(df))
@@ -885,7 +894,9 @@ def _build_stock_checking_summary(
             if "RP Type" in df.columns
             else _safe_default_series("RF", df.index)
         )
-        df["_grp"] = pd.Series(np.where(rp == "RF", "RF", "ND"), index=df.index)
+        # 空白／其他值跟隨需求判定口徑（只排除 ND → 空白視為可補貨歸 RF 組），
+        # 令 Summary 的 RF／ND 分組與「需要調貨」判定一致
+        df["_grp"] = pd.Series(np.where(rp == "ND", "ND", "RF"), index=df.index)
         if dim == "both":
             df["_grp"] = df["_nature"] + "-" + df["_grp"]
     df["_brand"] = df.get("Brand", _safe_default_series("", df.index)).fillna("").astype(str).str.strip()

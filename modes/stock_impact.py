@@ -311,22 +311,24 @@ def _classify_d001_status(d001_cm: float) -> str:
 
 
 
-def _resolve_period_stock_column(df: pd.DataFrame, period: str) -> str | None:
-    """回傳該期店舖庫存應採用的實際欄名（缺欄時以 LLM／LM 代理）。
+def _resolve_period_stock_column(df: pd.DataFrame, period: str, prefix: str = "Shop Stock Qty") -> str | None:
+    """回傳該期庫存應採用的實際欄名（缺欄時以 LLM／LM 代理）。
 
-    - ``M-2``：``Shop Stock Qty (M-2)``，缺欄時退用 ``Shop Stock Qty (LLM)``
-    - ``M-1``：``Shop Stock Qty (M-1)``，缺欄時退用 ``Shop Stock Qty (LM)``
-    - ``CM``：``Shop Stock Qty (CM)``
+    - ``M-2``：``{prefix} (M-2)``，缺欄時退用 ``{prefix} (LLM)``
+    - ``M-1``：``{prefix} (M-1)``，缺欄時退用 ``{prefix} (LM)``
+    - ``CM``：``{prefix} (CM)``
 
+    ``prefix`` 預設 ``Shop Stock Qty``；D001 倉庫存貨傳 ``"D001 Stock Qty"``
+    （標準檔的 D001 三期快照同樣以 LLM／LM 表示上上月／上月）。
     標準 I14 By SKUxShop 報表以 LLM／LM 表示上上月／上月快照，故缺 M-2／M-1 欄時
     必須以代理欄取數；兩者皆缺時回傳 ``None``（呼叫端應視為該期無資料，不應當作 0 庫存）。
     """
     if period == "M-2":
-        candidates = ("Shop Stock Qty (M-2)", "Shop Stock Qty (LLM)")
+        candidates = (f"{prefix} (M-2)", f"{prefix} (LLM)")
     elif period == "M-1":
-        candidates = ("Shop Stock Qty (M-1)", "Shop Stock Qty (LM)")
+        candidates = (f"{prefix} (M-1)", f"{prefix} (LM)")
     else:
-        return "Shop Stock Qty (CM)" if "Shop Stock Qty (CM)" in df.columns else None
+        return f"{prefix} (CM)" if f"{prefix} (CM)" in df.columns else None
     for cand in candidates:
         if cand in df.columns:
             return cand
@@ -382,8 +384,13 @@ def _build_sku_stock_diagnosis(raw: pd.DataFrame, sku_lookup: pd.DataFrame | Non
             focus.get(_stock_col, pd.Series(dtype=float, index=focus.index))
             if _stock_col else pd.Series(dtype=float, index=focus.index)
         )
-    for label, col in [("M-2", "D001 Stock Qty (M-2)"), ("M-1", "D001 Stock Qty (M-1)"), ("CM", "D001 Stock Qty (CM)")]:
-        focus[f"_d001_{label}"] = _safe_numeric(focus.get(col, pd.Series(dtype=float, index=focus.index)))
+    for label in ("M-2", "M-1", "CM"):
+        # D001 倉庫存貨同樣以 LLM／LM 代理 M-2／M-1（標準檔只有 D001 Stock Qty (LLM)/(LM)）
+        _d001_col = _resolve_period_stock_column(focus, label, prefix="D001 Stock Qty")
+        focus[f"_d001_{label}"] = _safe_numeric(
+            focus.get(_d001_col, pd.Series(dtype=float, index=focus.index))
+            if _d001_col else pd.Series(dtype=float, index=focus.index)
+        )
 
     # 判斷 Site Code 可用性（用於 nunique）
     has_site_code = "Site Code" in focus.columns
@@ -505,7 +512,7 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
     """存貨分佈彙總 — 回傳 dict 含 4 個 DataFrame。
 
     Args:
-        stock_threshold: 低存貨 SKU 門檻（D001 + Shop Stock 總和 < 此值視為低存貨，預設 300）。
+        stock_threshold: 低存貨 SKU 門檻（D001 + Shop Stock 總和 < 此值視為低存貨，預設 1000；0 表示不標記）。
         sku_lookup: 預先建好的 SKU 基本資訊查找表，為 None 時即時計算。
 
     回傳:
@@ -580,10 +587,10 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
             continue
         sub_stock = cm_stock[sub_mask]
         sub_td = turnday[sub_mask]
-        # 缺貨行數 (CM Stock=0)
-        oos_count = int((cm_stock[sub_mask] == 0).sum())
-        # 過剩行數 (>30日)
-        over30 = int((sub_td > 30).sum())
+        # 缺貨行數（CM Stock ≤ 0，負庫存同計；與全模組缺貨判定一致）
+        oos_count = int((cm_stock[sub_mask] <= 0).sum())
+        # 過剩行數（Turnday ≥ 30 日；與 Turnday 分級 band_over30 同一邊界）
+        over30 = int((sub_td >= 30).sum())
         b2_rows.append({
             "Shop Nature": nat,
             "總行數": int(sub_mask.sum()),
@@ -701,9 +708,9 @@ def _build_inventory_distribution_summary(raw: pd.DataFrame, stock_threshold: in
         # 附註解（計算方式說明）
         merged.attrs["annotation"] = (
             "【計算方式】\n"
-            "Mix過剩存貨：Mix 店舖 Shop Stock (CM) > 0 且 Turnday > 14 日的過剩部分 "
-            "（超出 P90D/90×14 標準的存貨總和）。\n"
-            "Non Tourist過剩存貨：Non Tourist 店舖 Shop Stock (CM) > 0 且 Turnday > 30 日的存貨總和。\n"
+            "Mix過剩存貨：Mix 店舖 Shop Stock (CM) > 0 且超出 14 日標準 "
+            "（優先 Sold Qty (P90D)÷90×14，缺欄時以月均÷30.5×14）的存貨總和。\n"
+            "Non Tourist過剩存貨：Non Tourist 店舖 Shop Stock (CM) > 0 且超出 14 日標準（與 Mix 同一準則）的存貨總和。\n"
             "建議調貨量 = min(Tourist 缺貨店數對應的需求量, Mix過剩存貨 + Non Tourist過剩存貨)。"
         )
         result["imbalance_sku"] = merged
@@ -906,6 +913,7 @@ _OOS_DETAIL_COLS = [
     "Site Code", "Shop Name", "OM",
     "Shop Nature", "Supply Source", "NDRF Status",
     "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)",
+    "Shop Stock Qty (LLM)", "Shop Stock Qty (LM)",
     "Shop Stock Qty (CM)", "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
     "Shop Monthly Sold Qty (P90D)", "Is OOS (M-2)", "Is OOS (M-1)", "Is OOS (CM)",
     "OOS Periods Count", "OOS Pattern",
@@ -919,7 +927,8 @@ _JOSEPH_RAW_COLS = [
     "Site Code", "Shop Name", "OM",
     "Shop Nature", "Supply Source",
     "Total Stock Qty (M-2)", "Total Stock Qty (M-1)", "Total Stock Qty (CM)",
-    "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)", "Shop Stock Qty (CM)",
+    "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)",
+    "Shop Stock Qty (LLM)", "Shop Stock Qty (LM)", "Shop Stock Qty (CM)",
     "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
     "Shop Monthly Sold Qty (P90D)", "Is OOS (M-2)", "Is OOS (M-1)", "Is OOS (CM)",
     "OOS Periods Count", "OOS Pattern",
@@ -950,10 +959,13 @@ _PRICE_TIER_LABELS = ["a below 100", "b 100-300", "c 300-500", "d 500-800", "e 8
 
 
 def _soh_tier_label(qty: int | float) -> str | None:
-    """將 Shop Stock Qty 轉為 SOH tier 標籤（a 0 … h 50+），NaN/None → None。"""
+    """將 Shop Stock Qty 轉為 SOH tier 標籤（a 0 … h 50+），NaN/None/負數 → None。"""
     if pd.isna(qty):
         return None
     qty = int(qty)
+    if qty < 0:
+        # 負庫存（盤點／退貨異常）不入任何分級，避免最缺貨的列被誤歸最高檔
+        return None
     for i in range(len(_SOH_TIER_BINS) - 1):
         if _SOH_TIER_BINS[i] < qty <= _SOH_TIER_BINS[i + 1]:
             return _SOH_TIER_LABELS[i]
@@ -980,24 +992,24 @@ def _enrich_raw_joseph(raw: pd.DataFrame) -> pd.DataFrame:
     idx = df.index
 
     # 1. Total Stock Qty = D001 Stock Qty + groupby(SKU) sum of Shop Stock Qty
-    for period, d001_col, shop_col in [
-        ("M-2", "D001 Stock Qty (M-2)", "Shop Stock Qty (M-2)"),
-        ("M-1", "D001 Stock Qty (M-1)", "Shop Stock Qty (M-1)"),
-        ("CM", "D001 Stock Qty (CM)", "Shop Stock Qty (CM)"),
-    ]:
+    #    M-2／M-1 缺欄時以 LLM／LM 代理（店舖與 D001 同一準則；標準檔只有 LLM／LM 快照）
+    for period in ["M-2", "M-1", "CM"]:
         col = f"Total Stock Qty ({period})"
-        d001 = _safe_numeric(df.get(d001_col, _safe_default_series(0, idx)))
-        shop = _safe_numeric(df.get(shop_col, _safe_default_series(0, idx)))
+        _d001_col = _resolve_period_stock_column(df, period, prefix="D001 Stock Qty")
+        _shop_col = _resolve_period_stock_column(df, period)
+        d001 = _safe_numeric(df[_d001_col]) if _d001_col else _safe_default_series(0, idx)
+        shop = _safe_numeric(df[_shop_col]) if _shop_col else _safe_default_series(0, idx)
         sku_total = shop.groupby(df["SKU"], dropna=False).transform("sum")
         df[col] = d001 + sku_total
 
-    # 2. 有貨店舖 / 有賣店舖（0/1 flag）
-    for period, shop_col, sold_col in [
-        ("M-2", "Shop Stock Qty (M-2)", "Sold Qty (M-2)"),
-        ("M-1", "Shop Stock Qty (M-1)", "Sold Qty (M-1)"),
-        ("CM", "Shop Stock Qty (CM)", "Sold Qty (CM - MTD)"),
+    # 2. 有貨店舖 / 有賣店舖（0/1 flag）——店舖庫存同樣經代理取數，與缺貨判定同一口徑
+    for period, sold_col in [
+        ("M-2", "Sold Qty (M-2)"),
+        ("M-1", "Sold Qty (M-1)"),
+        ("CM", "Sold Qty (CM - MTD)"),
     ]:
-        shop = _safe_numeric(df.get(shop_col, _safe_default_series(0, idx)))
+        _shop_col = _resolve_period_stock_column(df, period)
+        shop = _safe_numeric(df[_shop_col]) if _shop_col else _safe_default_series(0, idx)
         df[f"有貨店舖 ({period})"] = (shop > 0).astype(int)
         sold = _safe_numeric(df.get(sold_col, _safe_default_series(0, idx)))
         df[f"有賣店舖 ({period})"] = (sold > 0).astype(int)
@@ -1024,9 +1036,10 @@ def _enrich_raw_joseph(raw: pd.DataFrame) -> pd.DataFrame:
     # 4. Price Tier
     df["Price Tier"] = df["Eff Price"].apply(_price_tier_label)
 
-    # 5. SOH Tier 逐期
+    # 5. SOH Tier 逐期（店舖庫存經代理取數，與缺貨判定同一口徑）
     for period in ["M-2", "M-1", "CM"]:
-        shop = _safe_numeric(df.get(f"Shop Stock Qty ({period})", _safe_default_series(0, idx)))
+        _shop_col = _resolve_period_stock_column(df, period)
+        shop = _safe_numeric(df[_shop_col]) if _shop_col else _safe_default_series(0, idx)
         df[f"SOH Tier ({period})"] = shop.apply(_soh_tier_label)
 
     return df
@@ -1070,14 +1083,17 @@ def transform_stock_impact(
     warehouse_only: bool = True,
     stock_threshold: int = 1000,
     ref_date: datetime.date | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict, list[str]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
     """Stock Impact Analysis 主流程。
 
     Args:
         warehouse_only: 若 True（預設），只分析 Supply Source = Warehouse 的列。
+        stock_threshold: 低存量標記門檻（預設 1000 件；0 表示不標記）。
         ref_date: Launch Date 計算 New SKU 的參考日期（預設今天，建議傳入 MTD 截止日期）。
     Returns:
-        (summary_site, summary_brand, summary_buyer, summary_category, sku_allocation, sku_diagnosis, inv_distribution, sku_monthly_analysis, raw_df, warnings)
+        (summary_site, summary_brand, summary_buyer, summary_category, summary_item_class,
+         sku_allocation, sku_diagnosis, inv_distribution, sku_monthly_analysis, raw_df, warnings)
+        註：sku_allocation 自 v1.7.1 起不再輸出（回傳空表），保留位置以維持解包相容。
     """
     missing = validate_input(df_input)
     if missing:
@@ -1086,13 +1102,17 @@ def transform_stock_impact(
     warnings = []
 
     _optional_cols = [
-        "Shop Stock Qty (M-2)", "Shop Stock Qty (M-1)", "Shop Stock Qty (CM)",
+        "Shop Stock Qty (CM)",
         "Sold Qty (M-2)", "Sold Qty (M-1)", "Sold Qty (CM - MTD)",
         "Shop Monthly Sold Qty (P90D)", "Supply Source", "Shop Nature", "Adj. MCH1",
     ]
     for _col in _optional_cols:
         if _col not in df_input.columns:
             warnings.append(f"缺少可選欄位「{_col}」，相關統計將受影響")
+    # M-2／M-1 店舖庫存為「原生或代理（LLM／LM）二擇一」：兩者皆缺才警告
+    for _period, _proxy in (("Shop Stock Qty (M-2)", "Shop Stock Qty (LLM)"), ("Shop Stock Qty (M-1)", "Shop Stock Qty (LM)")):
+        if _period not in df_input.columns and _proxy not in df_input.columns:
+            warnings.append(f"缺少可選欄位「{_period}」（代理欄「{_proxy}」亦缺），該期庫存統計將受影響")
 
     if progress_callback:
         progress_callback(0.05, "驗證通過")
@@ -1178,14 +1198,15 @@ def transform_stock_impact(
     # 建立 SKU 基本資訊查找表（供 4 個 SKU-level 函式共用，避免重複 groupby）
     _sku_lookup = _build_sku_info_lookup(raw)
 
-    # 平行化：同時計算 4 個 SKU-level 分析（彼此獨立，共用 _sku_lookup）
-    with ThreadPoolExecutor(max_workers=4) as _sku_executor:
-        f_alloc = _sku_executor.submit(_build_sku_allocation_summary, raw, _sku_lookup)
+    # 平行化：同時計算 3 個 SKU-level 分析（彼此獨立，共用 _sku_lookup）。
+    # sku_allocation 自 v1.7.1 起取消輸出，不再計算（回傳空表維持解包相容）；
+    # 若日後重新啟用，須先補 RF 過濾（其 Tourist 缺貨篩選與 Is Stock Impacted 口徑不一）。
+    with ThreadPoolExecutor(max_workers=3) as _sku_executor:
         f_diag = _sku_executor.submit(_build_sku_stock_diagnosis, raw, _sku_lookup)
         f_inv = _sku_executor.submit(_build_inventory_distribution_summary, raw, stock_threshold)
         f_monthly = _sku_executor.submit(_build_sku_monthly_analysis, raw, stock_threshold, _sku_lookup)
 
-    sku_allocation = f_alloc.result()
+    sku_allocation = pd.DataFrame()
     sku_diagnosis = f_diag.result()
     inv_distribution = f_inv.result()
     sku_monthly_analysis = f_monthly.result()
@@ -1198,16 +1219,21 @@ def transform_stock_impact(
 
 
 def _write_oos_detail_sheet(ws, raw_df, header_font, header_fill, thin_border, progress_callback):
-    """寫入缺貨影響明細（含 ND/RF 行數統計），按缺貨期數降序。"""
+    """寫入缺貨影響明細（只計 RF 店舖，與 Dashboard／彙總同一口徑），按缺貨期數降序。"""
     idx = raw_df.index
-    # 擴展篩選：任一期缺貨且有需求證據（不限 RF）
+    # 篩選：任一期缺貨且有需求證據，且只計 RF 店舖——與「Is Stock Impacted」、
+    # Dashboard 指標與 By Brand／Buyer 彙總同一口徑（ND 店已停補貨，缺貨不屬可跟進事項）
     oos_count = _safe_numeric(raw_df.get("OOS Periods Count", _safe_default_series(0, idx)))
     m2_sold = _safe_numeric(raw_df.get("Sold Qty (M-2)", _safe_default_series(0, idx)))
     p90d = _safe_numeric(raw_df.get("Shop Monthly Sold Qty (P90D)", _safe_default_series(0, idx)))
+    _rp_det = (
+        raw_df.get("RP Type", _safe_default_series("", idx))
+        .fillna("").astype(str).str.strip().str.upper()
+    )
     has_oos = oos_count.values > 0
     has_demand = (m2_sold.values > 0) | (p90d.values > 0)
 
-    detail = raw_df[has_oos & has_demand].copy()
+    detail = raw_df[has_oos & has_demand & (_rp_det == "RF").values].copy()
     if detail.empty:
         ws.cell(row=1, column=1, value="無缺貨影響資料").font = Font(size=12)
         return
@@ -1972,11 +1998,13 @@ def _build_sku_soh_tier_summary(raw: pd.DataFrame) -> pd.DataFrame:
             if lbl not in vc.columns:
                 vc[lbl] = 0
         vc = vc[_SOH_TIER_LABELS].copy()
-        vc.columns = [f"{lbl}" for lbl in _SOH_TIER_LABELS]
+        # 三期欄名一律帶期別後綴：三期欄名相同會令後續 merge 碰撞（pandas 自動
+        # 加 _x/_y 後綴、第三次 merge 的 CM 值佔用無後綴欄名），三個區塊全顯示 CM 值
+        vc.columns = [f"{lbl} ({p})" for lbl in _SOH_TIER_LABELS]
         # add total
-        vc["總計"] = vc.sum(axis=1).astype(int)
+        vc[f"總計 ({p})"] = vc.sum(axis=1).astype(int)
         vc = vc.reset_index()
-        vc.columns = ["SKU"] + list(_SOH_TIER_LABELS) + ["總計"]
+        vc.columns = ["SKU"] + [f"{lbl} ({p})" for lbl in _SOH_TIER_LABELS] + [f"總計 ({p})"]
         tier_periods.append(vc)
 
     # 合併
@@ -2034,10 +2062,11 @@ def _build_sku_soh_tier_summary(raw: pd.DataFrame) -> pd.DataFrame:
         out.append("Sold Qty (CM - MTD)")
     for p, pname in [("M-2", "M-2"), ("M-1", "M-1"), ("CM", "CM")]:
         for lbl in _SOH_TIER_LABELS:
-            col = f"{lbl}"
+            col = f"{lbl} ({p})"
             if col in result.columns:
                 out.append(col)
-        out.append("總計")
+        if f"總計 ({p})" in result.columns:
+            out.append(f"總計 ({p})")
 
     out = [c for c in out if c in result.columns]
     result = result[out]
@@ -2351,7 +2380,8 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── 缺貨模式分類 ────────────────────────────────────────────────────────────
     pattern = np.full(len(df), "無缺貨", dtype=object)
-    # 恢復供貨：M-2 缺貨（或 M-2、M-1 都缺貨）但 CM 有貨 → 後期補回
+    # 恢復供貨：僅 M-2／M-1 缺貨而 CM 有貨 → 後期補回
+    # （註：M-2 與 M-1 都缺貨時缺貨期數 ≥ 2，下方「長期缺貨」會覆蓋本分類）
     recovered = (~oos_flags["CM"]) & (oos_flags["M-2"] | oos_flags["M-1"])
     # 間歇：僅 1 期缺貨（且非恢復供貨的 M-2/M-1 缺貨 → CM 有貨已涵蓋）
     intermittent = (oos_count == 1) & ~recovered
@@ -2424,8 +2454,9 @@ def _add_stock_impact_columns(df: pd.DataFrame) -> pd.DataFrame:
     td = turnday_clean.values
     # 無存貨
     no_stock = ~has_cm_stock
-    # 無銷售但有存貨（Turnday = -1 且有存貨）= 純囤積
-    no_sale_has_stock = (td < 0) & has_cm_stock
+    # 無銷售但有存貨（Turnday 為 -1 旗標＝inf/NaN 且有存貨）= 純囤積；
+    # 負數 Turnday（異常資料）不在此列，避免庫存被全數計入可釋放
+    no_sale_has_stock = (td == -1) & has_cm_stock
     # 有銷售：依 Turnday 分級
     band_under7 = (td >= 0) & (td < 7)
     band_7_14 = (td >= 7) & (td < 14)
@@ -2652,11 +2683,13 @@ def _build_sku_monthly_analysis(raw: pd.DataFrame, stock_threshold: int = 1000, 
         result = result.merge(sku_lookup[["SKU"] + extra_from_lookup], on="SKU", how="left")
 
     # ── 不分 Nature 的週期存貨/銷售欄位（M-2, M-1 D001/ShopStock；Sold M-2, M-1, MTD）──
-    # 店舖 M-2／M-1 缺欄時以 LLM／LM 代理（與缺貨判定同一口徑），確保標準報表仍有數值
+    # 店舖與 D001 的 M-2／M-1 缺欄時以 LLM／LM 代理（與缺貨判定同一口徑），確保標準報表仍有數值
     _shop_m2_col = _resolve_period_stock_column(raw, "M-2")
     _shop_m1_col = _resolve_period_stock_column(raw, "M-1")
-    d001_m2 = _safe_numeric(raw["D001 Stock Qty (M-2)"]) if "D001 Stock Qty (M-2)" in raw.columns else _safe_default_series(0, raw.index)
-    d001_m1 = _safe_numeric(raw["D001 Stock Qty (M-1)"]) if "D001 Stock Qty (M-1)" in raw.columns else _safe_default_series(0, raw.index)
+    _d001_m2_col = _resolve_period_stock_column(raw, "M-2", prefix="D001 Stock Qty")
+    _d001_m1_col = _resolve_period_stock_column(raw, "M-1", prefix="D001 Stock Qty")
+    d001_m2 = _safe_numeric(raw[_d001_m2_col]) if _d001_m2_col else _safe_default_series(0, raw.index)
+    d001_m1 = _safe_numeric(raw[_d001_m1_col]) if _d001_m1_col else _safe_default_series(0, raw.index)
     shop_m2 = _safe_numeric(raw[_shop_m2_col]) if _shop_m2_col else _safe_default_series(0, raw.index)
     shop_m1 = _safe_numeric(raw[_shop_m1_col]) if _shop_m1_col else _safe_default_series(0, raw.index)
     sold_m2 = _safe_numeric(raw.get("Sold Qty (M-2)", _safe_default_series(0, raw.index)))
