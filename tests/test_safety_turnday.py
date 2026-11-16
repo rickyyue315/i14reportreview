@@ -199,6 +199,83 @@ def test_turnday_custom_days():
     assert out["Recommend Safety Stock"].tolist() == [10]
 
 
+# ── 分母修正：P90D 有效統計日數 ───────────────────────────────────────────
+
+
+def test_sold_days_denominator_helper():
+    from modes.safety_review import _sold_days_denominator
+
+    df = pd.DataFrame([
+        {"Launch Date": "20261113"},   # 距參考日 2 日 → 含首尾 3 日
+        {"Launch Date": "20261106"},   # 10 日
+        {"Launch Date": "20261001"},   # 46 日
+        {"Launch Date": "20200101"},   # 遠超 90 → 90
+        {"Launch Date": ""},           # 缺值 → 90
+        {"Launch Date": "20261120"},   # 未來上市日 → 90（不修正）
+    ])
+    days = _sold_days_denominator(df, "2026-11-15")
+    assert days.tolist() == [3.0, 10.0, 46.0, 90.0, 90.0, 90.0]
+
+    # 保守下限：14 日以下一律按 14 日計
+    days_cons = _sold_days_denominator(df, "2026-11-15", floor_days=14)
+    assert days_cons.tolist() == [14.0, 14.0, 46.0, 90.0, 90.0, 90.0]
+
+
+def test_turnday_new_sku_uses_actual_sold_days():
+    """上市 10 日的新品：除以 10，而非固定 90。"""
+    df = _df([
+        {"SKU": "1", "Shop Nature": "Tourist", "Sold Qty (P90D)": 30,
+         "Adj. Safety Stock": 0, "Launch Date": "20261106"},
+    ])
+    out = _turn(df, safety_mode="allow_both", ref_date="2026-11-15",
+                safety_days={"Tourist": 10, "Mix": 9, "Non Tourist": 7})
+    assert out["Safety 周轉所需量"].tolist() == [30]  # ceil(30/10*10)
+    assert out["Recommend Safety Stock"].tolist() == [30]
+
+
+def test_turnday_new_sku_floor_1_matches_actual():
+    """sold_days_floor=1 → 完全按實際可售日數（與預設 3 日在 3 日以上資料一致）。"""
+    df = _df([
+        {"SKU": "1", "Shop Nature": "Tourist", "Sold Qty (P90D)": 30,
+         "Adj. Safety Stock": 0, "Launch Date": "20261113"},
+    ])
+    out = _turn(df, safety_mode="allow_both", ref_date="2026-11-15",
+                safety_days={"Tourist": 10, "Mix": 9, "Non Tourist": 7},
+                sold_days_floor=1)
+    assert out["Safety 周轉所需量"].tolist() == [100]  # ceil(30/3*10)
+
+
+def test_turnday_new_sku_floor_14_conservative():
+    """sold_days_floor=14 → 額外假設上市初期銷量會回落（保守口徑）。"""
+    df = _df([
+        {"SKU": "1", "Shop Nature": "Tourist", "Sold Qty (P90D)": 30,
+         "Adj. Safety Stock": 0, "Launch Date": "20261113"},
+    ])
+    out = _turn(df, safety_mode="allow_both", ref_date="2026-11-15",
+                safety_days={"Tourist": 10, "Mix": 9, "Non Tourist": 7},
+                sold_days_floor=14)
+    assert out["Safety 周轉所需量"].tolist() == [22]  # ceil(30/14*10)
+
+
+def test_turnday_old_sku_keeps_90_denominator():
+    df = _df([
+        {"SKU": "1", "Shop Nature": "Tourist", "Sold Qty (P90D)": 90,
+         "Adj. Safety Stock": 0, "Launch Date": "20250101"},
+    ])
+    out = _turn(df, safety_mode="allow_both", ref_date="2026-11-16",
+                safety_days={"Tourist": 10, "Mix": 9, "Non Tourist": 7})
+    assert out["Safety 周轉所需量"].tolist() == [10]  # ceil(90/90*10)
+
+
+def test_turnday_launch_date_missing_keeps_90_denominator():
+    df = _df([
+        {"SKU": "1", "Shop Nature": "Tourist", "Sold Qty (P90D)": 90, "Adj. Safety Stock": 0},
+    ])
+    out = _turn(df, safety_mode="allow_both", ref_date="2026-11-16",
+                safety_days={"Tourist": 10, "Mix": 9, "Non Tourist": 7})
+    assert out["Safety 周轉所需量"].tolist() == [10]
+
+
 def test_rate_mode_ignores_turnday_line():
     # 月銷倍率基準下，建議值仍按 X/Y；周轉所需量欄僅供對照
     df = _df([

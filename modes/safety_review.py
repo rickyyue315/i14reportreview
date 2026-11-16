@@ -133,9 +133,10 @@ COMBINED_RAW_COLS = [
 
 # Safety 計算基準（可切換選項；預設 "rate" 維持現行 X/Y 行為）：
 # - "rate"：月銷倍率（Overstock Cap X／OOS Floor Y；建議值 = max(Y, Z if Z ≤ X else X)）
-# - "turnday"：周轉天數（Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 基準天數)，
-#   與 Safety Stock x NetStock Review 同口徑；建議值直接取周轉所需量，有銷量或新品時
-#   含最低 3 件保底（舊品零銷量維持 0），不設 Overstock 上限）。
+# - "turnday"：周轉天數（Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 有效統計日數 × 該列 Nature
+#   基準天數)，有效統計日數 = min(90, max(上市至參考日天數（含首尾）, 3))；與 Safety Stock x NetStock
+#   Review 同口徑；建議值直接取周轉所需量，有銷量或新品時含最低 3 件保底（舊品零銷量維持 0），
+#   不設 Overstock 上限）。
 _SSR_SAFETY_BASIS_RATE = "rate"
 _SSR_SAFETY_BASIS_TURNDAY = "turnday"
 _SSR_SAFETY_BASIS_LABELS = {
@@ -145,7 +146,8 @@ _SSR_SAFETY_BASIS_LABELS = {
 
 # 周轉天數基準欄（與 Safety Stock x NetStock Review 同名同義，供對照與稽核）：
 # - Safety 基準天數：該列實際採用的基準天數（按 Shop Nature；預設與 Hybrid 相同）
-# - Safety 周轉所需量：ceil(Sold Qty (P90D) ÷ 90 × 基準天數)，有銷量或新品時含最低 3 件保底
+# - Safety 周轉所需量：ceil(Sold Qty (P90D) ÷ 有效統計日數 × 基準天數)，有銷量或新品時含最低 3 件保底
+#   （有效統計日數：取 min(90, max(上市至參考日天數, 3))，舊品為 90）
 _SSR_SAFETY_DAYS_COLUMN = "Safety 基準天數"
 _SSR_SAFETY_LINE_COLUMN = "Safety 周轉所需量"
 
@@ -158,6 +160,41 @@ def _normalize_ssr_safety_basis(safety_basis) -> str:
     return _SSR_SAFETY_BASIS_RATE
 
 
+# ── P90D 分母修正（有效統計日數）──
+# Sold Qty (P90D) 是「近 90 日累計」，但新品上市不足 90 日時，該累計只涵蓋上市後的
+# 少數日子（例如 11 月 13 日上市、數據截至 11 月 15 日 → 只有 3 日）。固定除以 90 會
+# 把日均銷量按比例低估（3 日 → 低估 30 倍），令 Safety 周轉所需量全線撞 3 件保底，
+# 賣得越快的店被削得越深。改按「實際可售日數」作分母：
+#   eff_days = min(90, max(上市至參考日（含首尾）, floor))
+# floor 預設 3 日——只防治以 1–2 日尖峰外推，不改變「按實際日數」的口徑；設 14 則
+# 額外假設上市初期銷量會回落（保守），設 1 即完全按實際日數。
+_SSR_SOLD_DAYS_MAX = 90
+_SSR_SOLD_DAYS_FLOOR_DEFAULT = 3
+
+
+def _sold_days_denominator(df, ref_date=None, floor_days=None) -> np.ndarray:
+    """每列 Sold Qty (P90D) 的有效統計日數（即除以多少日換算日均銷量）。
+
+    舊品（上市滿 90 日）／無 Launch Date／無法解析／上市日為未來 → 一律 90，維持原行為；
+    新品 → clip(上市至參考日天數（含首尾）, floor_days, 90)。逐列回傳 float 陣列，長度同 df。
+    """
+    n = len(df)
+    days = np.full(n, float(_SSR_SOLD_DAYS_MAX))
+    if n == 0 or "Launch Date" not in df.columns:
+        return days
+    _floor = _SSR_SOLD_DAYS_FLOOR_DEFAULT if floor_days is None else floor_days
+    try:
+        _floor = max(1.0, float(_floor))
+    except (TypeError, ValueError):
+        _floor = float(_SSR_SOLD_DAYS_FLOOR_DEFAULT)
+    launch = _parse_launch_dates(df["Launch Date"].fillna("").astype(str).str.strip())
+    _ref = pd.Timestamp(_normalize_ref_date(ref_date))
+    # 可售日數含首尾（上市日當日已可售）：參考日 − 上市日 + 1
+    _diff = (_ref - launch).dt.days.to_numpy(dtype=float)
+    valid = launch.notna().to_numpy() & (_diff >= 0)
+    if valid.any():
+        days[valid] = np.clip(_diff[valid] + 1.0, _floor, float(_SSR_SOLD_DAYS_MAX))
+    return days
 
 
 
@@ -203,7 +240,7 @@ def _annotate_nd_recommendation(nd_rec, df):
 
 def _add_combined_recommendation_columns(
     df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode="increase_only",
-    ref_date=None, safety_basis="rate", safety_days=None,
+    ref_date=None, safety_basis="rate", safety_days=None, sold_days_floor=None,
 ):
     df = df.copy()
     safety_basis = _normalize_ssr_safety_basis(safety_basis)
@@ -293,7 +330,9 @@ def _add_combined_recommendation_columns(
     z_values = adj_ss.values.astype(int)
 
     # ── 周轉天數基準（與 Safety Stock x NetStock Review 同口徑；兩種基準恆並列計算供對照）──
-    # Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 該列 Nature 基準天數)；
+    # Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 有效統計日數 × 該列 Nature 基準天數)；
+    # 有效統計日數 = min(90, max(上市至參考日天數, sold_days_floor))，舊品恆為 90
+    # （分母修正：新品上市不足 90 日時，固定 ÷90 會按比例低估日均銷量）。
     # 有銷量或 90 天內新品時含最低 3 件保底（沿用現行 OOS 底線保底），
     # 舊品零銷量（P90D ≤ 0）時維持 0，不保底
     # （負數 P90D 按 0 計算；其他 Nature 值歸 Non Tourist 天數）。
@@ -304,7 +343,8 @@ def _add_combined_recommendation_columns(
     ).astype(float)
     _sold_p90d = _safe_numeric(df.get("Sold Qty (P90D)", _safe_default_series(0, df.index))).values
     _sold_p90d = np.maximum(_sold_p90d, 0.0)
-    _turn_preclip = np.ceil(_sold_p90d / 90.0 * _days_arr)
+    _sold_days = _sold_days_denominator(df, _ref_early, sold_days_floor)
+    _turn_preclip = np.ceil(_sold_p90d / _sold_days * _days_arr)
     _has_sold = (_sold_p90d > 0) | _is_new_early
     _turn_values = np.where(_has_sold, np.maximum(_turn_preclip, 3), 0).astype(int)
 
@@ -651,6 +691,7 @@ def transform_combined(
     sales_overstock_min_units=None,
     safety_basis: str = "rate",
     safety_days: dict | None = None,
+    sold_days_floor: int | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str], list[str]]:
     missing = validate_input(df_input)
     if missing:
@@ -685,6 +726,7 @@ def transform_combined(
     raw = _add_combined_recommendation_columns(
         df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode=safety_mode,
         ref_date=ref_date, safety_basis=safety_basis, safety_days=_ssr_days,
+        sold_days_floor=sold_days_floor,
     )
 
     # 銷量帶／銷量存貨分類（常開顯示欄；只作分類顯示，不影響 Safety 建議計算）
@@ -1068,7 +1110,9 @@ def _write_combined_guide_sheet(ws, stats, dimension):
         ("OOS Rate",
          f"Tourist {oos_t}%／Mix {oos_m}%／Non Tourist {oos_n}%（缺貨底線 Y = ceil(月銷預估 × Rate)；有銷量或新品時最低 3 件，舊品零銷量維持 0）"),
         ("Safety 基準天數",
-         f"{_sd_label}（Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × 基準天數)；有銷量或新品時最低 3 件，舊品零銷量維持 0；與調貨段無關）"),
+         f"{_sd_label}（Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 有效統計日數 × 基準天數)；"
+         "有效統計日數 = min(90, max(上市至參考日天數（含首尾）, 3))，上市滿 90 日者為 90；"
+         "有銷量或新品時最低 3 件，舊品零銷量維持 0；與調貨段無關）"),
         ("MTD 日期",
          f'MTD {st_.get("mtd_days", "—")} 日（當月共 {st_.get("month_total_days", "—")} 日；'
          "月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均，月初以 P90D 為主）"),
@@ -1087,8 +1131,11 @@ def _write_combined_guide_sheet(ws, stats, dimension):
         "OOS Floor (Y) = ceil(月銷預估 × OOS Rate)；有銷量或 90 天內上市的新品時最低 3 件，"
         "舊品零銷量維持 0（不為滯銷品項設安全庫存）；月銷預估 = MTD 實績 + 剩餘日數 × P90D 月均"
         "（月初以 P90D 為主，月尾收斂至 MTD；P90D 缺值時退回純 MTD 線性外推）。",
-        "Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 90 × Safety 基準天數)；有銷量或 90 天內上市的新品時"
-        "最低 3 件，舊品零銷量維持 0（與 Safety Stock x NetStock Review 同口徑；負數 P90D 按 0 計算）。",
+        "Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 有效統計日數 × Safety 基準天數)；"
+        "有效統計日數 = min(90, max(上市至參考日天數（含首尾）, 3))（上市未滿 90 日的新品只按實際可售日數"
+        "換算日均，避免以 90 日作分母低估銷量；上市日缺值或無法解析時按 90 日）；"
+        "有銷量或 90 天內上市的新品時最低 3 件，舊品零銷量維持 0"
+        "（與 Safety Stock x NetStock Review 同口徑；負數 P90D 按 0 計算）。",
         "建議 Safety Stock（月銷倍率基準）= max(Y, Z if Z ≤ X else X)；"
         "建議 Safety Stock（周轉天數基準）= Safety 周轉所需量（Z = 現有 Safety 設定）；"
         "Safety Qty Change = 建議值 − Z（正=增加、負=減少、零=不變）。",

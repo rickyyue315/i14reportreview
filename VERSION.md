@@ -1,5 +1,19 @@
 # 版本記錄
 
+## v1.106.1 (2026-11-16)
+
+Safety Stock Review 周轉天數基準的分母修正（新品上市不足 90 日時 Safety 被全線削至 3 件保底）；Excel 表頭、欄名、工作表名等資料契約不變。
+
+### Safety Stock Review
+
+- **分母修正**：`Safety 周轉所需量 = ceil(Sold Qty (P90D) ÷ 有效統計日數 × 基準天數)`，有效統計日數 = `min(90, max(Launch Date 至參考日天數, 3))`（上市滿 90 日、Launch Date 缺值／無法解析、上市日為未來時一律 90，舊品行為完全不變）
+  - 修正前：`Sold Qty (P90D)` 是近 90 日累計，新品上市 3 日時仍除以 90，日均銷量被低估約 30 倍，令 `Safety 周轉所需量` 全表撞 3 件保底（實例：430 列全部 = 3，建議值只有 3／0 兩種取值；整體覆蓋由 28.6 日塌至 3.9 日）
+  - 修正後：按實際可售日數換算日均，賣得快的店舖不再與零銷店同得 3 件
+  - 新增 `sold_days_floor` 參數（預設 3；設 14 為額外假設上市初期銷量回落的保守口徑，設 1 即完全按實際日數），可經 `transform_combined` 逐次覆寫；`_add_combined_recommendation_columns` 同步接受
+  - 新增 `_sold_days_denominator` 輔助函式與 `_SSR_SOLD_DAYS_MAX`／`_SSR_SOLD_DAYS_FLOOR_DEFAULT` 常數
+- 說明（首頁導讀）「Safety 基準天數」「Safety 周轉所需量」兩段文字同步改為新公式；README 安全庫存審查章節補上分母修正理由
+- 新增 5 項回歸測試（`tests/test_safety_turnday.py`）：輔助函式日數換算（含未來上市日、缺值）、新品按實際日數、`sold_days_floor=1`、`sold_days_floor=14` 保守口徑、舊品維持 90
+
 ## v1.106.0 (2026-11-15)
 
 全模式邏輯審查後的批次修復（高風險數字失真、口徑矛盾、說明文字與實作不一致），並新增 17 項回歸測試（`tests/test_v106_fixes.py`）；Excel 表頭、欄名、工作表名等資料契約不變。
