@@ -1184,7 +1184,10 @@ def _write_combined_guide_sheet(ws, stats, dimension):
 
     _write_guide_sheet(
         ws, title="Safety Stock Review 說明與導讀",
-        subtitle="本頁講解此報告的 Review 邏輯與本次執行參數，並逐頁說明應留意的部分；各項判定以 RAW 逐列欄位為準。",
+        subtitle="本頁講解此報告的 Review 邏輯與本次執行參數，並逐頁說明應留意的部分；各項判定以 RAW 逐列欄位為準。最下方的 ⑤ 為 Safety 計算邏輯圖。",
         params=params, logic=logic, sheet_rows=sheet_rows, tips=tips,
+        image="assets/safety_logic_guide.png",
+        image_section="⑤ Safety 計算邏輯圖（與本報告建議值同一準則：Z＝Safety Stock (現時)、X0＝Overstock Cap、Y＝OOS Floor）",
+        image_width_px=900,
     )
 

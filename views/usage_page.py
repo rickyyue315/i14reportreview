@@ -174,7 +174,10 @@ MODES = [
 9. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
 10. **SUMMARY 工作表** — 統計 Safety Qty Change 分類（增加 / 減少 / 不變）與 Recommendation of new Safety Qty / ND 分類（空白維持 / New SKU / 0 已是 ND / ND 系列加註）各行數與 SKU 數；總計列 SKU 數為全表不重複 SKU（同一 SKU 可跨分類）；另附 **③ Safety Qty Change 分類 × 分類維度交叉表**（各分組列數／SKU 數／Safety Qty Change 合計，含總計列；非標準 Shop Nature 值如 Other 不佔分組欄、只計入合計）
 11. **分類維度與銷量分類** — 分類維度七選一，只改 SUMMARY 區塊 ③ 的分組欄位（分組鍵與 Safety Stock x NetStock Review 同一準則；來源缺「OM」欄或全欄空白時 OM 兩個維度退回 Shop Nature；RAW 缺「銷量帶」欄時銷量兩個維度退回 Shop Nature 鍵）。RAW 恆附「銷量帶」與「銷量存貨分類」：銷量帶＝同 SKU 內按 Sold Qty (P90D) 排名分帶（前 25%＝高銷、最低 25%＝低銷、其餘＝中銷、P90D≤0＝零銷；有銷店舖少於 4 間時不區分高低）；銷量存貨分類＝高銷且店舖周轉日數（Shop Stock Qty (CM) ÷ 月銷 × 30.5，月銷缺欄時以 Sold Qty (P90D) ÷ 90 × 30.5 換算）低於缺貨線（預設 7 日）→「高銷缺貨」；低銷且周轉日數達積壓線（預設 30 日）且庫存達保底件數（預設 2 件）→「低銷積壓」；零銷且庫存達保底件數→「零銷積壓」；其餘→「正常」。來源缺「Sold Qty (P90D)」時不輸出銷量兩欄並列 warning；缺「Shop Stock Qty (CM)」時只輸出銷量帶並列 warning
-     """),
+     """,
+     {"path": "assets/safety_logic_guide.png", "inline": True, "first": True,
+      "caption": "🖼️ **Safety 計算邏輯圖**：Z＝Safety Stock (現時)（來源檔 Adj. Safety Stock）、X0＝Overstock Cap 上限、Y＝OOS Floor 底線。"
+                 "圖中公式與系統建議值同一準則；點擊圖片可放大，或另存作內部講解用。"}),
 
     ("📦 Stock Impact Analysis",
      """
@@ -449,17 +452,55 @@ Safety Stock 月度變化計算：
 
 ]
 
+
+# 3b. 模式說明圖（第 4 個元素可為路徑字串、路徑元組或圖片規格 dict；dict 支援 title／caption／first／inline）
+def _sales_band_fig(path):
+    return {
+        "path": path,
+        "title": "🖼️ 銷量帶分類說明圖（高銷／中銷／低銷／零銷）",
+        "caption": "同 SKU 內按店舖 Sold Qty (P90D) 排名分帶；與輸出 Excel「說明」工作表的準則一致。",
+    }
+
+
+def _figures_of(extra, first=False):
+    """把 MODES 第 4 個元素正規化為圖片規格清單，並按插入位置（公式前／後）篩選。"""
+    if not extra or not extra[0]:
+        return []
+    spec = extra[0]
+    if isinstance(spec, str):
+        specs = [_sales_band_fig(spec)]
+    elif isinstance(spec, dict):
+        specs = [spec]
+    elif isinstance(spec, (list, tuple)):
+        specs = [_sales_band_fig(s) if isinstance(s, str) else s for s in spec
+                 if isinstance(s, (str, dict))]
+    else:
+        specs = []
+    return [s for s in specs if bool(s.get("first")) == first]
+
+
+def _render_figures(specs):
+    for _fig in specs:
+        if _fig.get("inline"):
+            st.image(_fig["path"], width="stretch")
+            if _fig.get("caption"):
+                st.caption(_fig["caption"])
+        else:
+            with st.expander(_fig.get("title", "🖼️ 說明圖"), expanded=False):
+                st.image(_fig["path"], width="stretch")
+                if _fig.get("caption"):
+                    st.caption(_fig["caption"])
+
+
 for _label, _desc, _rules, *_extra in MODES:
     with st.expander(_label, expanded=False):
         st.markdown("#### 🎯 模式說明")
         st.markdown(_desc)
+        _render_figures(_figures_of(_extra, first=True))
         if _rules:
             st.markdown("#### ⚙️ 核心計算規則")
             st.markdown(_rules)
-        if _extra and _extra[0]:
-            with st.expander("🖼️ 銷量帶分類說明圖（高銷／中銷／低銷／零銷）", expanded=False):
-                st.image(_extra[0], width="stretch")
-                st.caption("同 SKU 內按店舖 Sold Qty (P90D) 排名分帶；與輸出 Excel「說明」工作表的準則一致。")
+        _render_figures(_figures_of(_extra, first=False))
 
 # 4. 必要欄位檢核標準（單一 HTML 區塊）
 st.markdown("""

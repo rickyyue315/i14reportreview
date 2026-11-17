@@ -1,5 +1,32 @@
 # 版本記錄
 
+## v1.106.2 (2026-11-17)
+
+新增「Safety 計算邏輯圖」，同時放入使用說明頁與 Safety Stock Review 輸出的「說明」工作表，供首批試用 Safety Stock Review 的 Buyer 先看圖後看文字；計算邏輯、Excel 欄名與工作表名稱完全不變（只在「說明」工作表加圖）。
+
+### Safety Stock Review
+
+- **新增 Safety 計算邏輯圖**（`assets/safety_logic_guide.png`，由 `scripts/make_safety_logic_chart.py` 生成）：單頁流程圖，順序為「讀入三個數字（銷售數據／現時設定 Z／店舖屬性）→ 月銷預估 → 上限 X0 與底線 Y → Z 與 X0 比較 → 兩種情況的建議值 → 調整量分類」；另附四行例子（同一間 Mix 店 10／32／40／60 件）與「保底與特殊情況」「周轉天數基準」兩張說明卡
+- 圖中公式與 `_add_combined_recommendation_columns` 同一準則：`X0 = floor(P90D 月均 × Overstock Rate)`、`Y = ceil(月銷預估 × OOS Rate)`、建議值 = `Z ≤ X0 → max(Y, Z)`／`Z > X0 → max(Y, X0)`、周轉所需量 = `ceil(P90D ÷ 有效日數 × 基準天數)`；保底 3 件、舊品零銷量、RP Type＝ND 與新品保護均已在圖上標示
+- 使用說明頁「🔒 Safety Stock Review」區塊在「模式說明」之後直接顯示該圖（不入收合區），核心計算規則緊隨其後
+- Excel 輸出：圖插入「說明」工作表 ④ 實用提示之後新增的 ⑤ 段（900 px 寬、等比縮放），副標題補一句「最下方的 ⑤ 為 Safety 計算邏輯圖」
+
+### Excel「說明」工作表
+
+- `_write_guide_sheet` 新增選填 `image`／`image_section`／`image_width_px`：在既有四段之後另開一節插入圖片，錨在該節標題下一列
+- 新增 `_add_guide_image()`：按指定寬度等比縮放、置中於 A–C 文字欄；**缺檔、缺 Pillow 或任何繪圖錯誤一律靜默略過**，確保報告照常匯出
+- 只有 Safety Stock Review 傳圖；其餘模式（Stock Checking、Safety Stock 月度變化分析、P90D 轉貨等）的說明表輸出完全不變（維持 A–C 三欄、無圖）
+
+### 使用說明頁
+
+- 模式說明圖的傳入規格擴充為三種：路徑字串、路徑元組（現有的銷量帶分類說明圖）、dict（可指定 `title`／`caption`／`first`／`inline`）；`first` 決定插在核心計算規則之前或之後，`inline` 決定直接顯示或收入收合區塊
+- 銷量帶分類說明圖行為不變（仍在核心計算規則之後、收合顯示）
+
+### 其他
+
+- 新增 `scripts/make_safety_logic_chart.py`（離線生成圖表，非應用程式元件）；執行需本機具備 matplotlib 與微軟正黑體，輸出固定為 `assets/safety_logic_guide.png`
+- 新增 `tests/test_guide_image.py`（4 項）：縮放與錨點、缺檔靜默略過、Safety 說明表確實在 ⑤ 段後帶圖、未傳圖時維持三欄無圖
+
 ## v1.106.1 (2026-11-16)
 
 Safety Stock Review 周轉天數基準的分母修正（新品上市不足 90 日時 Safety 被全線削至 3 件保底）；Excel 表頭、欄名、工作表名等資料契約不變。

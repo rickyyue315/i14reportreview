@@ -9,6 +9,7 @@ import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -56,6 +57,7 @@ __all__ = [
     "validate_input",
     "_nature_rate_arr",
     "_write_guide_sheet",
+    "_add_guide_image",
 ]
 
 
@@ -828,9 +830,39 @@ def _nature_rate_arr(shop_nature, default_rate, tourist_rate, mix_rate):
 
 
 
-def _write_guide_sheet(ws, *, title, subtitle, params, logic, sheet_rows, tips):
+def _add_guide_image(ws, path, anchor="A1", width_px=900):
+    """在「說明」工作表插入說明圖（錨點由呼叫端決定，一般放在文字段落之後）。
+
+    缺檔、缺 Pillow 或任何繪圖錯誤時一律靜默略過並回傳 False，
+    確保報告照常輸出（說明圖屬輔助資訊，不應令匯出失敗）。
+    """
+    try:
+        from openpyxl.drawing.image import Image as XLImage
+    except Exception:
+        return False
+    try:
+        p = Path(path)
+        if not p.is_absolute():
+            p = Path(__file__).resolve().parent.parent / p
+        if not p.is_file():
+            return False
+        img = XLImage(str(p))
+        w0 = float(getattr(img, "width", 0) or 0)
+        h0 = float(getattr(img, "height", 0) or 0)
+        if w0 > 0 and h0 > 0:
+            img.width = int(width_px)
+            img.height = int(round(h0 * width_px / w0))
+        ws.add_image(img, anchor)
+        return True
+    except Exception:
+        return False
+
+
+def _write_guide_sheet(ws, *, title, subtitle, params, logic, sheet_rows, tips,
+                       image=None, image_section=None, image_width_px=900):
     """通用「說明」導讀表 writer：版面與 _write_hybrid_guide_sheet 相同。
-    params: [(標籤, 內容)]；logic: [段落]；sheet_rows: [(工作表, 內容, 建議留意)]；tips: [段落]。"""
+    params: [(標籤, 內容)]；logic: [段落]；sheet_rows: [(工作表, 內容, 建議留意)]；tips: [段落]。
+    image: 選填說明圖路徑（相對路徑以專案根目錄為基準），置於 ④ 之後另開一節。"""
     def _dw(text):
         # 顯示寬度估算（全形字元約 2、半形約 1），供換行高度估算
         return sum(2 if ord(ch) > 0x2E7F else 1 for ch in str(text))
@@ -912,3 +944,7 @@ def _write_guide_sheet(ws, *, title, subtitle, params, logic, sheet_rows, tips):
     _sec("④ 實用提示")
     for text in tips:
         _bullet(text)
+
+    if image:
+        _sec(image_section or "⑤ 計算邏輯圖")
+        _add_guide_image(ws, image, anchor=f"A{r}", width_px=image_width_px)
