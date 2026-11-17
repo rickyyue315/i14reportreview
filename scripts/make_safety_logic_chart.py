@@ -186,9 +186,9 @@ T(0.066, _y5 + 0.032,
 box(0.510, _y5, 0.440, _h5, "#FDF6EE", ec=ORANGE, lw=1.0)
 T(0.526, _y5 + 0.094, "情況 B：Z > X0（設定超出上限）", size=10.6, color=ORANGE, weight="bold")
 T(0.526, _y5 + 0.064, "建議值 = max（Y, X0）", size=12.2, color=INK, weight="bold")
-T(0.526, _y5 + 0.032,
+T(0.526, _y5 + 0.030,
   "• 壓回上限 X0（視為過剩）\n"
-  "• 但不得低於底線 Y", size=9.1, color=INK)
+  "• 但不得低於底線 Y；仍低於 Y 者照樣上調（例：Z=33 → 40）", size=9.0, color=INK)
 
 arrow(0.5, 0.288, 0.5, 0.270)
 
@@ -209,7 +209,7 @@ for _name, _rule, _fg, _bg in _chips:
 
 # ── 例子 ──
 _ye = 0.208
-T(0.05, _ye, "例子：同一間 Mix 店、同一個 SKU 的四種現時設定", size=11.4, weight="bold")
+T(0.05, _ye, "例子：同一間 Mix 店、同一個 SKU 的五種現時設定", size=11.4, weight="bold")
 T(0.05, _ye - 0.016,
   "假設 P90D 月均 80 件、月銷預估 80 件 → X0 = floor(80 × 40%) = 32、Y = ceil(80 × 50%) = 40",
   size=8.8, color=SUB)
@@ -217,6 +217,7 @@ T(0.05, _ye - 0.016,
 _rows = [
     ("10 件", "否（10 ≤ 32）", "40 件", "+30", "增加", TEAL, TEAL_BG),
     ("32 件", "否（32 ≤ 32）", "40 件", "+8", "增加", TEAL, TEAL_BG),
+    ("33 件", "是（33 > 32）", "40 件", "+7", "增加", TEAL, TEAL_BG),
     ("40 件", "是（40 > 32）", "40 件", "0", "不變", GREY, "#EDF0F3"),
     ("60 件", "是（60 > 32）", "40 件", "-20", "減少", ORANGE, ORANGE_BG),
 ]
@@ -226,14 +227,14 @@ _hdr = 0.177
 box(_tx, _hdr - 0.015, _tw, 0.021, HEAD_BG, r=0.0)
 for _i, _h in enumerate(["現時設定 Z", "有否超過上限", "建議值", "調整量", "分類"]):
     T(_cols[_i] + 0.009, _hdr - 0.0045, _h, size=9.2, color=INK, weight="bold")
-_rh = 0.024
+_rh = 0.022
 for _r, (_z, _over, _rec, _delta, _cat, _fg, _bg) in enumerate(_rows):
     _ry = _hdr - 0.015 - _rh * (_r + 1)
     if _r % 2 == 1:
         box(_tx, _ry, _tw, _rh, ZEBRA, r=0.0)
     for _i, _v in enumerate([_z, _over, _rec, _delta]):
         T(_cols[_i] + 0.009, _ry + _rh / 2, _v, size=9.2, color=INK)
-    box(_cols[4] + 0.006, _ry + 0.004, 0.052, 0.016, _bg, r=0.003)
+    box(_cols[4] + 0.006, _ry + 0.003, 0.052, 0.016, _bg, r=0.003)
     T(_cols[4] + 0.032, _ry + _rh / 2, _cat, size=8.8, color=_fg, weight="bold", ha="center")
 
 # ── 右側說明卡 ──

@@ -6,7 +6,7 @@
 
 ### Safety Stock Review
 
-- **新增 Safety 計算邏輯圖**（`assets/safety_logic_guide.png`，由 `scripts/make_safety_logic_chart.py` 生成）：單頁流程圖，順序為「讀入三個數字（銷售數據／現時設定 Z／店舖屬性）→ 月銷預估 → 上限 X0 與底線 Y → Z 與 X0 比較 → 兩種情況的建議值 → 調整量分類」；另附四行例子（同一間 Mix 店 10／32／40／60 件）與「保底與特殊情況」「周轉天數基準」兩張說明卡
+- **新增 Safety 計算邏輯圖**（`assets/safety_logic_guide.png`，由 `scripts/make_safety_logic_chart.py` 生成）：單頁流程圖，順序為「讀入三個數字（銷售數據／現時設定 Z／店舖屬性）→ 月銷預估 → 上限 X0 與底線 Y → Z 與 X0 比較 → 兩種情況的建議值 → 調整量分類」；另附五行例子（同一間 Mix 店 10／32／33／40／60 件，其中 Z=33 一列專門示範「已超出上限 X0=32，但仍在底線 Y=40 之下，因此照樣上調至 40（+7）」）與「保底與特殊情況」「周轉天數基準」兩張說明卡
 - 圖中公式與 `_add_combined_recommendation_columns` 同一準則：`X0 = floor(P90D 月均 × Overstock Rate)`、`Y = ceil(月銷預估 × OOS Rate)`、建議值 = `Z ≤ X0 → max(Y, Z)`／`Z > X0 → max(Y, X0)`、周轉所需量 = `ceil(P90D ÷ 有效日數 × 基準天數)`；保底 3 件、舊品零銷量、RP Type＝ND 與新品保護均已在圖上標示
 - 使用說明頁「🔒 Safety Stock Review」區塊在「模式說明」之後直接顯示該圖（不入收合區），核心計算規則緊隨其後
 - Excel 輸出：圖插入「說明」工作表 ④ 實用提示之後新增的 ⑤ 段（900 px 寬、等比縮放），副標題補一句「最下方的 ⑤ 為 Safety 計算邏輯圖」
