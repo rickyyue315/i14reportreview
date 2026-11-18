@@ -814,7 +814,12 @@ try:
     # 必須限制快取大小與壽命 — 無 TTL/無 max_entries 時每次轉換都累積一份 DataFrame 拷貝，
     # 長時間運作的容器記憶體會持續增長且「釋放記憶體」按鈕前的執行間隔內無法自動回收
     # P0（單人使用）：由 4 份降為 1 份，TTL 縮短，減少常駐記憶體
-    _compute_raw_extra_columns_impl = st.cache_data(_compute_raw_extra_columns_impl, max_entries=1, ttl=1800)
+    # v1.106.3：改為 scope="session"（每人一份、session 中斷即清）——
+    # 原本全域 max_entries=1 在多人同時使用時會互相擠掉彼此的快取，導致重複計算；
+    # 改為 session scope 後各 session 獨立命中自己的快取，且隨分頁關閉自動回收。
+    # 快取副本只含衍生的 RAW 欄位 DataFrame，不影響任何欄名、工作表或計算結果。
+    _compute_raw_extra_columns_impl = st.cache_data(
+        _compute_raw_extra_columns_impl, max_entries=1, ttl=1800, scope="session")
 except ImportError:
     pass
 

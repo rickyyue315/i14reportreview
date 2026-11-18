@@ -79,7 +79,7 @@ docker run -p 8080:8080 i14-report-review
 - 每次點擊任何控件都會重跑整頁；已解析的 DataFrame 存在 session 內不會重讀（`count_valid_source_rows` 已按檔案快取），但大檔互動仍比小檔慢。
 - 表格預覽一律只送 `head(200)` 給前端；整份 80 萬行直接 `st.dataframe` 會額外產生約 480MB Arrow 資料，故不做全表預覽。
 - 上傳上限 300MB、`server.maxMessageSize` 亦放寬至 300MB（下載大檔 Excel 用）。
-- 用完請按側欄「🧹 釋放記憶體」，清除 session 與 `st.cache_data` 快取並把頁面還給 OS。Sidebar 底部會顯示目前行程的 Memory Usage（Linux／容器），方便監察；若服務無故重啟，通常是 OOM（記憶體不足）。
+- 用完請按側欄頂端（品牌卡下方）「🧹 釋放記憶體」，清除 session 與 `st.cache_data` 快取並把頁面還給 OS；該卡片同時顯示目前行程的 Memory Usage（Linux／容器），方便監察。若服務無故重啟，通常是 OOM（記憶體不足）。
 
 ## 必要欄位
 

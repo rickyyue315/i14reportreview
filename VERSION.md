@@ -1,5 +1,21 @@
 # 版本記錄
 
+## v1.106.3 (2026-11-18)
+
+多人同時使用時的快取作用域修正與釋放記憶體入口優化：RAW 衍生欄位的計算快取由「全程式共用一份」改為「每個使用者 session 一份」，避免多人先後上傳不同檔案時互相擠掉快取、導致重複計算；同時把「🧹 釋放記憶體」按鈕由側欄底部移至頂端品牌卡下方並顯示即時記憶體用量。Excel 欄名、工作表名稱、計算邏輯與輸出結果完全不變。
+
+### 分析工具頁（Sidebar）
+
+- 「🧹 釋放記憶體」由兩個摺疊區之下的側欄底部，移至**側欄頂端品牌卡正下方**的邊框卡片，並在按鈕上方顯示目前行程 Memory Usage；改為 primary 按鈕提高可見度，方便 5–10 人同時使用時隨時釋放
+- 按鈕邏輯完全不變（清 `session_state` → `st.cache_data.clear()` → 更換 uploader key → 歸還 OS 記憶體 → rerun）；底部 footer 的重複用量顯示移除，用量只在頂端卡片出現
+- README.md 與 README.public.md 的容量建議段落同步更新按鈕位置描述
+
+### 其他
+
+- `modes/common.py`：`_compute_raw_extra_columns_impl` 的 `st.cache_data` 新增 `scope="session"`（保留原有 `max_entries=1, ttl=1800`）；各 session 獨立命中自己的快取，且隨 WebSocket 連線中斷自動回收，無需等待全域 TTL 到期
+- 背景：原設定在全域 scope 下只有一份快取，兩人以上的 session 先後上傳不同 DataFrame 會互換該份快取，令前一位使用者下次點擊控件時重新計算；1 萬行等小檔影響輕微，但 5–10 人常態使用時會累積成可見延遲
+- 此改動只影響快取的存放範圍，不涉及任何資料契約或 UI 文字；早前已設定的 `st.cache_data.clear()`（「釋放記憶體」按鈕）行為不變
+
 ## v1.106.2 (2026-11-17)
 
 新增「Safety 計算邏輯圖」，同時放入使用說明頁與 Safety Stock Review 輸出的「說明」工作表，供首批試用 Safety Stock Review 的 Buyer 先看圖後看文字；計算邏輯、Excel 欄名與工作表名稱完全不變（只在「說明」工作表加圖）。

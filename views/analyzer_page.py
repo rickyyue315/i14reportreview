@@ -241,7 +241,29 @@ with st.sidebar:
         <p class="sidebar-brand-sub">自動化報表與數據轉換引擎</p>
     </div>
     """, unsafe_allow_html=True)
-    
+
+    # v1.106.3：「釋放記憶體」由側欄底部移至頂端當眼處，配合 5–10 人同時使用時
+    # 需要頻繁釋放記憶體；按鈕邏輯與原本完全相同，只改變位置與可見度。
+    with st.container(border=True):
+        _rss = _process_rss_mb()
+        _mem_top = f"{_rss:.0f} MB" if _rss is not None else "不支援"
+        st.markdown(
+            f'<div style="font-size:0.78rem;color:#64748b;margin-bottom:6px;">'
+            f'目前記憶體用量 · <b style="color:#0369a1;">{_mem_top}</b></div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("🧹 釋放記憶體", type="primary", use_container_width=True,
+                     help="清除所有快取資料（含 st.cache_data 快取），並移除已上傳的 Excel 檔案，將記憶體歸還系統。清除後需重新上傳檔案。"):
+            for _key in list(st.session_state.keys()):
+                del st.session_state[_key]
+            # 清除 st.cache_data 模組級快取（如 transformer 的欄位計算快取）
+            st.cache_data.clear()
+            # 更換 uploader 的 widget key 徹底釋放已上傳檔案 —
+            # 否則檔案仍掛在 uploader 上，重跑時會即時重新讀取整個 Excel，記憶體不減反增
+            st.session_state.uploader_reset = st.session_state.get("uploader_reset", 0) + 1
+            _release_os_memory()
+            st.rerun()
+
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
     
     st.info("📖 各模式的詳細說明與核心計算規則，已移至左側選單的「📖 使用說明」頁。")
@@ -265,26 +287,9 @@ with st.sidebar:
         另有選用欄位 `""" + "／".join(M2_STOCK_LLM_COLUMNS) + """`（M-2 上上月庫存，LLM＝上上月、LM＝上月、CM＝當月）：僅 **""" + M2_STOCK_LLM_EFFECTIVE_DATE + """** 起的來源報表提供，全部模式皆不檢核、不要求；存在時完整保留於 RAW 明細，缺失時行為不變。
         """, unsafe_allow_html=True)
     
-    st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
-
-    if st.button("🧹 釋放記憶體", type="secondary", use_container_width=True,
-                 help="清除所有快取資料（含 st.cache_data 快取），並移除已上傳的 Excel 檔案，將記憶體歸還系統。清除後需重新上傳檔案。"):
-        for _key in list(st.session_state.keys()):
-            del st.session_state[_key]
-        # 清除 st.cache_data 模組級快取（如 transformer 的欄位計算快取）
-        st.cache_data.clear()
-        # 更換 uploader 的 widget key 徹底釋放已上傳檔案 —
-        # 否則檔案仍掛在 uploader 上，重跑時會即時重新讀取整個 Excel，記憶體不減反增
-        st.session_state.uploader_reset = st.session_state.get("uploader_reset", 0) + 1
-        _release_os_memory()
-        st.rerun()
-
-    _rss = _process_rss_mb()
-    _mem_line = f'Memory Usage: <b>{_rss:.0f} MB</b><br>' if _rss is not None else ''
     st.markdown(
         '<div class="sidebar-footer-card">'
         f'<b>I14 報表計算工具 v{__version__}</b><br>'
-        f'{_mem_line}'
         'Developed by Ricky Yue<br>'
         '<span style="color:#64748b;">Powered by Streamlit</span>'
         '</div>',
@@ -856,7 +861,7 @@ if uploaded_file is not None:
             f"📦 **大檔提示**：此檔 {len(df_input):,} 行。Streamlit 每個使用者的 session 會各自保留"
             f"一份已解析資料，實測約需 **{_est_steady:.1f} GB 常駐、{_est_peak:.1f} GB 峰值**記憶體"
             "（另加上傳檔本身的位元組）。建議：① 同一時間只讓 1–2 人執行；"
-            "② 下載完成後按側欄「🧹 釋放記憶體」把資料還給系統；"
+            "② 下載完成後按側欄頂端「🧹 釋放記憶體」把資料還給系統；"
             "③ 伺服器至少預留 4GB RAM（80 萬行、2 人同時使用建議 8GB 以上）。"
         )
 
