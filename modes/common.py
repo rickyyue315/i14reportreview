@@ -820,8 +820,12 @@ try:
     #   2) 即使版本支援，session-scoped 快取在 app 執行緒以外（單元測試、背景／非渲染流程）
     #      讀取會拋 StreamlitAPIException，風險遠大於多人先後上傳時互換該份快取的成本。
     # 多人同時使用如需減少重複計算，應改為調整 max_entries，而非改用 session scope。
+    # v1.106.5：max_entries 由 1 調為 2 —— 只有一份時，兩位使用者先後上傳不同檔案會互相擠掉
+    # 該份快取，令先後都要重算；兩份可讓最近兩個來源各自命中。代價是最多常駐兩份衍生欄位
+    # 副本（每份以 pickled 大小計），故不再往上加：README 已記載 80 萬行 2 人同時執行約 5GB，
+    # 三份以上容易觸發 OOM。大檔用完仍建議按「🧹 釋放記憶體」即時回收。
     _compute_raw_extra_columns_impl = st.cache_data(
-        _compute_raw_extra_columns_impl, max_entries=1, ttl=1800)
+        _compute_raw_extra_columns_impl, max_entries=2, ttl=1800)
 except ImportError:
     pass
 

@@ -1,4 +1,6 @@
-streamlit==1.52.0
+# 1.55.0 與本機開發／測試環境齊一：1.52 不認識 st.cache_data 的 scope，曾令容器於 import 階段
+# 失敗（v1.106.4 事故）。升級已跑完整迴歸（1819 項 pytest ＋ AppTest），並已改用 width="stretch"。
+streamlit==1.55.0
 pandas==2.3.3
 numpy==2.3.4
 openpyxl==3.1.5

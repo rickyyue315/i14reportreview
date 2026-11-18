@@ -1,5 +1,29 @@
 # 版本記錄
 
+## v1.106.5 (2026-11-18)
+
+對齊部署環境與本機版本：Streamlit 由 1.52.0 升至 1.55.0（消除「本機可行、容器報錯」的版本漂移），並把兩處已棄用的 `use_container_width=True` 改為新寫法 `width="stretch"`；另把 RAW 衍生欄位的快取份數由 1 調為 2，減少多人先後上傳時互相擠掉快取。計算邏輯、Excel 欄名、工作表名稱與輸出結果完全不變。
+
+### 依賴與 API 對齊
+
+- `requirements.txt`：`streamlit==1.52.0` → `streamlit==1.55.0`，與本機開發／測試環境一致；1.52 不認識 `st.cache_data` 的 `scope`，正是 v1.106.4 事故的成因
+- 已核對 Streamlit 1.55 的依賴約束：`pandas<3`（現 2.3.3）、`numpy<3`（現 2.3.4）、`pyarrow>=7`（現 22.0.0）、`protobuf<7` 全部相容，其餘釘版無需改動
+- `views/analyzer_page.py`：側欄「🧹 釋放記憶體」按鈕與置頂「下載分析報表」按鈕，`use_container_width=True` → `width="stretch"`；全庫已無 `use_container_width` 殘留，避免 1.55 的棄用警告
+
+### 快取
+
+- `modes/common.py`：`_compute_raw_extra_columns` 的 `st.cache_data` 由 `max_entries=1` 改為 `max_entries=2`（`ttl=1800` 不變）
+- 原設定只有一份快取，兩位使用者先後上傳不同檔案會互相擠掉，令先後都要重算；兩份可讓最近兩個來源各自命中
+- 不取 3 份：每份是整份衍生欄位 DataFrame 的 pickled 副本，README 已記載 80 萬行 2 人同時執行約需 5GB，三份以上容易觸發 OOM；大檔用完仍建議按「🧹 釋放記憶體」即時回收
+- 仍然**不**使用 `scope="session"`（原因見 v1.106.4）
+
+### 驗證
+
+- `py -m pytest tests` → 1819 項全部通過
+- `import views.analyzer_page` / `views.usage_page` 正常；以 `AppTest` 執行 `app.py` 0 exception，側欄按鈕正常渲染
+- 本機以 Streamlit 1.55.0 啟動服務，健康端點 200，日誌無 deprecation 或 traceback
+- 容器重建由 Railway 於 push 後自動執行（Docker 本機未安裝，未做本地映像構建）
+
 ## v1.106.4 (2026-11-18)
 
 修正 v1.106.3 令線上服務無法啟動的問題：`st.cache_data` 不支援 `scope` 參數，`modes/common.py` 於 import 階段即拋 `TypeError`，整個應用起不來。現撤銷該參數、回復全域快取；v1.106.3 的側欄「🧹 釋放記憶體」位置改動全部保留，計算邏輯、Excel 欄名與工作表名稱完全不變。

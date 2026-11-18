@@ -135,7 +135,7 @@ def _top_download_button(excel_data, prefix, key, *, disabled=False):
         file_name=f"{prefix}_{_hk}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary",
-        use_container_width=True,
+        width="stretch",
         key=key,
         disabled=disabled,
     )
@@ -252,7 +252,7 @@ with st.sidebar:
             f'目前記憶體用量 · <b style="color:#0369a1;">{_mem_top}</b></div>',
             unsafe_allow_html=True,
         )
-        if st.button("🧹 釋放記憶體", type="primary", use_container_width=True,
+        if st.button("🧹 釋放記憶體", type="primary", width="stretch",
                      help="清除所有快取資料（含 st.cache_data 快取），並移除已上傳的 Excel 檔案，將記憶體歸還系統。清除後需重新上傳檔案。"):
             for _key in list(st.session_state.keys()):
                 del st.session_state[_key]
