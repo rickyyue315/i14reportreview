@@ -1,5 +1,73 @@
 # 版本記錄
 
+## v1.108.0 (2026-11-18)
+
+`Summary` 由單一「Adj. MCH1 × Item Status」擴為**多區塊分類統計**：同一張表向下依次加「× RP Type」、「× 四個 Top N% 判定欄」（店舖件數／同Nature件數／店舖金額／同Nature金額）與「RF／ND × 店舖 Top（件數）」四象限，一眼看出每個中類有幾多 RF／ND、幾多屬 Top，以及「ND 且非 Top」這類精簡候選的數量。原有 Item Status 區塊位置與數值完全不變。
+
+### Summary 新增區塊
+
+- 版面：每個區塊＝標題列（`計數 - SKU：{維度}`）＋表頭（`列標籤`／各分類／`總計`）＋各 `Adj. MCH1` 一列＋底部 `總計` 列；區塊之間空兩行；零值一律留空（與原區塊一致）
+- ① `× Item Status`：原版面不動（A3「計數 - SKU」、A4「列標籤」），測試與既有使用者習慣不受影響
+- ② `× RP Type`：欄為 `RF`／`ND`；來源出現其他值或空白時另加 `其他` 欄（無則不加）
+- ③ `× 是否{店舖}的Top N%（件數）`、`× 是否同Shop Nature的Top N%（件數）`、同名兩欄的（金額）版本：欄為 `是`／`否`（有空白或非標準值時另加 `其他`）；標題直接採用實際輸出欄名，故 Top 70%／80%、店舖代號（HA21／HA40…）與金額視窗（P73D／P78D）全部自動跟隨，毋須改程式
+- ④ `RF／ND × 是否{店舖}的Top N%（件數）（非Top 含「否」及未判定）`：欄為 `RF - Top`／`RF - 非Top`／`ND - Top`／`ND - 非Top`（RP Type 有其他值時再加 `其他 - Top`／`其他 - 非Top`）
+- 缺欄自動略過：來源沒有 `Item Status` 時只跳過區塊①（其餘照出），沒有 `RP Type` 時跳過②④，金額口徑不可用時只有兩個件數判定區塊
+- 只計 `SKU` 非空白的列（與原樞紐的 `count` 語意一致）；分組次序沿用文字升序、空白組排最後
+
+### 實作
+
+- `modes/shop_simplify.py`：`_write_shop_simplify_summary` 重構為「計算 + 通用區塊寫入」，新增 `_shop_simplify_summary_levels`（正規化分組值）、`_shop_simplify_summary_row_order`、`_shop_simplify_summary_counts`、`_shop_simplify_summary_block`、`_shop_simplify_summary_top_columns`（按「店舖件數→同Nature件數→店舖金額→同Nature金額」排序）
+- 原模式（多店輸出）同樣受惠：其 `是否該店的Top N%（件數／金額）` 會各自出一個區塊，四象限改用該欄；指定店舖變體則用「是否{店舖}的Top N%」
+- 欄寬沿用原設定；四象限區塊欄數多於 4 個時，第 7 欄起用 12
+
+### 驗證
+
+- 以 `By SKUxShop_HA21_22Oct2026.xlsx`（4,703 列）實測：RP Type 總計 RF 3,505＋ND 1,198＝4,703；Top 80%（件數）是 1,601／否 3,102；四象限 RF-Top 1,470＋RF-非Top 2,035＋ND-Top 131＋ND-非Top 1,067＝4,703，且 1,470＋131＝1,601 與 Top 判定區塊吻合
+- 該檔只有 HA21 一個店舖，故「同Shop Nature」與「店舖」兩個區塊數值相同（單店 Nature 的必然結果，非計算錯誤）；上傳含同 Nature 其他店舖的檔案時兩者會分開
+- `py -m pytest tests` → 1823 項全部通過（新增 2 項：`test_summary_adds_rp_type_top_and_quadrant_blocks` 逐區塊核對欄標籤、首列與總計；`test_summary_blocks_survive_missing_item_status` 驗證缺 Item Status 時其餘區塊照出）
+
+## v1.107.0 (2026-11-18)
+
+「店舖精簡SKU模式(指定店舖)」的匯出檔改用**預設顯示欄**檢視：一打開只顯示回覆表真正需要的 30 欄（識別／庫存／銷量／六欄 Top 判定與對比／兩個回覆欄），其餘 26 欄一律隱藏，毋須每次橫向捲動。欄名、欄序、顏色、數字格式與 Summary 工作表完全不變，原模式（多店輸出）維持原有檢視。
+
+### 預設顯示欄（指定店舖變體）
+
+- 可見 30 欄：`SKU`／`Brand`／`SKU Desc`／`Buyer`／`Adj. SST`／`Vendor MC`／`Adj. MCH1`／`Item Status`／`Launch Date`／`Item Class`／`Supply Source`／`Site Code`／`RP Type`／`Adj. Safety Stock`／`D001 Net Stock Qty (CM)`／`Shop Stock Qty (CM)`／`Sold Qty (P90D)`／`Net Sales (P{N}D)`／`Sold Qty (CM - MTD)`／`Net Sales (CM - MTD)`／`過去90日有無賣過`／`過去90日有無存貨`／`是否{店舖}的Top N%（件數）`／`是否同Shop Nature的Top N%（件數）`／`{店舖} vs 同Nature Top N%（件數）`／同組三欄的（金額）版本／`Shop 回覆新的NDRF`／`如果RF的Safety Qty`
+- 隱藏 26 欄：`Item_Shop`／`Valuation Class`／`MCH2`／`MC`／`Shop Name`／`OM`／`Shop Nature`／`Shop Type`／`Shop Monthly Sold Qty (P90D)`／`Safety VS Monthly Sold Qty`／`D001 Stock Qty (LLM)`／`(LM)`／`(CM)`／`D001 Blocked Qty (CM)`／`D001 QI Qty (CM)`／`Shop Stock Qty (LLM)`／`(LM)`／`Turnday (P90D Qty)`／`Sold Qty (M-2)`／`(M-1)`／`Net Sales (M-2)`／`(M-1)`／`Shop Stock Status`／`Excess Stock Qty`／`D001 On Order PO Qty (CM)`／`Shop On Order PO Qty (CM)`／`Shop Pending Receive (±7 days)`／`SCT建議`
+- `SCT建議` 不在使用者指定的清單內，故同樣隱藏；如要恢復顯示，把它加入 `_SHOP_SIMPLIFY_SITE_VISIBLE_COLUMNS` 即可
+- 隱藏只影響「開啟時的檢視」，資料照常寫入；需要時在 Excel 選取相鄰欄「取消隱藏」便看到完整明細，篩選與排序不受影響
+
+### 實作
+
+- `modes/shop_simplify.py`：新增 `_SHOP_SIMPLIFY_SITE_VISIBLE_COLUMNS`（23 個固定欄名）與 `_is_shop_simplify_site_visible_column()`；後者另以樣式比對 `Net Sales (P{N}D)`、`是否{店舖}的Top N%`（件數／金額）、`是否同Shop Nature的Top N%`、`{店舖} vs 同Nature Top N%`，故切換 Top 70%／80% 或改數據截止日（P73D／P78D）毋須改清單；原模式的 `是否該店的Top N%` 與 `該店 件數 vs 該店 金額` 明確排除
+- `generate_excel_shop_simplify(..., site_view: bool = False)`：新增旗標，只影響表頭迴圈的隱藏判斷（既有隱藏欄清單照舊生效），其餘格式、顏色、數字格式與 Summary 完全不動
+- `views/analyzer_page.py`：只在 `_SHOP_SIMPLIFY_SITE_MODE` 分支傳 `site_view=True`；原模式與其他模式不受影響
+- `views/usage_page.py`：指定店舖模式的說明加一句「預設只顯示 30 欄」與第 11 點「預設顯示欄」；`README.md`／`README.public.md` 指定店舖章節加第 12 點
+
+### 驗證
+
+- 以 `By SKUxShop_HA21_22Oct2026.xlsx`（4,706 列 → 清理後 4,703 列、56 欄）實測：可見 30 欄、隱藏 26 欄，可見欄的順序與使用者提供的清單逐欄相同；`freeze_panes`、縮放、欄寬、顏色與 Summary 數值不變
+- `py -m pytest tests` → 1821 項全部通過（新增 2 項：`test_site_mode_default_view_hides_non_essential_columns` 驗證可見／隱藏清單與欄序不變，`test_original_mode_keeps_full_column_view` 驗證原模式不受影響）
+
+## v1.106.6 (2026-11-18)
+
+Safety 計算邏輯圖改為「兩步」直線流程（先壓上限、再同底線取較大），回應「為何好像永遠都是 X」的疑問；只改圖與圖上文字，計算邏輯、Excel 欄名與工作表完全不變。
+
+### Safety 計算邏輯圖
+
+- 舊版的「④ 決策（Z 有否超過 X0？）→ ⑤ 情況 A／B」改為兩條連續橫幅，每一步一條：
+  - **④ 第一步**：`X 欄 = min(X0, Z)`——Z 未超上限保留 Z、超出則只保留到上限；並註明 `X 欄` 就是 RAW 的「Overstock Cap (X)」欄
+  - **⑤ 第二步**：`建議值 = max(Y, X 欄)`——Y 較大用 Y、X 欄較大用 X 欄
+- 這個寫法與程式等價：因為 RAW 的 `Overstock Cap (X)` 本身已夾至不超過 Z，原式 `Z ≤ X0 → max(Y, Z)`／`Z > X0 → max(Y, X0)` 兩支化簡後就是 `max(Y, min(X0, Z))`
+- ⑤ 補上「Tourist 上限 30% < 底線 50% → 必用 Y」，直接解答預設參數下「為何多數情況由底線決定」
+- 例子表第 2 欄由「有否超過上限」改為「第一步 X 欄」，五行逐格對應兩個步驟（Z＝10／32／33／40／60 → X 欄＝10／32／32／32／32 → 建議值 40）
+- 「一句話」改為「先將現時設定壓到不超過上限（得出 X 欄），再同缺貨底線比較——哪個大，就用哪個」；不再寫「兩者之間不動」，因底線高過上限時並不存在該區間，舊寫法會誤導
+
+### 驗證
+
+- `tests/test_guide_image.py` 4 項通過；圖片尺寸維持 1750×2100，Excel「說明」工作表的 900×1080 縮放不受影響
+- 使用說明頁與 Excel「說明」工作表共用同一張圖，兩處同步更新，無需另行改動
+
 ## v1.106.5 (2026-11-18)
 
 對齊部署環境與本機版本：Streamlit 由 1.52.0 升至 1.55.0（消除「本機可行、容器報錯」的版本漂移），並把兩處已棄用的 `use_container_width=True` 改為新寫法 `width="stretch"`；另把 RAW 衍生欄位的快取份數由 1 調為 2，減少多人先後上傳時互相擠掉快取。計算邏輯、Excel 欄名、工作表名稱與輸出結果完全不變。

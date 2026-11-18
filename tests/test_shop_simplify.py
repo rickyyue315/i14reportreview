@@ -563,6 +563,94 @@ def test_summary_blank_groups_sorted_last():
     assert [summary.cell(row=7, column=c).value for c in range(2, 5)] == [2, 1, 3]
 
 
+def _summary_block(ws, title):
+    """按區塊標題找出 (欄標籤, 第一列資料, 總計列) 三行值。"""
+    for i in range(1, ws.max_row + 1):
+        if ws.cell(row=i, column=1).value == title:
+            header = [ws.cell(row=i + 1, column=c).value for c in range(1, ws.max_column + 1)]
+            header = [h for h in header if h is not None]
+            first = [ws.cell(row=i + 2, column=c).value for c in range(1, len(header) + 1)]
+            total = [ws.cell(row=i + 3, column=c).value for c in range(1, len(header) + 1)]
+            return header, first, total
+    raise AssertionError(f"Summary 找不到區塊：{title}")
+
+
+def test_summary_adds_rp_type_top_and_quadrant_blocks():
+    """Summary 除原有 Item Status 外，另加 RP Type、四個 Top N% 判定欄與
+    「RF／ND × 店舖 Top（件數）」四象限；各區塊 SKU 數加總一致。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "RP Type": "RF",
+         "Item Status": "Active", "Sold Qty (P90D)": 100,
+         "Net Sales (M-2)": 100, "Net Sales (M-1)": 0, "Net Sales (CM - MTD)": 0},
+        {"SKU": "B", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "RP Type": "RF",
+         "Item Status": "Active", "Sold Qty (P90D)": 5,
+         "Net Sales (M-2)": 5, "Net Sales (M-1)": 0, "Net Sales (CM - MTD)": 0},
+        {"SKU": "C", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "RP Type": "ND",
+         "Item Status": "Discontinued", "Sold Qty (P90D)": 4,
+         "Net Sales (M-2)": 4, "Net Sales (M-1)": 0, "Net Sales (CM - MTD)": 0},
+        {"SKU": "D", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "RP Type": "ND",
+         "Item Status": "Active", "Sold Qty (P90D)": 3,
+         "Net Sales (M-2)": 3, "Net Sales (M-1)": 0, "Net Sales (CM - MTD)": 0},
+    ]
+    raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12))
+    summary = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Summary"]
+
+    # 原有 Item Status 區塊位置與內容不變
+    assert summary["A3"].value == "計數 - SKU"
+    assert summary["A4"].value == "列標籤"
+    assert summary["A5"].value == "01 - SKIN CARE"
+
+    header, first, total = _summary_block(summary, "計數 - SKU：RP Type")
+    assert header == ["列標籤", "RF", "ND", "總計"]
+    assert first == ["01 - SKIN CARE", 2, 2, 4]
+    assert total == ["總計", 2, 2, 4]
+
+    header, first, total = _summary_block(summary, "計數 - SKU：是否HA21的Top 80%（件數）")
+    assert header == ["列標籤", "是", "否", "總計"]
+    assert first == ["01 - SKIN CARE", 1, 3, 4]
+    assert total == ["總計", 1, 3, 4]
+
+    header, first, _ = _summary_block(summary, "計數 - SKU：是否HA21的Top 80%（金額）")
+    assert header == ["列標籤", "是", "否", "總計"]
+    assert first == ["01 - SKIN CARE", 1, 3, 4]
+
+    header, first, total = _summary_block(
+        summary, "計數 - SKU：RF／ND × 是否HA21的Top 80%（件數）（非Top 含「否」及未判定）"
+    )
+    assert header == ["列標籤", "RF - Top", "RF - 非Top", "ND - Top", "ND - 非Top", "總計"]
+    assert first == ["01 - SKIN CARE", 1, 1, None, 2, 4]
+    assert total == ["總計", 1, 1, None, 2, 4]
+
+    # 各區塊都應存在，且總計列的總數一致
+    titles = [
+        summary.cell(row=i, column=1).value
+        for i in range(1, summary.max_row + 1)
+        if isinstance(summary.cell(row=i, column=1).value, str)
+        and summary.cell(row=i, column=1).value.startswith("計數 - SKU")
+    ]
+    assert titles[0] == "計數 - SKU"
+    assert len(titles) == 7  # Item Status＋RP Type＋四個 Top 欄＋四象限
+
+
+def test_summary_blocks_survive_missing_item_status():
+    """來源無 Item Status 時仍輸出 RP Type 與 Top 判定區塊（不整張 Summary 空白）。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "RP Type": "RF",
+         "Sold Qty (P90D)": 10},
+        {"SKU": "B", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "RP Type": "ND",
+         "Sold Qty (P90D)": 1},
+    ]
+    df = _df(rows)  # BASE 本身沒有 Item Status 欄
+    assert "Item Status" not in df.columns
+    raw, _ = transform_shop_simplify_site(df, "HA21", data_date=date(2026, 11, 12))
+    summary = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Summary"]
+
+    assert summary["A3"].value is None  # 沒有 Item Status 就不寫原區塊
+    header, first, total = _summary_block(summary, "計數 - SKU：RP Type")
+    assert header == ["列標籤", "RF", "ND", "總計"]
+    assert first == ["01 - SKIN CARE", 1, 1, 2]
+
+
 def test_output_sorted_by_brand_then_sku_text():
     df = _df([
         {"Brand": "B - B", "SKU": 200},
@@ -925,6 +1013,82 @@ def test_site_mode_excel_headers_widths_and_summary():
     assert round(ws.column_dimensions[get_column_letter(headers.index(_shop_simplify_compare_column("HA21")) + 1)].width, 2) == 26.0
     assert ws.freeze_panes == f"{get_column_letter(headers.index('SKU Desc') + 2)}2"
     assert wb.sheetnames == ["Summary", "Export"]
+
+
+def test_site_mode_default_view_hides_non_essential_columns():
+    """指定店舖變體匯出（site_view=True）：只顯示使用者指定的回覆表欄位（23 個固定欄＋
+    Net Sales (P{N}D) 與六個 Top 判定／對比欄，共 30 欄），其餘欄一律隱藏；欄名與欄序不變。"""
+    from openpyxl.utils import get_column_letter
+
+    extra = {
+        "Adj. SST": "Local", "Vendor MC": "VMC-1", "Adj. MCH1": "MCH1 - TEST",
+        "Item Status": "Active", "Launch Date": 20250101, "Item Class": "A",
+        "Supply Source": "W", "Adj. Safety Stock": 6, "OM": "OM1",
+        "Shop Name": "HA21", "D001 Stock Qty (CM)": 90, "D001 Net Stock Qty (CM)": 88,
+        "Shop Stock Qty (LLM)": 12, "Shop Monthly Sold Qty (P90D)": 40,
+        "Safety VS Monthly Sold Qty": 0.15, "Shop Stock Status": "Normal",
+        "Sold Qty (CM - MTD)": 4, "Sold Qty (M-2)": 12, "Sold Qty (M-1)": 13,
+        "Net Sales (M-2)": 100.0, "Net Sales (M-1)": 110.0, "Net Sales (CM - MTD)": 50.0,
+    }
+    rows = [dict(r, **extra) for r in _site_rows()]
+    # 固定數據截止日（11 月 12 日 → 12＋31＋30＝73 日），令金額欄名固定為 Net Sales (P73D)
+    raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12))
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Export"]
+    headers = [c.value for c in ws[1]]
+    visible = {
+        name for i, name in enumerate(headers, start=1)
+        if not ws.column_dimensions[get_column_letter(i)].hidden
+    }
+
+    expected = {
+        "SKU", "Brand", "SKU Desc", "Buyer", "Adj. SST", "Vendor MC", "Adj. MCH1",
+        "Item Status", "Launch Date", "Item Class", "Supply Source", "Site Code",
+        "RP Type", "Adj. Safety Stock", "D001 Net Stock Qty (CM)", "Shop Stock Qty (CM)",
+        "Sold Qty (P90D)", "Net Sales (P73D)", "Sold Qty (CM - MTD)", "Net Sales (CM - MTD)",
+        _SHOP_SIMPLIFY_SOLD_COLUMN, _SHOP_SIMPLIFY_STOCK_COLUMN,
+        _shop_simplify_site_top80_column("HA21"),
+        _shop_simplify_nature_top_column(),
+        _shop_simplify_compare_column("HA21"),
+        _shop_simplify_value_site_top_column("HA21"),
+        _shop_simplify_value_nature_top_column(),
+        _shop_simplify_compare_column("HA21", suffix=_SHOP_SIMPLIFY_VALUE_SUFFIX),
+        _SHOP_SIMPLIFY_NDRF_COLUMN, _SHOP_SIMPLIFY_SAFETY_COLUMN,
+    }
+    assert visible == expected
+    # 明細類欄位與 SCT建議 一律隱藏（SCT建議 不在使用者清單內）
+    hidden_names = (
+        "Item_Shop", "Valuation Class", "MCH2", "MC", "Shop Nature", "Shop Type",
+        "Shop Name", "OM", "Shop Monthly Sold Qty (P90D)", "Safety VS Monthly Sold Qty",
+        "D001 Stock Qty (CM)", "D001 Stock Qty (LM)", "Shop Stock Qty (LLM)",
+        "Shop Stock Qty (LM)", "Sold Qty (M-2)", "Sold Qty (M-1)",
+        "Net Sales (M-2)", "Net Sales (M-1)", "Shop Stock Status",
+        _SHOP_SIMPLIFY_SCT_COLUMN,
+    )
+    assert set(hidden_names) - set(headers) <= {"MCH2", "MC", "Shop Type", "D001 Stock Qty (LM)"}
+    for name in hidden_names:
+        assert name not in visible
+    # 欄名與欄序不變（只改顯示狀態）
+    assert headers == list(raw.columns)
+
+
+def test_original_mode_keeps_full_column_view():
+    """原模式（多店輸出）不受預設顯示欄影響：只隱藏範本指定的欄，其餘照舊顯示。"""
+    from openpyxl.utils import get_column_letter
+
+    raw, _ = transform_shop_simplify(_df([{"SKU": 1}, {"SKU": 2}]))
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Export"]
+    headers = [c.value for c in ws[1]]
+    hidden = {
+        name for i, name in enumerate(headers, start=1)
+        if ws.column_dimensions[get_column_letter(i)].hidden
+    }
+    assert hidden == {n for n in headers if n in {
+        "Item_Shop", "Valuation Class", "MCH2", "MC", "Shop Nature", "Shop Type",
+        "D001 Stock Qty (LM)", "D001 Blocked Qty (CM)", "D001 QI Qty (CM)",
+        "Turnday (P90D Qty)", "Net Sales (M-2)", "Excess Stock Qty",
+        "D001 On Order PO Qty (CM)", "Shop On Order PO Qty (CM)", "Shop Pending Receive (±7 days)",
+    }}
+    assert _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN not in hidden
 
 
 def test_site_mode_excel_red_highlight_rules():

@@ -51,6 +51,9 @@ Export（回覆明細）兩個工作表；Export 套用店舖精簡回覆表範�
 對比，但不設同 Shop Nature 判定，金額欄與判定欄的母體為各店自己的 (Site Code, 所選母體)。
 
 六個判定／對比欄只加在指定店舖的列上，其餘計算、清理、解析與回覆欄留空規則與原模式相同。
+匯出時指定店舖變體另設「預設顯示欄」檢視（`site_view=True`）：只顯示識別、庫存、銷量與
+Top N% 判定等 23 個固定欄加 7 個動態欄，其餘欄（Shop Name／OM／三個月庫存與銷量明細／
+Shop Stock Status／SCT建議 等）一律隱藏，開啟檔案即為 SCT 回覆用的檢視。
 """
 import calendar
 import datetime
@@ -265,6 +268,22 @@ _SHOP_SIMPLIFY_HIDDEN_COLUMNS = {
     "Turnday (P90D Qty)", "Net Sales (M-2)", "Excess Stock Qty",
     "D001 On Order PO Qty (CM)", "Shop On Order PO Qty (CM)", "Shop Pending Receive (±7 days)",
 }
+
+# 指定店舖變體的預設顯示欄（2026-11-18 使用者指定）：匯出檔一打開只顯示下列欄，
+# 其餘一律隱藏（使用者仍可在 Excel 內取消隱藏）。欄名固定者列於此；隨店舖／Top 比例／
+# 數據截止日改變的欄名（Net Sales (P{N}D)、是否{店舖}的Top N%、同 Nature 判定與對比）
+# 由 `_is_shop_simplify_site_visible_column` 以樣式比對，不寫死比例與日數。
+# 註：本清單不含 SCT建議，故該欄在指定店舖變體亦會隱藏（與使用者清單一致）。
+_SHOP_SIMPLIFY_SITE_VISIBLE_COLUMNS = (
+    "SKU", "Brand", "SKU Desc", "Buyer", "Adj. SST", "Vendor MC", "Adj. MCH1",
+    "Item Status", "Launch Date", "Item Class", "Supply Source", "Site Code",
+    "RP Type", "Adj. Safety Stock", "D001 Net Stock Qty (CM)", "Shop Stock Qty (CM)",
+    "Sold Qty (P90D)", "Sold Qty (CM - MTD)", "Net Sales (CM - MTD)",
+    _SHOP_SIMPLIFY_SOLD_COLUMN, _SHOP_SIMPLIFY_STOCK_COLUMN,
+    _SHOP_SIMPLIFY_NDRF_COLUMN, _SHOP_SIMPLIFY_SAFETY_COLUMN,
+)
+# 金額母體欄（Net Sales (P73D)／(P78D)…）隨數據截止日改變日數，故以樣式比對
+_SHOP_SIMPLIFY_SITE_NET_SALES_RE = re.compile(r"Net Sales \(P\d+D\)")
 
 # 欄寬（使用者範本；未列出的欄沿用 Excel 預設寬度）
 _SHOP_SIMPLIFY_COLUMN_WIDTHS = {
@@ -751,6 +770,25 @@ def _is_shop_simplify_top80_column(name) -> bool:
         return False
     text = name.strip()
     return text.startswith("是否") and re.search(r"Top\s*\d{1,3}%", text) is not None
+
+
+def _is_shop_simplify_site_visible_column(name) -> bool:
+    """指定店舖變體匯出時的預設顯示欄（清單見 `_SHOP_SIMPLIFY_SITE_VISIBLE_COLUMNS`）。
+
+    動態欄名一併納入：Net Sales (P{N}D)、是否{店舖}的Top N%（件數／金額）、
+    是否同Shop Nature的Top N%（件數／金額）、{店舖} vs 同Nature Top N%（件數／金額）。
+    原模式的「是否該店的Top N%」與「該店 件數 vs 該店 金額」不在此列（指定店舖變體不輸出）。
+    """
+    if not isinstance(name, str):
+        return False
+    text = name.strip()
+    if text in _SHOP_SIMPLIFY_SITE_VISIBLE_COLUMNS:
+        return True
+    if _SHOP_SIMPLIFY_SITE_NET_SALES_RE.fullmatch(text):
+        return True
+    if _is_shop_simplify_compare_column(text):
+        return True
+    return _is_shop_simplify_top80_column(text) and not text.startswith("是否該店的")
 
 
 def _shop_simplify_top80_mask(qty: pd.Series, share: float = _SHOP_SIMPLIFY_TOP80_SHARE, tail_guard: bool = True) -> pd.Series:
@@ -1529,76 +1567,254 @@ def _shop_simplify_red_mask(series: pd.Series, target: str) -> np.ndarray:
     return text.eq(target).to_numpy(dtype=bool)
 
 
-def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
-    """Summary 工作表：Adj. MCH1 × Item Status 的 SKU 列數樞紐（含總計；零值留空）。"""
-    ws["A3"] = "計數 - SKU"
-    ws["B3"] = "欄標籤"
+def _shop_simplify_summary_levels(series: pd.Series) -> pd.Series:
+    """Summary 的分組標籤：去除前後空白，空白／缺值一律成「(空白)」。"""
+    values = series.fillna("").astype(str).str.strip()
+    return values.mask(values == "", "(空白)")
 
+
+def _shop_simplify_summary_row_order(levels: pd.Series) -> list[str]:
+    """分組次序：文字升序，空白組排最後（Excel 樞紐慣例）。"""
+    order = sorted({v for v in levels if v != "(空白)"})
+    if bool((levels == "(空白)").any()):
+        order.append("(空白)")
+    return order
+
+
+def _shop_simplify_summary_counts(
+    levels: pd.Series, masks: list[tuple[str, pd.Series]], valid: pd.Series
+) -> dict[tuple[str, str], int]:
+    """按 (分組標籤, 欄標籤) 統計 SKU 列數（只計 SKU 非空白的列）。"""
+    frame = pd.DataFrame({"level": levels.to_numpy()})
+    for label, mask in masks:
+        frame[label] = (mask.fillna(False) & valid).to_numpy(dtype=int)
+    grouped = frame.groupby("level", sort=False).sum()
+    return {
+        (str(level), str(label)): int(grouped.at[level, label])
+        for level in grouped.index
+        for label in grouped.columns
+    }
+
+
+def _shop_simplify_summary_block(
+    ws, title: str, start_row: int, row_levels: list[str],
+    column_labels: list[str], counts: dict[tuple[str, str], int],
+) -> tuple[int, int]:
+    """寫一個「列標籤 × 欄標籤」的 SKU 計數區塊（零值留空、底部總計列）。
+
+    回傳 (最後一列列號, 用到的最大欄號)。
+    """
+    ws.cell(row=start_row, column=1, value=title)
+    header = start_row + 1
+    ws.cell(row=header, column=1, value="列標籤")
+    total_col = 2 + len(column_labels)
+    for j, label in enumerate(column_labels, start=2):
+        ws.cell(row=header, column=j, value=label)
+    ws.cell(row=header, column=total_col, value="總計")
+
+    column_totals = dict.fromkeys(column_labels, 0)
+    last = header
+    for i, level in enumerate(row_levels, start=header + 1):
+        cell = ws.cell(row=i, column=1, value=level)
+        cell.alignment = Alignment(horizontal="left")
+        row_total = 0
+        for j, label in enumerate(column_labels, start=2):
+            count = counts.get((level, label), 0)
+            if count:
+                ws.cell(row=i, column=j, value=count)
+            row_total += count
+            column_totals[label] += count
+        if row_total:
+            ws.cell(row=i, column=total_col, value=row_total)
+        last = i
+
+    total_row = last + 1
+    ws.cell(row=total_row, column=1, value="總計")
+    for j, label in enumerate(column_labels, start=2):
+        if column_totals[label]:
+            ws.cell(row=total_row, column=j, value=column_totals[label])
+    grand = sum(column_totals.values())
+    if grand:
+        ws.cell(row=total_row, column=total_col, value=grand)
+    return total_row, total_col
+
+
+def _shop_simplify_summary_top_columns(df: pd.DataFrame) -> list[str]:
+    """Summary 要拆分的 Top N% 判定欄，順序為：店舖件數／同Nature件數／店舖金額／同Nature金額。
+
+    欄名直接取自輸出（如「是否HA21的Top 80%（件數）」），故 Top 70%／80% 與店舖代號
+    自動跟隨；金額口徑不可用時只有兩欄。
+    """
+    tops = [c for c in df.columns if _is_shop_simplify_top80_column(c)]
+
+    def key(name: str):
+        text = str(name).strip()
+        is_nature = text.startswith("是否同Shop Nature")
+        is_value = text.endswith(_SHOP_SIMPLIFY_VALUE_SUFFIX)
+        return (1 if is_value else 0, 1 if is_nature else 0)
+
+    return sorted(tops, key=key)
+
+
+def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
+    """Summary 工作表：以 Adj. MCH1 為列，逐個維度統計 SKU 列數。
+
+    區塊次序：
+    1. × Item Status（原有版面，固定於 A3／A4）；
+    2. × RP Type（RF／ND／其他）；
+    3. × 四個 Top N% 判定欄（店舖件數／同Nature件數／店舖金額／同Nature金額，
+       欄名取實際輸出欄，故 Top 70%／80% 與店舖代號自動跟隨）；
+    4. RF／ND × 店舖 Top（件數）的四象限（RF-Top／RF-非Top／ND-Top／ND-非Top）。
+    零值一律留空，每個區塊底部有總計列；來源缺該欄時該區塊自動略過。
+    """
     index_col = "Adj. MCH1" if "Adj. MCH1" in df.columns else (
         "Item Class" if "Item Class" in df.columns else None
     )
-    status_col = "Item Status" if "Item Status" in df.columns else None
-    if df is None or df.empty or index_col is None or status_col is None or "SKU" not in df.columns:
+    if df is None or df.empty or index_col is None or "SKU" not in df.columns:
         return
 
-    summary_df = df.copy()
-    index_values = summary_df[index_col].fillna("").astype(str).str.strip()
-    status_values = summary_df[status_col].fillna("").astype(str).str.strip()
-    summary_df[index_col] = index_values.mask(index_values == "", "(空白)")
-    summary_df[status_col] = status_values.mask(status_values == "", "(空白)")
+    levels = _shop_simplify_summary_levels(df[index_col])
+    row_order = _shop_simplify_summary_row_order(levels)
+    valid = df["SKU"].notna()
 
-    table = summary_df.pivot_table(
-        index=index_col,
-        columns=status_col,
-        values="SKU",
-        aggfunc="count",
-        margins=True,
-        margins_name="總計",
-        fill_value=0,
-    )
-    # 空白組排在最後（Excel 樞紐慣例），總計列／欄置末
-    statuses = [c for c in table.columns if c != "總計"]
-    statuses = [c for c in statuses if c != "(空白)"] + [c for c in statuses if c == "(空白)"]
-    total_col = 2 + len(statuses)
-    row_order = [v for v in table.index if v not in ("總計", "(空白)")]
-    if "(空白)" in table.index:
-        row_order.append("(空白)")
-    if "總計" in table.index:
-        row_order.append("總計")
-    table = table.reindex(
-        index=row_order,
-        columns=statuses + (["總計"] if "總計" in table.columns else []),
-    )
+    # ── 區塊 1：× Item Status（原有版面，測試與使用者習慣依賴 A3／A4 位置）──
+    status_col = "Item Status" if "Item Status" in df.columns else None
+    blocks_end = 2
+    max_col = 0
+    if status_col is not None:
+        ws["A3"] = "計數 - SKU"
+        ws["B3"] = "欄標籤"
 
-    ws.cell(row=4, column=1, value="列標籤")
-    for j, status in enumerate(statuses, start=2):
-        ws.cell(row=4, column=j, value=str(status))
-    ws.cell(row=4, column=total_col, value="總計")
+        summary_df = df.copy()
+        summary_df[index_col] = levels
+        status_values = _shop_simplify_summary_levels(df[status_col])
+        summary_df[status_col] = status_values
 
-    for i, (idx, row) in enumerate(table.iterrows(), start=5):
-        cell = ws.cell(row=i, column=1, value=str(idx))
-        cell.alignment = Alignment(horizontal="left")
+        table = summary_df.pivot_table(
+            index=index_col,
+            columns=status_col,
+            values="SKU",
+            aggfunc="count",
+            margins=True,
+            margins_name="總計",
+            fill_value=0,
+        )
+        # 空白組排在最後（Excel 樞紐慣例），總計列／欄置末
+        statuses = [c for c in table.columns if c != "總計"]
+        statuses = [c for c in statuses if c != "(空白)"] + [c for c in statuses if c == "(空白)"]
+        total_col = 2 + len(statuses)
+        order = [v for v in table.index if v not in ("總計", "(空白)")]
+        if "(空白)" in table.index:
+            order.append("(空白)")
+        if "總計" in table.index:
+            order.append("總計")
+        table = table.reindex(
+            index=order,
+            columns=statuses + (["總計"] if "總計" in table.columns else []),
+        )
+
+        ws.cell(row=4, column=1, value="列標籤")
         for j, status in enumerate(statuses, start=2):
-            count = int(row[status])
-            if count:
-                ws.cell(row=i, column=j, value=count)
-        total = int(row["總計"])
-        if total:
-            ws.cell(row=i, column=total_col, value=total)
+            ws.cell(row=4, column=j, value=str(status))
+        ws.cell(row=4, column=total_col, value="總計")
 
-    # 欄寬（對齊範本；狀態欄多於 4 個時其餘沿用預設）
+        for i, (idx, row) in enumerate(table.iterrows(), start=5):
+            cell = ws.cell(row=i, column=1, value=str(idx))
+            cell.alignment = Alignment(horizontal="left")
+            for j, status in enumerate(statuses, start=2):
+                count = int(row[status])
+                if count:
+                    ws.cell(row=i, column=j, value=count)
+            total = int(row["總計"])
+            if total:
+                ws.cell(row=i, column=total_col, value=total)
+        blocks_end = 4 + len(table)
+        max_col = total_col
+
+    # ── 區塊 2：× RP Type ──
+    if "RP Type" in df.columns:
+        rp = _shop_simplify_summary_levels(df["RP Type"])
+        labels = ["RF", "ND"]
+        masks = [(label, rp.eq(label)) for label in labels]
+        other = ~rp.isin(["RF", "ND"])
+        if bool(other.any()):
+            labels.append("其他")
+            masks.append(("其他", other))
+        counts = _shop_simplify_summary_counts(levels, masks, valid)
+        blocks_end, _ = _shop_simplify_summary_block(
+            ws, "計數 - SKU：RP Type", blocks_end + 3, row_order, labels, counts
+        )
+        max_col = max(max_col, 2 + len(labels))
+
+    # ── 區塊 3：× 四個 Top N% 判定欄 ──
+    top_columns = _shop_simplify_summary_top_columns(df)
+    for name in top_columns:
+        flags = _shop_simplify_summary_levels(df[name])
+        labels = ["是", "否"]
+        masks = [("是", flags.eq(_SHOP_SIMPLIFY_TOP80_YES)), ("否", flags.eq(_SHOP_SIMPLIFY_TOP80_NO))]
+        other = ~flags.isin([_SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO])
+        if bool(other.any()):
+            labels.append("其他")
+            masks.append(("其他", other))
+        counts = _shop_simplify_summary_counts(levels, masks, valid)
+        blocks_end, _ = _shop_simplify_summary_block(
+            ws, f"計數 - SKU：{name}", blocks_end + 3, row_order, labels, counts
+        )
+        max_col = max(max_col, 2 + len(labels))
+
+    # ── 區塊 4：RF／ND × 店舖 Top（件數）四象限 ──
+    site_qty_top = next(
+        (
+            c for c in top_columns
+            if not str(c).strip().startswith("是否同Shop Nature")
+            and str(c).strip().endswith(_SHOP_SIMPLIFY_QTY_SUFFIX)
+        ),
+        None,
+    )
+    if "RP Type" in df.columns and site_qty_top is not None:
+        rp = _shop_simplify_summary_levels(df["RP Type"])
+        top = _shop_simplify_summary_levels(df[site_qty_top]).eq(_SHOP_SIMPLIFY_TOP80_YES)
+        labels = ["RF - Top", "RF - 非Top", "ND - Top", "ND - 非Top"]
+        masks = [
+            ("RF - Top", rp.eq("RF") & top),
+            ("RF - 非Top", rp.eq("RF") & ~top),
+            ("ND - Top", rp.eq("ND") & top),
+            ("ND - 非Top", rp.eq("ND") & ~top),
+        ]
+        other = ~rp.isin(["RF", "ND"])
+        if bool(other.any()):
+            labels += ["其他 - Top", "其他 - 非Top"]
+            masks += [("其他 - Top", other & top), ("其他 - 非Top", other & ~top)]
+        counts = _shop_simplify_summary_counts(levels, masks, valid)
+        blocks_end, _ = _shop_simplify_summary_block(
+            ws,
+            f"計數 - SKU：RF／ND × {site_qty_top}（非Top 含「否」及未判定）",
+            blocks_end + 3,
+            row_order,
+            labels,
+            counts,
+        )
+        max_col = max(max_col, 2 + len(labels))
+
+    # 欄寬（對齊範本；區塊欄數多於 4 個時其餘用 12）
     widths = [35.28515625, 9.7109375, 12.7109375, 8.28515625, 10.0, 5.28515625]
+    while len(widths) < max_col:
+        widths.append(12.0)
     for j, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(j)].width = width
 
 
-def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> BytesIO:
+def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site_view: bool = False) -> BytesIO:
     """產生兩個工作表：Summary（Adj. MCH1 × Item Status 計數）與 Export（回覆明細）。
 
     Export 沿用店舖精簡回覆表範本的格式：Brand／SKU 排序、凍結 F2、指定欄寬與隱藏欄、
     數字格式、綠色／紫色重點欄、「無賣」列的淡紅標示、三類紅色底標示
     （Item Status＝Discontinued、RP Type＝ND、過去90日有無存貨＝無存貨），
     以及對比欄底色（兩者皆是＝青綠、兩者皆非＝粉紅）。
+
+    `site_view=True`（指定店舖變體）：只顯示 `_SHOP_SIMPLIFY_SITE_VISIBLE_COLUMNS` 所列的
+    23 個固定欄，加上 Net Sales (P{N}D) 與六個 Top 判定／對比欄；其餘欄一律隱藏，
+    令匯出檔一打開就是回覆表需要的檢視（欄序、顏色、隱藏欄以外的格式完全不變）。
     """
     wb = Workbook()
     ws_summary = wb.active
@@ -1669,6 +1885,10 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None) -> B
         if width is not None:
             ws.column_dimensions[letter].width = width
         if name in _SHOP_SIMPLIFY_HIDDEN_COLUMNS:
+            ws.column_dimensions[letter].hidden = True
+        elif site_view and not _is_shop_simplify_site_visible_column(name):
+            # 指定店舖變體：不在預設顯示清單內的欄（Shop Name、OM、三個月庫存／銷量明細、
+            # Shop Stock Status、SCT建議 等）一律隱藏，需要時在 Excel 內取消隱藏即可
             ws.column_dimensions[letter].hidden = True
 
     # 資料格：綠色重點欄、紫色 Sold Qty (P90D)、「無賣」淡紅標示、

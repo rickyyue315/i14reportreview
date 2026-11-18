@@ -3585,7 +3585,7 @@ if uploaded_file is not None:
                         data_date=_shopslimsite_data_date,
                         group_by=_shopslimsite_group,
                     )
-                    buf = generate_excel_shop_simplify(raw_df, progress_callback=_cb_excel)
+                    buf = generate_excel_shop_simplify(raw_df, progress_callback=_cb_excel, site_view=True)
                     st.session_state.shopslimsite_processed = True
                     st.session_state.shopslimsite_raw_df = raw_df
                     st.session_state.shopslimsite_stats = shop_simplify_site_stats(
