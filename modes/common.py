@@ -814,12 +814,14 @@ try:
     # 必須限制快取大小與壽命 — 無 TTL/無 max_entries 時每次轉換都累積一份 DataFrame 拷貝，
     # 長時間運作的容器記憶體會持續增長且「釋放記憶體」按鈕前的執行間隔內無法自動回收
     # P0（單人使用）：由 4 份降為 1 份，TTL 縮短，減少常駐記憶體
-    # v1.106.3：改為 scope="session"（每人一份、session 中斷即清）——
-    # 原本全域 max_entries=1 在多人同時使用時會互相擠掉彼此的快取，導致重複計算；
-    # 改為 session scope 後各 session 獨立命中自己的快取，且隨分頁關閉自動回收。
-    # 快取副本只含衍生的 RAW 欄位 DataFrame，不影響任何欄名、工作表或計算結果。
+    # v1.106.4：撤銷 v1.106.3 的 scope="session"，回復全域快取（行為同 v1.106.2）。原因：
+    #   1) scope 由 Streamlit 1.53 起才提供，容器鎖在 1.52，import 時即以
+    #      TypeError（CacheDataAPI.__call__() got an unexpected keyword argument）中斷，全站起不來；
+    #   2) 即使版本支援，session-scoped 快取在 app 執行緒以外（單元測試、背景／非渲染流程）
+    #      讀取會拋 StreamlitAPIException，風險遠大於多人先後上傳時互換該份快取的成本。
+    # 多人同時使用如需減少重複計算，應改為調整 max_entries，而非改用 session scope。
     _compute_raw_extra_columns_impl = st.cache_data(
-        _compute_raw_extra_columns_impl, max_entries=1, ttl=1800, scope="session")
+        _compute_raw_extra_columns_impl, max_entries=1, ttl=1800)
 except ImportError:
     pass
 

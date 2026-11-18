@@ -1,5 +1,21 @@
 # 版本記錄
 
+## v1.106.4 (2026-11-18)
+
+修正 v1.106.3 令線上服務無法啟動的問題：`st.cache_data` 不支援 `scope` 參數，`modes/common.py` 於 import 階段即拋 `TypeError`，整個應用起不來。現撤銷該參數、回復全域快取；v1.106.3 的側欄「🧹 釋放記憶體」位置改動全部保留，計算邏輯、Excel 欄名與工作表名稱完全不變。
+
+### 修正
+
+- `modes/common.py`：`_compute_raw_extra_columns_impl` 的 `st.cache_data` 回復為 `max_entries=1, ttl=1800`（與 v1.106.2 相同），移除 `scope="session"`
+- 原因一（線上事故）：`scope` 由 Streamlit 1.53 起才提供；本機開發環境為 1.55.0（接受此參數），容器依 requirements.txt 鎖在 1.52.0（不接受），故本機測試通過、Railway 部署後全站報錯
+- 原因二（設計風險）：即使在 1.53 以上，session-scoped 快取在 app 執行緒以外讀取會拋 `StreamlitAPIException`（A session-scoped cache was accessed outside of the app execution thread）；以 pytest 直接呼叫 `_compute_raw_extra_columns` 已重現，背景／非渲染流程同樣有同類風險
+- 驗證：`py -m pytest tests` 共 1819 項全部通過
+
+### 其他
+
+- 多人同時使用如仍覺重複計算明顯，建議改為調高 `max_entries`（例如 2 至 3）並同步觀察容器記憶體用量，而非使用 session scope
+- `requirements.txt` 未改動（streamlit 維持 1.52.0）；是否升級至本機的 1.55.0 屬獨立決定，需另做一輪迴歸測試
+
 ## v1.106.3 (2026-11-18)
 
 多人同時使用時的快取作用域修正與釋放記憶體入口優化：RAW 衍生欄位的計算快取由「全程式共用一份」改為「每個使用者 session 一份」，避免多人先後上傳不同檔案時互相擠掉快取、導致重複計算；同時把「🧹 釋放記憶體」按鈕由側欄底部移至頂端品牌卡下方並顯示即時記憶體用量。Excel 欄名、工作表名稱、計算邏輯與輸出結果完全不變。
