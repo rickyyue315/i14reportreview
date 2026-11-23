@@ -1,5 +1,31 @@
 # 版本記錄
 
+## v1.108.1 (2026-11-23)
+
+`Summary` 的四象限由一個擴為**四個**：原本只有「RF／ND × 是否{店舖}的Top N%（件數）」，現按四個 Top N% 判定欄各出一個區塊——店舖件數、同Shop Nature件數、店舖金額、同Shop Nature金額。其餘區塊（Item Status／RP Type／四個 Top 判定欄的是否分佈）與 `Export` 完全不變。
+
+### Summary 四象限
+
+- 新增區塊：`計數 - SKU：RF／ND × 是否同Shop Nature的Top N%（件數）（非Top 含「否」及未判定）`、`… × 是否{店舖}的Top N%（金額）（…）`、`… × 是否同Shop Nature的Top N%（金額）（…）`
+- 原有「店舖件數」區塊位置不變（四個 是／否 區塊之後緊接第一個四象限），其後依次為同Nature件數、店舖金額、同Nature金額
+- 欄位一律 `RF - Top`／`RF - 非Top`／`ND - Top`／`ND - 非Top`（`RP Type` 有其他值時再加 `其他 - Top`／`其他 - 非Top`）＋`總計`；非Top 含「否」及未判定（空白／非標準值）
+- 標題沿用實際輸出欄名，故 Top 70%／80%、店舖代號與金額視窗（P73D／P78D）自動跟隨；金額口徑不可用時只有兩個件數四象限
+- 指定店舖變體四象限總數 4 個；原模式（多店輸出）自動改用 `是否該店的Top N%（件數／金額）`，四象限 2 個
+- `Summary` 因而由 7 個區塊增至 10 個（Item Status＋RP Type＋四個是／否＋四個四象限），欄寬與零值留空規則不變
+
+### 實作
+
+- `modes/shop_simplify.py`：`_write_shop_simplify_summary` 的四象限改為走訪 `top_columns`（即 `_shop_simplify_summary_top_columns()` 的四個判定欄），逐欄產生區塊；移除原本只挑「店舖件數」一欄的邏輯
+- 其餘計算、`Export` 格式、隱藏欄與 `site_view` 行為完全不動
+
+### 驗證
+
+- 以 `By SKUxShop_HA21_22Oct2026.xlsx`（4,703 列）實測十個區塊：
+  - 件數四象限 RF-Top 1,470／RF-非Top 2,035／ND-Top 131／ND-非Top 1,067＝4,703，且 1,470＋131＝1,601 與「Top 80%（件數）是」一致
+  - 金額四象限 1,375／2,130／91／1,107＝4,703，且 1,375＋91＝1,466 與「Top 80%（金額）是」一致
+  - 該檔只有 HA21 一間店，故「同Shop Nature」與「店舖」兩個四象限數值相同（單店 Nature 的必然結果）
+- `py -m pytest tests` → 1823 項全部通過（既有 3 個 Summary 測試改為逐個四象限核對，並確認區塊數由 7 增至 10）
+
 ## v1.108.0 (2026-11-18)
 
 `Summary` 由單一「Adj. MCH1 × Item Status」擴為**多區塊分類統計**：同一張表向下依次加「× RP Type」、「× 四個 Top N% 判定欄」（店舖件數／同Nature件數／店舖金額／同Nature金額）與「RF／ND × 店舖 Top（件數）」四象限，一眼看出每個中類有幾多 RF／ND、幾多屬 Top，以及「ND 且非 Top」這類精簡候選的數量。原有 Item Status 區塊位置與數值完全不變。

@@ -614,12 +614,19 @@ def test_summary_adds_rp_type_top_and_quadrant_blocks():
     assert header == ["列標籤", "是", "否", "總計"]
     assert first == ["01 - SKIN CARE", 1, 3, 4]
 
-    header, first, total = _summary_block(
-        summary, "計數 - SKU：RF／ND × 是否HA21的Top 80%（件數）（非Top 含「否」及未判定）"
-    )
-    assert header == ["列標籤", "RF - Top", "RF - 非Top", "ND - Top", "ND - 非Top", "總計"]
-    assert first == ["01 - SKIN CARE", 1, 1, None, 2, 4]
-    assert total == ["總計", 1, 1, None, 2, 4]
+    # 四個 Top 判定欄各出一個四象限區塊（店舖件數／同Nature件數／店舖金額／同Nature金額）
+    for name in (
+        "是否HA21的Top 80%（件數）",
+        "是否同Shop Nature的Top 80%（件數）",
+        "是否HA21的Top 80%（金額）",
+        "是否同Shop Nature的Top 80%（金額）",
+    ):
+        header, first, total = _summary_block(
+            summary, f"計數 - SKU：RF／ND × {name}（非Top 含「否」及未判定）"
+        )
+        assert header == ["列標籤", "RF - Top", "RF - 非Top", "ND - Top", "ND - 非Top", "總計"]
+        assert first == ["01 - SKIN CARE", 1, 1, None, 2, 4]
+        assert total == ["總計", 1, 1, None, 2, 4]
 
     # 各區塊都應存在，且總計列的總數一致
     titles = [
@@ -629,7 +636,8 @@ def test_summary_adds_rp_type_top_and_quadrant_blocks():
         and summary.cell(row=i, column=1).value.startswith("計數 - SKU")
     ]
     assert titles[0] == "計數 - SKU"
-    assert len(titles) == 7  # Item Status＋RP Type＋四個 Top 欄＋四象限
+    # Item Status＋RP Type＋四個 Top 欄＋四個四象限
+    assert len(titles) == 10
 
 
 def test_summary_blocks_survive_missing_item_status():

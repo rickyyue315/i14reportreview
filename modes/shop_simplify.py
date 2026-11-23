@@ -1664,7 +1664,8 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
     2. × RP Type（RF／ND／其他）；
     3. × 四個 Top N% 判定欄（店舖件數／同Nature件數／店舖金額／同Nature金額，
        欄名取實際輸出欄，故 Top 70%／80% 與店舖代號自動跟隨）；
-    4. RF／ND × 店舖 Top（件數）的四象限（RF-Top／RF-非Top／ND-Top／ND-非Top）。
+    4. RF／ND × 每個 Top N% 判定欄的四象限（店舖件數／同Nature件數／店舖金額／同Nature金額
+       各一個區塊，欄為 RF-Top／RF-非Top／ND-Top／ND-非Top；非Top 含「否」及未判定）。
     零值一律留空，每個區塊底部有總計列；來源缺該欄時該區塊自動略過。
     """
     index_col = "Adj. MCH1" if "Adj. MCH1" in df.columns else (
@@ -1762,39 +1763,33 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
         )
         max_col = max(max_col, 2 + len(labels))
 
-    # ── 區塊 4：RF／ND × 店舖 Top（件數）四象限 ──
-    site_qty_top = next(
-        (
-            c for c in top_columns
-            if not str(c).strip().startswith("是否同Shop Nature")
-            and str(c).strip().endswith(_SHOP_SIMPLIFY_QTY_SUFFIX)
-        ),
-        None,
-    )
-    if "RP Type" in df.columns and site_qty_top is not None:
+    # ── 區塊 4：RF／ND × 各 Top 判定欄的四象限（件數與金額、店舖與同 Nature 各一個）──
+    if "RP Type" in df.columns:
         rp = _shop_simplify_summary_levels(df["RP Type"])
-        top = _shop_simplify_summary_levels(df[site_qty_top]).eq(_SHOP_SIMPLIFY_TOP80_YES)
-        labels = ["RF - Top", "RF - 非Top", "ND - Top", "ND - 非Top"]
-        masks = [
-            ("RF - Top", rp.eq("RF") & top),
-            ("RF - 非Top", rp.eq("RF") & ~top),
-            ("ND - Top", rp.eq("ND") & top),
-            ("ND - 非Top", rp.eq("ND") & ~top),
-        ]
-        other = ~rp.isin(["RF", "ND"])
-        if bool(other.any()):
-            labels += ["其他 - Top", "其他 - 非Top"]
-            masks += [("其他 - Top", other & top), ("其他 - 非Top", other & ~top)]
-        counts = _shop_simplify_summary_counts(levels, masks, valid)
-        blocks_end, _ = _shop_simplify_summary_block(
-            ws,
-            f"計數 - SKU：RF／ND × {site_qty_top}（非Top 含「否」及未判定）",
-            blocks_end + 3,
-            row_order,
-            labels,
-            counts,
-        )
-        max_col = max(max_col, 2 + len(labels))
+        for name in top_columns:
+            # Top＝「是」；非Top＝「否」及未判定（空白／其他值），與區塊標題一致
+            top = _shop_simplify_summary_levels(df[name]).eq(_SHOP_SIMPLIFY_TOP80_YES)
+            labels = ["RF - Top", "RF - 非Top", "ND - Top", "ND - 非Top"]
+            masks = [
+                ("RF - Top", rp.eq("RF") & top),
+                ("RF - 非Top", rp.eq("RF") & ~top),
+                ("ND - Top", rp.eq("ND") & top),
+                ("ND - 非Top", rp.eq("ND") & ~top),
+            ]
+            other = ~rp.isin(["RF", "ND"])
+            if bool(other.any()):
+                labels += ["其他 - Top", "其他 - 非Top"]
+                masks += [("其他 - Top", other & top), ("其他 - 非Top", other & ~top)]
+            counts = _shop_simplify_summary_counts(levels, masks, valid)
+            blocks_end, _ = _shop_simplify_summary_block(
+                ws,
+                f"計數 - SKU：RF／ND × {name}（非Top 含「否」及未判定）",
+                blocks_end + 3,
+                row_order,
+                labels,
+                counts,
+            )
+            max_col = max(max_col, 2 + len(labels))
 
     # 欄寬（對齊範本；區塊欄數多於 4 個時其餘用 12）
     widths = [35.28515625, 9.7109375, 12.7109375, 8.28515625, 10.0, 5.28515625]
