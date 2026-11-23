@@ -600,6 +600,15 @@ def test_summary_adds_rp_type_top_and_quadrant_blocks():
     assert summary["A4"].value == "列標籤"
     assert summary["A5"].value == "01 - SKIN CARE"
 
+    # 新增：Item Status × RP Type（每個狀態再分 RF／ND）
+    header, first, total = _summary_block(summary, "計數 - SKU：Item Status × RP Type")
+    assert header == [
+        "列標籤", "Active - RF", "Active - ND",
+        "Discontinued - RF", "Discontinued - ND", "總計",
+    ]
+    assert first == ["01 - SKIN CARE", 2, 1, None, 1, 4]
+    assert total == ["總計", 2, 1, None, 1, 4]
+
     header, first, total = _summary_block(summary, "計數 - SKU：RP Type")
     assert header == ["列標籤", "RF", "ND", "總計"]
     assert first == ["01 - SKIN CARE", 2, 2, 4]
@@ -636,8 +645,31 @@ def test_summary_adds_rp_type_top_and_quadrant_blocks():
         and summary.cell(row=i, column=1).value.startswith("計數 - SKU")
     ]
     assert titles[0] == "計數 - SKU"
-    # Item Status＋RP Type＋四個 Top 欄＋四個四象限
-    assert len(titles) == 10
+    # Item Status＋Item Status × RP Type＋RP Type＋四個 Top 欄＋四個四象限
+    assert len(titles) == 11
+
+
+def test_summary_item_status_by_rp_type_other_column():
+    """RP Type 出現 RF／ND 以外的值（含空白）時，交叉區塊加「其他」欄，
+    且各欄相加等於該列總計（與 Item Status 區塊對得上）。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE",
+         "Item Status": "Active", "RP Type": "RF", "Sold Qty (P90D)": 10},
+        {"SKU": "B", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE",
+         "Item Status": "Active", "RP Type": "", "Sold Qty (P90D)": 5},
+        {"SKU": "C", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE",
+         "Item Status": "Discontinued", "RP Type": "nd", "Sold Qty (P90D)": 1},
+    ]
+    raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12))
+    summary = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Summary"]
+
+    header, first, total = _summary_block(summary, "計數 - SKU：Item Status × RP Type")
+    assert header == [
+        "列標籤", "Active - RF", "Active - ND", "Active - 其他",
+        "Discontinued - RF", "Discontinued - ND", "Discontinued - 其他", "總計",
+    ]
+    assert first == ["01 - SKIN CARE", 1, None, 1, None, 1, None, 3]
+    assert total == ["總計", 1, None, 1, None, 1, None, 3]
 
 
 def test_summary_blocks_survive_missing_item_status():

@@ -1,5 +1,30 @@
 # 版本記錄
 
+## v1.108.3 (2026-11-23)
+
+`Summary` 在原本的「× Item Status」之後新增交叉區塊 **「計數 - SKU：Item Status × RP Type」**：每個 Item Status 再分 RF／ND（有 RF／ND 以外的值時另加「其他」），一眼看出「Active 之中幾多係 ND」、「Discontinued 之中幾多仍係 RF」這類組合。其餘區塊、`Export`、欄名與計算結果完全不變。
+
+### 交叉區塊
+
+- 欄標籤：`{狀態} - RF`、`{狀態} - ND`（另有其他值時加 `{狀態} - 其他`）＋`總計`；狀態次序與第一個區塊相同（文字升序、`(空白)` 排最後）
+- 各欄相加＝該列總計，與 Item Status 區塊逐列對得上
+- `RP Type` 比對改為**忽略大小寫**（`nd` 亦計入 ND），與 Export 的紅色底判定一致；空白及不明值歸「其他」
+- 只計 `SKU` 非空白的列；零值留空（與其他區塊一致）
+- 表頭支援自動換行、列高 30；第 7 欄起欄寬由 12 調為 15，避免「Discontinued - ND」被裁
+- 區塊總數：指定店舖變體 11 個（Item Status＋交叉＋RP Type＋四個是／否＋四個四象限）；原模式 7 個（Item Status＋交叉＋RP Type＋兩個是／否＋兩個四象限）
+
+### 實作
+
+- `modes/shop_simplify.py`：`_write_shop_simplify_summary` 在區塊①之後加區塊①b；沿用 `_shop_simplify_summary_counts`／`_shop_simplify_summary_block`，另把 RP Type 正規化為大寫再比對
+- `_shop_simplify_summary_block`：表頭置中＋自動換行、列高 30；Summary 第 7 欄起欄寬 15
+- 版面取自使用者提供的三個方案，選定「另加交叉區塊」（原表不動）
+
+### 驗證
+
+- `py -m pytest tests` → 1820 passed、4 skipped（4 項仍因資料夾無 `.xlsx` 實檔而略過）
+- 新增 2 項測試：交叉區塊的欄標籤／逐列數值與總計；`RP Type` 有空白值時加「其他」欄且各欄相加等於總計
+- 另產生 `Summary 預覽_ItemStatus_RF-ND_20261123.xlsx`（以使用者提供的 Item Status 數字重建，只含前三類區塊，供核對版面）
+
 ## v1.108.2 (2026-11-23)
 
 用語統一：使用者可見文字中的**「母體」全部改為香港書面語**。「母體」屬台灣統計用語（內地寫「總體」），香港書面語不通行；按語意分拆為「分組」（分組維度）、「分母」（百分比基數）與「統計範圍」（全部列）。只改顯示文字與說明，欄名、工作表名、資料契約與計算結果完全不變。

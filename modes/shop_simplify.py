@@ -1608,9 +1608,12 @@ def _shop_simplify_summary_block(
     header = start_row + 1
     ws.cell(row=header, column=1, value="列標籤")
     total_col = 2 + len(column_labels)
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for j, label in enumerate(column_labels, start=2):
-        ws.cell(row=header, column=j, value=label)
-    ws.cell(row=header, column=total_col, value="總計")
+        cell = ws.cell(row=header, column=j, value=label)
+        cell.alignment = header_align
+    ws.cell(row=header, column=total_col, value="總計").alignment = header_align
+    ws.row_dimensions[header].height = 30
 
     column_totals = dict.fromkeys(column_labels, 0)
     last = header
@@ -1661,6 +1664,7 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
 
     區塊次序：
     1. × Item Status（原有版面，固定於 A3／A4）；
+    1b. Item Status × RP Type（每個狀態再分 RF／ND，另有其他值時加「其他」）；
     2. × RP Type（RF／ND／其他）；
     3. × 四個 Top N% 判定欄（店舖件數／同Nature件數／店舖金額／同Nature金額，
        欄名取實際輸出欄，故 Top 70%／80% 與店舖代號自動跟隨）；
@@ -1680,6 +1684,7 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
 
     # ── 區塊 1：× Item Status（原有版面，測試與使用者習慣依賴 A3／A4 位置）──
     status_col = "Item Status" if "Item Status" in df.columns else None
+    status_labels: list[str] = []
     blocks_end = 2
     max_col = 0
     if status_col is not None:
@@ -1729,12 +1734,35 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
             total = int(row["總計"])
             if total:
                 ws.cell(row=i, column=total_col, value=total)
+        status_labels = [str(s) for s in statuses]
         blocks_end = 4 + len(table)
         max_col = total_col
 
+    # ── 區塊 1b：Item Status × RP Type（每個狀態再分 RF／ND，另有其他值時加「其他」）──
+    if status_labels and "RP Type" in df.columns:
+        # RF／ND 比對忽略大小寫（與 Export 的紅色底判定一致，"nd" 亦計入 ND）
+        rp = _shop_simplify_summary_levels(df["RP Type"]).str.upper()
+        rp_other = ~rp.isin(["RF", "ND"])
+        rp_labels = ["RF", "ND"] + (["其他"] if bool(rp_other.any()) else [])
+        status_levels = _shop_simplify_summary_levels(df[status_col])
+        labels = []
+        masks = []
+        for status in status_labels:
+            in_status = status_levels.eq(status)
+            for rp_label in rp_labels:
+                mask = in_status & (rp_other if rp_label == "其他" else rp.eq(rp_label))
+                label = f"{status} - {rp_label}"
+                labels.append(label)
+                masks.append((label, mask))
+        counts = _shop_simplify_summary_counts(levels, masks, valid)
+        blocks_end, _ = _shop_simplify_summary_block(
+            ws, "計數 - SKU：Item Status × RP Type", blocks_end + 3, row_order, labels, counts
+        )
+        max_col = max(max_col, 2 + len(labels))
+
     # ── 區塊 2：× RP Type ──
     if "RP Type" in df.columns:
-        rp = _shop_simplify_summary_levels(df["RP Type"])
+        rp = _shop_simplify_summary_levels(df["RP Type"]).str.upper()
         labels = ["RF", "ND"]
         masks = [(label, rp.eq(label)) for label in labels]
         other = ~rp.isin(["RF", "ND"])
@@ -1794,7 +1822,8 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
     # 欄寬（對齊範本；區塊欄數多於 4 個時其餘用 12）
     widths = [35.28515625, 9.7109375, 12.7109375, 8.28515625, 10.0, 5.28515625]
     while len(widths) < max_col:
-        widths.append(12.0)
+        # 交叉區塊的欄名較長（如「Discontinued - ND」），配 15 並自動換行
+        widths.append(15.0)
     for j, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(j)].width = width
 

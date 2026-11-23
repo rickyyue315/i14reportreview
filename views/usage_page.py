@@ -102,7 +102,7 @@ MODES = [
 - 另加「該店 件數 vs 該店 金額 Top N%」四象限對比：兩者皆是／僅店舖件數／僅店舖金額／兩者皆非
 - 金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示覆蓋日數如 P73D，三個月先按原值相加、容許退貨抵銷同品項其他月份銷貨，總和下限為 0）
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 三欄留空，供 SCT 與店舖填寫
-- 輸出：Summary（Adj. MCH1 為列，逐個維度統計 SKU 數：Item Status／RP Type／四個 Top N% 判定欄／四個 RF-ND × Top N% 四象限）＋ Export（依 Brand／SKU 排序，套用範本欄寬、隱藏欄與顏色標示）
+- 輸出：Summary（Adj. MCH1 為列，逐個維度統計 SKU 數：Item Status／Item Status × RP Type（每個狀態再分 RF／ND）／RP Type／四個 Top N% 判定欄／四個 RF-ND × Top N% 四象限）＋ Export（依 Brand／SKU 排序，套用範本欄寬、隱藏欄與顏色標示）
      """,
      """
 1. **過去90日有無賣過** = Sold Qty (P90D) > 0 →「有」；等於 0、負數或空白 →「無賣」
@@ -114,7 +114,7 @@ MODES = [
 7. **不篩選列** — 全店全 SKU 輸出，清理規則與其他模式一致（剔除合計列與 117 - Marketing）；Shop Nature 篩選為選填
 8. **SKU Desc／Shop Name** — 由 Item_Shop 以 Site Code 解析；SKU Desc 排於 Brand 之後、Shop Name 排於 Site Code 之後；Item_Shop 缺欄時兩欄留空並列 warning
 9. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄）一律刪除；大小寫敏感，Valuation Class 不會被刪除
-10. **排序與格式** — 依 Brand、SKU（文字）升序；Summary 以 Adj. MCH1 為列，第一個區塊為 × Item Status 的 SKU 列數，其後依次加 × RP Type（RF／ND／其他）、× 四個 Top N% 判定欄（店舖件數、同Nature件數、店舖金額、同Nature金額；70%／80% 與店舖代號自動跟隨）與四個 RF／ND × Top N% 四象限（店舖件數、同Nature件數、店舖金額、同Nature金額各一個，欄為 RF-Top／RF-非Top／ND-Top／ND-非Top；非Top 含「否」及未判定），零值留空、每區塊底部有總計；Export 凍結 F2、縮放 85%，套用範本欄寬、隱藏欄、數字格式與顏色（RP Type／Shop Stock Qty (CM) 綠色、Sold Qty (P90D) 紫色、「無賣」列淡紅、Item Status＝Discontinued／RP Type＝ND／過去90日有無存貨＝無存貨 紅色底；對比欄兩者皆是青綠、兩者皆非粉紅）
+10. **排序與格式** — 依 Brand、SKU（文字）升序；Summary 以 Adj. MCH1 為列，第一個區塊為 × Item Status 的 SKU 列數，其後依次加 Item Status × RP Type（每個狀態再分 RF／ND，另有其他值時加「其他」）、× RP Type（RF／ND／其他，比對忽略大小寫）、× 四個 Top N% 判定欄（店舖件數、同Nature件數、店舖金額、同Nature金額；70%／80% 與店舖代號自動跟隨）與四個 RF／ND × Top N% 四象限（店舖件數、同Nature件數、店舖金額、同Nature金額各一個，欄為 RF-Top／RF-非Top／ND-Top／ND-非Top；非Top 含「否」及未判定），零值留空、每區塊底部有總計；Export 凍結 F2、縮放 85%，套用範本欄寬、隱藏欄、數字格式與顏色（RP Type／Shop Stock Qty (CM) 綠色、Sold Qty (P90D) 紫色、「無賣」列淡紅、Item Status＝Discontinued／RP Type＝ND／過去90日有無存貨＝無存貨 紅色底；對比欄兩者皆是青綠、兩者皆非粉紅）
 11. **比例與視窗切換** — 欄名隨 Top 比例與數據截止日改變，重跑會自動移除舊判定欄與舊 `Net Sales (PxxD)`，不會兩套並存；已執行後在側欄改設定但未重算時，結果頁以結果檔欄名標示並提示重新執行
      """),
 
@@ -128,7 +128,7 @@ MODES = [
 - 金額覆蓋日數＝MTD 日數＋M-1 全月＋M-2 全月（例：11 月 12 日 → 12＋31＋30＝73 日）
 - 「兩項皆非」即精簡候選；其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則同店舖精簡SKU模式
 - 匯出檔預設只顯示回覆表需要的 30 欄（識別、庫存、銷量、六欄 Top 判定與對比、回覆欄），其餘欄位（Shop Name／OM／三個月庫存與銷量明細／Shop Stock Status／SCT建議 等）預設隱藏，需要時可在 Excel 內取消隱藏
-- 輸出：Summary（Adj. MCH1 為列：Item Status／RP Type／四個 Top N% 判定欄／四個 RF-ND × Top N% 四象限）＋Export（Sold Qty 後加 Net Sales (PxxD)，存貨判定欄後加四欄判定＋兩欄對比，回覆欄維持最後）
+- 輸出：Summary（Adj. MCH1 為列：Item Status／Item Status × RP Type（每個狀態再分 RF／ND）／RP Type／四個 Top N% 判定欄／四個 RF-ND × Top N% 四象限）＋Export（Sold Qty 後加 Net Sales (PxxD)，存貨判定欄後加四欄判定＋兩欄對比，回覆欄維持最後）
      """,
      """
 1. **件數口徑** — `是否{店舖}的Top N%（件數）` 與 `是否同Shop Nature的Top N%（件數）`：按所選分組（MCH2 預設／MC／Adj. SST）分類，在每個分類內按 Sold Qty (P90D) 由高至低累計，累計銷量首次達該分類總銷量 N% 的 SKU 為「是」，其餘「否」；同一銷量整組納入或排除（實際覆蓋率可能略高於 N%）
