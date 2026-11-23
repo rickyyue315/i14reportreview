@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 """店舖精簡SKU模式：把 By SKUxShop 明細轉化為店舖精簡 SKU 回覆表。
 
-每列一店×一 SKU，保留來源檔全部欄位，並在最後附加八個固定欄位（另加一個金額母體欄）：
+每列一店×一 SKU，保留來源檔全部欄位，並在最後附加八個固定欄位（另加一個金額計算欄）：
 
 - 過去90日有無賣過：Sold Qty (P90D) > 0 → 「有」，否則（等於 0、負數或空白）→「無賣」；
 - 過去90日有無存貨：Shop Stock Qty (LLM)、(LM) 或 (CM) 任一 > 0 →「有存貨」
   （LLM 欄自 2026-10-26 起來源報表提供；缺欄時以其餘庫存欄判定），
   三者同時為 0（或空白／負數）→「無存貨」；
-- 是否該店的Top N%（件數）：每間店以所選母體（MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類）
-  為分組，在每個分類內按 Sold Qty (P90D) 由高至低累計，累計銷量首次達該店該分類總銷量 N% 的
+- 是否該店的Top N%（件數）：每間店按所選分組（MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類）
+  ，在每個分類內按 Sold Qty (P90D) 由高至低累計，累計銷量首次達該店該分類總銷量 N% 的
   SKU 為「是」（同一銷量整組納入或整組排除；分類之間不互相擠佔；缺 Site Code 時
-  全表單一分組；所選母體缺欄時按 MCH2 → MC → Adj. SST 退回並列 warning，全缺則每店單一分組）；
-- 是否該店的Top N%（金額）：同一母體與同一 N%，改按 Net Sales (P{N}D)＝
+  全表單一分組；所選分組欄缺失時按 MCH2 → MC → Adj. SST 退回並列 warning，全缺則每店單一分組）；
+- 是否該店的Top N%（金額）：同一分組與同一 N%，改按 Net Sales (P{N}D)＝
   Net Sales (M-2)＋(M-1)＋(CM - MTD)（先按原值相加，容許退貨抵銷同品項其他月份銷貨，
   總和下限為 0）累計；
 - 該店 件數 vs 該店 金額 Top N%：由上述兩個判定合成四象限——「兩者皆是」／
@@ -43,12 +43,12 @@ Export（回覆明細）兩個工作表；Export 套用店舖精簡回覆表範�
 - 對比：{店舖} vs 同Nature Top N%（件數）／（金額），值為「兩者皆是／僅店舖／僅同Nature／
   兩者皆非」，一眼看出該 SKU 在兩邊是否同為核心。
 
-六欄均以所選母體為分組（介面可選 MCH2（預設中類）／MC（小類）／Adj. SST（陳列分類）），
-分類之間不互相擠佔；所選母體缺欄時按 MCH2 → MC → Adj. SST 退回並列 warning，
+六欄均按所選分組（介面可選 MCH2（預設中類）／MC（小類）／Adj. SST（陳列分類）），
+分類之間不互相擠佔；所選分組欄缺失時按 MCH2 → MC → Adj. SST 退回並列 warning，
 全缺則退回全店／全 Nature 單一分組；缺三個月 Net Sales 欄時只輸出件數兩欄（兩欄對比）。
 欄名隨比例與視窗改變（如 Top 80%／Net Sales (P73D)），故切換重跑不會留下舊欄。
 原模式（多店輸出）同樣輸出件數與金額兩個判定欄及一欄「該店 件數 vs 該店 金額 Top N%」
-對比，但不設同 Shop Nature 判定，金額欄與判定欄的母體為各店自己的 (Site Code, 所選母體)。
+對比，但不設同 Shop Nature 判定，金額欄與判定欄的計算範圍為各店自己的 (Site Code, 所選分組)。
 
 六個判定／對比欄只加在指定店舖的列上，其餘計算、清理、解析與回覆欄留空規則與原模式相同。
 匯出時指定店舖變體另設「預設顯示欄」檢視（`site_view=True`）：只顯示識別、庫存、銷量與
@@ -173,10 +173,10 @@ _SHOP_SIMPLIFY_STOCK_YES = "有存貨"
 _SHOP_SIMPLIFY_STOCK_NO = "無存貨"
 
 # ── 原模式與指定店舖模式的 Top N% 判定（預設 80%，介面可選 70%）──
-# 累計銷量／金額達該母體（該店／同 Shop Nature 全部店舖）總量的 N% 即屬 Top N%；
+# 累計銷量／金額達該分組（該店／同 Shop Nature 全部店舖）總量的 N% 即屬 Top N%；
 # 同一銷量／金額的 SKU 整組納入或整組排除，避免同值被隨意切開。
 _SHOP_SIMPLIFY_TOP80_SHARE = 0.8
-# 母體分組欄（介面可選，預設 MCH2）：MCH2＝中類（如「0101 - FACE & NECK」）、
+# 分組欄（介面可選，預設 MCH2）：MCH2＝中類（如「0101 - FACE & NECK」）、
 # MC＝小類（如「0101004 - AMPOULES & SERUM」）、Adj. SST＝陳列分類（舊口徑）。
 # 所選欄缺欄時按下列順序退回並列 warning；全缺則單一分組。
 _SHOP_SIMPLIFY_GROUP_OPTIONS = ("MCH2", "MC", "Adj. SST")
@@ -282,7 +282,7 @@ _SHOP_SIMPLIFY_SITE_VISIBLE_COLUMNS = (
     _SHOP_SIMPLIFY_SOLD_COLUMN, _SHOP_SIMPLIFY_STOCK_COLUMN,
     _SHOP_SIMPLIFY_NDRF_COLUMN, _SHOP_SIMPLIFY_SAFETY_COLUMN,
 )
-# 金額母體欄（Net Sales (P73D)／(P78D)…）隨數據截止日改變日數，故以樣式比對
+# 金額計算欄（Net Sales (P73D)／(P78D)…）隨數據截止日改變日數，故以樣式比對
 _SHOP_SIMPLIFY_SITE_NET_SALES_RE = re.compile(r"Net Sales \(P\d+D\)")
 
 # 欄寬（使用者範本；未列出的欄沿用 Excel 預設寬度）
@@ -417,7 +417,7 @@ def shop_simplify_stats(df: pd.DataFrame, group_by=None) -> dict:
 
 
 def shop_simplify_site_stats(df: pd.DataFrame, site_code: str, top_ratio=None, group_by=None) -> dict:
-    """指定店舖模式的結果頁指標：列數、SKU 數、母體分類數（所選 MCH2／MC／Adj. SST）、
+    """指定店舖模式的結果頁指標：列數、SKU 數、分組數（所選 MCH2／MC／Adj. SST）、
     件數與金額兩組 Top N% 命中數、兩項皆非、無賣／無存貨。
 
     `top_ratio` 只在判定欄不存在時作後備；正常情況由欄名（「…Top 70%」）取回實際比例，
@@ -606,7 +606,7 @@ def _shop_simplify_top_column_percent(name) -> int | None:
 
 
 def _shop_simplify_net_sales_window(data_date=None) -> dict:
-    """回傳金額母體的日數拆解：MTD 日數＋M-1 月日數＋M-2 月日數。
+    """回傳金額覆蓋日數的拆解：MTD 日數＋M-1 月日數＋M-2 月日數。
 
     來源數據為 T-1，故未指定時以「今天減一日」為數據截止日。例如 11 月 13 日執行 →
     截止 11 月 12 日：MTD 12 日＋10 月 31 日＋9 月 30 日＝73 日，標示 `P73D`。
@@ -831,7 +831,7 @@ def _shop_simplify_top80_mask(qty: pd.Series, share: float = _SHOP_SIMPLIFY_TOP8
 
 
 def _shop_simplify_group_choice(group_by=None) -> str:
-    """正規化母體選擇（MCH2／MC／Adj. SST，忽略大小寫與前後空白）；不認識時用預設 MCH2。"""
+    """正規化分組選擇（MCH2／MC／Adj. SST，忽略大小寫與前後空白）；不認識時用預設 MCH2。"""
     if group_by is None:
         return _SHOP_SIMPLIFY_TOP80_GROUP_COLUMN
     text = str(group_by).strip().upper()
@@ -842,10 +842,10 @@ def _shop_simplify_group_choice(group_by=None) -> str:
 
 
 def _shop_simplify_group_column(columns, group_by=None) -> tuple[str | None, str]:
-    """回傳 (實際分組欄名, 命中的母體名稱)。
+    """回傳 (實際分組欄名, 命中的分組名稱)。
 
-    由所選母體開始按退回鏈找第一個存在的欄位（MCH2 → MC → Adj. SST；選 MC 時
-    MC → Adj. SST），全部缺欄時回傳 (None, 所選母體)。
+    由所選分組開始按退回鏈找第一個存在的欄位（MCH2 → MC → Adj. SST；選 MC 時
+    MC → Adj. SST），全部缺欄時回傳 (None, 所選分組)。
     """
     requested = _shop_simplify_group_choice(group_by)
     avail = set(columns)
@@ -859,7 +859,7 @@ def _shop_simplify_group_column(columns, group_by=None) -> tuple[str | None, str
 def _shop_simplify_blank_sku_keys(skus: pd.Series) -> set[str]:
     """SKU「空白鍵」集合：空字串與字串化的 NaN／None（astype(str) 的產物）。
 
-    空白 SKU 列無品項身分，不得計入 Top N% 母體（會令分母虛增、判定線被推移）；
+    空白 SKU 列無品項身分，不得計入 Top N% 分組（會令分母虛增、判定線被推移）；
     呼叫方以 `sku in blank_keys` 排除並列 warning。
     """
     keys = skus.fillna("").astype(str).str.strip()
@@ -873,10 +873,10 @@ def _shop_simplify_top80_keys(
     share: float = _SHOP_SIMPLIFY_TOP80_SHARE,
     tail_guard: bool = True,
 ) -> set[tuple[str, str]]:
-    """按母體分類（MC；缺欄時退回 Adj. SST）分組，回傳各組累計 N% 的 (分類, SKU) 集合。
+    """按所選分組欄（MC；缺欄時退回 Adj. SST）分組，回傳各組累計 N% 的 (分類, SKU) 集合。
 
     每個分類獨立累計，分類之間不互相擠佔；同一 SKU 在同一分類內重複出現時先加總。
-    SKU 空白（NaN／空字串）的列不計入母體（該等列的判定一律為非 Top，
+    SKU 空白（NaN／空字串）的列不計入分母（該等列的判定一律為非 Top，
     由呼叫方列 warning 提示檢查來源檔）；`tail_guard` 僅件數口徑使用（見
     _shop_simplify_top80_mask）。
     """
@@ -901,7 +901,7 @@ def _shop_simplify_top80_keys(
 
 
 def _shop_simplify_net_sales_series(df: pd.DataFrame, net_columns) -> pd.Series:
-    """三個月 Net Sales 相加成金額母體；先按原始值相加，最後才將總和下限為 0，
+    """三個月 Net Sales 相加成金額計算欄；先按原始值相加，最後才將總和下限為 0，
     令跨月退貨可抵銷原銷貨（避免逐月先 clip 為 0 導致退貨月份被忽略）；缺值當 0。
 
     `net_columns` 為 [(實際欄名, 標準欄名), ...]；實際欄名為 None 時略過該月。
@@ -921,14 +921,14 @@ def _shop_simplify_shop_top_flags(
     share: float = _SHOP_SIMPLIFY_TOP80_SHARE,
     tail_guard: bool = True,
 ) -> pd.Series:
-    """每列是否屬「該店 × 該母體分類」累計 N% 內的 SKU（原模式多店輸出用）。
+    """每列是否屬「該店 × 該分組」累計 N% 內的 SKU（原模式多店輸出用）。
 
-    以 (Site Code, 母體分類) 為母體鍵（分類欄優先 MC，缺欄時退回 Adj. SST），
-    母體之間互不擠佔；缺 Site Code 時全表視為單一店舖（"(全部店舖)"），
+    以 (Site Code, 分組值) 為分組鍵（分類欄優先 MC，缺欄時退回 Adj. SST），
+    分組之間互不擠佔；缺 Site Code 時全表視為單一店舖（"(全部店舖)"），
     缺分類欄時每店單一分組（"(全部)"）。
     `measure` 可為件數（Sold Qty (P90D)）或金額（Net Sales (P{N}D)），兩者共用同一引擎；
     `tail_guard` 長尾保護僅件數口徑使用（金額口徑傳 False）。
-    SKU 空白的列不計入母體，判定一律為非 Top。
+    SKU 空白的列不計入分母，判定一律為非 Top。
     """
     index = df.index
     if site_col is not None and site_col in df.columns:
@@ -944,7 +944,7 @@ def _shop_simplify_shop_top_flags(
     if "SKU" not in df.columns:
         return pd.Series(False, index=index, dtype=bool)
 
-    # 以不可見分隔符併成單一母體鍵，重用按分類累計 N% 的同一判定
+    # 以不可見分隔符併成單一分組鍵，重用按分類累計 N% 的同一判定
     body_keys = sites.astype(str) + "\u0000" + groups.astype(str)
     skus = _cached_safe_sku_series(df["SKU"]).astype(str).str.strip()
     keys = _shop_simplify_top80_keys(body_keys, skus, measure, share=share, tail_guard=tail_guard)
@@ -1001,9 +1001,9 @@ def transform_shop_simplify(
     """清理來源資料並附加「過去90日有無賣過／過去90日有無存貨」、件數與金額兩組
     「是否該店的Top N%」、一欄「該店 件數 vs 該店 金額 Top N%」對比，以及三個空白回覆欄。
 
-    - 兩個判定都以 (Site Code, 母體分類) 為母體，每間店每個分類各自一條 N% 線；
+    - 兩個判定都以 (Site Code, 分組值) 為分組，每間店每個分類各自一條 N% 線；
       件數按 Sold Qty (P90D)、金額按 Net Sales (P{N}D)（三個月先按原值相加，
-      總和下限為 0）。SKU 空白的列不計入 Top N% 母體（判定為非 Top）並列 warning。
+      總和下限為 0）。SKU 空白的列不計入 Top N% 分組（判定為非 Top）並列 warning。
       `group_by` 可選 MCH2（預設，中類）／MC（小類）／Adj. SST（陳列分類）；
       所選欄缺欄時按 MCH2 → MC → Adj. SST 退回並列 warning，全缺則每店單一分組。
       對比值為「兩者皆是／僅店舖件數／僅店舖金額／兩者皆非」。
@@ -1070,7 +1070,7 @@ def transform_shop_simplify(
             "只輸出件數判定欄（不會加入 Net Sales 與（金額）欄）。"
         )
 
-    # SKU 空白列不計入 Top N% 母體（分母不含該等列；判定一律為非 Top）
+    # SKU 空白列不計入 Top N% 分組（分母不含該等列；判定一律為非 Top）
     if "SKU" in df.columns:
         _blank_keys = _shop_simplify_blank_sku_keys(df["SKU"])
         if _blank_keys:
@@ -1078,7 +1078,7 @@ def transform_shop_simplify(
                 df["SKU"].fillna("").astype(str).str.strip().isin(_blank_keys).sum()
             )
             warnings.append(
-                f"有 {_blank_sku_rows} 列「SKU」空白，已不計入 Top {pct}% 母體"
+                f"有 {_blank_sku_rows} 列「SKU」空白，已不計入 Top {pct}% 分母"
                 "（該等列的件數／金額判定一律標示為非 Top），請檢查來源檔。"
             )
 
@@ -1191,7 +1191,7 @@ def transform_shop_simplify(
         df[name] = ""
 
     # 欄序：判定欄緊接「過去90日有無存貨」（件數 → 金額 → 對比），
-    # 金額母體緊接 Sold Qty (P90D)，三個回覆欄維持最後
+    # 金額計算欄緊接 Sold Qty (P90D)，三個回覆欄維持最後
     if include_shop_top80:
         cols = list(df.columns)
         insert_at = cols.index(_SHOP_SIMPLIFY_STOCK_COLUMN) + 1
@@ -1258,9 +1258,9 @@ def transform_shop_simplify_site(
 - 對比：`{店舖} vs 同Nature Top N%（件數）`／`（金額）`，值為「兩者皆是／僅店舖／
   僅同Nature／兩者皆非」，直接看兩邊是否同為核心；Nature 不可用時整欄留空。
 
-    兩種口徑都按所選母體分組（`group_by`：MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類），
+    兩種口徑都按所選分組（`group_by`：MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類），
     在每個分類內累計至該分類 N%，同一銷量／金額整組納入或排除；分類之間不互相擠佔。
-    來源缺 Shop Nature 時 Nature 欄留空；所選母體缺欄時按 MCH2 → MC → Adj. SST 退回並列
+    來源缺 Shop Nature 時 Nature 欄留空；所選分組欄缺失時按 MCH2 → MC → Adj. SST 退回並列
     warning，全缺則退回單一分組；缺三個月 Net Sales 欄時只輸出件數判定，均列 warning。
 
     `top_ratio` 為累計比例：0.8（預設）或 0.7；亦接受 70、"70%" 等寫法。欄名隨比例改變，
@@ -1335,7 +1335,7 @@ def transform_shop_simplify_site(
             "只輸出件數判定欄（不會加入 Net Sales 與（金額）欄）。"
         )
 
-    # SKU 空白列不計入 Top N% 母體（分母不含該等列；判定一律為非 Top）
+    # SKU 空白列不計入 Top N% 分組（分母不含該等列；判定一律為非 Top）
     if "SKU" in shop_raw.columns:
         _blank_keys = _shop_simplify_blank_sku_keys(shop_raw["SKU"])
         if _blank_keys:
@@ -1343,7 +1343,7 @@ def transform_shop_simplify_site(
                 shop_raw["SKU"].fillna("").astype(str).str.strip().isin(_blank_keys).sum()
             )
             warnings.append(
-                f"有 {_blank_sku_rows} 列「SKU」空白，已不計入 Top {pct}% 母體"
+                f"有 {_blank_sku_rows} 列「SKU」空白，已不計入 Top {pct}% 分母"
                 "（該等列的件數／金額判定一律標示為非 Top），請檢查來源檔。"
             )
 
@@ -1357,8 +1357,8 @@ def transform_shop_simplify_site(
             f"來源檔案缺少「{group_requested}」，Top {pct}% 改以「{group_used}」分類計算。"
         )
 
-    # ── 同 Shop Nature 的 Top N%（件數與金額）：先在清理後全表按 (母體分類, SKU) 算好，
-    #    稍後映射到指定店舖的列；其他 Nature 不計入母體 ──
+    # ── 同 Shop Nature 的 Top N%（件數與金額）：先在清理後全表按 (分組值, SKU) 算好，
+    #    稍後映射到指定店舖的列；其他 Nature 不計入分母 ──
     nature_available = False
     nature_value = ""
     nature_keys: set[tuple[str, str]] = set()
@@ -1875,7 +1875,7 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
             else:
                 width = 16.0 if is_nature else 14.0
         if width is None and isinstance(name, str) and re.fullmatch(r"Net Sales \(P\d+D\)", name.strip()):
-            # 金額母體欄（Net Sales (P73D)）
+            # 金額計算欄（Net Sales (P73D)）
             width = 14.0
         if width is not None:
             ws.column_dimensions[letter].width = width
@@ -1912,7 +1912,7 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
         for i, name in enumerate(headers, start=1)
         if name in _SHOP_SIMPLIFY_NUMBER_FORMATS
     ]
-    # 金額母體欄名隨視窗改變（Net Sales (P73D)），按樣式套用與三個月 Net Sales 相同的數字格式
+    # 金額計算欄名隨視窗改變（Net Sales (P73D)），按樣式套用與三個月 Net Sales 相同的數字格式
     number_formats += [
         (i, _SHOP_SIMPLIFY_NUMBER_FORMATS["Net Sales (M-2)"])
         for i, name in enumerate(headers, start=1)

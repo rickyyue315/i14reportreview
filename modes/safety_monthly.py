@@ -1110,7 +1110,7 @@ def _safm_label_to_key(label: str) -> int | None:
 def _build_safm_rp_cohort(change_df: pd.DataFrame) -> pd.DataFrame:
     """RP 轉變群組生意對比：按 RP Type 轉變 × 本月分組，隔離各群組的生意變化。
 
-    母體為 SKU月度變化事件（Site Code × SKU 相鄰月份環比），每列一組轉變 × 本月。
+    統計範圍為 SKU月度變化事件（Site Code × SKU 相鄰月份環比），每列一組轉變 × 本月。
     另附每種轉變的全部合計列、每月總計列與全檔總計列，便於對照
     RF→ND 群組與持續 RF 群組的同期生意走勢。
     變化率＝變化量 ÷ 上月合計絕對值，上月合計為 0 時留空。
@@ -1819,7 +1819,7 @@ def _write_safety_monthly_guide_sheet(ws, stats):
         "RF→ND SKU數／ND→RF SKU數：三個樞紐按維度、By Shop 按店舖，分月份統計當月發生該轉變的不重複 SKU 數"
         "（按轉變的「本月」歸月，取自 SKU月度變化事件；樞紐的「全部合計」為整個期間不重複 SKU 數，"
         "總計列為全檔口徑，各維度相加可大於總計——同一 SKU 可在多個維度、多個月份轉變）。",
-        "RP 轉變群組生意對比：母體同為 SKU月度變化事件，按 RF→RF／ND→ND／RF→ND／ND→RF 四組各自加總上月與本月生意，"
+        "RP 轉變群組生意對比：統計範圍同為 SKU月度變化事件，按 RF→RF／ND→ND／RF→ND／ND→RF 四組各自加總上月與本月生意，"
         "避免轉 ND 群組與持續群組混合；重點比較 RF→ND 群組與 RF→RF 群組的同期變化率。",
         "店舖精簡成效：每店每月列示 RF／ND／總 SKU 數及其環比變化、淨精簡數（RF→ND 減 ND→RF）、"
         "被精簡掉的上月生意基數（RF→ND 組上月合計）與留存 RF 組（RF→RF 事件）上月與本月對比；"

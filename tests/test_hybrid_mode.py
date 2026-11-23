@@ -1472,7 +1472,7 @@ def test_excel_safety_blocks_empty_population():
     assert diag_summary.empty
     ws = load_workbook(generate_excel_hybrid(
         raw, sc_summary, diagnosis, diagnosis_om, diag_summary, stats))["Review 摘要"]
-    assert ws.cell(row=20, column=1).value == "無符合資料（①–④ 統計區塊以調貨事件列為母體）"
+    assert ws.cell(row=20, column=1).value == "無符合資料（①–④ 統計區塊以調貨事件列為範圍）"
     # ⑤ 銷量 × 存貨分類母體為全部列，無調貨事件時仍恆寫入
     assert str(ws.cell(row=22, column=1).value).startswith("銷量 × 存貨分類交叉表")
     assert ws.cell(row=23, column=1).value == "銷量存貨分類"

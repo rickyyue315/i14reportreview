@@ -328,8 +328,8 @@ MODE_DESCRIPTIONS = {
     "OOS Review": "篩選缺貨與潛在缺貨品項，偵測安全庫存不足。",
     "Carry SKU Review": "統計各店舖實際經營品項數量與結構。",
     "SKU 精簡 Review": "針對不可補貨品項，建議退倉安排。",
-    "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去90日有無存貨（LLM／LM／CM 任一 > 0＝有存貨，LLM 欄自 2026-10-26 起來源報表提供），可自選 Top 80%（預設）或 Top 70%，同時輸出件數與金額兩組判定（欄名末端註明「（件數）」／「（金額）」）及一欄「該店 件數 vs 該店 金額 Top N%」對比（值為兩者皆是／僅店舖件數／僅店舖金額／兩者皆非）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D；三個月先按原值相加，容許退貨抵銷同品項其他月份銷貨，總和下限為 0），兩者均以所選母體（MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類）為分組，在每個分類內由高至低累計，首次達該店該分類總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔；若達標點落在僅 1 件的長尾且整組納入會令分類 100% 入選，則只保留高於 1 件者，避免精簡失效；不設同 Nature 判定；所選母體缺欄時按 MCH2 → MC → Adj. SST 退回並列 warning）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數，並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
-    "店舖精簡SKU模式(指定店舖)": "只列指定店舖（如 HA21）的 SKU，可自選 Top 80%（預設）或 Top 70%，同時輸出件數與金額兩組判定（四欄，欄名末端註明「（件數）」／「（金額）」）及兩欄「{店舖} vs 同Nature Top N%」對比（值為兩者皆是／僅店舖／僅同Nature／兩者皆非）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D；三個月先按原值相加，容許退貨抵銷同品項其他月份銷貨，總和下限為 0），各自判定「是否該店的Top N%」及「是否同Shop Nature的Top N%」——均按所選母體（MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類）分組，在每個分類內由高至低累計，首次達該分類母體（該店／同 Nature 全部店舖）總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔；若達標點落在僅 1 件的長尾且整組納入會令分類 100% 入選，則只保留高於 1 件者，避免精簡失效；所選母體缺欄時按 MCH2 → MC → Adj. SST 退回並列 warning）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數。其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則與店舖精簡SKU模式相同。",
+    "店舖精簡SKU模式": "按店舖×SKU 列出過去90日有無賣過及過去90日有無存貨（LLM／LM／CM 任一 > 0＝有存貨，LLM 欄自 2026-10-26 起來源報表提供），可自選 Top 80%（預設）或 Top 70%，同時輸出件數與金額兩組判定（欄名末端註明「（件數）」／「（金額）」）及一欄「該店 件數 vs 該店 金額 Top N%」對比（值為兩者皆是／僅店舖件數／僅店舖金額／兩者皆非）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D；三個月先按原值相加，容許退貨抵銷同品項其他月份銷貨，總和下限為 0），兩者均按所選分組（MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類），在每個分類內由高至低累計，首次達該店該分類總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔；若達標點落在僅 1 件的長尾且整組納入會令分類 100% 入選，則只保留高於 1 件者，避免精簡失效；不設同 Nature 判定；所選分組欄缺失時按 MCH2 → MC → Adj. SST 退回並列 warning）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數，並由 Item_Shop 解析 SKU Desc 與 Shop Name、刪除欄名含 Value 的欄位，供 SCT 與店舖填寫精簡回覆（SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty 一律留空）。",
+    "店舖精簡SKU模式(指定店舖)": "只列指定店舖（如 HA21）的 SKU，可自選 Top 80%（預設）或 Top 70%，同時輸出件數與金額兩組判定（四欄，欄名末端註明「（件數）」／「（金額）」）及兩欄「{店舖} vs 同Nature Top N%」對比（值為兩者皆是／僅店舖／僅同Nature／兩者皆非）：件數按 Sold Qty (P90D)、金額按 Net Sales（MTD＋M-1＋M-2，欄名自動標示實際覆蓋日數如 P73D；三個月先按原值相加，容許退貨抵銷同品項其他月份銷貨，總和下限為 0），各自判定「是否該店的Top N%」及「是否同Shop Nature的Top N%」——均按所選分組（MCH2 中類（預設）／MC 小類／Adj. SST 陳列分類），在每個分類內由高至低累計，首次達該分類總額（該店／同 Nature 全部店舖）總量 N% 即屬 Top N%（同一銷量／金額整組納入或排除，分類之間不互相擠佔；若達標點落在僅 1 件的長尾且整組納入會令分類 100% 入選，則只保留高於 1 件者，避免精簡失效；所選分組欄缺失時按 MCH2 → MC → Adj. SST 退回並列 warning）；另可選數據截止日（T-1，預設昨日）決定 MTD 日數。其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則與店舖精簡SKU模式相同。",
     "NDRF 月份對比": "對比兩個月份各店舖經營與不可補貨品項變化。",
     "Safety Stock Review": "全面審查安全庫存設定，計算平衡建議值（最低 3 件保底只適用於有銷量或 90 天內上市的新品；舊品零銷量維持 0，避免為滯銷品項設定安全庫存）。",
     "Stock Impact Analysis": "分析缺貨對銷售的影響與調貨機會。",
@@ -1253,7 +1253,7 @@ if uploaded_file is not None:
                     st.info("無符合資料")
 
                 st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
-                st.markdown("#### ② 銷量 × 存貨分類分佈（母體為全部店舖×SKU 列）")
+                st.markdown("#### ② 銷量 × 存貨分類分佈（統計範圍為全部店舖×SKU 列）")
                 try:
                     _ss_sales_block = _build_hybrid_sales_summary(raw_df)
                 except Exception:
@@ -1321,7 +1321,7 @@ if uploaded_file is not None:
             )
     elif mode == "Safety Stock x NetStock Review":
         with st.expander("🔀 調貨事件 Review Safety 設定說明（點選展開）", expanded=False):
-            st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 10 / Mix 9 / Non Tourist 7 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。另附 **全列預防性 Safety 設定建議**（母體為全部店舖×SKU 列，不依賴調貨事件；ND 列不作上調）：RAW「全列」五欄與「🛡️ Safety 設定建議 (全列)」分頁供一次過設定適合的 Safety Stock，減少日後調貨次數。主表另附「建議 Safety 設定值 Turnday」（建議值 ÷ (P90D 月均 ÷ 30)，月均 0 留空），受保底影響的建議在店舖問題 SKU 建議方法加註保底原因。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM、Shop Nature＋OM、銷量（高銷／中銷／低銷／零銷 四帶）或 銷量＋Shop Nature（Nature×銷量帶 12 組）分類；其中 OM／銷量／銷量＋Shop Nature 維度計算與預設相同，僅 Summary／交叉表改按 OM、Nature×OM、銷量帶或 Nature×銷量帶分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。RAW／主表恆附 **銷量帶**（同 SKU 內按 Sold Qty (P90D) 排名分帶）與 **銷量存貨分類**（高銷缺貨／低銷積壓／零銷積壓／正常；店舖周轉日數門檻預設缺貨 7 日、積壓 30 日、保底 2 件，與調貨 14 日線及 Safety 基準天數互相獨立）；「Review 摘要」另附 **⑤ 銷量 × 存貨分類交叉表**（母體為全部店舖×SKU 列）與 **⑥ 全列 Safety 調整方向分類／明細**。可勾選 **啟用銷量再平衡**（預設關閉）：高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方（仍須 D001 低於門檻、補到 14 日需求 > 0 且同 SKU 有貨可調），積壓列經既有轉出判定提供來源；跟隨單向／雙向框架，自我調貨／同 Nature／同OM 守衛與池級歸零不放寬。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示，存貨偏低分組另以淺藍底標示庫存佔比欄；以銷量／銷量＋Shop Nature 分類時，零銷組「加總 - Shop Stock Qty (CM) %」大於 0% 另以醒目紅底標示——零銷售而仍有存貨，理論上全屬 Overstock）。")
+            st.caption("🔀 **調貨事件 Review Safety 設定**：沿用 Stock Checking 調貨規則（14 日目標、NT 優先→Mix 補足）後，以 **Safety 基準周轉天數**（按 Shop Nature 分別設定，預設 Tourist 10 / Mix 9 / Non Tourist 7 日，可調 7–10）Review Safety Stock 設定 — 需調入列若現有設定低於所需量 → 「Safety 設定不足」；有貨可轉出列若現有設定高於生效基準 → 「Safety 設定過高」，並給出建議調整值與調整量（**下調建議補底 3 件**——受限 SAP MOQ，Safety 1–2 件難以補貨：現有 ≥ 3 件而下調至 1–2 件者建議最低 3 件；現有本身 1–2 件不強制上調；零銷售歸零建議不受保底；上調建議照常）。另附 **全列預防性 Safety 設定建議**（統計範圍為全部店舖×SKU 列，不依賴調貨事件；ND 列不作上調）：RAW「全列」五欄與「🛡️ Safety 設定建議 (全列)」分頁供一次過設定適合的 Safety Stock，減少日後調貨次數。主表另附「建議 Safety 設定值 Turnday」（建議值 ÷ (P90D 月均 ÷ 30)，月均 0 留空），受保底影響的建議在店舖問題 SKU 建議方法加註保底原因。Safety 基準與調貨的 14 日線**互相獨立**（調整 Safety 天數不會改變任何調貨數字）。調貨結果分 **不限OM** 與 **同OM**（來源店須與需求店同 OM）兩套對照；OM 限制只影響調貨分配，不影響 Safety Review 與建議調整。調貨段除 Stock Checking 規則外，另含本模式的資料品質補正（Shop Nature 正規化、月銷空白／為 0 但有 P90D 銷售時逐列回補、D001 逐列 Net→Stock 回補），同檔與 Stock Checking 模式的結果可能有細微差異。可勾選 **允許雙向調貨**：存貨偏重遊客區時，Mix / Non Tourist 缺貨店舖亦可調入、遊客區店舖可轉出。可選擇 **分類維度**（預設 Shop Nature）：改以 RP Type（RF＝可補貨／ND＝不可補貨）、Shop Nature＋RP Type、OM、Shop Nature＋OM、銷量（高銷／中銷／低銷／零銷 四帶）或 銷量＋Shop Nature（Nature×銷量帶 12 組）分類；其中 OM／銷量／銷量＋Shop Nature 維度計算與預設相同，僅 Summary／交叉表改按 OM、Nature×OM、銷量帶或 Nature×銷量帶分組（TurnDay 與 Safety 基準天數恆按 Shop Nature）；**RP Type 為 ND 的店舖列一律不作調貨需求方（仍可作供應方轉出）**。來源缺「OM」欄或全欄空白時，OM 兩個維度退回 Shop Nature。可勾選 **ND 優先轉出**（預設關閉）：同一 Shop Nature 池內 **RP Type＝ND 的店舖先於 RF 店舖轉出**（池間順序仍為 Non Tourist → Mix → Tourist，轉出資格一律不放寬），只改變逐列轉出量與調貨來源，**不影響 Safety Review 與建議調整量**。RAW／主表恆附 **銷量帶**（同 SKU 內按 Sold Qty (P90D) 排名分帶）與 **銷量存貨分類**（高銷缺貨／低銷積壓／零銷積壓／正常；店舖周轉日數門檻預設缺貨 7 日、積壓 30 日、保底 2 件，與調貨 14 日線及 Safety 基準天數互相獨立）；「Review 摘要」另附 **⑤ 銷量 × 存貨分類交叉表**（統計範圍為全部店舖×SKU 列）與 **⑥ 全列 Safety 調整方向分類／明細**。可勾選 **啟用銷量再平衡**（預設關閉）：高銷缺貨的 RF 店舖列即使所屬 Nature 池不缺貨亦可加入調貨需求方（仍須 D001 低於門檻、補到 14 日需求 > 0 且同 SKU 有貨可調），積壓列經既有轉出判定提供來源；跟隨單向／雙向框架，自我調貨／同 Nature／同OM 守衛與池級歸零不放寬。另附 SKU 級 **Summary**（按所選維度分組的庫存/銷量佔比與「存貨偏重提示」，偏重數值以醒目橘色底色加強顯示，存貨偏低分組另以淺藍底標示庫存佔比欄；以銷量／銷量＋Shop Nature 分類時，零銷組「加總 - Shop Stock Qty (CM) %」大於 0% 另以醒目紅底標示——零銷售而仍有存貨，理論上全屬 Overstock）。")
 
         sc_top = st.columns(2)
         with sc_top[0]:
@@ -1775,7 +1775,7 @@ if uploaded_file is not None:
                         "需調整 Safety SKU 佔比": st.column_config.NumberColumn("需調整 Safety SKU 佔比", format="%.1f%%"),
                     },
                 )
-                st.caption(f"共 {len(_hyb_buyer_combined):,} 個 Buyer（已刪除重複；Buyer 取同 SKU 首個非空值，空白歸入「(未填 Buyer)」；需調整母體為 Safety 設定不足＋過高，貨量與調整量為淨額）。")
+                st.caption(f"共 {len(_hyb_buyer_combined):,} 個 Buyer（已刪除重複；Buyer 取同 SKU 首個非空值，空白歸入「(未填 Buyer)」；需調整範圍為 Safety 設定不足＋過高，貨量與調整量為淨額）。")
 
         
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
@@ -1923,7 +1923,7 @@ if uploaded_file is not None:
                             "需調整 Safety SKU 佔比": st.column_config.NumberColumn("需調整 Safety SKU 佔比", format="%.1f%%"),
                         },
                     )
-                    st.caption("同一 Buyer 的需調貨與需調整 Safety 並列顯示（已刪除重複；需調貨按 Stock Checking 同一準則；需調整母體為 Safety 設定不足＋過高，貨量與調整量為淨額）。")
+                    st.caption("同一 Buyer 的需調貨與需調整 Safety 並列顯示（已刪除重複；需調貨按 Stock Checking 同一準則；需調整範圍為 Safety 設定不足＋過高，貨量與調整量為淨額）。")
                 else:
                     st.info("無符合條件的 Buyer 統計")
 
@@ -1931,20 +1931,20 @@ if uploaded_file is not None:
                 _soos = int((stats or {}).get("sales_oos_days") or _HYBRID_SALES_OOS_DAYS_DEFAULT)
                 _sover = int((stats or {}).get("sales_overstock_days") or _HYBRID_SALES_OVERSTOCK_DAYS_DEFAULT)
                 _sminu = int((stats or {}).get("sales_overstock_min_units") or _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT)
-                st.markdown("#### ⑤ 銷量 × 存貨分類交叉表（母體為全部店舖×SKU 列）")
+                st.markdown("#### ⑤ 銷量 × 存貨分類交叉表（統計範圍為全部店舖×SKU 列）")
                 _sales_block = _build_hybrid_sales_summary(raw_df)
                 if not _sales_block.empty:
                     st.dataframe(_sales_block, width='stretch', hide_index=True)
                     st.caption(f"分類準則：高銷缺貨＝同 SKU 內屬高銷帶且店舖周轉日數 < {_soos} 日；"
                                f"低銷積壓＝低銷帶且周轉日數 ≥ {_sover} 日且庫存 ≥ {_sminu} 件；"
                                f"零銷積壓＝P90D 零銷售且庫存 ≥ {_sminu} 件；其餘為正常。"
-                               "母體為全部店舖×SKU 列（有別於 ①–④ 的調貨事件列母體），無調貨事件時仍可查閱；"
+                               "統計範圍為全部店舖×SKU 列（有別於 ①–④ 的調貨事件列範圍），無調貨事件時仍可查閱；"
                                "銷量帶按本次上傳資料內同 SKU 排名計算，篩選範圍不同時結果會不同。")
                 else:
                     st.info("無符合資料")
 
                 st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
-                st.markdown("#### ⑥ 全列 Safety 調整方向分類（增加 / 減少 / 不變；母體為全部列）")
+                st.markdown("#### ⑥ 全列 Safety 調整方向分類（增加 / 減少 / 不變；統計範圍為全部列）")
                 _full_change = _build_hybrid_full_safety_change_summary(raw_df)
                 if not _full_change.empty:
                     st.dataframe(_full_change, width='stretch', hide_index=True)
@@ -1965,7 +1965,7 @@ if uploaded_file is not None:
                     st.info("無符合資料")
             with tab_full:
                 st.markdown("#### 全列預防性 Safety 設定建議 — 一次過設定適合的 Safety Stock，減少日後調貨次數")
-                st.caption("母體為全部店舖×SKU 列，不依賴調貨事件；與事件版同口徑（Safety 周轉所需量＋下調補底 3 件）；"
+                st.caption("統計範圍為全部店舖×SKU 列，不依賴調貨事件；與事件版同口徑（Safety 周轉所需量＋下調補底 3 件）；"
                            "ND 列不作上調，只可下調；以下只列出需要調整的列（設定正常列不佔版面）。")
                 _full_detail = _build_hybrid_full_safety_detail(raw_df)
                 if _full_detail is not None and not _full_detail.empty:
@@ -2875,7 +2875,7 @@ if uploaded_file is not None:
                     "🔥 只顯示爆升 SKU（新起量／加速中／爆升）",
                     value=True,
                     key="fc_surge_only",
-                    help="只影響主表與店舖覆蓋表的顯示；摘要與按 Buyer 彙總一律按全母體計算。"
+                    help="只影響主表與店舖覆蓋表的顯示；摘要與按 Buyer 彙總一律按以全部列計算。"
                 )
             with st.expander("⚙️ 進階模型設定 (v2 加權混合)", expanded=False):
                 st.caption(
@@ -2967,19 +2967,19 @@ if uploaded_file is not None:
                 horizontal=True,
                 key="shopslim_top_ratio",
                 help="決定每間店兩條判定線的累計門檻：Top 80% 為預設；Top 70% 門檻更緊、"
-                     "保留的 SKU 更少。件數與金額兩組都按所選母體（MCH2／MC／Adj. SST）"
+                     "保留的 SKU 更少。件數與金額兩組都按所選分組（MCH2／MC／Adj. SST）"
                      "獨立累計，同一銷量／金額的 SKU 整組納入或整組排除。",
             )
             _shopslim_ratio = _SHOPSLIM_RATIO_OPTIONS[_shopslim_ratio_label]
             _shopslim_pct = int(round(_shopslim_ratio * 100))
             _shopslim_group_label = st.selectbox(
-                "🏷️ Top N% 母體",
+                "🏷️ Top N% 分組",
                 options=list(_SHOPSLIM_GROUP_OPTIONS),
                 index=0,
                 key="shopslim_group",
                 help="決定每店每組 N% 線的分組欄：MCH2 為中類（如 0101 - FACE & NECK）、"
                      "MC 為小類（如 0101004 - AMPOULES & SERUM）、Adj. SST 為陳列分類（舊口徑）。"
-                     "母體越細，入選 SKU 越多；所選欄缺失時按 MCH2 → MC → Adj. SST 退回並列 warning。",
+                     "分組越細，入選 SKU 越多；所選欄缺失時按 MCH2 → MC → Adj. SST 退回並列 warning。",
             )
             _shopslim_group = _SHOPSLIM_GROUP_OPTIONS[_shopslim_group_label]
             _shopslim_data_date = st.date_input(
@@ -2993,7 +2993,7 @@ if uploaded_file is not None:
             )
             _shopslim_window = _shop_simplify_net_sales_window(_shopslim_data_date)
             st.caption(
-                f"📅 金額母體：MTD **{_shopslim_window['mtd_days']}** 日 ＋ "
+                f"📅 金額計算範圍：MTD **{_shopslim_window['mtd_days']}** 日 ＋ "
                 f"**{int(_shopslim_window['m1'].split('-')[1])} 月 {_shopslim_window['m1_days']}** 日 ＋ "
                 f"**{int(_shopslim_window['m2'].split('-')[1])} 月 {_shopslim_window['m2_days']}** 日 "
                 f"＝ **Net Sales ({_shopslim_window['label']})**（合共 {_shopslim_window['total_days']} 日）。"
@@ -3015,19 +3015,19 @@ if uploaded_file is not None:
                 horizontal=True,
                 key="shopslimsite_top_ratio",
                 help="決定四條判定欄的累計門檻：Top 80% 為預設；Top 70% 門檻更緊、保留的 SKU 更少，"
-                     "精簡力度更大。件數與金額兩組都按所選母體（MCH2／MC／Adj. SST）獨立累計，"
+                     "精簡力度更大。件數與金額兩組都按所選分組（MCH2／MC／Adj. SST）獨立累計，"
                      "同一銷量／金額的 SKU 整組納入或整組排除。",
             )
             _shopslimsite_ratio = _SHOPSLIM_RATIO_OPTIONS[_shopslimsite_ratio_label]
             _shopslimsite_pct = int(round(_shopslimsite_ratio * 100))
             _shopslimsite_group_label = st.selectbox(
-                "🏷️ Top N% 母體",
+                "🏷️ Top N% 分組",
                 options=list(_SHOPSLIM_GROUP_OPTIONS),
                 index=0,
                 key="shopslimsite_group",
                 help="決定店舖與同 Nature 兩條 N% 線的分組欄：MCH2 為中類（如 0101 - FACE & NECK）、"
                      "MC 為小類（如 0101004 - AMPOULES & SERUM）、Adj. SST 為陳列分類（舊口徑）。"
-                     "母體越細，入選 SKU 越多；所選欄缺失時按 MCH2 → MC → Adj. SST 退回並列 warning。",
+                     "分組越細，入選 SKU 越多；所選欄缺失時按 MCH2 → MC → Adj. SST 退回並列 warning。",
             )
             _shopslimsite_group = _SHOPSLIM_GROUP_OPTIONS[_shopslimsite_group_label]
             _shopslimsite_data_date = st.date_input(
@@ -3041,7 +3041,7 @@ if uploaded_file is not None:
             )
             _shopslimsite_window = _shop_simplify_net_sales_window(_shopslimsite_data_date)
             st.caption(
-                f"📅 金額母體：MTD **{_shopslimsite_window['mtd_days']}** 日 ＋ "
+                f"📅 金額計算範圍：MTD **{_shopslimsite_window['mtd_days']}** 日 ＋ "
                 f"**{int(_shopslimsite_window['m1'].split('-')[1])} 月 {_shopslimsite_window['m1_days']}** 日 ＋ "
                 f"**{int(_shopslimsite_window['m2'].split('-')[1])} 月 {_shopslimsite_window['m2_days']}** 日 "
                 f"＝ **Net Sales ({_shopslimsite_window['label']})**（合共 {_shopslimsite_window['total_days']} 日）"
@@ -3061,12 +3061,12 @@ if uploaded_file is not None:
                 key="shopslimsite_site",
                 help=f"只輸出此店舖的 SKU 列，並判定該店與同 Shop Nature 的 Top {_shopslimsite_pct}%，"
                      "件數用 Sold Qty (P90D)、金額用 Net Sales（MTD＋M-1＋M-2）；"
-                     f"兩者均以 {_shopslimsite_group} 分類為母體，每個分類獨立累計。",
+                     f"兩者均以 {_shopslimsite_group} 為分組，每個分類獨立累計。",
             )
             _slim_site = _shopslimsite_site
             _slim_pct = _shopslimsite_pct
             st.caption(
-                f"目前設定 → **{_slim_site}**、**Top {_slim_pct}%**、母體 **{_shopslimsite_group}**、金額 **{_shopslimsite_window['label']}**："
+                f"目前設定 → **{_slim_site}**、**Top {_slim_pct}%**、分組 **{_shopslimsite_group}**、金額 **{_shopslimsite_window['label']}**："
                 "輸出該店全部 SKU，並加四欄判定與兩欄對比——"
                 f"「是否{_slim_site}的Top {_slim_pct}%（件數）」、「是否同Shop Nature的Top {_slim_pct}%（件數）」、"
                 f"「是否{_slim_site}的Top {_slim_pct}%（金額）」、「是否同Shop Nature的Top {_slim_pct}%（金額）」，"
@@ -3077,7 +3077,7 @@ if uploaded_file is not None:
 
         SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
         if mode in ("Stock Checking", "Forecast Review", _SHOP_SIMPLIFY_SITE_MODE):
-            # 調貨分配／Forecast SKU 彙總需要完整涵蓋所有 Shop Nature；指定店舖模式由該店 Shop Nature 決定母體，
+            # 調貨分配／Forecast SKU 彙總需要完整涵蓋所有 Shop Nature；指定店舖模式由該店 Shop Nature 決定分組，
             # 三者皆不做 Nature 篩選
             selected_shop_natures = SHOP_NATURE_OPTIONS
         else:
@@ -4972,7 +4972,7 @@ if uploaded_file is not None:
                 _b_total_d001 = int(buyer_df["FC 建議訂量合計 (D001 PO)"].sum())
                 _b_total_shop = int(buyer_df["FC 建議訂量合計 (Shop PO)"].sum())
                 st.dataframe(buyer_df, width='stretch', hide_index=True)
-                st.caption(f"共 {len(buyer_df)} 個 Buyer；D001 PO 合計 {_b_total_d001:,} 件，Shop PO 合計 {_b_total_shop:,} 件（全母體計算，不受「只顯示爆升」影響）。")
+                st.caption(f"共 {len(buyer_df)} 個 Buyer；D001 PO 合計 {_b_total_d001:,} 件，Shop PO 合計 {_b_total_shop:,} 件（以全部列計算，不受「只顯示爆升」影響）。")
             else:
                 st.info("無符合資料")
 
@@ -5317,8 +5317,8 @@ if uploaded_file is not None:
                 )
             if _group_selected != _group_used:
                 st.warning(
-                    f"下方結果的母體為 **{_group_used}**（上次執行時的設定）；目前側欄已選 **{_group_selected}**。"
-                    "請按「⚙️ 執行報表轉換與分析」重新計算，Top N% 判定才會按新母體更新。"
+                    f"下方結果的分組為 **{_group_used}**（上次執行時的設定）；目前側欄已選 **{_group_selected}**。"
+                    "請按「⚙️ 執行報表轉換與分析」重新計算，Top N% 判定才會按新分組更新。"
                 )
             _dl_prefix = f"I14 店舖精簡SKU模式_Top{_pct_used}" + (
                 f"_{_window_used}" if _value_ok and _window_used else ""
@@ -5346,7 +5346,7 @@ if uploaded_file is not None:
                 _cmp = _stats.get("compare") or {}
                 _shop_cards_2 = [
                     (f"件數 Top {_pct_used}%", _stats.get("qty_top80", 0), f"每間店每個 {_group_used} 分類內累計達該分類件數門檻", "#8b5cf6"),
-                    (f"金額 Top {_pct_used}%", _stats.get("value_top80", 0), f"金額口徑 {_window_used}，同一母體與門檻", "#0ea5e9"),
+                    (f"金額 Top {_pct_used}%", _stats.get("value_top80", 0), f"金額口徑 {_window_used}，同一分組與門檻", "#0ea5e9"),
                     ("件數金額皆是", _cmp.get(_SHOP_SIMPLIFY_COMPARE_BOTH, 0), "同一間店的件數與金額同為核心（優先保留）", "#10b981"),
                     ("件數金額皆非", _cmp.get(_SHOP_SIMPLIFY_COMPARE_NEITHER, 0), "兩種口徑都不是核心（精簡候選）", "#f97316"),
                 ]
@@ -5381,7 +5381,7 @@ if uploaded_file is not None:
 
             st.caption(
                 f"共 {int(_stats.get('sites', 0)):,} 間店舖、{int(_stats.get('skus', 0)):,} 個 SKU。"
-                f"件數與金額都以 (Site Code, {_group_used}) 為母體：每個分類內由高至低累計，"
+                f"件數與金額都以 (Site Code, {_group_used}) 為分組：每個分類內由高至低累計，"
                 f"首次達該分類 {_pct_used}% 即屬 Top {_pct_used}%；同一銷量／金額的 SKU 整組納入或整組排除，"
                 "分類之間不互相擠佔（故實際覆蓋率可能略高於門檻）。"
                 + (
@@ -5515,8 +5515,8 @@ if uploaded_file is not None:
                 )
             if _group_selected != _group_used:
                 st.warning(
-                    f"下方結果的母體為 **{_group_used}**（上次執行時的設定）；目前側欄已選 **{_group_selected}**。"
-                    "請按「⚙️ 執行報表轉換與分析」重新計算，Top N% 判定才會按新母體更新。"
+                    f"下方結果的分組為 **{_group_used}**（上次執行時的設定）；目前側欄已選 **{_group_selected}**。"
+                    "請按「⚙️ 執行報表轉換與分析」重新計算，Top N% 判定才會按新分組更新。"
                 )
             _top_download_button(
                 excel_data,
@@ -5581,7 +5581,7 @@ if uploaded_file is not None:
             st.caption(
                 f"共 {int(_stats.get('rows', 0)):,} 個 SKU（{_site}）、{int(_stats.get('group_count', 0)):,} 個 {_stats.get('group_column', 'MC')} 分類；"
                 f"過去90日無賣 {int(_stats.get('sold_no', 0)):,} 個、無存貨 {int(_stats.get('stock_no', 0)):,} 個。"
-                f"件數與金額都以 {_group_used} 分類為母體：每個分類內由高至低累計，首次達該分類 {_pct_used}% 即屬 Top {_pct_used}%；"
+                f"件數與金額都以 {_group_used} 為分組：每個分類內由高至低累計，首次達該分類 {_pct_used}% 即屬 Top {_pct_used}%；"
                 "同一銷量／金額的 SKU 整組納入或整組排除，分類之間不互相擠佔（故實際覆蓋率可能略高於門檻）。"
                 + (
                     f"金額口徑＝MTD＋M-1＋M-2 三個月 Net Sales 相加（可跨月抵銷退貨，總和下限為 0），"

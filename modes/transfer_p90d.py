@@ -362,7 +362,7 @@ def _apply_mch_filter(base: pd.DataFrame, mch1_filter=None) -> pd.DataFrame:
     """排除指定 MCH1 分類以外的列（None 或包含全部值＝不排除）。
 
     mch1_filter 為 None 或空集合時不作限制；'' 代表空白分類；
-    只會收窄母體，不改變已選分類內的分配結果。
+    只會收窄範圍，不改變已選分類內的分配結果。
     """
     if base.empty or not mch1_filter:
         return base
@@ -557,7 +557,7 @@ def _with_total_row(df: pd.DataFrame, total: dict) -> pd.DataFrame:
 
 
 def _source_pool(base: pd.DataFrame, nd_mode: bool, meta: dict | None = None) -> pd.DataFrame:
-    """可轉出母體（未套用已選店舖）。
+    """可轉出範圍（未套用已選店舖）。
 
     ND 模式：RP Type＝ND 且有庫存（不看銷售記錄，不受 90 日有貨準則約束）。
     P90D 模式：0 Sales（Sold Qty (P90D) ≤ 0）且有庫存；``Shop Stock Qty (LM)``／``(LLM)``
@@ -1172,7 +1172,7 @@ def generate_excel_p90d_transfer(
             "同 SKU 沒有任何接收店（即沒有其他 RP Type＝RF 且有銷售記錄的店舖）時不轉出，保留於原店舖，並列於「SKU 轉貨彙總」的未分配量。",
             "RP Type 為必要欄位，來源檔缺少即停止計算；空白或其他非 RF／ND 的值一律不納入轉出與接收（列警告）。",
             "「Site Code × SKU」重複列一律停止計算（重複列會重複計算庫存與銷售），請先修正來源資料。",
-            "MCH 篩選（執行前）：按 Adj. MCH1 排除分類；被排除的分類不會轉出，亦不會作為接收店；篩選只收窄母體，不改變已選分類內的分配結果。",
+            "MCH 篩選（執行前）：按 Adj. MCH1 排除分類；被排除的分類不會轉出，亦不會作為接收店；篩選只收窄範圍，不改變已選分類內的分配結果。",
             "本模式不做 Safety、周轉天數或調貨觸發判斷，只按上述規則計算。",
         ]
         _tips = [
@@ -1224,7 +1224,7 @@ def generate_excel_p90d_transfer(
             "接收店不受庫存限制（封頂模式開啟時受 14 日需求限制）；接收後庫存＝調前庫存＋分配總量。",
             "同 SKU 沒有任何接收店（即沒有其他有銷售記錄的店舖）時不轉出，保留於原店舖，並列於「SKU 轉貨彙總」的未分配量。",
             "「Site Code × SKU」重複列一律停止計算（重複列會重複計算庫存與銷售），請先修正來源資料。",
-            "MCH 篩選（執行前）：按 Adj. MCH1 排除分類；被排除的分類不會轉出，亦不會作為接收店；篩選只收窄母體，不改變已選分類內的分配結果。",
+            "MCH 篩選（執行前）：按 Adj. MCH1 排除分類；被排除的分類不會轉出，亦不會作為接收店；篩選只收窄範圍，不改變已選分類內的分配結果。",
             "本模式不做 Safety、周轉天數或調貨觸發判斷，只按上述規則計算。",
         ]
         _tips = [

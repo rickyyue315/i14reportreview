@@ -518,8 +518,8 @@ _HYBRID_SALES_SUMMARY_COLUMNS = [
 
 
 def _build_hybrid_sales_summary(raw: pd.DataFrame) -> pd.DataFrame:
-    """銷量 × 存貨分類交叉表（Review 摘要區塊⑤）——母體為**全部店舖×SKU 列**
-    （有別於 ①–④ 的調貨事件列母體），無調貨事件時仍可查閱高銷缺貨與積壓分布。
+    """銷量 × 存貨分類交叉表（Review 摘要區塊⑤）——統計範圍為**全部店舖×SKU 列**
+    （有別於 ①–④ 的調貨事件列範圍），無調貨事件時仍可查閱高銷缺貨與積壓分布。
     列：高銷缺貨／低銷積壓／零銷積壓／正常／總計；各 Nature 列數按 Shop Nature 拆分，
     SKU 數與店舖數為不重複計數（店舖數＝Site Code 不重複，空白不計），
     庫存與 P90D 銷量為件數合計。分類欄為 transform_hybrid 常開產出；缺欄時回傳空表。"""
@@ -552,8 +552,8 @@ def _build_hybrid_sales_summary(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _hybrid_safety_event_frame(raw: pd.DataFrame) -> pd.DataFrame:
-    """Safety 調整統計母體 — 僅「事件類型」非空的列（與 Safety Review × Shop Nature
-    交叉表同母體）。Safety 建議不受 OM 限制影響，故不限OM／同OM 共用同一份統計。"""
+    """Safety 調整統計範圍 — 僅「事件類型」非空的列（與 Safety Review × Shop Nature
+    交叉表同範圍）。Safety 建議不受 OM 限制影響，故不限OM／同OM 共用同一份統計。"""
     if raw is None or raw.empty or "事件類型" not in raw.columns:
         return pd.DataFrame()
     return raw[raw["事件類型"].fillna("").astype(str) != ""].copy()
@@ -574,7 +574,7 @@ def _build_hybrid_safety_change_summary(raw: pd.DataFrame) -> pd.DataFrame:
     """Safety 調整方向分類表 — 按「Safety 建議調整量」（顯示值，已四捨五入至 1 位小數）
     的正負分為 增加／減少／不變，統計列數、SKU 數與調整量合計，含總計列。
     邊界情形：調整量四捨五入後為 0 的列歸「不變」（其「Safety Review」仍可能標示不足／過高）。
-    總計列的 SKU 數用母體不重複 SKU，避免同一 SKU 跨分類虛增。"""
+    總計列的 SKU 數用範圍內不重複 SKU，避免同一 SKU 跨分類虛增。"""
     cols = _HYBRID_SAFETY_CHANGE_COLUMNS
     df = _hybrid_safety_event_frame(raw)
     if df.empty:
@@ -663,7 +663,7 @@ def _build_hybrid_safety_sku_detail(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 
-# ── 全列預防性 Safety 設定建議（母體為全部店舖×SKU 列；欄名屬新契約）──
+# ── 全列預防性 Safety 設定建議（統計範圍為全部店舖×SKU 列；欄名屬新契約）──
 _HYBRID_FULL_SAFETY_CHANGE_COLUMNS = ["分類", "列數", "SKU 數", "全列 Safety 建議調整量合計", "說明"]
 
 
@@ -677,7 +677,7 @@ _HYBRID_FULL_SAFETY_SKU_COLUMNS = [
 
 
 def _build_hybrid_full_safety_change_summary(raw: pd.DataFrame) -> pd.DataFrame:
-    """全列預防性調整方向分類 — 以全部店舖×SKU 列為母體，按「全列 Safety 建議調整量」
+    """全列預防性調整方向分類 — 以全部店舖×SKU 列為統計範圍，按「全列 Safety 建議調整量」
     正負分為 增加／減少／不變，統計列數、SKU 數與調整量合計，含總計列。
     既有事件版統計（_build_hybrid_safety_change_summary）維持不變。"""
     cols = _HYBRID_FULL_SAFETY_CHANGE_COLUMNS
@@ -829,8 +829,8 @@ def _hybrid_buyer_need_stats(raw: pd.DataFrame, need_series: pd.Series | None = 
 def _hybrid_buyer_safety_stats(raw: pd.DataFrame) -> list[tuple[str, int, int]]:
     """Buyer 級統計：各 Buyer 涉及多少個「需要修改 Safety」SKU（已刪除重複）。
 
-    母體為 Safety Review 屬「Safety 設定不足」或「Safety 設定過高」的列（即有
-    「建議 Safety 設定值」的列，與 Safety 調整方向分類的增加＋減少同母體）。
+    範圍為 Safety Review 屬「Safety 設定不足」或「Safety 設定過高」的列（即有
+    「建議 Safety 設定值」的列，與 Safety 調整方向分類的增加＋減少同範圍）。
     Buyer 取同 SKU 首個非空值（與需調貨統計同一準則）；全空歸入「(未填 Buyer)」。
     調整量合計為該 Buyer 名下各需調整 SKU 的「Safety 建議調整量」列合計（四捨五入取整，
     與交叉表／分類表同一準則；正=增加、負=減少）。
@@ -926,7 +926,7 @@ def _hybrid_buyer_combined_detail(raw: pd.DataFrame) -> list[tuple[str, int, int
     """Buyer 合併明細：同一 Buyer 的需調貨與需調整 Safety 並列（已刪除重複）。
 
     Buyer 取同 SKU 全表首個非空值（需調貨與需調整共用同一歸屬，避免同一 SKU
-    在兩母體歸入不同 Buyer）；全空歸入「(未填 Buyer)」。
+    在兩個範圍歸入不同 Buyer）；全空歸入「(未填 Buyer)」。
     需調貨貨量為該 Buyer 名下各需調貨 SKU 的「調入需求量 (補到14日)」列合計
     （取整，與指標卡總需求同一準則）；Safety 調整量為「Safety 建議調整量」列合計
     （取整，正=增加、負=減少）。
@@ -1173,7 +1173,7 @@ def _hybrid_dashboard_metrics(raw: pd.DataFrame, stats: dict | None = None):
         ]
     if row5:
         rows.append(row5)
-    # 末尾另加銷量分類概況排（僅開關狀態為 True 時）——母體為全部店舖×SKU 列；
+    # 末尾另加銷量分類概況排（僅開關狀態為 True 時）——統計範圍為全部店舖×SKU 列；
     # 開關狀態無法由 RAW 反推，故回退路徑（stats 缺 sales_rebalance）不顯示本排
     if bool(stats.get("sales_rebalance")):
         rows.append([
@@ -1485,7 +1485,7 @@ def transform_hybrid(
       契約一致（雙向模式亦同）。
       觸發面因此**只收縮**（原本標示但實際無貨可調的列不再進入事件表，連帶其可轉出未使用
       來源列亦不進 Review），總調入量不變、需求與分配演算法不變；
-      Safety Review 與建議調整量只隨事件列母體收縮而變動。
+      Safety Review 與建議調整量只隨事件列範圍收縮而變動。
       同時新增「調貨補足狀態」欄（已補足／部分補足／無貨可調，非需求列留空），
       開啟後「無貨可調」只剩真實的供給競爭／守衛阻擋（同 SKU 多個需求列爭用同一批貨、
       同OM 變體無同 OM 來源、自我調貨守衛）；stats 另記 `no_supply_need_rows`／
@@ -1501,7 +1501,7 @@ def transform_hybrid(
       強制調貨提示、存貨偏重提示（門檻按維度切換）），
       供查閱哪些 SKU 存貨偏重哪個分組。
     - Buyer 統計：沿用 Stock Checking 的 Buyer 需調貨 SKU 統計（同 SKU 首個非空 Buyer，
-      已刪除重複），另加 Buyer 需調整 Safety SKU 統計（Safety 設定不足＋過高母體，
+      已刪除重複），另加 Buyer 需調整 Safety SKU 統計（Safety 設定不足＋過高範圍，
       含各 Buyer 的調整量合計）。
     - 零銷售轉 ND 提示：Past 90 Days 0 Sales 候選（四期銷售皆 ≤ 0 且有庫存）於
       「店舖問題 SKU」以 ND 退場提示（距參考日期 90 天內新品除外）；參考日期
@@ -1516,7 +1516,7 @@ def transform_hybrid(
     stats["buyer_safety_fix"] 為 [(Buyer, 需調整 Safety SKU 數, Safety 建議調整量合計)]；
     stats["sales_rebalance"] 為銷量再平衡開關狀態；stats["sales_oos_days"]／
     ["sales_overstock_days"]／["sales_overstock_min_units"] 為實際採用的銷量門檻；
-    stats["sales_oos_rows"]／["sales_oos_skus"] 為高銷缺貨列數／SKU 數（全列母體）；
+    stats["sales_oos_rows"]／["sales_oos_skus"] 為高銷缺貨列數／SKU 數（全部列統計範圍）；
     stats["sales_overstock_rows"]／["sales_overstock_units"] 為積壓列數（低銷＋零銷）／
     積壓列庫存合計；stats["sales_need_rows"] 為僅由銷量再平衡通道新增的需求列數；
     stats["return_to_d001"] 為建議退D001 開關狀態，stats["return_rows"]／["return_skus"]／
@@ -2171,7 +2171,7 @@ def transform_hybrid(
     raw["調貨後庫存 (同OM)"] = np.where(in_table, stock_after_om, np.nan)
     raw["調貨後 TurnDay (同OM)"] = np.where(in_table, np.round(td_after_om, 1), np.nan)
 
-    # ── 全列預防性 Safety 設定建議（不依賴調貨事件；母體為全部列）──
+    # ── 全列預防性 Safety 設定建議（不依賴調貨事件；統計範圍為全部列）──
     # 與事件版同口徑（所需量＋下調補底 3 件），惟不設調貨事件門檻，協助用家一次過
     # 設定適合的 Safety Stock，減少日後調貨次數。ND 列不作上調（不可補貨），只可下調。
     _is_nd_full = (raw["RP Type"].to_numpy() == "ND") if "RP Type" in raw.columns else np.zeros(n_rows, dtype=bool)
@@ -2655,8 +2655,8 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
     ＋ ① Safety Review × 分類維度交叉表（維度由 stats["dimension"] 推定，
     預設 Shop Nature）＋ ② Safety 調整方向分類
     ＋ ③ Safety 調整明細（SKU 級彙總）＋ ④ Buyer 統計（需調貨＋需調整 Safety 合併表）
-    ＋ ⑤ 銷量 × 存貨分類交叉表（母體為全部店舖×SKU 列，不受調貨事件影響）
-    ＋ ⑥ 全列 Safety 調整方向分類／明細（母體為全部列的預防性建議）。
+    ＋ ⑤ 銷量 × 存貨分類交叉表（統計範圍為全部店舖×SKU 列，不受調貨事件影響）
+    ＋ ⑥ 全列 Safety 調整方向分類／明細（統計範圍為全部列的預防性建議）。
     ②③ 由 raw 即時彙算（Safety 建議不受 OM 限制影響，兩變體共用同一份統計）；
     ④ 與 Stock Checking 的 Buyer 統計同一準則（同 SKU 首個非空 Buyer，已刪除重複）。"""
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
@@ -2687,11 +2687,11 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
                      section_fill=section_fill, total_fill=total_fill, thin_border=thin_border,
                      center=center, left_wrap=left_wrap)
     _dim = _hybrid_dimension((stats or {}).get("dimension"))
-    # ①–④ 共用同一母體（事件類型非空），① 為空即代表四區塊全無資料；
-    # ⑤ 母體為全部列，不受影響，恆在四區塊之後寫入
+    # ①–④ 共用同一範圍（事件類型非空），① 為空即代表四區塊全無資料；
+    # ⑤ 統計範圍為全部列，不受影響，恆在四區塊之後寫入
     if cross is None or cross.empty:
         ws.cell(row=table_start, column=1,
-                value="無符合資料（①–④ 統計區塊以調貨事件列為母體）").font = Font(size=12)
+                value="無符合資料（①–④ 統計區塊以調貨事件列為範圍）").font = Font(size=12)
         next_row = table_start + 2
     else:
         next_row = _write_hybrid_summary_block(
@@ -2725,11 +2725,11 @@ def _write_hybrid_diag_summary_sheet(ws, cross: pd.DataFrame, stats: dict | None
     _min_units = int((stats or {}).get("sales_overstock_min_units") or _HYBRID_SALES_OVERSTOCK_MIN_UNITS_DEFAULT)
     next_row = _write_hybrid_summary_block(
         ws, next_row,
-        f"銷量 × 存貨分類交叉表（母體為全部店舖×SKU 列；缺貨線 {_oos_days} 日、"
+        f"銷量 × 存貨分類交叉表（統計範圍為全部店舖×SKU 列；缺貨線 {_oos_days} 日、"
         f"積壓線 {_over_days} 日、積壓保底 {_min_units} 件）",
         _build_hybrid_sales_summary(raw), **_block_kw)
 
-    # ── ⑥ 全列預防性 Safety 設定建議（母體為全部列；與事件版 ②③ 同口徑、不同母體）──
+    # ── ⑥ 全列預防性 Safety 設定建議（統計範圍為全部列；與事件版 ②③ 同口徑、不同範圍）──
     next_row = _write_hybrid_summary_block(
         ws, next_row, "全列 Safety 調整方向分類（增加 / 減少 / 不變）",
         _build_hybrid_full_safety_change_summary(raw), **_block_kw)
@@ -2885,7 +2885,7 @@ def _write_hybrid_guide_sheet(ws, stats):
             "現有設定 > 生效基準 → 「Safety 設定過高」；等於邊界屬設定正常。建議值＝不足列取所需量、"
             "過高列取生效基準（下調補底 3 件——SAP MOQ 使 1–2 件難以補貨）。建議 Safety 設定值 Turnday＝建議值 ÷ (P90D 月均 ÷ 30)；"
             "受保底影響（建議值 3 件、未套保底前 < 3）時，店舖問題 SKU 的建議方法加註保底原因。Safety 設定與調貨 14 日線互相獨立。")
-    _bullet("全列預防性 Safety 設定建議（母體為全部店舖×SKU 列，不依賴調貨事件）：與 Review 段同口徑"
+    _bullet("全列預防性 Safety 設定建議（統計範圍為全部店舖×SKU 列，不依賴調貨事件）：與 Review 段同口徑"
             "（所需量＋下調補底 3 件），惟不設調貨事件門檻——現有 < 所需量 → 不足（ND 列不作上調，只可下調），"
             "現有 > 生效基準 → 過高，其餘 → 設定正常。RAW「全列」五欄與「Safety 設定建議 (全列)」工作表"
             "供一次過設定適合的 Safety Stock，減少日後調貨次數；事件版 Review 欄維持只覆蓋調貨事件列。")
@@ -2970,7 +2970,7 @@ def _write_hybrid_guide_sheet(ws, stats):
     # ── ④ 實用提示 ──
     _sec("④ 實用提示")
     _bullet("「Safety 建議調整量」正數＝建議上調設定；負數＝建議下調設定（僅不足／過高列有值）；"
-            "「全列 Safety 建議調整量」同口徑，惟母體為全部列（需調整列有值），供預防性一次過設定。")
+            "「全列 Safety 建議調整量」同口徑，惟統計範圍為全部列（需調整列有值），供預防性一次過設定。")
     _bullet("Summary 橘底＝觸發「存貨偏重提示」的分組（庫存佔比高而銷量佔比低）。")
     _bullet(f"Summary 淺藍底＝存貨偏低分組（{_hybrid_shortage_hint_text(dim)}，門檻較偏重側寬鬆）——庫存佔比明顯低於銷量佔比，提示潛在缺貨風險；只標示庫存佔比欄，不另設文字欄。")
     if dim in ("sales", "sales_nature"):
@@ -3016,7 +3016,7 @@ def generate_excel_hybrid(
   + Safety Review × 分類維度交叉表
  + Safety 調整方向分類 + Safety 調整明細（SKU 級彙總）
  + Buyer 統計（需調貨＋需調整 Safety 合併表）
- + 銷量 × 存貨分類交叉表（母體為全部店舖×SKU 列））/
+ + 銷量 × 存貨分類交叉表（統計範圍為全部店舖×SKU 列））/
     簡易調貨明細 (不限OM) / 簡易調貨明細 (同OM)（一列一筆來源店→接收店調貨，來源字串已拆行）。
     雙向與否由 RAW 是否含「可轉出貨量 (Tourist)」欄推定；分類維度由 stats["dimension"] 推定
     （缺失時退回 nature）。

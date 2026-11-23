@@ -445,7 +445,7 @@ def generate_excel_oos(summary_df, raw_df, categories, progress_callback=None, i
     if _total_row.empty:
         raise ValueError("摘要資料中未找到總計列，無法生成分析儀表板")
     total_oos = int(_total_row["總計"].values[0])
-    # 影響面只計有異常（總計 > 0）的 Buyer／Brand／SKU——summary 母體含全部清理列，
+    # 影響面只計有異常（總計 > 0）的 Buyer／Brand／SKU——summary 範圍含全部清理列，
     # 直接 nunique 會把毫無異常的採購人員／品牌／SKU 一併計入（與 nd.py 同一準則）
     _det = summary_df[
         (summary_df["Buyer"] != "總計")

@@ -1033,7 +1033,7 @@ def transform_forecast(
             main[_cc] = "" if _cc in _fc_text_cols else 0
     main = main[_FORECAST_MAIN_COLUMNS]
 
-    # ── 店舖覆蓋表（母體：建議訂量＞0 的 SKU，每店一列；只收錄 RF 店舖）──
+    # ── 店舖覆蓋表（範圍：建議訂量＞0 的 SKU，每店一列；只收錄 RF 店舖）──
     order_skus = set(main.loc[main["FC 建議訂量"] > 0, "SKU"])
     cov = df[df["SKU"].isin(order_skus)].copy()
     # RP Type＝ND 店舖已停補貨，不應向其派貨，故不納入覆蓋表
@@ -1078,7 +1078,7 @@ def transform_forecast(
         coverage = coverage.sort_values(["SKU", "_risk_ord", "_days_ord"], kind="stable").reset_index(drop=True)
         coverage = coverage.drop(columns=["_risk_ord", "_days_ord"])
 
-    # ── Buyer 彙總（全母體；爆升 SKU 數含新起量／加速中／爆升）──
+    # ── Buyer 彙總（全部列；爆升 SKU 數含新起量／加速中／爆升）──
     buyer_key = main["Buyer"].fillna("").astype(str).str.strip().replace("", "(未填 Buyer)")
     is_order = main["FC 建議訂量"].to_numpy() > 0
     is_surge_cls = main["FC 爆升分類"].isin([_FC_CLASS_NEW, _FC_CLASS_ACCEL, _FC_CLASS_SURGE]).to_numpy()

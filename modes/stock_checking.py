@@ -844,7 +844,7 @@ def _build_stock_checking_summary(
       Shop Stock Qty (CM) 與 Shop Monthly Sold Qty (P90D)，
       TurnDay = 加總庫存 ÷ 加總月銷 × 30.5（月銷為 0 時留空）；除佔比外一律取整顯示
     - 各組涉及店舖數：同 SKU 同組的 Site Code 不重複計數（空白 Site Code 不計），
-      與加總同母體，置於該組 TurnDay 之後
+      與加總同範圍，置於該組 TurnDay 之後
     - 各組佔比 (%)：該組加總 ÷ 全部分組加總合計（0-1 小數，Excel 以 0.00% 顯示；
       合計為 0 時留空；nature 維度僅計 Tourist / Mix / Non Tourist 精確比對）
     - 強制調貨提示：該 SKU 有任何店舖列被標示「需要調貨」時顯示「需要調貨」

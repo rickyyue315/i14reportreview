@@ -471,7 +471,7 @@ def _build_combined_shop_issues(raw: pd.DataFrame) -> pd.DataFrame:
 def _build_hybrid_shop_issues(raw: pd.DataFrame, ref_date=None) -> pd.DataFrame:
     """Safety Stock x NetStock Review 店舖問題表：Safety 設定不足／過高＋ND 退場列。
 
-    - 母體為 Safety 需調整列（不足／過高）加上 Past 90 Days 0 Sales 轉 ND 候選
+    - 範圍為 Safety 需調整列（不足／過高）加上 Past 90 Days 0 Sales 轉 ND 候選
       （四期銷售皆 ≤ 0 且有庫存、距參考日期 90 天內新品與需要調貨列除外，見
       `_hybrid_p90d_zero_sales_mask`；參考日期預設為今天，建議傳入 MTD 截止日期）；設定正常列一律排除。
     - 已屬不足／過高且同時符合零銷售的列保留原問題類型，建議方法末尾加註；

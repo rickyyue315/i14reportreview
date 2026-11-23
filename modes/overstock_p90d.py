@@ -102,7 +102,7 @@ _OP90D_STATUS = "Overstock (P90D 0 Sales)"
 _OP90D_MAKEUP_MCH1 = "02 - MAKE UP"
 
 # 店舖總數（分母）暫存於 raw.attrs，供 By SKU 計算無銷售店舖佔比。
-# 母體為清理及 Shop Nature 篩選後的上載資料，而非只有 P90D 0 Sales 的列。
+# 統計範圍為清理及 Shop Nature 篩選後的上載資料，而非只有 P90D 0 Sales 的列。
 _OP90D_TOTAL_SHOPS_ATTR = "_op90d_total_shops"
 
 # LLM 排除列數（Shop Stock Status 為 P90D 0 Sales 且 LM > 0，但 LLM = 0 而按 90 日準則排除）
