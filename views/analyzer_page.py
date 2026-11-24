@@ -12,6 +12,7 @@ from transformer import (
     transform_carry, generate_excel_carry,
     transform_combined, generate_excel_combined,
     _SSR_TARGET_BASIS_LABEL, _SSR_TARGET_FILE_CURRENT_COLUMN, _ssr_read_target_file,
+    _build_combined_target_template,
     transform_nd, generate_excel_nd,
     transform_stock_impact, generate_excel_stock_impact,
     _build_sku_monthly_analysis_simplified, generate_excel_stock_impact_simplified,
@@ -1129,7 +1130,14 @@ if uploaded_file is not None:
                                 df_input["SKU"].astype(str).str.strip()
                                 .str.replace(r"\.0$", "", regex=True)
                             )
-                            _totals = _safe_numeric(df_input["Adj. Safety Stock"]).groupby(_sku_txt).sum()
+                            _adj_col = _resolve_column_name(
+                                "Adj. Safety Stock", set(df_input.columns)
+                            )
+                            _z_ser = (
+                                _safe_numeric(df_input[_adj_col]) if _adj_col
+                                else pd.Series(0, index=df_input.index)
+                            )
+                            _totals = _z_ser.groupby(_sku_txt).sum()
                             st.session_state["ss_target_cur_key"] = _cur_key
                             st.session_state["ss_target_cur_totals"] = _totals.to_dict()
                             st.session_state["ss_target_cur_skus"] = set(_totals.index)
@@ -1170,32 +1178,58 @@ if uploaded_file is not None:
                         pass
                     _ss_target_file_src = "上載清單"
 
-            st.markdown("**方法二：直接填寫（少量 SKU 時用）**")
+            st.markdown("**方法二：直接填寫（自動帶入來源檔的 SKU）**")
+            _ss_target_df = None
             if _ss_target_file_df is not None:
-                st.caption("已上載清單，下表停用；如要改用表格填寫，請先移除上載檔案。")
-            _ss_target_seed = pd.DataFrame({
-                "SKU": ["", "", ""],
-                "Target Safety (全線合計)": [0, 0, 0],
-            })
-            _ss_target_df = st.data_editor(
-                _ss_target_seed,
-                hide_index=True,
-                num_rows="dynamic",
-                width="stretch",
-                key="ss_target_editor",
-                disabled=_ss_target_file_df is not None,
-                column_config={
-                    "SKU": st.column_config.TextColumn(
-                        "SKU",
-                        help="必須與來源檔的 SKU 一致（數字或文字皆可，系統會自動正規化）",
-                    ),
-                    "Target Safety (全線合計)": st.column_config.NumberColumn(
-                        "Target Safety (全線合計)",
-                        min_value=0, step=1, format="%d",
-                        help="該 SKU 在全線 RF 店的 Safety 合計件數（不是每店件數）；填 0 或留空即不啟用",
-                    ),
-                },
-            )
+                st.caption("已上載清單，下表不再顯示；如要改用表格填寫，請先移除上載檔案。")
+            else:
+                # 由來源檔自動帶入每個 SKU 的 Brand／SKU Desc／Vendor MC／Buyer／現時Safety Qty，
+                # 使用者只需填 Target；同一份上傳檔只建一次（大檔 groupby 不重跑）。
+                _ss_tpl_key = f"{st.session_state.get('last_uploaded_key')}|{len(df_input)}|tpl"
+                if st.session_state.get("ss_target_tpl_key") != _ss_tpl_key:
+                    st.session_state["ss_target_tpl"] = _build_combined_target_template(df_input)
+                    st.session_state["ss_target_tpl_key"] = _ss_tpl_key
+                _ss_template = st.session_state.get("ss_target_tpl")
+                if _ss_template is None or _ss_template.empty:
+                    _ss_template = pd.DataFrame({
+                        "Brand": [""], "SKU": [""], "SKU Desc": [""], "Vendor MC": [""],
+                        "Buyer": [""], "現時Safety Qty": [0], "Target Safety (全線合計)": [0],
+                    })
+                    st.caption("來源檔沒有可用的 SKU，請直接在表格輸入。")
+                elif len(_ss_template) > 1000:
+                    st.warning(
+                        f"共 {len(_ss_template):,} 隻 SKU，表格較大，載入與編輯會較慢；"
+                        "建議改用方法一上載清單。"
+                    )
+                else:
+                    st.caption(
+                        f"已自動帶入 **{len(_ss_template):,} 隻 SKU**（Brand／SKU／SKU Desc／Vendor MC／Buyer／"
+                        "現時Safety Qty）；只需在最後一欄填「Target Safety (全線合計)」。"
+                    )
+                _ss_target_df = st.data_editor(
+                    _ss_template,
+                    hide_index=True,
+                    num_rows="dynamic",
+                    width="stretch",
+                    height=420,
+                    key="ss_target_editor",
+                    # SKU 保持可編輯：如來源缺某 SKU 或要改寫法，仍可即場補一行
+                    disabled=[c for c in _ss_template.columns if c not in ("SKU", "Target Safety (全線合計)")],
+                    column_config={
+                        "SKU": st.column_config.TextColumn("SKU", width="small"),
+                        "SKU Desc": st.column_config.TextColumn("SKU Desc", width="large"),
+                        "Buyer": st.column_config.TextColumn("Buyer", width="medium"),
+                        "現時Safety Qty": st.column_config.NumberColumn(
+                            "現時Safety Qty", format="%d", width="small",
+                            help="該 SKU 在本次資料全部店舖的 Safety 合計（只作參考，不參與計算）",
+                        ),
+                        "Target Safety (全線合計)": st.column_config.NumberColumn(
+                            "Target Safety (全線合計)",
+                            min_value=0, step=1, format="%d", width="medium",
+                            help="該 SKU 在全線 RF 店的 Safety 合計件數（不是每店件數）；填 0 或留空即不啟用",
+                        ),
+                    },
+                )
         _ss_target_map = {}
         if _ss_target_file_df is not None and len(_ss_target_file_df):
             # 上載清單優先：整批套用，表格內容一律不理
@@ -1204,21 +1238,16 @@ if uploaded_file is not None:
                 for _, _row in _ss_target_file_df.iterrows()
             }
         elif _ss_target_df is not None and len(_ss_target_df):
-            for _, _trow in _ss_target_df.iterrows():
-                _tk = _trow.get("SKU", "")
-                _tv = _trow.get("Target Safety (全線合計)")
-                if _tk is None or pd.isna(_tk):
-                    continue
-                _tk = str(_tk).strip()
-                if not _tk or _tv is None or pd.isna(_tv):
-                    continue
-                try:
-                    _tv = int(float(_tv))
-                except (TypeError, ValueError):
-                    continue
-                if _tv > 0:
-                    _ss_target_map[_tk] = _tv
-            _ss_target_file_src = "表格填寫"
+            _ss_qty = pd.to_numeric(
+                _ss_target_df["Target Safety (全線合計)"], errors="coerce"
+            ).fillna(0)
+            _ss_picked = _ss_target_df[_ss_qty > 0]
+            for _sku_val, _qty_val in zip(
+                _ss_picked["SKU"].astype(str).str.strip(), _ss_qty[_ss_qty > 0].astype(int)
+            ):
+                if _sku_val and _sku_val.lower() != "nan":
+                    _ss_target_map[_sku_val] = int(_qty_val)
+            _ss_target_file_src = "表格填寫（自動帶入 SKU）"
         if _ss_target_map:
             st.caption(
                 f"已指定 **{len(_ss_target_map)} 隻 SKU**（{_ss_target_file_src}），"

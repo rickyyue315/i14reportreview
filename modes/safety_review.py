@@ -26,6 +26,7 @@ from modes.common import (
     _compute_raw_extra_columns,
     _display_safety_header,
     _extract_shop_name,
+    _extract_sku_desc,
     _iter_header_rows,
     _nature_rate_arr,
     _normalize_ref_date,
@@ -80,6 +81,9 @@ __all__ = [
     "_SSR_TARGET_BASIS_LABEL",
     "_SSR_TARGET_FILE_CURRENT_COLUMN",
     "_SSR_TARGET_FILE_ALIASES",
+    "_SSR_TARGET_CURRENT_QTY_COLUMN",
+    "_SSR_TARGET_TEMPLATE_COLUMNS",
+    "_build_combined_target_template",
     "_normalize_ssr_safety_basis",
     "_ssr_column_key",
     "_ssr_normalize_target_columns",
@@ -273,6 +277,11 @@ _SSR_TARGET_BASIS_LABEL = "各半（Sold Qty (P90D) 佔比 50% + 現有 Safety �
 # `_ssr_column_key` 正規化，故「現時 Safety」「現時safety」「Safety Stock (現時)」
 # 都會命中同一欄）。`現時Safety` 只作核對，不參與計算。
 _SSR_TARGET_FILE_CURRENT_COLUMN = "現時Safety"
+_SSR_TARGET_CURRENT_QTY_COLUMN = "現時Safety Qty"
+_SSR_TARGET_TEMPLATE_COLUMNS = (
+    "Brand", "SKU", "SKU Desc", "Vendor MC", "Buyer",
+    _SSR_TARGET_CURRENT_QTY_COLUMN, _SSR_TARGET_TOTAL_COLUMN,
+)
 _SSR_TARGET_FILE_ALIASES = {
     "SKU": ("sku", "貨品編號", "貨號", "item code", "item"),
     "Brand": ("brand", "品牌"),
@@ -478,6 +487,100 @@ def _ssr_read_target_file(data, filename=""):
 
     best[_SSR_TARGET_TOTAL_COLUMN] = best[_SSR_TARGET_TOTAL_COLUMN].astype(int)
     return best.reset_index(drop=True), warnings
+
+
+def _ssr_target_desc(item_shop, site_code) -> str:
+    """取 SKU 描述：先用共用 `_extract_sku_desc`（Item_Shop 含 Site Code 時最準），
+    取不到時退回「去掉 (品牌) 與前置 SKU、再去掉最後一段（店舖名）」。
+
+    來源的 Item_Shop 有兩種寫法：`{Desc}-{SiteCode}` 與 `(Brand) {SKU}-{Desc}-{Shop}`，
+    後者沒有 Site Code，共用解析會回空，故需要這個後備。
+    """
+    desc = _extract_sku_desc(item_shop, site_code)
+    if desc:
+        return desc
+    if item_shop is None or (isinstance(item_shop, float) and pd.isna(item_shop)):
+        return ""
+    text = re.sub(r"^\([^)]+\)\s*", "", str(item_shop).strip())
+    text = re.sub(r"^\d+\s*-\s*", "", text)
+    if "-" in text:
+        text = text.rsplit("-", 1)[0]
+    return text.strip().strip(",，;；:： ")
+
+
+def _build_combined_target_template(df_input):
+    """由來源資料建立「指定總量分配」填寫表：每個 SKU 一列。
+
+    欄位：Brand／SKU／SKU Desc／Vendor MC／Buyer／現時Safety Qty／
+    Target Safety (全線合計)。
+    - `現時Safety Qty`＝該 SKU 在全部店舖的 Adj. Safety Stock 合計，
+      與分配所用口徑一致（同一份上傳資料）
+    - Brand／Vendor MC／Buyer 取該 SKU 首個非空值；SKU Desc 由 Item_Shop 解析
+      （來源已有「SKU Desc」欄時直接沿用），只解析不重複 SKU，成本與店舖數無關
+    - `Target Safety (全線合計)` 預設 0，由使用者在介面填寫；排序按 Brand、SKU
+    - SKU 空白或無法辨識的列不納入；來源缺欄時對應欄留空
+    """
+    empty = pd.DataFrame(columns=list(_SSR_TARGET_TEMPLATE_COLUMNS))
+    if df_input is None or len(df_input) == 0 or "SKU" not in df_input.columns:
+        return empty
+
+    sku_text = (
+        df_input["SKU"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    )
+    # 來源可能用顯示名「Safety Stock (現時)」，沿用全系統同一欄名解析
+    _adj_col = _resolve_column_name(_ADJ_SAFETY_SOURCE_COL, set(df_input.columns))
+    if _adj_col is not None:
+        safety = _safe_numeric(df_input[_adj_col])
+    else:
+        safety = _safe_default_series(0, df_input.index)
+    work = pd.DataFrame({"_sku": sku_text, "_z": safety}, index=df_input.index)
+    work = work[work["_sku"].ne("")]
+
+    for col in ("Brand", "Buyer", "Vendor MC"):
+        if col in df_input.columns:
+            series = df_input[col].astype(str).str.strip()
+            work[col] = series.where(~series.isin(("", "nan", "None")))
+
+    if "SKU Desc" in df_input.columns:
+        series = df_input["SKU Desc"].astype(str).str.strip()
+        work["_desc"] = series.where(~series.isin(("", "nan", "None")))
+
+    if work.empty:
+        return empty
+
+    totals = work.groupby("_sku")["_z"].sum()
+    agg_cols = [c for c in ("Brand", "Buyer", "Vendor MC") if c in work.columns]
+    agg = work.groupby("_sku")[agg_cols].first() if agg_cols else pd.DataFrame(index=totals.index)
+
+    if "_desc" in work.columns:
+        desc = work.groupby("_sku")["_desc"].first()
+    else:
+        # 只保留每個 SKU 第一筆有 Item_Shop 的列再解析，避免逐列處理全表
+        _site = df_input.get("Site Code", _safe_default_series("", df_input.index)).astype(str).str.strip()
+        _item = df_input.get("Item_Shop", _safe_default_series("", df_input.index))
+        _pairs = pd.DataFrame({"_sku": sku_text, "_site": _site, "_item": _item}, index=df_input.index)
+        _item_text = _pairs["_item"].astype(str).str.strip()
+        _pairs = _pairs[_pairs["_sku"].ne("") & ~_item_text.isin(("", "nan", "None"))]
+        _pairs = _pairs.drop_duplicates("_sku", keep="first")
+        if _pairs.empty:
+            desc = pd.Series(dtype=object)
+        else:
+            desc = pd.Series(
+                [_ssr_target_desc(it, st) for it, st in zip(_pairs["_item"], _pairs["_site"])],
+                index=_pairs["_sku"].to_numpy(dtype=object),
+            )
+
+    out = pd.DataFrame(index=totals.index)
+    for col in ("Brand", "Buyer", "Vendor MC"):
+        out[col] = agg[col].reindex(out.index).fillna("").astype(str) if col in agg.columns else ""
+    out["SKU"] = out.index.astype(str)
+    out["SKU Desc"] = desc.reindex(out.index).fillna("").astype(str) if len(desc) else ""
+    out[_SSR_TARGET_CURRENT_QTY_COLUMN] = totals.reindex(out.index).fillna(0).round(0).astype(int)
+    out[_SSR_TARGET_TOTAL_COLUMN] = 0
+
+    out = out[list(_SSR_TARGET_TEMPLATE_COLUMNS)]
+    out = out.sort_values(["Brand", "SKU"], kind="stable").reset_index(drop=True)
+    return out
 
 
 def _ssr_largest_remainder(total, weights) -> np.ndarray:

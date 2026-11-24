@@ -361,3 +361,79 @@ def test_target_from_file_drives_allocation():
     assert out["Recommend Safety Stock"].tolist() == [750, 1000, 1250]
     assert int(out["Recommend Safety Stock"].sum()) == 3000
     assert out[_SSR_TARGET_TOTAL_COLUMN].tolist() == [3000, 3000, 3000]
+
+
+# ── 方法二：由來源檔自動帶入 SKU ──
+
+def test_target_template_prefills_from_source():
+    from modes.safety_review import _build_combined_target_template
+
+    df = pd.DataFrame([
+        {"Item_Shop": "(GBS) 107072302002-HONLUNG TONG Oi, V2, 40MLHB83-新加坡專", "SKU": "107072302002",
+         "Brand": "GBS - GOLDBOSS", "Buyer": "123 - Cara Tsoi", "Vendor MC": "None",
+         "Site Code": "SG01", "Adj. Safety Stock": 120},
+        {"Item_Shop": "(GBS) 107072302002-HONLUNG TONG Oi, V2, 40MLHB83-北角中", "SKU": "107072302002",
+         "Brand": "GBS - GOLDBOSS", "Buyer": "123 - Cara Tsoi", "Vendor MC": "None",
+         "Site Code": "HK02", "Adj. Safety Stock": 80},
+        {"Item_Shop": "(LORE) 200018-REPAIR CREAM 50ML-旺角", "SKU": "200018",
+         "Brand": "LORE - LOREAL", "Buyer": "088 - Amy Chan", "Vendor MC": "VC003",
+         "Site Code": "HK09", "Adj. Safety Stock": 450},
+    ])
+    out = _build_combined_target_template(df)
+
+    assert list(out.columns) == [
+        "Brand", "SKU", "SKU Desc", "Vendor MC", "Buyer",
+        "現時Safety Qty", "Target Safety (全線合計)",
+    ]
+    assert len(out) == 2
+    row = out[out["SKU"] == "107072302002"].iloc[0]
+    assert row["現時Safety Qty"] == 200            # 同 SKU 兩間店合計
+    assert row["Brand"] == "GBS - GOLDBOSS"
+    assert row["Buyer"] == "123 - Cara Tsoi"
+    assert row["Vendor MC"] == ""                   # 來源為字串 "None" → 視作空白
+    assert row["SKU Desc"] == "HONLUNG TONG Oi, V2, 40MLHB83"
+    assert row["Target Safety (全線合計)"] == 0      # 預設 0，待使用者填寫
+
+    assert out["SKU"].is_unique
+    assert out["Target Safety (全線合計)"].eq(0).all()
+
+
+def test_target_template_desc_uses_site_code_when_available():
+    from modes.safety_review import _build_combined_target_template, _ssr_target_desc
+
+    # Item_Shop 含 Site Code → 用共用解析（不會把 Site Code 留在描述內）
+    assert _ssr_target_desc("Hydra Serum-HK01", "HK01") == "Hydra Serum"
+    # 不含 Site Code（店舖名寫法）→ 後備去掉最後一段
+    assert _ssr_target_desc("(GBS) 107072302002-HONLUNG TONG-新加坡專", "SG01") == "HONLUNG TONG"
+
+    df = pd.DataFrame([
+        {"Item_Shop": "Hydra Serum-HK01", "SKU": "1", "Brand": "B", "Buyer": "U",
+         "Vendor MC": "V", "Site Code": "HK01", "Adj. Safety Stock": 5},
+    ])
+    out = _build_combined_target_template(df)
+    assert out.iloc[0]["SKU Desc"] == "Hydra Serum"
+
+
+def test_target_template_empty_source():
+    from modes.safety_review import _build_combined_target_template
+
+    assert _build_combined_target_template(None).empty
+    assert _build_combined_target_template(pd.DataFrame()).empty
+    # 缺 SKU 欄 → 空表
+    assert _build_combined_target_template(pd.DataFrame({"Brand": ["A"]})).empty
+    # SKU 全空白 → 空表
+    assert _build_combined_target_template(
+        pd.DataFrame({"SKU": ["", "  "], "Adj. Safety Stock": [1, 2]})
+    ).empty
+
+
+def test_target_template_accepts_display_safety_column():
+    """來源用顯示名『Safety Stock (現時)』時，現時Safety Qty 仍要正確合計。"""
+    from modes.safety_review import _build_combined_target_template
+
+    df = pd.DataFrame([
+        {"SKU": "1", "Safety Stock (現時)": 10, "Brand": "B"},
+        {"SKU": "1", "Safety Stock (現時)": 25, "Brand": "B"},
+    ])
+    out = _build_combined_target_template(df)
+    assert out.iloc[0]["現時Safety Qty"] == 35

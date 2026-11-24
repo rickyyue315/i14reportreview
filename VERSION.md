@@ -1,5 +1,35 @@
 # 版本記錄
 
+## v1.110.1 (2026-11-24)
+
+指定總量分配的「方法二」改為**自動帶入來源檔的 SKU**：此前是一張空白表，要使用者自己抄 SKU、再自己查現時 Safety。現在上傳 By SKUxShop 檔後，表格直接列出每個 SKU 的 Brand／SKU／SKU Desc／Vendor MC／Buyer／現時Safety Qty，只留最後一欄「Target Safety (全線合計)」可編輯。
+
+### 規則
+
+- 一個 SKU 一列（同一 SKU 跨店舖只出現一次），按 Brand、SKU 排序
+- `現時Safety Qty` ＝ 該 SKU 在**本次上傳資料全部店舖**的 `Adj. Safety Stock` 合計，與分配所用口徑一致
+- `Brand`／`Vendor MC`／`Buyer` 取該 SKU 首個非空值；來源寫成字串 `None`／`nan` 者視作空白
+- `SKU Desc`：來源已有「SKU Desc」欄時直接沿用；否則由 `Item_Shop` 解析。Item_Shop 有兩種寫法——`{Desc}-{SiteCode}` 走共用 `_extract_sku_desc`，`(Brand) {SKU}-{Desc}-{Shop}` 沒有 Site Code，故新增後備：去掉「(品牌)」與前置 SKU、再去掉最後一段（店舖名）
+- `Target Safety (全線合計)` 預設 0；只有這一欄可編輯，其餘欄位唯讀
+- SKU 空白或無法辨識的列不納入；來源缺欄時對應欄留空
+- 上載 Target 清單時（方法一），方法二表格不再顯示，避免兩邊數值混淆
+
+### 效能
+
+- 表格按上傳檔快取（`last_uploaded_key|len(df_input)`），同一份檔只建一次，互動時不重跑 groupby
+- SKU 正規化與「現時 Safety」合計全走向量化；`SKU Desc` 只解析不重複 SKU，成本與店舖數無關
+- SKU 超過 1,000 隻時提示改用方法一（表格過大難以操作）
+
+### 實作
+
+- `modes/safety_review.py`：新增 `_SSR_TARGET_CURRENT_QTY_COLUMN`、`_SSR_TARGET_TEMPLATE_COLUMNS`、`_ssr_target_desc()`、`_build_combined_target_template()`
+- `views/analyzer_page.py`：方法二改為讀取快取模板；`disabled` 只開放 `SKU` 與 Target 欄（其餘唯讀）；讀回時改用向量化篩選（只取 Target > 0 的列），不再逐列 `iterrows`
+
+### 驗證
+
+- `py -m pytest tests` → 1871 passed、4 skipped（`tests/test_safety_target.py` 加 3 項：自動帶入欄位與合計、SKU Desc 兩種寫法、空來源）
+- 以截圖格式實測：`(GBS) 107072302002-HONLUNG ZUOGU SHENGJING TONG Oi, V2, 40MLHB83-新加坡專` → SKU Desc 正確取出、兩間店 Safety 合計 200、Vendor MC 的 `None` 顯示為空白
+
 ## v1.110.0 (2026-11-24)
 
 **Shop Blocked Qty (CM) 全模式自動扣減**：店舖投訴已完成退貨，但係統計算的 `Shop Stock Qty (CM)` 未扣數（例如 HB97 有 16 件待退，仍然當作有貨）。PowerBI 已於 `By SKUxShop` 新增 `Shop Blocked Qty (CM)`（店舖已安排退貨的件數），本版改為所有模式在清理階段自動扣減，並同步調整 `Shop Stock Value (CM)`。
