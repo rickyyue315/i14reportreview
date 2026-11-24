@@ -77,6 +77,7 @@ from transformer import (
     _SHOP_SIMPLIFY_TOP80_YES, _SHOP_SIMPLIFY_TOP80_NO,
     _SHOP_SIMPLIFY_COMPARE_LABELS,
     _SHOP_SIMPLIFY_MEASURE_COMPARE_LABELS,
+    _SHOP_SIMPLIFY_MEASURE_COMPARE_QTY_ONLY, _SHOP_SIMPLIFY_MEASURE_COMPARE_VALUE_ONLY,
     _SHOP_SIMPLIFY_COMPARE_BOTH, _SHOP_SIMPLIFY_COMPARE_NEITHER,
     _shop_simplify_shop_qty_top_column, _shop_simplify_shop_value_top_column,
     _shop_simplify_shop_compare_column,
@@ -87,6 +88,8 @@ from transformer import (
     _SHOP_SIMPLIFY_SCT_DEFAULT_PRESET,
     _SHOP_SIMPLIFY_SCT_PREFERRED, _SHOP_SIMPLIFY_SCT_SECONDARY,
     _SHOP_SIMPLIFY_SCT_RF,
+    _SHOP_SIMPLIFY_SCT_SHOP_CASES, _SHOP_SIMPLIFY_SCT_SHOP_DEFAULT,
+    _shop_simplify_sct_shop_case_text,
     _shop_simplify_sct_case_text, _shop_simplify_sct_case_compare,
 )
 import time
@@ -2957,6 +2960,7 @@ if uploaded_file is not None:
         _shopslimsite_group = None
         _shopslim_data_date = None
         _shopslim_window = None
+        _shopslim_sct_rules = None
         _SHOPSLIM_GROUP_OPTIONS = {
             "MCH2（中類，預設）": "MCH2",
             "MC（小類）": "MC",
@@ -3005,6 +3009,70 @@ if uploaded_file is not None:
                 f"每間店按 {_shopslim_group} 分類各自判定 Top {_shopslim_pct}%（件數與金額），"
                 "對比欄值為兩者皆是／僅店舖件數／僅店舖金額／兩者皆非。"
             )
+
+            with st.expander("SCT建議", expanded=False):
+                st.caption(
+                    "本模式每間店只有「件數 Top」「金額 Top」兩個判定，對比欄由判定自動合成，"
+                    "所以全部情況＝2×2＝**4 種**。逐格指定 **首選RF**／**次選RF**／**建議RF**／留空，"
+                    "匯出時自動寫入 `SCT建議`；留空的情況維持空白，由 SCT 自行判斷。"
+                )
+                _shopslim_sct_on = st.checkbox(
+                    "依 Top 判定自動填寫 SCT建議",
+                    value=True,
+                    key="shopslim_sct_on",
+                    help="預設開啟。取消勾選後 SCT建議 一律留空（原本行為）。",
+                )
+                if _shopslim_sct_on:
+                    _sct_shop_rows = []
+                    for _i, _case in enumerate(_SHOP_SIMPLIFY_SCT_SHOP_CASES, start=1):
+                        _sct_shop_rows.append({
+                            "編號": _i,
+                            "情況": _case,
+                            "件數 Top": "是" if _case[0] == "Y" else "否",
+                            "金額 Top": "是" if _case[1] == "Y" else "否",
+                            "對比": (
+                                _SHOP_SIMPLIFY_COMPARE_BOTH if _case == "YY"
+                                else _SHOP_SIMPLIFY_MEASURE_COMPARE_QTY_ONLY if _case == "YN"
+                                else _SHOP_SIMPLIFY_MEASURE_COMPARE_VALUE_ONLY if _case == "NY"
+                                else _SHOP_SIMPLIFY_COMPARE_NEITHER
+                            ),
+                            "說明": _shop_simplify_sct_shop_case_text(_case),
+                            "SCT建議": _SHOP_SIMPLIFY_SCT_SHOP_DEFAULT.get(_case, ""),
+                        })
+                    _sct_shop_editor = st.data_editor(
+                        pd.DataFrame(_sct_shop_rows),
+                        hide_index=True,
+                        width="stretch",
+                        key="shopslim_sct_editor",
+                        disabled=["編號", "情況", "件數 Top", "金額 Top", "對比", "說明"],
+                        column_config={
+                            "SCT建議": st.column_config.SelectboxColumn(
+                                "SCT建議",
+                                options=list(_SHOP_SIMPLIFY_SCT_OPTIONS),
+                                required=False,
+                                help="留空＝不自動填寫，由 SCT 自行判斷",
+                            ),
+                        },
+                    )
+                    _shopslim_sct_rules = {
+                        str(_row["情況"]): str(_row["SCT建議"] or "").strip()
+                        for _, _row in _sct_shop_editor.iterrows()
+                    }
+
+            if _shopslim_sct_rules:
+                _shop_counts = {
+                    label: sum(1 for v in _shopslim_sct_rules.values() if v == label)
+                    for label in (
+                        _SHOP_SIMPLIFY_SCT_PREFERRED, _SHOP_SIMPLIFY_SCT_SECONDARY,
+                        _SHOP_SIMPLIFY_SCT_RF,
+                    )
+                }
+                _shop_blank = 4 - sum(_shop_counts.values())
+                st.caption(
+                    f"目前設定：**首選RF {_shop_counts[_SHOP_SIMPLIFY_SCT_PREFERRED]} 種情況**、"
+                    f"**次選RF {_shop_counts[_SHOP_SIMPLIFY_SCT_SECONDARY]} 種**、"
+                    f"**建議RF {_shop_counts[_SHOP_SIMPLIFY_SCT_RF]} 種**，其餘 {_shop_blank} 種留空（由 SCT 判斷）。"
+                )
 
         _shopslimsite_site = None
         _shopslimsite_ratio = 0.8
@@ -3642,6 +3710,7 @@ if uploaded_file is not None:
                         top_ratio=_shopslim_ratio,
                         data_date=_shopslim_data_date,
                         group_by=_shopslim_group,
+                        sct_rules=_shopslim_sct_rules,
                     )
                     buf = generate_excel_shop_simplify(raw_df, progress_callback=_cb_excel)
                     st.session_state.shopslim_processed = True

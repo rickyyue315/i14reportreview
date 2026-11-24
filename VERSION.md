@@ -1,5 +1,31 @@
 # 版本記錄
 
+## v1.109.5 (2026-11-24)
+
+「店舖精簡SKU模式」（多店輸出）也加入 **SCT建議自動填寫**：本模式每間店只有「件數 Top」「金額 Top」兩個判定，對比欄由判定自動合成，故全部情況＝2×2＝**4 種**——`兩者皆是 → 首選RF`／`只有件數 Top → 次選RF`／`只有金額 Top → 建議RF`／`兩者皆非 → 留空`。側欄「SCT建議」一張 4 列小表，逐格可改，自動填寫**預設開啟**。
+
+### 兩個模式的 SCT建議 對照
+
+| 模式 | 判定維度 | 情況數 | 表格位置 |
+| --- | --- | --- | --- |
+| 店舖精簡SKU模式（多店） | 件數 Top／金額 Top | **4 種** | 側欄「SCT建議」 |
+| 店舖精簡SKU模式(指定店舖) | 件數／金額 × 店舖／同Nature | **16 種** | 側欄「SCT建議」 |
+
+- 原模式的情況鍵為 `YY`／`YN`／`NY`／`NN`；金額欄缺失（缺三個月 Net Sales）時金額一律視為非 Top，只會出現 `YN`／`NN`
+- 兩者填寫後 `SCT建議` 欄都保持顯示（原模式本來就不隱藏），`Summary` 亦多一個「計數 - SKU：SCT建議」區塊
+- 未勾選時兩個模式的行為都回到原本（一律留空）
+
+### 實作
+
+- `modes/shop_simplify.py`：新增 `_SHOP_SIMPLIFY_SCT_SHOP_CASES`（`("YY","YN","NY","NN")`）、`_SHOP_SIMPLIFY_SCT_SHOP_DEFAULT`、`_shop_simplify_sct_shop_case_text()`、`_shop_simplify_sct_shop_series()`；`transform_shop_simplify(..., sct_rules=None)` 在回覆欄留空之後按 4 情況填寫
+- `views/analyzer_page.py`：原模式側欄加「SCT建議」展開區（4 列 `st.data_editor`、預設開啟、摘要顯示各級情況數），只在該模式生效；widget key 與指定店舖分開（`shopslim_sct_editor`／`shopslimsite_sct_editor`）
+- 文件：README×2 原模式章節第 6 點＋新第 14 點；`views/usage_page.py` 原模式 bullet、第 6 點＋新第 12 點
+
+### 驗證
+
+- 新增 `test_original_mode_sct_four_cases()`：以件數／金額刻意錯位的 5 個 SKU 造出 `YY`（E）／`YN`（A）／`NY`（C）／`NN`（B、D）四種情況，核對預設四級、自訂升至首選、未傳規則時全留空，以及 `Summary` 出現 SCT建議 區塊
+- `py -m pytest tests` → 1829 passed、4 skipped
+
 ## v1.109.4 (2026-11-24)
 
 `Export` 的 `Adj. SST` 欄若含 **「03 - Private Label」** 字眼（大小寫、前後空白不拘），該資料格以**醒目橙色底（#FFC000）**標示，方便一眼分出 Private Label 貨品。只加底色，欄名、欄序、數值與其他格式完全不變；與店舖精簡SKU模式共用同一匯出引擎，兩個模式一併生效。

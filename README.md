@@ -151,7 +151,7 @@ Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）�
 3. **是否該店的Top N%（件數）** — 每間店按所選分組（`MCH2` 中類為預設／`MC` 小類／`Adj. SST` 陳列分類），在每個分類內按 `Sold Qty (P90D)` 由高至低累計，累計銷量首次達該店該分類總銷量 N% 的 SKU 為「是」；同一銷量的 SKU 整組納入或整組排除，分類之間不互相擠佔；缺 `Site Code` 時全表單一分組，所選分組欄缺失時按 `MCH2` → `MC` → `Adj. SST` 退回並列 warning（本模式不設同 Shop Nature 判定）
 4. **是否該店的Top N%（金額）** — 同一分組與同一 N%，改按 `Net Sales (P{N}D)`＝`Net Sales (M-2)`＋`Net Sales (M-1)`＋`Net Sales (CM - MTD)` 累計，負數（退貨）視為 0；金額欄緊接 `Sold Qty (P90D)`，`N` 由數據截止日決定（MTD 日數＋M-1 全月＋M-2 全月；例：11 月 12 日 → 12＋31＋30＝73 日 → 欄名 `Net Sales (P73D)`）
 5. **該店 件數 vs 該店 金額 Top N%** — 由同一間店的上述兩個判定合成四象限：`兩者皆是`（兩種口徑同為核心，優先保留）／`僅店舖件數`（賣得多但金額貢獻未達門檻）／`僅店舖金額`（金額貢獻高但件數不多，高單價）／`兩者皆非`（兩種口徑都不是核心，精簡候選）；缺三個月 Net Sales 欄時不加入金額欄與對比欄
-6. **SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty** — 一律留空；來源檔已有這些欄位時以本次結果覆蓋，舊回覆不會保留（範本檔中的 SCT建議 值由 SCT 另行填寫；指定店舖變體可另在側欄啟用 SCT建議 自動填寫，見該章節第 13 點）
+6. **SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty** — 一律留空；來源檔已有這些欄位時以本次結果覆蓋，舊回覆不會保留（本模式可在側欄啟用 SCT建議 自動填寫，見第 14 點；指定店舖變體見其章節第 13 點）
 7. **不篩選列** — 全店全 SKU 輸出；清理規則與其他模式一致（剔除合計列與 117 - Marketing），Shop Nature 篩選為選填
 8. **SKU Desc／Shop Name** — 由 `Item_Shop` 以 `Site Code` 解析；`SKU Desc` 排於 `Brand` 之後、`Shop Name` 排於 `Site Code` 之後，`Item_Shop` 缺欄時兩欄留空並列 warning
 9. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄，如 `Shop Stock Value (LM)`／`(CM)`、`Excess Stock Value`）一律刪除；判定為大小寫敏感的「含 Value」字串比對，故 `Valuation Class` 不會被刪除
@@ -159,6 +159,7 @@ Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）�
 11. **Export 格式** — 凍結 F2、縮放 85%、指定欄寬與隱藏欄；表頭列高 70.5 並自動換行；`RP Type`／`Shop Stock Qty (CM)` 綠色、四個 Top N% 判定欄（店舖／同Nature × 件數／金額）值為「是」時亦以綠色底標示、`Sold Qty (P90D)` 紫色、「無賣」列淡紅、`Item Status`＝`Discontinued`／`RP Type`＝`ND`／`過去90日有無存貨`＝`無存貨` 紅色底（比對忽略大小寫與前後空白，ND 的紅色底蓋過該欄綠色）；對比欄 `兩者皆是` 青綠底、`兩者皆非` 粉紅底；`Shop Monthly Sold Qty (P90D)`、`Safety VS Monthly Sold Qty`、`Turnday`、`Sold Qty (M-2／M-1／CM - MTD)`、`Net Sales (M-2／M-1／CM - MTD／P{N}D)` 套用指定數字格式；`Adj. SST` 含「03 - Private Label」字眼時以醒目橙色底（#FFC000）標示
 12. **比例與視窗切換** — 欄名隨 Top 比例與數據截止日改變，重跑會自動移除舊判定欄與舊 `Net Sales (PxxD)`，不會兩套並存；已執行後在側欄改設定但未重算時，結果頁以結果檔欄名標示並提示重新執行
 13. **來源工作表** — 多工作表檔案優先讀取 `Export`；沒有 Export 時沿用第一個工作表（例如手動另加樞紐的 HA20 工作檔可直接上傳）
+14. **SCT建議自動填寫（v1.109.5）** — 側欄「SCT建議」提供一張 **4 情況表**（本模式每間店只有「件數 Top」「金額 Top」兩個判定，對比欄由判定自動合成，故 2×2＝4 種）：`兩者皆是 → 首選RF`／`只有件數 Top → 次選RF`／`只有金額 Top → 建議RF`／`兩者皆非 → 留空`。逐格下拉可改（首選RF／次選RF／建議RF／留空），自動填寫**預設開啟**；取消勾選則 SCT建議 一律留空（原本行為）。填寫後 `Summary` 會多一個「計數 - SKU：SCT建議」區塊。
 
 ### 店舖精簡SKU模式（指定店舖）
 

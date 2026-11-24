@@ -78,6 +78,9 @@ from transformer import (
     _shop_simplify_sct_case_text,
     _shop_simplify_sct_case_compare,
     _SHOP_SIMPLIFY_PRIVATE_LABEL_FILL,
+    _SHOP_SIMPLIFY_SCT_SHOP_CASES,
+    _SHOP_SIMPLIFY_SCT_SHOP_DEFAULT,
+    _shop_simplify_sct_shop_case_text,
 )
 
 BASE = {
@@ -1238,6 +1241,57 @@ def test_adj_sst_private_label_cells_are_orange():
     assert rgb(ws, 5, "Adj. SST") is None
     # 其他欄不受影響（例如 RP Type 仍按原規則著色）
     assert rgb(ws, 2, "RP Type") == "CCFF99"
+
+
+def test_original_mode_sct_four_cases():
+    """原模式（多店輸出）只有件數／金額兩個判定，4 種情況：
+    兩者皆是→首選RF、只有件數→次選RF、只有金額→建議RF、兩者皆非→留空。"""
+    assert _SHOP_SIMPLIFY_SCT_SHOP_CASES == ("YY", "YN", "NY", "NN")
+    assert _shop_simplify_sct_shop_case_text("YN") == "只有件數 Top"
+
+    rows = [
+        # E：件數 200、金額 9000 → 兩邊都 Top（YY）
+        {"SKU": "E", "Site Code": "HA21", "Sold Qty (P90D)": 200,
+         "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+         "Net Sales (M-2)": 9000.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        # A：件數 100（Top）、金額 1（非 Top）→ YN
+        {"SKU": "A", "Site Code": "HA21", "Sold Qty (P90D)": 100,
+         "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+         "Net Sales (M-2)": 1.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        # C：件數 10（非 Top）、金額 5000（Top）→ NY
+        {"SKU": "C", "Site Code": "HA21", "Sold Qty (P90D)": 10,
+         "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+         "Net Sales (M-2)": 5000.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        # B、D：兩邊都非 Top → NN
+        {"SKU": "B", "Site Code": "HA21", "Sold Qty (P90D)": 50,
+         "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+         "Net Sales (M-2)": 1.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": "D", "Site Code": "HA21", "Sold Qty (P90D)": 1,
+         "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+         "Net Sales (M-2)": 1.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+    ]
+    raw, warns = transform_shop_simplify(_df(rows), data_date=date(2026, 11, 12), sct_rules=_SHOP_SIMPLIFY_SCT_SHOP_DEFAULT)
+    sct = dict(zip(raw["SKU"], raw[_SHOP_SIMPLIFY_SCT_COLUMN]))
+    assert sct == {"E": "首選RF", "A": "次選RF", "C": "建議RF", "B": "", "D": ""}
+    assert any("SCT建議" in w for w in warns)
+
+    # 自訂：把「只有金額 Top」也升為首選RF
+    custom = dict(_SHOP_SIMPLIFY_SCT_SHOP_DEFAULT, NY="首選RF")
+    raw2, _ = transform_shop_simplify(_df(rows), data_date=date(2026, 11, 12), sct_rules=custom)
+    assert dict(zip(raw2["SKU"], raw2[_SHOP_SIMPLIFY_SCT_COLUMN]))["C"] == "首選RF"
+
+    # 不傳規則時維持原本行為（一律留空）
+    raw3, _ = transform_shop_simplify(_df(rows), data_date=date(2026, 11, 12))
+    assert (raw3[_SHOP_SIMPLIFY_SCT_COLUMN].fillna("").astype(str) == "").all()
+
+    # Summary 出現 SCT建議 分佈區塊
+    summary = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))["Summary"]
+    titles = [
+        summary.cell(row=i, column=1).value for i in range(1, summary.max_row + 1)
+        if isinstance(summary.cell(row=i, column=1).value, str)
+        and summary.cell(row=i, column=1).value.startswith("計數 - SKU：SCT")
+    ]
+    assert titles
 
 
 def test_site_mode_default_view_hides_non_essential_columns():

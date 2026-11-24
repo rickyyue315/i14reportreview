@@ -98,6 +98,10 @@ __all__ = [
     "_shop_simplify_sct_case_text",
     "_shop_simplify_sct_case_compare",
     "_shop_simplify_sct_series",
+    "_SHOP_SIMPLIFY_SCT_SHOP_CASES",
+    "_SHOP_SIMPLIFY_SCT_SHOP_DEFAULT",
+    "_shop_simplify_sct_shop_case_text",
+    "_shop_simplify_sct_shop_series",
     "_SHOP_SIMPLIFY_NDRF_COLUMN",
     "_SHOP_SIMPLIFY_SAFETY_COLUMN",
     "_SHOP_SIMPLIFY_REPLY_COLUMNS",
@@ -382,6 +386,49 @@ def _shop_simplify_sct_series(df: pd.DataFrame, rules, columns) -> pd.Series:
             flags = np.zeros(len(df), dtype=bool)
         letters.append(pd.Series(np.where(flags, "Y", "N"), index=df.index))
     keys = letters[0].str.cat(letters[1:], sep="")
+    return keys.map(mapping).fillna("").astype(object)
+
+
+# 原模式（多店輸出）只有「件數 Top」「金額 Top」兩個維度，故全部情況＝2×2＝4 種
+_SHOP_SIMPLIFY_SCT_SHOP_CASES = ("YY", "YN", "NY", "NN")
+_SHOP_SIMPLIFY_SCT_SHOP_DEFAULT = {
+    "YY": _SHOP_SIMPLIFY_SCT_PREFERRED,
+    "YN": _SHOP_SIMPLIFY_SCT_SECONDARY,
+    "NY": _SHOP_SIMPLIFY_SCT_RF,
+    "NN": "",
+}
+
+
+def _shop_simplify_sct_shop_case_text(case: str) -> str:
+    """原模式情況鍵（件數、金額）→ 人看的說明。"""
+    return {
+        "YY": "件數與金額都是 Top",
+        "YN": "只有件數 Top",
+        "NY": "只有金額 Top",
+        "NN": "件數與金額都不是 Top",
+    }.get(case, case)
+
+
+def _shop_simplify_sct_shop_series(df: pd.DataFrame, rules, qty_column, value_column=None) -> pd.Series:
+    """原模式：按「是否該店的Top N%（件數／金額）」兩個判定產生 SCT建議。
+
+    金額欄缺失時一律視為非 Top（情況鍵尾碼為 N）；規則未涵蓋的情況留空。
+    """
+    mapping = {str(k).strip(): str(v or "").strip() for k, v in dict(rules).items()}
+    qty = (
+        _shop_simplify_cell_mask(df[qty_column], _SHOP_SIMPLIFY_TOP80_YES)
+        if qty_column in df.columns
+        else np.zeros(len(df), dtype=bool)
+    )
+    value = (
+        _shop_simplify_cell_mask(df[value_column], _SHOP_SIMPLIFY_TOP80_YES)
+        if value_column and value_column in df.columns
+        else np.zeros(len(df), dtype=bool)
+    )
+    keys = pd.Series(
+        np.char.add(np.where(qty, "Y", "N").astype(str), np.where(value, "Y", "N").astype(str)),
+        index=df.index,
+    )
     return keys.map(mapping).fillna("").astype(object)
 
 
@@ -1154,6 +1201,7 @@ def transform_shop_simplify(
     include_net_sales: bool = True,
     data_date=None,
     group_by=None,
+    sct_rules=None,
 ):
     """清理來源資料並附加「過去90日有無賣過／過去90日有無存貨」、件數與金額兩組
     「是否該店的Top N%」、一欄「該店 件數 vs 該店 金額 Top N%」對比，以及三個空白回覆欄。
@@ -1169,6 +1217,8 @@ def transform_shop_simplify(
       （如 `Net Sales (P73D)`）；缺三個月 Net Sales 欄時只輸出件數判定並列 warning。
     - 指定店舖變體另有自己的店舖／同 Nature 判定，故以 `include_shop_top80=False` 及
       `include_net_sales=False` 關閉，避免重複欄位。
+    - `sct_rules` 為 SCT建議 的 4 情況表（情況鍵 "YY"／"YN"／"NY"／"NN" →
+      首選RF／次選RF／建議RF／留空）；提供時按其填寫「SCT建議」欄，否則維持留空。
     - 回傳 (raw_df, warnings)。缺少 Sold Qty (P90D)，或 Shop Stock Qty (LLM)／(LM)／(CM)
       三個庫存欄同時缺失時拋出 ValueError（無法判定，不應靜默輸出）。
     """
@@ -1346,6 +1396,22 @@ def transform_shop_simplify(
 
     for name in _SHOP_SIMPLIFY_REPLY_COLUMNS:
         df[name] = ""
+
+    # SCT建議：按 4 種情況自動填寫（未指定時維持留空）
+    if sct_rules and include_shop_top80 and qty_column in df.columns:
+        df[_SHOP_SIMPLIFY_SCT_COLUMN] = _shop_simplify_sct_shop_series(
+            df, sct_rules, qty_column, value_column if net_available else None
+        )
+        _sct_labels = df[_SHOP_SIMPLIFY_SCT_COLUMN].replace("", np.nan).dropna()
+        if len(_sct_labels):
+            warnings.append(
+                f"已按 SCT建議規則填寫「{_SHOP_SIMPLIFY_SCT_COLUMN}」欄，"
+                f"共 {len(_sct_labels):,} 列（可按實際情況在 Excel 內修改）。"
+            )
+        else:
+            warnings.append(
+                "SCT建議規則沒有任何情況命中，該欄維持空白；請檢查情況表是否有指定建議。"
+            )
 
     # 欄序：判定欄緊接「過去90日有無存貨」（件數 → 金額 → 對比），
     # 金額計算欄緊接 Sold Qty (P90D)，三個回覆欄維持最後
