@@ -19,7 +19,8 @@
   是否同為核心（缺三個月 Net Sales 欄時整欄不加入）；
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty：一律留空，供 SCT／店舖填寫；
   指定店舖變體可另傳 `sct_rules`（16 種 Top 判定情況 → 首選RF／次選RF／建議RF／留空）
-  自動填寫 SCT建議，其餘兩個回覆欄維持留空。
+  自動填寫 SCT建議，其餘兩個回覆欄維持留空；Buyer＝123 - Cara Tsoi 的 ND 貨品不套用
+  情況表，改標示「需由Buyer決定」（該 Buyer 可能有受限制 SKU，例如只限澳門出售）。
 
 N 可選 80%（預設）或 70%；金額欄名隨數據截止日自動標示實際覆蓋日數（如 P73D），
 緊接 Sold Qty (P90D) 之後。本模式不作調貨、Safety 或退倉建議，亦不篩選列
@@ -96,6 +97,11 @@ __all__ = [
     "_SHOP_SIMPLIFY_SCT_PRESETS",
     "_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET",
     "_SHOP_SIMPLIFY_SCT_SKIP_STATUS",
+    "_SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER",
+    "_SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE",
+    "_SHOP_SIMPLIFY_SCT_BUYER_ND_FILL",
+    "_shop_simplify_buyer_nd_mask",
+    "_shop_simplify_sct_mark_buyer_nd",
     "_SHOP_SIMPLIFY_SCT_BLANK_LABEL",
     "_SHOP_SIMPLIFY_SCT_FILLS",
     "_shop_simplify_sct_skip_discontinued",
@@ -377,12 +383,18 @@ _SHOP_SIMPLIFY_SCT_PRESETS = {
 _SHOP_SIMPLIFY_SCT_DEFAULT_PRESET = "三級建議（兩者皆是→首選／同Nature→次選／只有店舖→建議RF／無Top→留空）"
 # Item Status＝Discontinued 的列一律留空，不套用 SCT 規則（由 SCT 另行判斷）
 _SHOP_SIMPLIFY_SCT_SKIP_STATUS = "Discontinued"
+# Buyer 123 - Cara Tsoi 旗下的 SKU 有機會屬受限制貨品（例如只限澳門出售），
+# 其 RP Type＝ND 的列不自動建議轉 RF，改為標示「需由Buyer決定」，由 Buyer 拍板
+_SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER = "123 - Cara Tsoi"
+_SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE = "需由Buyer決定"
+_SHOP_SIMPLIFY_SCT_BUYER_ND_FILL = "FFF2CC"
 # Summary 內 SCT建議 分類的標註顏色（與 16 情況設定表一致；留空用灰）
 _SHOP_SIMPLIFY_SCT_BLANK_LABEL = "（留空）"
 _SHOP_SIMPLIFY_SCT_FILLS = {
     _SHOP_SIMPLIFY_SCT_PREFERRED: "CCFF99",
     _SHOP_SIMPLIFY_SCT_SECONDARY: "FFEB9C",
     _SHOP_SIMPLIFY_SCT_RF: "FFCC99",
+    _SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE: _SHOP_SIMPLIFY_SCT_BUYER_ND_FILL,
     _SHOP_SIMPLIFY_SCT_BLANK_LABEL: "D9D9D9",
 }
 
@@ -419,6 +431,37 @@ def _shop_simplify_sct_skip_discontinued(df: pd.DataFrame, series: pd.Series) ->
         return series, 0
     result = series.astype(object).copy()
     result.loc[skip] = ""
+    return result, count
+
+
+def _shop_simplify_buyer_nd_mask(df: pd.DataFrame) -> np.ndarray:
+    """Buyer＝123 - Cara Tsoi 且 RP Type＝ND 的列。
+
+    比對忽略大小寫、前後空白與「-」兩側空白（例如「123-Cara Tsoi」亦命中）；
+    缺 Buyer 或 RP Type 欄時一律不命中。
+    """
+    if not len(df) or "Buyer" not in df.columns or "RP Type" not in df.columns:
+        return np.zeros(len(df), dtype=bool)
+    buyer = df["Buyer"].fillna("").astype(str).str.strip().str.lower()
+    buyer = buyer.str.replace(r"\s*-\s*", " - ", regex=True)
+    target = re.sub(r"\s*-\s*", " - ", _SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER.strip().lower())
+    is_buyer = buyer.eq(target).to_numpy(dtype=bool)
+    is_nd = _shop_simplify_cell_mask(df["RP Type"], "ND")
+    return is_buyer & is_nd
+
+
+def _shop_simplify_sct_mark_buyer_nd(df: pd.DataFrame, series: pd.Series) -> tuple[pd.Series, int]:
+    """把 Buyer 123 - Cara Tsoi 的 ND 貨品改寫為「需由Buyer決定」，回傳（新序列, 標示列數）。
+
+    這批 SKU 有機會屬受限制貨品（例如只限澳門出售），不宜由 SCT 自行建議轉 RF；
+    標示後仍以 Item Status＝Discontinued 的留空規則為準（停售品一律留空）。
+    """
+    mask = _shop_simplify_buyer_nd_mask(df)
+    count = int(mask.sum())
+    if not count:
+        return series, 0
+    result = series.astype(object).copy()
+    result.loc[mask] = _SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE
     return result, count
 
 
@@ -1445,19 +1488,30 @@ def transform_shop_simplify(
 
     # SCT建議：按 4 種情況自動填寫（未指定時維持留空）
     if sct_rules and include_shop_top80 and qty_column in df.columns:
-        _sct_filled, _sct_skipped = _shop_simplify_sct_skip_discontinued(
+        _sct_series, _ = _shop_simplify_sct_mark_buyer_nd(
             df,
             _shop_simplify_sct_shop_series(
                 df, sct_rules, qty_column, value_column if net_available else None
             ),
         )
+        _sct_filled, _sct_skipped = _shop_simplify_sct_skip_discontinued(df, _sct_series)
         df[_SHOP_SIMPLIFY_SCT_COLUMN] = _sct_filled
+        _sct_buyer_nd = int(
+            _shop_simplify_cell_mask(_sct_filled, _SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE).sum()
+        )
         _sct_labels = df[_SHOP_SIMPLIFY_SCT_COLUMN].replace("", np.nan).dropna()
         if len(_sct_labels):
-            _sct_note = (
-                f"（Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS} 的 {_sct_skipped:,} 列一律留空）"
-                if _sct_skipped else ""
-            )
+            _sct_notes = []
+            if _sct_skipped:
+                _sct_notes.append(
+                    f"Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS} 的 {_sct_skipped:,} 列一律留空"
+                )
+            if _sct_buyer_nd:
+                _sct_notes.append(
+                    f"Buyer＝{_SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER} 且 RP Type＝ND 的 "
+                    f"{_sct_buyer_nd:,} 列標示「{_SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE}」"
+                )
+            _sct_note = f"（{'；'.join(_sct_notes)}）" if _sct_notes else ""
             warnings.append(
                 f"已按 SCT建議規則填寫「{_SHOP_SIMPLIFY_SCT_COLUMN}」欄，"
                 f"共 {len(_sct_labels):,} 列{_sct_note}（可按實際情況在 Excel 內修改）。"
@@ -1811,16 +1865,27 @@ def transform_shop_simplify_site(
         if not net_available:
             # 金額口徑不可用時，金額兩項一律視為非 Top（情況鍵尾兩碼為 N）
             _sct_columns = _sct_columns[:2] + [None, None]
-        _sct_filled, _sct_skipped = _shop_simplify_sct_skip_discontinued(
+        _sct_series, _ = _shop_simplify_sct_mark_buyer_nd(
             shop_df, _shop_simplify_sct_series(shop_df, sct_rules, _sct_columns)
         )
+        _sct_filled, _sct_skipped = _shop_simplify_sct_skip_discontinued(shop_df, _sct_series)
         shop_df[_SHOP_SIMPLIFY_SCT_COLUMN] = _sct_filled
+        _sct_buyer_nd = int(
+            _shop_simplify_cell_mask(_sct_filled, _SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE).sum()
+        )
         _sct_labels = shop_df[_SHOP_SIMPLIFY_SCT_COLUMN].replace("", np.nan).dropna()
         if len(_sct_labels):
-            _sct_note = (
-                f"（Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS} 的 {_sct_skipped:,} 列一律留空）"
-                if _sct_skipped else ""
-            )
+            _sct_notes = []
+            if _sct_skipped:
+                _sct_notes.append(
+                    f"Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS} 的 {_sct_skipped:,} 列一律留空"
+                )
+            if _sct_buyer_nd:
+                _sct_notes.append(
+                    f"Buyer＝{_SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER} 且 RP Type＝ND 的 "
+                    f"{_sct_buyer_nd:,} 列標示「{_SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE}」"
+                )
+            _sct_note = f"（{'；'.join(_sct_notes)}）" if _sct_notes else ""
             warnings.append(
                 f"已按 SCT建議規則填寫「{_SHOP_SIMPLIFY_SCT_COLUMN}」欄，"
                 f"共 {len(_sct_labels):,} 列{_sct_note}（可按實際情況在 Excel 內修改）。"
@@ -2312,7 +2377,6 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
         else pd.Series("", index=df.index)
     )
     sct_any = bool((sct_series != "").any())
-    case_rows: list[dict] = []
 
     # ── 標題 ──
     cell = ws.cell(row=1, column=2, value="店舖精簡SKU模式 — 輸出說明")
@@ -2356,7 +2420,9 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
         row,
         "「SCT建議」按 Top N% 判定自動填寫，目的是在匯出時先為每個 SKU 標示一個 RF 取態，減少逐列人手判斷。"
         "填寫規則由應用程式側欄「SCT建議」的情況表決定（指定店舖模式 16 種、店舖精簡SKU模式 4 種）；"
-        "第二節列出的是本檔實際採用的規則與結果。留空的 SKU 代表不預設建議，由 SCT 按實際情況判斷（例如 ND）。",
+        "第二節列出的是本檔實際採用的規則與結果。留空的 SKU 代表不預設建議，由 SCT 按實際情況判斷（例如 ND）。"
+        f"Buyer＝{_SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER} 的 ND 貨品不套用情況表，一律標示"
+        f"「{_SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE}」。",
     )
     row += 1
 
@@ -2395,7 +2461,6 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
                 shown += "（同一情況有多個值）"
             elif labels and "" in values:
                 shown += "（部分留空）"
-            case_rows.append({"count": count, "value": labels[0] if labels else ""})
 
             first = ws.cell(row=row, column=2, value=index)
             first.alignment = Alignment(horizontal="center")
@@ -2417,8 +2482,9 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
             row,
             "註：同一情況若曾在 Excel 內手動改成不同值，會以「／」列出；SKU 數只計 SKU 非空白的列。"
             "情況的欄序與 Export 的判定欄一致（件數 → 金額，店舖 → 同 Shop Nature）。"
-            f"Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS} 的 SKU 不套用情況表，一律留空，"
-            "故該情況會顯示「（部分留空）」。",
+            f"Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS} 的 SKU 不套用情況表，一律留空；"
+            f"Buyer＝{_SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER} 的 ND 貨品改標示"
+            f"「{_SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE}」，故該情況亦會顯示「（部分留空）」或另一值。",
             font=note_font,
         )
     else:
@@ -2428,22 +2494,27 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
         )
     row += 1
 
-    # ── 三、SCT建議 的三個值 ──
-    row = section(row, "三、SCT建議 的三個值")
+    # ── 三、SCT建議 的值 ──
+    row = section(row, "三、SCT建議 的值與留空")
+    _sct_text = sct_series.fillna("").astype(str).str.strip()[valid]
     for label, meaning in (
         (_SHOP_SIMPLIFY_SCT_PREFERRED, "最高優先：資源足夠時先處理這批 SKU。"),
         (_SHOP_SIMPLIFY_SCT_SECONDARY, "次一級：首選處理完後才考慮。"),
         (_SHOP_SIMPLIFY_SCT_RF, "可考慮：條件較弱，有剩餘資源時才處理。"),
+        (
+            _SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE,
+            f"Buyer＝{_SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER} 的 ND 貨品：有機會屬受限制貨品"
+            "（例如只限澳門出售），必須由 Buyer 決定，不由 SCT 建議轉 RF。",
+        ),
         (
             "",
             f"不預設建議，由 SCT 按實際情況判斷（例如 ND）；Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS} 亦一律留空。",
         ),
     ):
         text = f"• {label} — {meaning}" if label else f"• 留空 — {meaning}"
-        if case_rows:
-            cases_hit = sum(1 for item in case_rows if item["value"] == label)
-            skus_hit = sum(item["count"] for item in case_rows if item["value"] == label)
-            text += f"（本檔：{cases_hit} 種情況、{skus_hit:,} 個 SKU）"
+        if len(_sct_text):
+            hit = int((_sct_text == label).sum())
+            text += f"（本檔：{hit:,} 個 SKU）"
         row = paragraph(row, text)
     row += 1
 
@@ -2476,6 +2547,11 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
         (_SHOP_SIMPLIFY_SCT_FILLS[_SHOP_SIMPLIFY_SCT_PREFERRED], "Summary 的 SCT建議 分類", "首選RF（與 Top 判定「是」同色）"),
         (_SHOP_SIMPLIFY_SCT_FILLS[_SHOP_SIMPLIFY_SCT_SECONDARY], "Summary 的 SCT建議 分類", "次選RF"),
         (_SHOP_SIMPLIFY_SCT_FILLS[_SHOP_SIMPLIFY_SCT_RF], "Summary 的 SCT建議 分類", "建議RF"),
+        (
+            _SHOP_SIMPLIFY_SCT_BUYER_ND_FILL,
+            "Export 的 SCT建議；Summary 的 SCT建議 分類",
+            f"{_SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE}（Buyer {_SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER} 的 ND 貨品）",
+        ),
         (_SHOP_SIMPLIFY_SCT_FILLS[_SHOP_SIMPLIFY_SCT_BLANK_LABEL], "Summary 的 SCT建議 分類", "留空（未給建議，例如停售品）"),
         (_SHOP_SIMPLIFY_HEADER_BLUE, "其餘表頭", "一般欄"),
     ):
@@ -2523,7 +2599,9 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
     row = section(row, "七、回覆欄與其他注意事項")
     notes = [
         "• Shop 回覆新的NDRF、如果RF的Safety Qty 一律留空，供店舖填寫。",
-        "• SCT建議 可自行修改；建議只用三個值（首選RF／次選RF／建議RF），否則 Summary 的 SCT建議 區塊會多出一欄「其他」。",
+        "• SCT建議 可自行修改；手動只建議用三個值（首選RF／次選RF／建議RF），其他文字會在 Summary 的 SCT建議 區塊另開一欄，以該文字作欄名。",
+        f"• SCT建議＝「{_SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE}」的列，是 Buyer {_SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER} 的 ND 貨品，"
+        "有機會屬受限制貨品（例如只限澳門出售），請由 Buyer 確認後才改為 RF，不要自行改動。",
     ]
     if len(flags) == 4:
         notes.append(
@@ -2612,6 +2690,11 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
         end_color=_SHOP_SIMPLIFY_PRIVATE_LABEL_FILL,
         fill_type="solid",
     )
+    fill_buyer_nd = PatternFill(
+        start_color=_SHOP_SIMPLIFY_SCT_BUYER_ND_FILL,
+        end_color=_SHOP_SIMPLIFY_SCT_BUYER_ND_FILL,
+        fill_type="solid",
+    )
 
     # 表頭：粗體、指定底色、細框、置中置頂、自動換行；列高 70.5
     ws.row_dimensions[1].height = 70.5
@@ -2683,6 +2766,15 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
             _SHOP_SIMPLIFY_PRIVATE_LABEL_KEYWORD, regex=False
         ).to_numpy(dtype=bool)
 
+    # SCT建議＝「需由Buyer決定」（Buyer 123 - Cara Tsoi 的 ND 貨品）→ 淺黃底，
+    # 與紅色底互不重疊（該欄沒有其他底色規則）
+    buyer_nd_col = headers.index(_SHOP_SIMPLIFY_SCT_COLUMN) + 1 if _SHOP_SIMPLIFY_SCT_COLUMN in headers else None
+    buyer_nd_mask = None
+    if buyer_nd_col is not None and _SHOP_SIMPLIFY_SCT_COLUMN in df.columns:
+        buyer_nd_mask = _shop_simplify_cell_mask(
+            df[_SHOP_SIMPLIFY_SCT_COLUMN], _SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE
+        )
+
     # 對比欄：兩者皆是＝青綠底、兩者皆非＝粉紅底，其餘（僅店舖／僅同Nature）不著色
     compare_rules = []
     for name in headers:
@@ -2724,6 +2816,8 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
                 ws.cell(row=row_idx, column=col_idx).fill = fill_compare_both
             elif neither_mask[row_idx - 2]:
                 ws.cell(row=row_idx, column=col_idx).fill = fill_compare_neither
+        if buyer_nd_mask is not None and buyer_nd_mask[row_idx - 2]:
+            ws.cell(row=row_idx, column=buyer_nd_col).fill = fill_buyer_nd
         # 紅色底最後套用，故 RP Type＝ND 會蓋過該欄的綠色
         for col_idx, mask in red_rules:
             if mask[row_idx - 2]:

@@ -74,12 +74,25 @@ __all__ = [
     "_SSR_SAFETY_BASIS_LABELS",
     "_SSR_SAFETY_DAYS_COLUMN",
     "_SSR_SAFETY_LINE_COLUMN",
+    "_SSR_TARGET_TOTAL_COLUMN",
+    "_SSR_TARGET_SHARE_COLUMN",
+    "_SSR_TARGET_NOTE_COLUMN",
+    "_SSR_TARGET_BASIS_LABEL",
+    "_SSR_TARGET_FILE_CURRENT_COLUMN",
+    "_SSR_TARGET_FILE_ALIASES",
     "_normalize_ssr_safety_basis",
+    "_ssr_column_key",
+    "_ssr_normalize_target_columns",
+    "_ssr_read_target_file",
+    "_ssr_normalize_target_map",
+    "_ssr_largest_remainder",
+    "_ssr_target_weight_series",
     "_add_combined_recommendation_columns",
     "_annotate_nd_recommendation",
     "_build_combined_by_shop_summary",
     "_build_combined_classification_summary",
     "_build_combined_dimension_cross_tab",
+    "_build_combined_target_summary",
     "_build_nd_rec_qty_nd",
     "_write_combined_guide_sheet",
     "_write_summary_sheet",
@@ -107,6 +120,9 @@ COMBINED_RAW_COLS = [
     "Adj. Safety Stock",  # 表頭顯示為 Safety Stock (現時)
     "Recommend Safety Stock",
     "Recommend Safety Stock Turnday",
+    "Target Safety (全線合計)",
+    "Safety 分配佔比",
+    "Target 分配提示",
     "Safety Qty Change",
     "Safety Qty Change 分類",
     "Recommendation of new Safety Qty / ND",
@@ -238,9 +254,350 @@ def _annotate_nd_recommendation(nd_rec, df):
 
 
 
+# ── 指定總量分配（Target Safety）──
+# 用途：公司有時會強制大幅增加／減少 Safety（例如配合大堆頭陳列、推廣期），
+# 下達的是「這個 SKU 全線合計多少件」，而不是逐店按銷量計出來。此機制只覆寫
+# 被指定的 SKU，其餘 SKU 一律沿用原有基準（月銷倍率／周轉天數），互不影響。
+#
+# 分配基準固定為各半：50% 按 Sold Qty (P90D) 佔比、50% 按現有 Safety 佔比——
+# 令銷量強的店分得多，同時保留原有設定的相對結構，避免純按銷量令個別旺店暴增。
+# 取整用最大餘數法，保證每個 SKU 的分配總和恆等於指定值（與調貨段 R7 同一準則）。
+_SSR_TARGET_TOTAL_COLUMN = "Target Safety (全線合計)"
+_SSR_TARGET_SHARE_COLUMN = "Safety 分配佔比"
+_SSR_TARGET_NOTE_COLUMN = "Target 分配提示"
+_SSR_TARGET_WEIGHT_SOLD = 0.5
+_SSR_TARGET_WEIGHT_SAFETY = 0.5
+_SSR_TARGET_BASIS_LABEL = "各半（Sold Qty (P90D) 佔比 50% + 現有 Safety 佔比 50%）"
+
+# 上載 Target 清單的欄名對應：一個系統欄位對多個使用者寫法（比對前先經
+# `_ssr_column_key` 正規化，故「現時 Safety」「現時safety」「Safety Stock (現時)」
+# 都會命中同一欄）。`現時Safety` 只作核對，不參與計算。
+_SSR_TARGET_FILE_CURRENT_COLUMN = "現時Safety"
+_SSR_TARGET_FILE_ALIASES = {
+    "SKU": ("sku", "貨品編號", "貨號", "item code", "item"),
+    "Brand": ("brand", "品牌"),
+    "SKU Desc": ("sku desc", "sku description", "description", "貨品描述", "貨品名稱", "品名"),
+    "Vendor MC": ("vendor mc", "vendor", "供應商"),
+    "Buyer": ("buyer", "採購", "買手"),
+    _SSR_TARGET_FILE_CURRENT_COLUMN: (
+        "現時 safety", "現時 safety stock", "現時safety", "現時safety stock",
+        "現有 safety", "現有safety", "safety stock (現時)", "adj. safety stock",
+        "現時安全庫存", "現時safety qty",
+    ),
+    _SSR_TARGET_TOTAL_COLUMN: (
+        "我想輸入的 safety qty", "我想輸入的safety qty", "我想輸入的 safety", "我想輸入的safety",
+        "目標 safety qty", "目標safety qty", "目標 safety", "目標safety",
+        "target safety qty", "target safety", "target safety (全線合計)",
+        "輸入 safety qty", "新 safety qty", "新safety", "建議 safety qty",
+    ),
+}
+
+
+def _ssr_normalize_target_map(target_safety):
+    """指定總量輸入正規化：接受 {SKU: 總量}、[(SKU, 總量)] 或 DataFrame（首欄 SKU、次欄總量）。
+
+    回傳 dict[str, int]：SKU 以 `_safe_sku` 正規化（與 RAW 的 SKU 同一口徑，數字
+    與文字寫法皆可對上），總量轉正整數。空白 SKU、非數值、0 或負數一律略過
+    （不視為指定，該 SKU 按原基準計算）。同一 SKU 重複出現時以最後一筆為準。
+    """
+    if target_safety is None:
+        return {}
+    pairs = []
+    if isinstance(target_safety, pd.DataFrame):
+        if target_safety.empty or len(target_safety.columns) < 2:
+            return {}
+        _cols = list(target_safety.columns)
+        pairs = list(zip(target_safety[_cols[0]], target_safety[_cols[1]]))
+    elif isinstance(target_safety, dict):
+        pairs = list(target_safety.items())
+    else:
+        for item in target_safety:
+            try:
+                _k, _v = item
+            except (TypeError, ValueError):
+                continue
+            pairs.append((_k, _v))
+
+    out = {}
+    for key, val in pairs:
+        if key is None or (isinstance(key, float) and pd.isna(key)):
+            continue
+        sku = str(key).strip()
+        if not sku:
+            continue
+        try:
+            sku = str(_safe_sku(sku)).strip()
+        except Exception:
+            pass
+        try:
+            qty = int(float(val))
+        except (TypeError, ValueError):
+            continue
+        if qty <= 0:
+            continue
+        out[sku] = qty
+    return out
+
+
+def _ssr_column_key(name) -> str:
+    """欄名比對鍵：全形轉半形、去空白與常見標點、轉小寫。
+
+    讓「現時 Safety」「現時Safety」「Safety Stock (現時)」等寫法都對得上同一欄，
+    避免使用者上載的清單因空格或括號不同而讀不到。
+    """
+    s = unicodedata.normalize("NFKC", str(name)).strip().lower()
+    for ch in " \t\r\n()（）[]【】{}_-／/\\:：.,，、":
+        s = s.replace(ch, "")
+    return s
+
+
+def _ssr_normalize_target_columns(df):
+    """把上載 Target 清單的欄名對應到系統欄名。
+
+    回傳 (改名後的 DataFrame, 已識別欄位清單, 缺少的必要欄位清單)。
+    只保留識別到的欄位；`SKU` 與目標總量為必要，其餘（Brand／SKU Desc／
+    Vendor MC／Buyer／現時Safety）只作顯示與核對，缺了不影響計算。
+    """
+    if df is None or len(df) == 0:
+        return pd.DataFrame(), [], ["SKU", _SSR_TARGET_TOTAL_COLUMN]
+
+    key_to_target = {}
+    for _target, _aliases in _SSR_TARGET_FILE_ALIASES.items():
+        for _alias in _aliases:
+            key_to_target.setdefault(_ssr_column_key(_alias), _target)
+
+    mapping = {}
+    used = set()
+    for col in df.columns:
+        _tgt = key_to_target.get(_ssr_column_key(col))
+        if _tgt and _tgt not in used:
+            mapping[col] = _tgt
+            used.add(_tgt)
+    out = df[list(mapping)].rename(columns=mapping)
+    missing = [c for c in ("SKU", _SSR_TARGET_TOTAL_COLUMN) if c not in out.columns]
+    return out, list(out.columns), missing
+
+
+def _ssr_read_target_file(data, filename=""):
+    """讀取上載的 Target 清單，回傳 (正規化 DataFrame, 警告清單)。
+
+    - `.xlsx`：逐個工作表尋找同時具備 `SKU` 與目標總量欄的一頁（不假設次序）；
+      `.csv`：先試 UTF-8，失敗再試 Big5（Excel 另存的繁體 CSV 常見）。
+    - 容許千分位逗號；略過空白／合計列、目標值空白或 ≤ 0 的列；
+      同一 SKU 重複出現時以最後一筆為準並列警告。
+    - 找不到必要欄位或無可用列時拋 ValueError，訊息列出已識別的欄位供核對。
+    """
+    if data is None:
+        raise ValueError("沒有收到檔案內容。")
+    raw_bytes = data if isinstance(data, (bytes, bytearray)) else bytes(data)
+    name = str(filename or "").lower()
+    buf = BytesIO(raw_bytes)
+
+    best = None
+    candidates = []
+    if name.endswith(".csv") or name.endswith(".txt"):
+        for enc in ("utf-8", "utf-8-sig", "big5"):
+            try:
+                buf.seek(0)
+                candidates = [pd.read_csv(buf, encoding=enc, header=0)]
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+            except Exception as exc:
+                raise ValueError(f"CSV 讀取失敗：{exc}") from exc
+        if not candidates:
+            raise ValueError("CSV 編碼無法辨識（已試 UTF-8 與 Big5）。")
+    else:
+        try:
+            book = pd.ExcelFile(BytesIO(raw_bytes))
+        except Exception as exc:
+            raise ValueError(f"Excel 讀取失敗：{exc}") from exc
+        try:
+            candidates = [book.parse(sheet) for sheet in book.sheet_names]
+        finally:
+            book.close()
+
+    first_error = None
+    for frame in candidates:
+        if frame is None or frame.empty:
+            continue
+        normalized, cols, missing = _ssr_normalize_target_columns(frame)
+        if missing:
+            if first_error is None:
+                first_error = (cols, missing)
+            continue
+        best = normalized
+        break
+    if best is None:
+        if first_error is not None:
+            cols, missing = first_error
+            raise ValueError(
+                "找不到必要欄位：" + "、".join(missing)
+                + "（已識別：" + ("、".join(str(c) for c in cols) or "無") + "）"
+            )
+        raise ValueError("檔案沒有可讀的資料列。")
+
+    warnings = []
+    _sku_text = best["SKU"].astype(str).str.strip()
+    _total_label = _sku_text.str.lower()
+    _skip_mask = (
+        _sku_text.eq("")
+        | _total_label.isin({"total", "grand total", "subtotal", "總計", "合計", "小計"})
+    )
+    _dropped = int(_skip_mask.sum())
+    if _dropped:
+        warnings.append(f"已略過 {_dropped} 列空白或合計列。")
+    best = best[~_skip_mask].copy()
+
+    def _num(series):
+        if series.dtype == object:
+            series = series.astype(str).str.replace(",", "", regex=False).str.strip()
+        return pd.to_numeric(series, errors="coerce")
+
+    best["SKU"] = best["SKU"].map(_safe_sku).astype(str).str.strip()
+    best[_SSR_TARGET_TOTAL_COLUMN] = _num(best[_SSR_TARGET_TOTAL_COLUMN])
+    if _SSR_TARGET_FILE_CURRENT_COLUMN in best.columns:
+        best[_SSR_TARGET_FILE_CURRENT_COLUMN] = _num(best[_SSR_TARGET_FILE_CURRENT_COLUMN])
+
+    _invalid = best[_SSR_TARGET_TOTAL_COLUMN].isna() | (best[_SSR_TARGET_TOTAL_COLUMN] <= 0)
+    if int(_invalid.sum()):
+        warnings.append(
+            f"有 {int(_invalid.sum())} 隻 SKU 的「{_SSR_TARGET_TOTAL_COLUMN}」空白、非數值或 ≤ 0，已略過。"
+        )
+        best = best[~_invalid].copy()
+
+    _dup = best["SKU"].duplicated(keep=False)
+    if int(_dup.sum()):
+        warnings.append(
+            f"有 {int(best.loc[_dup, 'SKU'].nunique())} 隻 SKU 重複出現，已以最後一筆為準。"
+        )
+        best = best.drop_duplicates(subset="SKU", keep="last")
+
+    if best.empty:
+        raise ValueError("清單沒有可用的 SKU 與目標數量（全部為空白、合計列或非數值）。")
+
+    best[_SSR_TARGET_TOTAL_COLUMN] = best[_SSR_TARGET_TOTAL_COLUMN].astype(int)
+    return best.reset_index(drop=True), warnings
+
+
+def _ssr_largest_remainder(total, weights) -> np.ndarray:
+    """按權重把整數 total 分成整數件（最大餘數法），保證加總等於 total。
+
+    先取 floor，餘量按小數部分由大到小逐件補 1；小數部分相同時依原次序
+    （穩定排序），令同一批資料每次分配的結果一致。權重全為 0 或負數時退回均分；
+    total ≤ 0 時回傳全 0。與調貨段 R7 同一取整準則。
+    """
+    w = np.asarray(weights, dtype=float)
+    n = len(w)
+    if n == 0:
+        return np.zeros(0, dtype=int)
+    total = int(total)
+    if total <= 0:
+        return np.zeros(n, dtype=int)
+    w = np.where(np.isfinite(w) & (w > 0), w, 0.0)
+    _sum = float(w.sum())
+    if _sum <= 0:
+        w = np.ones(n, dtype=float)
+        _sum = float(n)
+    raw = total * w / _sum
+    base = np.floor(raw).astype(int)
+    remainder = total - int(base.sum())
+    if remainder > 0:
+        order = np.argsort(-(raw - base), kind="stable")
+        base[order[:remainder]] += 1
+    return base
+
+
+def _ssr_target_weight_series(sold, safety) -> np.ndarray:
+    """各店分配權重：50% 按 Sold Qty (P90D) 佔比 + 50% 按現有 Safety 佔比。
+
+    某一半的合計為 0（例如全線零銷量、或現有 Safety 全為 0）時，該半不參與，
+    等同把權重全給另一半；兩半皆為 0 時退回均分，令指定總量仍可全數分配。
+    負數與缺值一律按 0 計。回傳權重已正規化為合計 1（n > 0 時）。
+    """
+    sold_arr = np.asarray(sold, dtype=float)
+    safety_arr = np.asarray(safety, dtype=float)
+    sold_arr = np.where(np.isfinite(sold_arr) & (sold_arr > 0), sold_arr, 0.0)
+    safety_arr = np.where(np.isfinite(safety_arr) & (safety_arr > 0), safety_arr, 0.0)
+    _sold_sum = float(sold_arr.sum())
+    _safety_sum = float(safety_arr.sum())
+    w_sold = sold_arr / _sold_sum if _sold_sum > 0 else np.zeros_like(sold_arr)
+    w_safety = safety_arr / _safety_sum if _safety_sum > 0 else np.zeros_like(safety_arr)
+    w = _SSR_TARGET_WEIGHT_SOLD * w_sold + _SSR_TARGET_WEIGHT_SAFETY * w_safety
+    _w_sum = float(w.sum())
+    if _w_sum > 0:
+        return w / _w_sum
+    return np.ones(len(sold_arr), dtype=float) / max(len(sold_arr), 1)
+
+
+def _apply_target_safety(df, recommend_safety, delta, target_map, x_values, y_values):
+    """把指定 SKU 的建議 Safety 改為「全線合計」由上而下分配。
+
+    只處理 target_map 內、且 RP Type 不是 ND 的列（ND＝不執行自動補貨，
+    Safety 必須為 0，故不參與分配）；其餘列原值不動。回傳
+    (建議值, 變化量, Target 欄, 分配佔比欄, 提示欄, 統計 dict)。
+
+    提示欄逐列比較分配值與 X／Y：超出庫存上限或低於缺貨底線都會標明，
+    令審批人清楚知道這是公司指定值、不是公式結果。
+    """
+    n = len(df)
+    recommend = np.array(recommend_safety, dtype=int, copy=True)
+    delta_arr = np.array(delta, dtype=int, copy=True)
+    target_col = np.full(n, np.nan)
+    share_col = np.full(n, np.nan)
+    note_col = np.full(n, "", dtype=object)
+    info = {"matched": [], "missing": [], "below_current": 0}
+
+    if not target_map or n == 0:
+        info["missing"] = sorted(target_map) if target_map else []
+        return recommend, delta_arr, target_col, share_col, note_col, info
+
+    if "SKU" in df.columns:
+        sku_arr = df["SKU"].apply(_safe_sku).astype(str).str.strip().to_numpy(dtype=object)
+    else:
+        sku_arr = np.full(n, "", dtype=object)
+    rp = (
+        df.get("RP Type", _safe_default_series("", df.index))
+        .fillna("").astype(str).str.strip().str.upper().to_numpy()
+    )
+    is_nd = rp == "ND"
+    sold = _safe_numeric(df.get("Sold Qty (P90D)", _safe_default_series(0, df.index))).to_numpy(dtype=float)
+    safety = _safe_numeric(df.get("Adj. Safety Stock", _safe_default_series(0, df.index))).to_numpy(dtype=float)
+    safety_int = np.rint(safety).astype(int)
+    x_arr = np.asarray(x_values, dtype=float)
+    y_arr = np.asarray(y_values, dtype=float)
+
+    for key in sorted(target_map):
+        total = int(target_map[key])
+        rows = np.flatnonzero((sku_arr == key) & ~is_nd)
+        if rows.size == 0:
+            info["missing"].append(key)
+            continue
+        weights = _ssr_target_weight_series(sold[rows], safety[rows])
+        alloc = _ssr_largest_remainder(total, weights)
+        recommend[rows] = alloc
+        delta_arr[rows] = alloc - safety_int[rows]
+        target_col[rows] = total
+        share_col[rows] = np.round(weights * 100.0, 2)
+        for pos, ridx in enumerate(rows):
+            notes = []
+            if alloc[pos] > x_arr[ridx]:
+                notes.append(f"超出庫存上限 X={int(x_arr[ridx])}")
+            if alloc[pos] < y_arr[ridx]:
+                notes.append(f"低於缺貨底線 Y={int(y_arr[ridx])}")
+            if notes:
+                note_col[ridx] = "；".join(notes)
+        info["matched"].append(key)
+        info["below_current"] += int((alloc < safety_int[rows]).sum())
+
+    return recommend, delta_arr, target_col, share_col, note_col, info
+
+
+
 def _add_combined_recommendation_columns(
     df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode="increase_only",
     ref_date=None, safety_basis="rate", safety_days=None, sold_days_floor=None,
+    target_safety=None,
 ):
     df = df.copy()
     safety_basis = _normalize_ssr_safety_basis(safety_basis)
@@ -416,6 +773,31 @@ def _add_combined_recommendation_columns(
     df["Recommend Safety Stock"] = recommend_safety
     df["Safety Qty Change"] = delta
 
+    # ── 指定總量分配（Target Safety）：只覆寫被指定的 SKU，其餘列不動 ──
+    # 分配值直接取代該 SKU 的建議值，是「公司指令」而非公式結果，故不套用
+    # Overstock Cap／OOS Floor 上限，亦不受「只可增加」限制（否則指定值永遠達不到）；
+    # 落差改為逐列寫入「Target 分配提示」供審批核對。
+    _target_mask = None
+    if target_safety:
+        _target_map = (
+            target_safety if isinstance(target_safety, dict)
+            else _ssr_normalize_target_map(target_safety)
+        )
+        if _target_map:
+            (recommend_safety, delta,
+             _target_col, _share_col, _note_col, _target_info) = _apply_target_safety(
+                df, recommend_safety, delta, _target_map, x_values, y_values
+            )
+            df["Recommend Safety Stock"] = recommend_safety
+            df["Safety Qty Change"] = delta
+            _target_mask = (~pd.isna(pd.Series(_target_col, index=df.index))).to_numpy()
+            # 一個 SKU 都對不上時不加空欄（避免 RAW 出現三欄全空）
+            if _target_mask.any():
+                df[_SSR_TARGET_TOTAL_COLUMN] = _target_col
+                df[_SSR_TARGET_SHARE_COLUMN] = _share_col
+                df[_SSR_TARGET_NOTE_COLUMN] = _note_col
+            df.attrs["ssr_target_info"] = _target_info
+
     # 保底影響偵測（供店舖問題 SKU 建議方法加註）：最終建議值停在 3 件，且未套最低
     # 3 件保底時的本來建議值 < 3 → 建議值是因保底而停在 3（保障自動補貨）。
     # 「只可增加」模式的最終值 = max(現有設定, 未保底建議值)，故 recommend_pre 亦取兩者較大。
@@ -423,8 +805,12 @@ def _add_combined_recommendation_columns(
         combined_pre if safety_mode != "increase_only" else np.maximum(z_values, combined_pre)
     )
     df["_safety_floor3"] = (recommend_safety == 3) & (recommend_pre < 3)
+    if _target_mask is not None and _target_mask.any():
+        # 指定總量分配的列，其建議值由公司指定而非保底決定 → 不標示保底影響
+        df.loc[_target_mask, "_safety_floor3"] = False
 
     # Safety Qty Change 分類（增加 / 減少 / 不變）—「只可增加」模式下不會出現「減少」
+    # （唯一例外：指定總量分配的列，以公司指定值為準，可能低於現有 Safety）
     df["Safety Qty Change 分類"] = np.where(delta > 0, "增加", np.where(delta < 0, "減少", "不變"))
 
     # 建議 Safety Stock 的周轉日數，與來源「Turnday (P90D Qty)」同一準則（P90D 日均）：
@@ -450,6 +836,14 @@ def _add_combined_recommendation_columns(
             nd_rec[is_new_sku & ~is_nd.values] = "New SKU (3 Month)"
         # ND 轉換建議依 Adj. MCH1 / Adj. SST 加註 MAKE UP / Private Label
         nd_rec = _annotate_nd_recommendation(nd_rec, df)
+    if _target_mask is not None and _target_mask.any():
+        # 指定總量分配的列由公司指定補貨量，不再同時給「轉 ND／歸零」建議
+        # （兩者互相矛盾）；New SKU 標記保留。清空後該列在 Summary 歸「（空白）維持」
+        nd_rec = np.asarray(nd_rec, dtype=object).copy()
+        for _i in np.flatnonzero(_target_mask):
+            _val = str(nd_rec[_i])
+            if _val in ("0", "ND") or _val.startswith("ND("):
+                nd_rec[_i] = ""
     df["Recommendation of new Safety Qty / ND"] = nd_rec
     df["Buyer reply"] = ""
 
@@ -521,7 +915,7 @@ def _build_combined_by_shop_summary(raw):
 
 _CHANGE_CAT_DESC = {
     "增加": "建議 Safety Stock 高於現時",
-    "減少": "建議 Safety Stock 低於現時（僅「可加可減」模式出現）",
+    "減少": "建議 Safety Stock 低於現時（「可加可減」模式，或指定總量分配的列）",
     "不變": "建議 Safety Stock 與現時相同",
 }
 
@@ -609,6 +1003,62 @@ def _build_combined_classification_summary(raw):
 
 
 
+def _build_combined_target_summary(raw):
+    """SUMMARY 區塊 ④：指定總量分配（Target Safety）逐 SKU 對帳。
+
+    只列有指定總量的 SKU；「參與店舖數」只計實際獲分配的非 ND 列（ND 店
+    Safety 必須為 0，不參與分配）。「差額」理論上恆為 0（最大餘數法保證），
+    保留作稽核；「超出庫存上限／低於缺貨底線店數」反映指定值與 X／Y 的落差，
+    讓審批人一眼看出哪些店舖的分配值偏離公式範圍。未啟用時回傳空表。
+    """
+    columns = [
+        "SKU", "Target 全線合計", "已分配", "差額", "參與店舖數",
+        "超出庫存上限店數", "低於缺貨底線店數",
+    ]
+    empty = pd.DataFrame(columns=columns)
+    if raw is None or raw.empty or _SSR_TARGET_TOTAL_COLUMN not in raw.columns:
+        return empty
+    target = pd.to_numeric(raw[_SSR_TARGET_TOTAL_COLUMN], errors="coerce")
+    mask = target.notna()
+    if not mask.any():
+        return empty
+
+    sub = raw.loc[mask]
+    rec = pd.to_numeric(sub.get("Recommend Safety Stock", _safe_default_series(0, sub.index)), errors="coerce").fillna(0)
+    x_ser = pd.to_numeric(sub.get("Overstock Cap (X)", _safe_default_series(np.nan, sub.index)), errors="coerce")
+    y_ser = pd.to_numeric(sub.get("OOS Floor (Y)", _safe_default_series(np.nan, sub.index)), errors="coerce")
+    sub = sub.assign(_rec=rec, _x=x_ser, _y=y_ser)
+
+    rows = []
+    for sku, part in sub.groupby("SKU", sort=False, dropna=False):
+        _target = pd.to_numeric(part[_SSR_TARGET_TOTAL_COLUMN], errors="coerce").max()
+        _alloc = float(part["_rec"].sum())
+        rows.append({
+            "SKU": sku,
+            "Target 全線合計": int(_target) if pd.notna(_target) else 0,
+            "已分配": int(round(_alloc)),
+            "差額": int(round(float(_target) - _alloc)) if pd.notna(_target) else 0,
+            "參與店舖數": int(len(part)),
+            "超出庫存上限店數": int(((part["_x"].notna()) & (part["_rec"] > part["_x"])).sum()),
+            "低於缺貨底線店數": int(((part["_y"].notna()) & (part["_rec"] < part["_y"])).sum()),
+        })
+
+    out = pd.DataFrame(rows, columns=columns)
+    if out.empty:
+        return empty
+    total_row = pd.DataFrame([{
+        "SKU": "總計",
+        "Target 全線合計": int(out["Target 全線合計"].sum()),
+        "已分配": int(out["已分配"].sum()),
+        "差額": int(out["差額"].sum()),
+        "參與店舖數": int(out["參與店舖數"].sum()),
+        "超出庫存上限店數": int(out["超出庫存上限店數"].sum()),
+        "低於缺貨底線店數": int(out["低於缺貨底線店數"].sum()),
+    }])
+    return pd.concat([out, total_row], ignore_index=True)
+
+
+
 def _build_combined_dimension_cross_tab(raw, dimension="nature", om_groups=None):
     """Safety Qty Change 分類 × 分類維度交叉表（SUMMARY 區塊 ③）。
 
@@ -692,6 +1142,7 @@ def transform_combined(
     safety_basis: str = "rate",
     safety_days: dict | None = None,
     sold_days_floor: int | None = None,
+    target_safety=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str], list[str]]:
     missing = validate_input(df_input)
     if missing:
@@ -701,6 +1152,7 @@ def transform_combined(
     safety_basis = _normalize_ssr_safety_basis(safety_basis)
     _ssr_days, _ssr_day_warnings = _hybrid_safety_days(safety_days)
     warnings.extend(_ssr_day_warnings)
+    _target_map = _ssr_normalize_target_map(target_safety)
 
     # Safety 來源欄相容檢查：顯示名一律視為來源名（Safety Stock (現時) = 來源檔案的 Adj. Safety Stock）
     _adj_avail = set(df_input.columns) | {_resolve_column_name(_ADJ_SAFETY_SOURCE_COL, set(df_input.columns))}
@@ -726,8 +1178,31 @@ def transform_combined(
     raw = _add_combined_recommendation_columns(
         df, rates_overstock, rates_oos, mtd_days, month_total_days, safety_mode=safety_mode,
         ref_date=ref_date, safety_basis=safety_basis, safety_days=_ssr_days,
-        sold_days_floor=sold_days_floor,
+        sold_days_floor=sold_days_floor, target_safety=_target_map or None,
     )
+    _target_info = dict(raw.attrs.get("ssr_target_info") or {})
+
+    if _target_map:
+        _matched = _target_info.get("matched") or []
+        _target_total = sum(int(_target_map[k]) for k in _matched)
+        if _matched:
+            warnings.append(
+                f"已套用指定總量分配：{len(_matched)} 個 SKU（合計 {_target_total:,} 件），"
+                f"分配基準為{_SSR_TARGET_BASIS_LABEL}，分配總和等於指定值；"
+                "未指定的 SKU 一律按上方計算基準計算。"
+            )
+        if _target_info.get("missing"):
+            _miss = "、".join(str(k) for k in _target_info["missing"])
+            warnings.append(
+                f"以下指定 SKU 在本次資料中沒有可分配的非 ND 店舖，未套用指定總量：{_miss}"
+                "（請核對 SKU 寫法，或該 SKU 是否全線為 ND／已被 Shop Nature 篩選剔除）。"
+            )
+        if _target_info.get("below_current"):
+            warnings.append(
+                f"指定總量分配下有 {_target_info['below_current']} 列的分配值低於現有 Safety；"
+                "此類列以公司指定值為準，不受「只可增加」限制，"
+                "RAW「Safety Qty Change 分類」會出現「減少」。"
+            )
 
     # 銷量帶／銷量存貨分類（常開顯示欄；只作分類顯示，不影響 Safety 建議計算）
     _sales_params, _sales_param_warnings = _hybrid_sales_params(
@@ -811,9 +1286,10 @@ def transform_combined(
 
 
 
-def _write_summary_sheet(ws, change_summary, nd_summary, thin_border, cross_tab=None):
+def _write_summary_sheet(ws, change_summary, nd_summary, thin_border, cross_tab=None, target_summary=None):
     """SUMMARY sheet — 區塊：Safety Qty Change 分類、ND 建議分類 統計表，
-    另附 Safety Qty Change 分類 × 分類維度交叉表（cross_tab，Safety Stock Review 引入分類維度用）."""
+    另附 Safety Qty Change 分類 × 分類維度交叉表（cross_tab，Safety Stock Review 引入分類維度用）
+    與指定總量分配逐 SKU 對帳（target_summary，只在有指定 SKU 時出現）."""
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     bold_font = Font(bold=True, size=11)
@@ -866,7 +1342,14 @@ def _write_summary_sheet(ws, change_summary, nd_summary, thin_border, cross_tab=
     next_row = _write_block(3, "① Safety Qty Change 分類（增加 / 減少 / 不變）", change_summary)
     next_row = _write_block(next_row + 1, "② Recommendation of new Safety Qty / ND 分類", nd_summary)
     if cross_tab is not None and not cross_tab.empty:
-        _write_block(next_row + 1, "③ Safety Qty Change 分類 × 分類維度交叉表", cross_tab)
+        next_row = _write_block(next_row + 1, "③ Safety Qty Change 分類 × 分類維度交叉表", cross_tab)
+    if target_summary is not None and not target_summary.empty:
+        _write_block(
+            next_row + 1,
+            "④ 指定總量分配（Target Safety）逐 SKU 對帳"
+            f"（分配基準：{_SSR_TARGET_BASIS_LABEL}；差額應為 0）",
+            target_summary,
+        )
     _auto_width(ws)
 
 
@@ -1015,8 +1498,12 @@ def generate_excel_combined(
 
     # ── Sheet 5: SUMMARY（Safety Qty Change 分類 / ND 建議分類 統計）──
     change_summary, nd_summary = _build_combined_classification_summary(raw_df)
+    target_summary = _build_combined_target_summary(raw_df)
     ws_class_summary = wb.create_sheet(title="SUMMARY")
-    _write_summary_sheet(ws_class_summary, change_summary, nd_summary, thin_border, cross_tab=cross_tab)
+    _write_summary_sheet(
+        ws_class_summary, change_summary, nd_summary, thin_border,
+        cross_tab=cross_tab, target_summary=target_summary,
+    )
 
     if progress_callback:
         progress_callback(0.88, "建立分析摘要工作表...")
@@ -1100,11 +1587,29 @@ def _write_combined_guide_sheet(ws, stats, dimension):
                  if _basis == _SSR_SAFETY_BASIS_TURNDAY
                  else "月銷倍率 (X/Y) — 建議值 = max(Y, Z if Z ≤ X else X)")
 
+    _tgt_raw = st_.get("target_safety") or {}
+    try:
+        _tgt = {str(_k): int(_v) for _k, _v in dict(_tgt_raw).items()}
+    except (TypeError, ValueError):
+        _tgt = {}
+    if _tgt:
+        _tgt_list = "、".join(f"{k}={v:,}" for k, v in list(_tgt.items())[:8])
+        _tgt_txt = (
+            f"（來源：{st_.get('target_safety_source') or '表格填寫'}）"
+            f"{len(_tgt)} 隻 SKU 指定全線合計（合計 {sum(_tgt.values()):,} 件）：{_tgt_list}"
+            + ("…" if len(_tgt) > 8 else "")
+            + f"；分配基準＝{_SSR_TARGET_BASIS_LABEL}，以最大餘數法取整，分配總和等於指定值；"
+            "RP Type＝ND 的店舖不參與分配，未指定的 SKU 按上方基準計算。"
+        )
+    else:
+        _tgt_txt = "未啟用（全部 SKU 按上方基準計算）"
+
     params = [
         ("分類維度",
          f"{_HYBRID_DIMENSION_LABELS[dim]}（只影響 SUMMARY 區塊 ③ 的分組，不影響 Safety 建議計算）"),
         ("Safety Qty 計算模式", mode_txt),
         ("Safety 計算基準", f"{basis_txt}；基準天數：{_sd_label}"),
+        ("指定總量分配 (Target Safety)", _tgt_txt),
         ("Overstock Rate",
          f"Tourist {os_t}%／Mix {os_m}%／Non Tourist {os_n}%（庫存上限 X = floor(月均銷售 × Rate)，有銷量或新品時另設最低 3 件；上限不超過現有 Safety）"),
         ("OOS Rate",
@@ -1139,9 +1644,15 @@ def _write_combined_guide_sheet(ws, stats, dimension):
         "建議 Safety Stock（月銷倍率基準）= max(Y, Z if Z ≤ X else X)；"
         "建議 Safety Stock（周轉天數基準）= Safety 周轉所需量（Z = 現有 Safety 設定）；"
         "Safety Qty Change = 建議值 − Z（正=增加、負=減少、零=不變）。",
+        "指定總量分配（Target Safety，選用）：只覆寫被指定的 SKU。各店權重 = 0.5 ×（該店 Sold Qty (P90D) ÷ 同 SKU 合計）"
+        "+ 0.5 ×（該店現有 Safety ÷ 同 SKU 合計），再按指定全線合計以最大餘數法分配整數件，"
+        "分配總和恆等於指定值；某一半合計為 0 時該半不參與，兩半皆為 0 時退回均分。"
+        "RP Type＝ND 的店舖不參與（Safety 必須為 0）；分配值直接取代該 SKU 的建議值，"
+        "不受 Overstock Cap／OOS Floor 限制，亦不受「只可增加」限制（否則指定值永遠達不到），"
+        "落差逐列寫入「Target 分配提示」。",
         "Recommend Safety Stock Turnday = 建議值 ÷ (P90D 月均 ÷ 30)（月均 0 留空；"
         "與來源「Turnday (P90D Qty)」同一準則）。",
-        "「只可增加」模式全表只增不減，且 ND 列（RP Type＝ND）一律不作上調"
+        "「只可增加」模式全表只增不減（指定總量分配的列除外），且 ND 列（RP Type＝ND）一律不作上調"
         "（ND＝不執行自動補貨，Safety 不能 > 0 件，建議值維持現有設定）；"
         "ND／P90D 0 Sales 的歸零與 ND 退場建議不套用；"
         "「可加可減」模式套用退場建議：ND 列 → 0；P90D 0 Sales 舊品 → ND"
@@ -1162,21 +1673,27 @@ def _write_combined_guide_sheet(ws, stats, dimension):
         ("說明（本頁）", "Review 邏輯、本次參數與導讀", "執行任何行動前，先核對上方 ① 的參數是否符合預期"),
         ("RAW", "全部店舖×SKU 逐列明細與判定欄",
          "留意「Shop Stock Status」「Safety Qty Change」「Recommend Safety Stock Turnday」「銷量帶」「銷量存貨分類」；"
-         "「只可增加」模式不會出現「減少」，且 RP Type＝ND 列不作上調"),
+         "有指定總量分配時另見「Target Safety (全線合計)」「Safety 分配佔比」「Target 分配提示」；"
+         "「只可增加」模式不會出現「減少」（指定總量分配的列除外），且 RP Type＝ND 列不作上調"),
         ("Shop Stock Status", "採購人員×品牌之庫存異常交叉統計", "各 Buyer／品牌的分類分佈概覽"),
         ("By Shop", "各店舖層級彙總", "留意「安全庫存調整總量」與需增／需減 SKU 數較多的店舖"),
         ("店舖問題 SKU", "每間店舖需行動列（問題＋建議方法）",
          "店務同事可先從這一頁著手；含 Safety 需增加／減少、ND 退場建議與調入缺口跟進；建議方法附建議周轉日數"),
-        ("SUMMARY", "① Safety Qty Change 分類 ／ ② ND 建議分類 ／ ③ 分類維度交叉表",
-         "看調整方向與總量；③ 的分組按上方分類維度切換"),
+        ("SUMMARY", "① Safety Qty Change 分類 ／ ② ND 建議分類 ／ ③ 分類維度交叉表 ／ ④ 指定總量分配對帳",
+         "④ 只在有指定 SKU 時出現；核對「已分配」是否等於「Target 全線合計」（差額應為 0）"),
         ("Safety Stock 數據分析摘要", "指標卡總覽", "留意 Overstock／OOS／調整行數與調整總量"),
     ]
 
     tips = [
-        "「Safety Qty Change」正數＝建議增加、負數＝建議減少、零＝不變；「只可增加」模式下不會出現負數。",
+        "「Safety Qty Change」正數＝建議增加、負數＝建議減少、零＝不變；「只可增加」模式下不會出現負數"
+        "（唯一例外：指定總量分配的列以公司指定值為準，可能低於現有 Safety）。",
         "RP Type＝ND 的列不會出現增加建議（ND 不執行自動補貨，Safety 不能 > 0 件），"
         "「只可增加」模式下建議值維持現有設定；ND 歸零只出現在「可加可減」模式。",
         "「只可增加」模式下 Overstock Rate 不產生壓縮效果；要壓縮庫存請選「可加可減」。",
+        "指定總量分配為「公司指令」而非公式結果，故不套用 Overstock Cap／OOS Floor 上限；"
+        "分配值超出 X 或低於 Y 的店舖會列在「Target 分配提示」，SUMMARY ④ 亦有逐 SKU 店數統計。"
+        "此類 Safety 屬臨時性質（如配合大堆頭陳列），陳列期完結後需自行調回，"
+        "否則下一次 Review 會計出「需減少」。",
         "建議值最低 3 件為保障自動補貨的保底，只適用於有銷量或 90 天內上市的新品；"
         "舊品零銷量維持 0（不為滯銷品項設安全庫存）；受影響的店舖問題列會加註原因。",
         "分類維度只改變 SUMMARY 區塊 ③ 的分組顯示，不影響任何 Safety 建議計算。",

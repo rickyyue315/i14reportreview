@@ -1,5 +1,96 @@
 # 版本記錄
 
+## v1.109.13 (2026-11-24)
+
+指定總量分配（Target Safety）改為**上載清單為主**：前線慣常逐隻 SKU 輸入 Target（一行一隻），並已有一份含 `Brand／SKU／SKU Desc／Vendor MC／Buyer／現時Safety／我想輸入的Safety Qty` 的檔案，逐格在網頁填寫不現實。上載後系統即時讀取並核對，確認無誤才執行計算。
+
+### 上載與讀取
+
+- 側欄「🎯 指定總量分配」新增 `📄 上載 Target 清單（.xlsx／.csv）`；下方原表格保留，但上載成功時停用（以清單為準）
+- **欄名自動辨認**：先經 `_ssr_column_key` 正規化（NFKC 全形轉半形、去空白與括號等標點、轉小寫），故「現時 Safety」「現時Safety」「Safety Stock (現時)」「Adj. Safety Stock」都命中同一欄；`我想輸入的Safety Qty` 亦接受 `Target Safety`／`目標Safety`／`新Safety` 等寫法
+- **只有 `SKU` 與目標數量為必要**；`Brand／SKU Desc／Vendor MC／Buyer` 只作顯示，`現時Safety` 只作核對
+- **Excel 逐頁尋找**：不假設資料在第一頁，改為逐個工作表找同時具備 `SKU` 與目標數量欄的一頁，故可另加「填寫說明」頁（範本檔示範）
+- **CSV 編碼**：UTF-8 失敗自動試 UTF-8-SIG 與 Big5（Excel 另存的繁體 CSV 常見）
+- **清理**：容許千分位逗號；略過 SKU 空白或「總計／合計／Total／Grand Total」列；目標數量空白、非數值或 ≤ 0 的列略過；同一 SKU 重複出現以最後一筆為準。各項均列 warning，不是靜靜丟棄
+
+### 上載後的核對（執行前）
+
+- 讀取摘要：隻數、目標合計、實際識別到的欄位
+- 預覽前 20 列
+- **SKU 覆蓋**：`N／M 隻在本次資料找到`，找不到的逐隻列出（可能寫錯 SKU、全線為 ND、或被 Shop Nature 篩選剔除）
+- **現時Safety 差異**：清單合計 vs 本次資料全線合計、幾隻不同；有差異時展開可看差異最大的 50 隻（按絕對值排序），提示可能來自不同快照
+- 核對結果只作顯示，不影響分配；分配一律以清單的目標數量為準
+
+### 其他
+
+- 說明頁 ① 參數加註來源（上載清單／表格填寫）
+- 新增範本 `Target Safety 清單範本_20261124.xlsx`（`Target` 頁 7 欄＋3 列示例、`填寫說明` 頁 11 條）
+- `modes/safety_review.py` 新增 `_SSR_TARGET_FILE_CURRENT_COLUMN`、`_SSR_TARGET_FILE_ALIASES`、`_ssr_column_key()`、`_ssr_normalize_target_columns()`、`_ssr_read_target_file()`
+- `views/analyzer_page.py`：上載區、讀取摘要、SKU 覆蓋與現時Safety 核對、表格停用邏輯；`stats` 帶入 `target_safety_source`
+
+### 驗證
+
+- `py -m pytest tests` → 1857 passed、4 skipped（`tests/test_safety_target.py` 加 5 項：欄名正規化、CSV 別名與清理、xlsx 多頁選頁、缺欄訊息、清單驅動分配）
+- 用範本檔實測讀取：3 隻 SKU 全數識別，`現時Safety` 與目標數量正確，無 warning
+
+## v1.109.12 (2026-11-24)
+
+Safety Stock Review 新增 **指定總量分配（Target Safety）**：公司強制大幅增加／減少 Safety 時（例如配合大堆頭陳列、推廣期），可直接指定某 SKU 的**全線 Safety 合計件數**，由系統分配到每間 RF 店。此前的引擎是由下而上計（每店按自己銷量計，全線加起來是多少就多少），無法指定總數；用現有參數亦到不到指定值（例：現時 Safety 500、月銷 2,000 → 建議值最多 1,000，要到 3,000 只能把 OOS Rate 拉到 150%，但那是全線所有 SKU 一齊變）。
+
+### 規則
+
+- **只覆寫被指定的 SKU**，其餘 SKU 一律按原有計算基準（月銷倍率／周轉天數）計算，兩者可同時使用
+- **分配權重＝各半**：50% ×（該店 `Sold Qty (P90D)` ÷ 同 SKU 合計）＋ 50% ×（該店現有 `Adj. Safety Stock` ÷ 同 SKU 合計）；某一半合計為 0 時該半不參與，兩半皆為 0 時退回均分
+- **取整用最大餘數法**（與調貨段 R7 同一準則），每個 SKU 的分配總和恆等於指定值
+- **RP Type＝ND 的店舖不參與**（ND＝不執行自動補貨，Safety 必須為 0）
+- 分配值**直接取代**該 SKU 的建議值：不受 Overstock Cap／OOS Floor 上限限制，亦不受「只可增加」限制（否則指定值永遠達不到）；逐店落差寫入 `Target 分配提示`（`超出庫存上限 X=…`／`低於缺貨底線 Y=…`，兩者皆有時以「；」分隔）
+- 指定總量分配的列不再同時給「轉 ND／歸零」建議（兩者互相矛盾），`New SKU (3 Month)` 標記保留
+- 指定總量分配的列不標示「最低 3 件保底」原因（建議值由公司指定，非保底決定）
+
+### 介面與輸出
+
+- 側欄新增「🎯 指定總量分配（Target Safety，選用）」展開區：兩欄表格（`SKU`／`Target Safety (全線合計)`），可動態增行；收合後仍顯示「已指定 N 個 SKU，合計 X 件」
+- `RAW` 新增三欄（置於 `Recommend Safety Stock Turnday` 之後，原有欄序不變）：`Target Safety (全線合計)`、`Safety 分配佔比`（%）、`Target 分配提示`；未啟用時三欄不出現，不留空欄
+- `SUMMARY` 新增區塊 **④ 指定總量分配（Target Safety）逐 SKU 對帳**（只在有指定 SKU 時出現）：SKU／Target 全線合計／已分配／差額／參與店舖數／超出庫存上限店數／低於缺貨底線店數＋總計列
+- `說明` 頁：① 參數新增「指定總量分配 (Target Safety)」（列出 SKU 與件數）、② 核心邏輯新增分配公式、③ 工作表導讀更新 SUMMARY 與 RAW、④ 提示新增臨時性質提醒
+
+### 實作
+
+- `modes/safety_review.py`：新增 `_SSR_TARGET_TOTAL_COLUMN／_SSR_TARGET_SHARE_COLUMN／_SSR_TARGET_NOTE_COLUMN／_SSR_TARGET_WEIGHT_SOLD／_SSR_TARGET_WEIGHT_SAFETY／_SSR_TARGET_BASIS_LABEL`；`_ssr_normalize_target_map()`（接受 dict／tuple 清單／DataFrame，SKU 以 `_safe_sku` 正規化）、`_ssr_largest_remainder()`、`_ssr_target_weight_series()`、`_apply_target_safety()`、`_build_combined_target_summary()`；`_add_combined_recommendation_columns()` 與 `transform_combined()` 新增 `target_safety` 參數（預設 `None`，舊呼叫完全不變）；`_write_summary_sheet()` 新增 `target_summary`；`_CHANGE_CAT_DESC["減少"]` 加註「或指定總量分配的列」
+- `views/analyzer_page.py`：新增指定總量輸入表與摘要 caption；`stats` 帶入 `target_safety` 供說明頁照錄
+- 未指定 SKU 的既有輸出（含欄序、數值、warning）完全不變
+
+### 驗證
+
+- `py -m pytest tests` → 1852 passed、4 skipped（新增 `tests/test_safety_target.py` 13 項：最大餘數法、各半權重與退化情況、輸入正規化、只覆寫指定 SKU、ND 排除、低於現有 Safety 的「減少」、ND 建議清理、提示欄、SUMMARY ④、端到端 warning）
+- 15 列合成資料實測：SKU `100001` 8 間 RF 店分配 849／566／453／340／283／226／170／113＝3,000（ND 店不參與）；SKU `100003` 指定 200 → 91／67／42＝200 並正確顯示「減少」；未指定的 SKU `100002` 數值完全不變
+- 預覽檔：`Target Safety 分配預覽_20261124.xlsx`
+
+### 已知限制
+
+- 此類 Safety 屬臨時性質，陳列期完結後需自行調回；否則下一次 Review 會計出「需減少」（本期未做有效期與還原清單，經確認暫不需要）
+
+## v1.109.11 (2026-11-24)
+
+Buyer 為 `123 - Cara Tsoi` 且 `RP Type`＝`ND` 的 SKU，`SCT建議` 不再自動建議轉 RF，改為標示「需由Buyer決定」並以淺黃底標示。該 Buyer 旗下貨品有機會屬受限制 SKU（例如只限澳門出售），須由 Buyer 拍板。
+
+### 規則
+
+- `Buyer`＝`123 - Cara Tsoi`（比對忽略大小寫、前後空白與「-」兩側空白）且 `RP Type`＝`ND`（忽略大小寫）→ `SCT建議` 寫入「需由Buyer決定」，不套用 16／4 情況表
+- 兩個模式（店舖精簡SKU模式、指定店舖變體）同時生效；`Item Status`＝`Discontinued` 仍然優先留空
+- `Export` 該格填淺黃底 `#FFF2CC`；`Summary` 的 `SCT建議`、`SCT建議 × Item Status`、`SCT建議 × RP Type` 三個區塊會自動多出「需由Buyer決定」欄／列，同樣以淺黃底標示
+- 說明頁：第一節、第二節註解、第三節（改成「SCT建議 的值與留空」，數值改由實際欄位統計）、第五節顏色表、第七節注意事項均加註此規則
+
+### 實作
+
+- `modes/shop_simplify.py`：新增 `_SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER／_VALUE／_FILL`、`_shop_simplify_buyer_nd_mask()`、`_shop_simplify_sct_mark_buyer_nd()`；兩個 transform 在情況表之後、停售品留空之前套用；warning 加註標示列數
+- 移除說明頁已無用的 `case_rows` 收集（第三節改由 `sct_series` 直接統計）
+
+### 驗證
+
+- `py -m pytest tests` → 1839 passed、4 skipped（新增 2 項：兩個模式的值與顏色、Buyer 比對容錯）
+- 5 列實測：Cara Tsoi＋ND→「需由Buyer決定」（`FFF2CC`）、Cara Tsoi＋RF→首選RF、其他 Buyer＋ND→首選RF、Cara Tsoi＋ND＋Discontinued→留空；`Summary` 區塊 首選RF `[2]`、需由Buyer決定 `[2]`、總計 4
+
 ## v1.109.10 (2026-11-24)
 
 說明頁的時間改用香港時間（HKT）。此前頁尾以 `datetime.now()` 取伺服器所在時區，部署在雲端（UTC）時會比香港慢 8 小時；同一原因亦令 HKT 凌晨執行的金額視窗退回一日。

@@ -11,6 +11,7 @@ from transformer import (
     transform_oos, generate_excel_oos,
     transform_carry, generate_excel_carry,
     transform_combined, generate_excel_combined,
+    _SSR_TARGET_BASIS_LABEL, _SSR_TARGET_FILE_CURRENT_COLUMN, _ssr_read_target_file,
     transform_nd, generate_excel_nd,
     transform_stock_impact, generate_excel_stock_impact,
     _build_sku_monthly_analysis_simplified, generate_excel_stock_impact_simplified,
@@ -1041,6 +1042,155 @@ if uploaded_file is not None:
             "Tourist": int(_ss_sd_tourist), "Mix": int(_ss_sd_mix), "Non Tourist": int(_ss_sd_nt),
         }
 
+        with st.expander("🎯 指定總量分配（Target Safety，選用）", expanded=False):
+            st.caption(
+                "公司強制大幅加減 Safety 時（例如配合大堆頭陳列、推廣期），可指定某 SKU 的**全線 Safety 合計**，"
+                "由系統分配到每間 RF 店。**只對清單內的 SKU 生效**，其餘 SKU 一律按上方「Safety 計算基準」計算。\n\n"
+                f"分配基準：{_SSR_TARGET_BASIS_LABEL}；以最大餘數法取整，"
+                "分配總和恆等於指定值。RP Type＝ND 的店舖不參與（Safety 必須為 0）。"
+                "分配值會直接取代該 SKU 的建議值，不受 Overstock Cap／OOS Floor 限制，"
+                "亦不受「只可增加」限制（否則指定值永遠達不到）；逐店落差寫入 RAW 的「Target 分配提示」。"
+            )
+
+            st.markdown("**方法一：上載 Target 清單（每隻 SKU 一列）**")
+            _ss_target_file = st.file_uploader(
+                "📄 上載 Target 清單（.xlsx／.csv）",
+                type=["xlsx", "csv"],
+                key="ss_target_file",
+                help=(
+                    "欄位：Brand、SKU、SKU Desc、Vendor MC、Buyer、現時Safety、我想輸入的Safety Qty。"
+                    "只有 SKU 與「我想輸入的Safety Qty」為必要；數量填該 SKU 的全線合計（不是每店）。"
+                    "「現時Safety」只作核對，不參與計算。系統會自動辨認欄名（空白、全半形、括號寫法不拘）。"
+                ),
+            )
+            _ss_target_file_df = None
+            _ss_target_file_src = ""
+            if _ss_target_file is not None:
+                try:
+                    _ss_target_file_df, _ss_tf_warnings = _ssr_read_target_file(
+                        _ss_target_file.getvalue(), _ss_target_file.name
+                    )
+                except Exception as _ss_tf_err:
+                    st.error(f"❌ Target 清單讀取失敗：{_ss_tf_err}")
+                    _ss_target_file_df = None
+                else:
+                    for _w in _ss_tf_warnings:
+                        st.warning(_w)
+                    _ss_tf_total = int(_ss_target_file_df["Target Safety (全線合計)"].sum())
+                    st.caption(
+                        f"已讀取 **{len(_ss_target_file_df):,} 隻 SKU**，目標合計 **{_ss_tf_total:,} 件**；"
+                        f"識別欄位：{'、'.join(str(c) for c in _ss_target_file_df.columns)}。"
+                    )
+                    st.dataframe(_ss_target_file_df.head(20), hide_index=True, width="stretch")
+                    if len(_ss_target_file_df) > 20:
+                        st.caption(f"（只預覽前 20 列，實際讀取 {len(_ss_target_file_df):,} 列）")
+
+                    # 核對：清單的 SKU 是否都在本次資料內、現時Safety 是否與本次資料一致
+                    try:
+                        # 逐 SKU 的現時 Safety 合計只與來源檔有關，按上傳檔快取，
+                        # 避免每次互動重算（80 萬行全表 groupby）。
+                        _cur_key = f"{st.session_state.get('last_uploaded_key')}|{len(df_input)}"
+                        if st.session_state.get("ss_target_cur_key") != _cur_key:
+                            _sku_txt = (
+                                df_input["SKU"].astype(str).str.strip()
+                                .str.replace(r"\.0$", "", regex=True)
+                            )
+                            _totals = _safe_numeric(df_input["Adj. Safety Stock"]).groupby(_sku_txt).sum()
+                            st.session_state["ss_target_cur_key"] = _cur_key
+                            st.session_state["ss_target_cur_totals"] = _totals.to_dict()
+                            st.session_state["ss_target_cur_skus"] = set(_totals.index)
+                        _cur_totals = st.session_state.get("ss_target_cur_totals") or {}
+                        _cur_skus = st.session_state.get("ss_target_cur_skus") or set()
+
+                        _ss_file_skus = list(_ss_target_file_df["SKU"].astype(str))
+                        _ss_miss = sorted({s for s in _ss_file_skus if s not in _cur_skus})
+                        st.caption(
+                            f"SKU 核對：**{len(_ss_file_skus) - len(_ss_miss)}／{len(_ss_file_skus)}** 隻在本次資料找到"
+                            + (f"；**{len(_ss_miss)} 隻找不到**（不會分配，見下）" if _ss_miss else "")
+                        )
+                        if _ss_miss:
+                            with st.expander(f"⚠️ {len(_ss_miss)} 隻 SKU 在本次資料找不到", expanded=False):
+                                st.write("、".join(_ss_miss[:100]) + ("…" if len(_ss_miss) > 100 else ""))
+                                st.caption("請核對 SKU 寫法；若該 SKU 全線為 ND 或已被 Shop Nature 篩選剔除，亦會找不到。")
+
+                        if _SSR_TARGET_FILE_CURRENT_COLUMN in _ss_target_file_df.columns:
+                            _cmp = _ss_target_file_df[["SKU", _SSR_TARGET_FILE_CURRENT_COLUMN]].copy()
+                            _cmp["本次資料合計"] = _cmp["SKU"].map(_cur_totals)
+                            _cmp["差異"] = _cmp[_SSR_TARGET_FILE_CURRENT_COLUMN] - _cmp["本次資料合計"]
+                            _diff = _cmp[_cmp["差異"].abs() >= 1]
+                            st.caption(
+                                f"現時Safety 核對：檔案合計 **{int(_ss_target_file_df[_SSR_TARGET_FILE_CURRENT_COLUMN].sum()):,} 件**、"
+                                f"本次資料合計 **{int(_cmp['本次資料合計'].sum()):,} 件**；"
+                                f"**{len(_diff)} 隻不同**"
+                                + ("（可能來自不同快照，建議先核對）" if len(_diff) else "（一致）")
+                            )
+                            if len(_diff):
+                                with st.expander(f"⚠️ {len(_diff)} 隻 SKU 的現時Safety 與本次資料不同", expanded=False):
+                                    _diff_sorted = _diff.reindex(
+                                        _diff["差異"].abs().sort_values(ascending=False).index
+                                    )
+                                    st.dataframe(_diff_sorted.head(50), hide_index=True, width="stretch")
+                                    if len(_diff) > 50:
+                                        st.caption(f"（只列差異最大的 50 隻，實際 {len(_diff)} 隻）")
+                    except Exception:
+                        pass
+                    _ss_target_file_src = "上載清單"
+
+            st.markdown("**方法二：直接填寫（少量 SKU 時用）**")
+            if _ss_target_file_df is not None:
+                st.caption("已上載清單，下表停用；如要改用表格填寫，請先移除上載檔案。")
+            _ss_target_seed = pd.DataFrame({
+                "SKU": ["", "", ""],
+                "Target Safety (全線合計)": [0, 0, 0],
+            })
+            _ss_target_df = st.data_editor(
+                _ss_target_seed,
+                hide_index=True,
+                num_rows="dynamic",
+                width="stretch",
+                key="ss_target_editor",
+                disabled=_ss_target_file_df is not None,
+                column_config={
+                    "SKU": st.column_config.TextColumn(
+                        "SKU",
+                        help="必須與來源檔的 SKU 一致（數字或文字皆可，系統會自動正規化）",
+                    ),
+                    "Target Safety (全線合計)": st.column_config.NumberColumn(
+                        "Target Safety (全線合計)",
+                        min_value=0, step=1, format="%d",
+                        help="該 SKU 在全線 RF 店的 Safety 合計件數（不是每店件數）；填 0 或留空即不啟用",
+                    ),
+                },
+            )
+        _ss_target_map = {}
+        if _ss_target_file_df is not None and len(_ss_target_file_df):
+            # 上載清單優先：整批套用，表格內容一律不理
+            _ss_target_map = {
+                str(_row["SKU"]): int(_row["Target Safety (全線合計)"])
+                for _, _row in _ss_target_file_df.iterrows()
+            }
+        elif _ss_target_df is not None and len(_ss_target_df):
+            for _, _trow in _ss_target_df.iterrows():
+                _tk = _trow.get("SKU", "")
+                _tv = _trow.get("Target Safety (全線合計)")
+                if _tk is None or pd.isna(_tk):
+                    continue
+                _tk = str(_tk).strip()
+                if not _tk or _tv is None or pd.isna(_tv):
+                    continue
+                try:
+                    _tv = int(float(_tv))
+                except (TypeError, ValueError):
+                    continue
+                if _tv > 0:
+                    _ss_target_map[_tk] = _tv
+            _ss_target_file_src = "表格填寫"
+        if _ss_target_map:
+            st.caption(
+                f"已指定 **{len(_ss_target_map)} 隻 SKU**（{_ss_target_file_src}），"
+                f"合計 **{sum(_ss_target_map.values()):,} 件**；其餘 SKU 按上方基準計算。"
+            )
+
         _ss_dim_label = st.radio(
             "🗂️ 分類維度",
             options=list(_DIMENSION_OPTIONS),
@@ -1087,6 +1237,7 @@ if uploaded_file is not None:
                     sales_overstock_min_units=_ss_sales_minu,
                     safety_basis=_ss_safety_basis,
                     safety_days=_ss_safety_days,
+                    target_safety=_ss_target_map or None,
                 )
                 buf = generate_excel_combined(
                     summary_df, raw_df, categories, progress_callback=_cb_excel,
@@ -1095,6 +1246,8 @@ if uploaded_file is not None:
                         "safety_mode": safety_mode_value,
                         "safety_basis": _ss_safety_basis,
                         "safety_days": _ss_safety_days,
+                        "target_safety": dict(_ss_target_map),
+                        "target_safety_source": _ss_target_file_src,
                         "rates_overstock": rates_overstock,
                         "rates_oos": rates_oos,
                         "mtd_date": str(mtd_date),

@@ -83,6 +83,10 @@ from transformer import (
     _SHOP_SIMPLIFY_SCT_SHOP_CASES,
     _SHOP_SIMPLIFY_SCT_SHOP_DEFAULT,
     _SHOP_SIMPLIFY_SCT_SKIP_STATUS,
+    _SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER,
+    _SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE,
+    _SHOP_SIMPLIFY_SCT_BUYER_ND_FILL,
+    _shop_simplify_buyer_nd_mask,
     _SHOP_SIMPLIFY_SCT_BLANK_LABEL,
     _SHOP_SIMPLIFY_SCT_FILLS,
     _shop_simplify_sct_shop_case_text,
@@ -1331,6 +1335,70 @@ def test_sct_leaves_discontinued_rows_blank_in_both_modes():
     summary = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Summary"]
     _, first, total = _summary_block(summary, "計數 - SKU：SCT建議")
     assert total[-1] == 1
+
+
+def test_sct_buyer_cara_tsoi_nd_marked_for_buyer_decision():
+    """Buyer＝123 - Cara Tsoi 且 RP Type＝ND 的列不套用情況表，改標示「需由Buyer決定」；
+    同一 Buyer 的 RF 貨品、其他 Buyer 的 ND 貨品照常套用；Discontinued 仍然優先留空。
+    兩個模式都生效，Export 該格填淺黃底，Summary 多一行／一欄同名分類。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Buyer": _SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER,
+         "RP Type": "ND", "Item Status": "Active", "Adj. MCH1": "01 - SKIN CARE",
+         "Sold Qty (P90D)": 400,
+         "Net Sales (M-2)": 18000.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": "B", "Site Code": "HA21", "Buyer": _SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER,
+         "RP Type": "RF", "Item Status": "Active", "Adj. MCH1": "01 - SKIN CARE",
+         "Sold Qty (P90D)": 300,
+         "Net Sales (M-2)": 12000.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": "C", "Site Code": "HA21", "Buyer": "127 - Grace Wong",
+         "RP Type": "ND", "Item Status": "Active", "Adj. MCH1": "01 - SKIN CARE",
+         "Sold Qty (P90D)": 200,
+         "Net Sales (M-2)": 6000.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": "D", "Site Code": "HA21", "Buyer": _SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER,
+         "RP Type": "ND", "Item Status": "Discontinued", "Adj. MCH1": "01 - SKIN CARE",
+         "Sold Qty (P90D)": 100,
+         "Net Sales (M-2)": 3000.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+    ]
+    rules = _SHOP_SIMPLIFY_SCT_PRESETS[_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET]
+    raw, warns = transform_shop_simplify_site(
+        _df(rows), "HA21", data_date=date(2026, 11, 12), sct_rules=rules
+    )
+    sct = dict(zip(raw["SKU"], raw[_SHOP_SIMPLIFY_SCT_COLUMN]))
+    assert sct["A"] == _SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE
+    assert sct["B"] == _SHOP_SIMPLIFY_SCT_PREFERRED
+    assert sct["C"] == _SHOP_SIMPLIFY_SCT_PREFERRED
+    assert sct["D"] == ""                       # 停售品優先留空
+    assert any(_SHOP_SIMPLIFY_SCT_BUYER_ND_BUYER in w and "1 列" in w for w in warns)
+
+    raw2, _ = transform_shop_simplify(
+        _df(rows), data_date=date(2026, 11, 12), sct_rules=_SHOP_SIMPLIFY_SCT_SHOP_DEFAULT
+    )
+    sct2 = dict(zip(raw2["SKU"], raw2[_SHOP_SIMPLIFY_SCT_COLUMN]))
+    assert sct2["A"] == _SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE
+    assert sct2["D"] == ""
+
+    wb = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))
+    ws = wb["Export"]
+    cols = {c.value: i + 1 for i, c in enumerate(ws[1])}
+    assert ws.cell(row=2, column=cols[_SHOP_SIMPLIFY_SCT_COLUMN]).fill.start_color.rgb[-6:] == _SHOP_SIMPLIFY_SCT_BUYER_ND_FILL
+    assert ws.cell(row=3, column=cols[_SHOP_SIMPLIFY_SCT_COLUMN]).fill.fill_type is None
+
+    header, _, total = _summary_block(wb["Summary"], "計數 - SKU：SCT建議")
+    assert _SHOP_SIMPLIFY_SCT_BUYER_ND_VALUE in header
+    assert total[-1] == 3                        # 首選RF 2＋需由Buyer決定 1（停售品不計）
+
+
+def test_buyer_nd_mask_tolerates_spacing_and_case():
+    """Buyer 比對忽略大小寫、前後空白與「-」兩側空白；RP Type 只認 ND。"""
+    df = pd.DataFrame([
+        {"Buyer": "123 - Cara Tsoi", "RP Type": "ND"},
+        {"Buyer": "  123-Cara Tsoi ", "RP Type": "nd"},
+        {"Buyer": "123 - Cara Tsoi", "RP Type": "RF"},
+        {"Buyer": "127 - Grace Wong", "RP Type": "ND"},
+        {"Buyer": None, "RP Type": "ND"},
+    ])
+    assert _shop_simplify_buyer_nd_mask(df).tolist() == [True, True, False, False, False]
+    assert _shop_simplify_buyer_nd_mask(pd.DataFrame({"Buyer": ["123 - Cara Tsoi"]})).tolist() == [False]
 
 
 def test_summary_adds_sct_by_status_and_rp_type_blocks():
