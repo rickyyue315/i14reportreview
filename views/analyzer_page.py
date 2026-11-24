@@ -83,6 +83,11 @@ from transformer import (
     _shop_simplify_site_top80_column, _shop_simplify_nature_top_column,
     _shop_simplify_value_site_top_column, _shop_simplify_value_nature_top_column,
     _shop_simplify_net_sales_window,
+    _SHOP_SIMPLIFY_SCT_PRESETS, _SHOP_SIMPLIFY_SCT_CASES, _SHOP_SIMPLIFY_SCT_OPTIONS,
+    _SHOP_SIMPLIFY_SCT_DEFAULT_PRESET,
+    _SHOP_SIMPLIFY_SCT_PREFERRED, _SHOP_SIMPLIFY_SCT_SECONDARY,
+    _SHOP_SIMPLIFY_SCT_RF,
+    _shop_simplify_sct_case_text, _shop_simplify_sct_case_compare,
 )
 import time
 import traceback
@@ -3005,6 +3010,7 @@ if uploaded_file is not None:
         _shopslimsite_ratio = 0.8
         _shopslimsite_data_date = None
         _shopslimsite_window = None
+        _shopslimsite_sct_rules = None
         if mode == _SHOP_SIMPLIFY_SITE_MODE:
             st.markdown("#### 🏪 指定店舖（Top 比例與判定）")
             _SHOPSLIM_RATIO_OPTIONS = {"Top 80%（預設）": 0.8, "Top 70%": 0.7}
@@ -3074,6 +3080,82 @@ if uploaded_file is not None:
                 "Shop Nature 由來源檔該店的值決定（不設 Nature 篩選）；"
                 f"每個 {_shopslimsite_group} 分類內累計首次達該分類 {_slim_pct}% 即屬 Top {_slim_pct}%（同一銷量／金額整組納入或排除）。"
             )
+
+            with st.expander("📝 SCT建議（依四個 Top 判定自動填寫）", expanded=False):
+                st.caption(
+                    "四個判定各只有「是／否」，兩欄對比由判定自動合成，所以全部情況＝2×2×2×2＝**16 種**。"
+                    "為每個情況指定 **首選RF**／**次選RF**／**建議RF**／留空，匯出時自動寫入 `SCT建議`；"
+                    "留空的情況維持空白，由 SCT 自行判斷（例如 ND）。"
+                )
+                _shopslimsite_sct_on = st.checkbox(
+                    "依 Top 判定自動填寫 SCT建議",
+                    value=False,
+                    key="shopslimsite_sct_on",
+                    help="未勾選時 SCT建議 一律留空（原本行為）。勾選後可按內建方案或自訂 16 種情況逐格指定。",
+                )
+                if _shopslimsite_sct_on:
+                    _sct_source = st.radio(
+                        "規則來源",
+                        options=list(_SHOP_SIMPLIFY_SCT_PRESETS) + ["自訂 16 種情況"],
+                        index=0,
+                        key="shopslimsite_sct_source",
+                        help="內建方案即 16 種情況的現成組合；選「自訂」可逐格修改，"
+                             "修改後即時用於下一次匯出。",
+                    )
+                    if _sct_source == "自訂 16 種情況":
+                        _sct_default = _SHOP_SIMPLIFY_SCT_PRESETS[_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET]
+                        _sct_rows = []
+                        for _i, _case in enumerate(_SHOP_SIMPLIFY_SCT_CASES, start=1):
+                            _qty_cmp, _val_cmp = _shop_simplify_sct_case_compare(_case)
+                            _sct_rows.append({
+                                "編號": _i,
+                                "情況": _case,
+                                "件數－店舖": "是" if _case[0] == "Y" else "否",
+                                "件數－同Nature": "是" if _case[1] == "Y" else "否",
+                                "件數對比": _qty_cmp,
+                                "金額－店舖": "是" if _case[2] == "Y" else "否",
+                                "金額－同Nature": "是" if _case[3] == "Y" else "否",
+                                "金額對比": _val_cmp,
+                                "說明": _shop_simplify_sct_case_text(_case),
+                                "SCT建議": _sct_default.get(_case, ""),
+                            })
+                        _sct_editor = st.data_editor(
+                            pd.DataFrame(_sct_rows),
+                            hide_index=True,
+                            height=430,
+                            width="stretch",
+                            key="shopslimsite_sct_editor",
+                            disabled=[c for c in ("編號", "情況", "件數－店舖", "件數－同Nature", "件數對比",
+                                                  "金額－店舖", "金額－同Nature", "金額對比", "說明")],
+                            column_config={
+                                "SCT建議": st.column_config.SelectboxColumn(
+                                    "SCT建議",
+                                    options=list(_SHOP_SIMPLIFY_SCT_OPTIONS),
+                                    required=False,
+                                    help="留空＝不自動填寫，由 SCT 自行判斷",
+                                ),
+                            },
+                        )
+                        _shopslimsite_sct_rules = {
+                            str(_row["情況"]): str(_row["SCT建議"] or "").strip()
+                            for _, _row in _sct_editor.iterrows()
+                        }
+                    else:
+                        _shopslimsite_sct_rules = dict(_SHOP_SIMPLIFY_SCT_PRESETS[_sct_source])
+                    _counts = {
+                        label: sum(1 for v in _shopslimsite_sct_rules.values() if v == label)
+                        for label in (
+                            _SHOP_SIMPLIFY_SCT_PREFERRED, _SHOP_SIMPLIFY_SCT_SECONDARY,
+                            _SHOP_SIMPLIFY_SCT_RF,
+                        )
+                    }
+                    _blank = 16 - sum(_counts.values())
+                    st.caption(
+                        f"目前設定：**首選RF {_counts[_SHOP_SIMPLIFY_SCT_PREFERRED]} 種情況**、"
+                        f"**次選RF {_counts[_SHOP_SIMPLIFY_SCT_SECONDARY]} 種**、"
+                        f"**建議RF {_counts[_SHOP_SIMPLIFY_SCT_RF]} 種**，其餘 {_blank} 種留空（由 SCT 判斷）。"
+                        "匯出後 Summary 會多一個「計數 - SKU：SCT建議」區塊，可直接核對分佈。"
+                    )
 
         SHOP_NATURE_OPTIONS = ["Tourist", "Mix", "Non Tourist"]
         if mode in ("Stock Checking", "Forecast Review", _SHOP_SIMPLIFY_SITE_MODE):
@@ -3584,6 +3666,7 @@ if uploaded_file is not None:
                         top_ratio=_shopslimsite_ratio,
                         data_date=_shopslimsite_data_date,
                         group_by=_shopslimsite_group,
+                        sct_rules=_shopslimsite_sct_rules,
                     )
                     buf = generate_excel_shop_simplify(raw_df, progress_callback=_cb_excel, site_view=True)
                     st.session_state.shopslimsite_processed = True

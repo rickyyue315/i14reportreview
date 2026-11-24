@@ -1,5 +1,110 @@
 # 版本記錄
 
+## v1.109.2 (2026-11-24)
+
+`SCT建議` 不再預設「建議ND」：**「無 Top」一律留空**，由 SCT 自行判斷。四級方案改名為**「三級建議」（並保持為預設）**——**兩者皆是 → 首選RF**、**僅同Nature → 次選RF**、**只有本店 Top → 建議RF**、**四項皆非 → 留空**。可選值同時收窄為 `首選RF`／`次選RF`／`建議RF`／留空。
+
+### 變更
+
+- 移除值 `建議ND`（連同 `_SHOP_SIMPLIFY_SCT_REJECT` 常數）；`_SHOP_SIMPLIFY_SCT_OPTIONS` 改為 `""`／`首選RF`／`次選RF`／`建議RF`
+- 三級建議的 16 種情況分佈：首選RF **7 種**、次選RF **5 種**、建議RF **3 種**、留空 **1 種**（`NNNN`）
+- 其餘四個方案（件數優先／雙重把關／店舖優先／命中項數分級）不變；「自訂 16 種情況」的下拉同步只有三個值＋留空
+- 側欄摘要改為「首選RF X 種／次選RF Y 種／建議RF Z 種，其餘 N 種留空（由 SCT 判斷）」
+- `Summary` 的「計數 - SKU：SCT建議」只會出現三欄（首選RF／次選RF／建議RF），無值不留欄
+- 設定表重新產生：下拉改為 `首選RF,次選RF,建議RF`，方案說明更新為「無Top→留空」，移除紅色圖例
+
+### 驗證
+
+- 測試更新：三級 16 種情況逐格核對（`NNNN` → 空字串）、指定店舖填寫測試 D／E 期望改為留空、確認 `建議ND` 不在選項內
+- `py -m pytest tests` → 1827 passed、4 skipped
+- 10 列合成資料實測：`YYYY`→首選RF、`YNNN`→建議RF、`NYYY`→次選RF、`NNNN`→留空；`Summary` 標題為 列標籤／首選RF／次選RF／建議RF／總計
+
+## v1.109.1 (2026-11-24)
+
+`SCT建議` 的建議值由三個擴為**四級**（`首選RF`／`次選RF`／`建議RF`／`建議ND`），並新增**「四級建議」內建方案並設為預設**：件數與金額各判一次，取兩者之中較高的一級——**兩者皆是 → 首選RF**、**僅同Nature → 次選RF**、**只有本店 Top → 建議RF**、**四項皆非 → 建議ND**。
+
+### 四級建議（預設方案）
+
+- 判定次序：件數對比與金額對比各自屬「兩者皆是／僅同Nature／僅店舖／兩者皆非」，取較高的一級（兩者皆是 ＞ 僅同Nature ＞ 僅店舖 ＞ 兩者皆非）
+- 16 種情況的分佈：首選RF **7 種**、次選RF **5 種**、建議RF **3 種**、建議ND **1 種**
+- 混合情況以較高級為準：例如「件數＝兩者皆是、金額＝兩者皆非」→ 首選RF；「件數＝僅店舖、金額＝僅同Nature」→ 次選RF
+- 其餘四個方案（件數優先／雙重把關／店舖優先／命中項數分級）保留，可即場切換比較；「自訂 16 種情況」仍可逐格改
+
+### 值與顯示
+
+- `_SHOP_SIMPLIFY_SCT_OPTIONS` 改為 `""`／`首選RF`／`次選RF`／`建議RF`／`建議ND`（原「不建議RF」改為「建議ND」）
+- `Summary` 的「計數 - SKU：SCT建議」區塊按上述四個值分欄（只列有值的欄）
+- 側欄摘要顯示四級各佔幾種情況與留空數；`Export` 顯示／隱藏邏輯不變（有值才顯示）
+- `SCT建議_16種情況設定表_YYYYMMDD.xlsx` 重新產生：預設方案表增至 5 欄，建議RF 以橙色標示
+
+### 實作
+
+- `modes/shop_simplify.py`：新增 `_SHOP_SIMPLIFY_SCT_RF`、`_SHOP_SIMPLIFY_SCT_TIER_RANK`、`_SHOP_SIMPLIFY_SCT_TIER_LABELS`、`_shop_simplify_sct_tier_label()`；`_SHOP_SIMPLIFY_SCT_REJECT` 值改為「建議ND」；「四級建議」排於 `_SHOP_SIMPLIFY_SCT_PRESETS` 首位並成為 `_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET`
+- `views/analyzer_page.py`：側欄摘要改為四級計數（不再用選項索引）
+- `scripts/make_sct_suggestion_matrix.py`：方案說明加四級方案、建議RF 橙色、下拉加入建議RF／建議ND
+
+### 驗證
+
+- 新增 `test_sct_tier_preset_is_default_and_maps_four_levels()`（逐個核對 16 種情況的四級結果）；指定店舖填寫測試改按四級期望（A 首選RF／B、C 建議RF／D、E 建議ND）
+- `py -m pytest tests` → 1827 passed、4 skipped
+- 以 10 列合成資料實測：`YYYY`／`YNNN`／`NYYY`／`NNNN` 分別得 首選RF／建議RF／次選RF／建議ND，`Summary` 顯示四欄分佈
+
+## v1.109.0 (2026-11-24)
+
+「店舖精簡SKU模式(指定店舖)」新增**SCT建議初步設定**：側欄可依四個 Top N% 判定自動寫入 `SCT建議`。四個判定各只有「是／否」，兩個對比欄由判定自動合成，故全部情況＝2×2×2×2＝**16 種**；可即場用四個內建方案，或「自訂 16 種情況」逐格指定，讓 SCT 分配「甚麼情況下給首選RF」。
+
+### SCT建議設定
+
+- **情況鍵**：`件數－店舖`／`件數－同Shop Nature`／`金額－店舖`／`金額－同Shop Nature` 四個「是／否」組成 16 種（例如 `YNYY`＝只有本店件數不是 Top）
+- **可選值**：`首選RF`／`次選RF`／`不建議RF`／留空（留空＝不自動填寫，由 SCT 判斷）
+- **四個內建方案**
+  - 件數優先：任一件數 Top → 首選RF（12 種情況）
+  - 雙重把關：件數與金額都有 Top → 首選RF；只中一組 → 次選RF
+  - 店舖優先：店舖件數 Top → 首選RF；只有店舖金額 Top → 次選RF
+  - 命中項數分級：命中 4～3 項 → 首選RF；2 項 → 次選RF
+- **自訂 16 種情況**：`st.data_editor` 列出 16 列（四個判定、兩個對比、情況說明為唯讀），最後一欄下拉選建議；修改即用於下一次匯出
+- 未勾選時行為完全不變（`SCT建議` 一律留空），`Shop 回覆新的NDRF`／`如果RF的Safety Qty` 永遠留空
+
+### 輸出
+
+- `Export`：`SCT建議` 一經填寫便**由隱藏改為顯示**（原本在「預設顯示欄」檢視中隱藏）；未填寫時維持隱藏，其餘 30 欄檢視完全不變
+- `Summary`：多一個「計數 - SKU：SCT建議」區塊（Adj. MCH1 × 首選RF／次選RF／不建議RF，零值留空、底部總計），只在該欄有值時出現
+- 結果頁 warning 會列出已填寫的列數；規則沒有命中任何情況時提示檢查情況表
+
+### 實作
+
+- `modes/shop_simplify.py`：新增 `_SHOP_SIMPLIFY_SCT_PREFERRED／SECONDARY／REJECT`、`_SHOP_SIMPLIFY_SCT_OPTIONS`、`_SHOP_SIMPLIFY_SCT_CASES`（itertools.product 產生 16 個情況鍵）、`_SHOP_SIMPLIFY_SCT_PRESETS`（四個方案）、`_shop_simplify_sct_case_text()`、`_shop_simplify_sct_case_compare()`、`_shop_simplify_sct_series()`；`transform_shop_simplify_site(..., sct_rules=None)` 在判定欄完成後按情況填寫；`generate_excel_shop_simplify` 以「SCT建議 是否有值」決定是否顯示該欄；`_write_shop_simplify_summary` 加 2b 區塊
+- `views/analyzer_page.py`：指定店舖側欄新增「📝 SCT建議（依四個 Top 判定自動填寫）」展開區（開關、方案／自訂、16 列編輯器、目前設定摘要），只在此模式生效
+- `scripts/make_sct_suggestion_matrix.py`：產生 `SCT建議_16種情況設定表_YYYYMMDD.xlsx`（情況一覽＋下拉選單／四個方案逐格對照／方案說明與使用步驟），供離線逐格規劃
+- `views/usage_page.py`、`README.md`／`README.public.md` 同步說明
+
+### 驗證
+
+- 新增 5 項測試：16 個情況鍵與四個方案的完整性、情況文字與對比標籤、`_shop_simplify_sct_series` 逐列映射（含前後空白與未涵蓋情況）、指定店舖填寫＋`Export` 顯示＋另外兩個回覆欄仍留空、`Summary` 的 SCT建議 區塊（有值才出現）
+- `py -m pytest tests` → 1826 passed、4 skipped（4 項因資料夾無 `.xlsx` 實檔而自動跳過）
+- 現有行為不變：未傳 `sct_rules` 時 `SCT建議` 仍一律留空，`Summary` 區塊數與「預設顯示欄」30 欄檢視不受影響
+
+## v1.108.4 (2026-11-23)
+
+`Export` 的四個 Top N% 判定欄（`是否{店舖}的Top N%（件數）`、`是否同Shop Nature的Top N%（件數）`、同兩欄的（金額）版本）值為**「是」時以綠色底標示**，一眼掃出核心 SKU；「否」保持不著色。只加底色，欄名、欄序、數值與其他格式完全不變。
+
+### 底色
+
+- 綠色沿用報表既有的 `CCFF99`（與 `RP Type`／`Shop Stock Qty (CM)` 同一隻綠），不新增第三種綠色
+- 比對忽略前後空白與大小寫（`" 是 "`、`YES` 之外的雜值不命中）；空白不著色
+- 套用次序：綠色重點欄／紫色 Sold Qty → Top「是」綠色 → 對比欄（青綠／粉紅）→ 紅色底（Discontinued／ND／無存貨）。四類底色互不重疊（Top 欄不會同時是對比欄或紅色底欄），故不會互相覆蓋
+- 原模式（多店輸出）的 `是否該店的Top N%（件數／金額）` 同樣套用（同一判定函數）
+
+### 實作
+
+- `modes/shop_simplify.py`：`_shop_simplify_red_mask` 改名為 `_shop_simplify_cell_mask`（通用「值等於目標」比對，紅色底與綠色底共用）；`generate_excel_shop_simplify` 新增 `top_yes_rules`，逐欄預先算好「是」的遮罩，再在寫入迴圈套 `fill_green`
+
+### 驗證
+
+- `py -m pytest tests` → 1821 passed、4 skipped（4 項仍因資料夾無 `.xlsx` 實檔而略過）
+- 新增 1 項測試 `test_top_judgement_yes_cells_are_green`：四個判定欄「是」＝`CCFF99`、「否」無填色
+- 另產生 `Export 綠色標示預覽_20261123.xlsx`（8 列合成資料，涵蓋四欄「是／否」四種組合）供核對
+
 ## v1.108.3 (2026-11-23)
 
 `Summary` 在原本的「× Item Status」之後新增交叉區塊 **「計數 - SKU：Item Status × RP Type」**：每個 Item Status 再分 RF／ND（有 RF／ND 以外的值時另加「其他」），一眼看出「Active 之中幾多係 ND」、「Discontinued 之中幾多仍係 RF」這類組合。其餘區塊、`Export`、欄名與計算結果完全不變。

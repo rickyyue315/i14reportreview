@@ -17,7 +17,9 @@
 - 該店 件數 vs 該店 金額 Top N%：由上述兩個判定合成四象限——「兩者皆是」／
   「僅店舖件數」／「僅店舖金額」／「兩者皆非」，一眼看出同一間店的件數與金額
   是否同為核心（缺三個月 Net Sales 欄時整欄不加入）；
-- SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty：一律留空，供 SCT／店舖填寫。
+- SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty：一律留空，供 SCT／店舖填寫；
+  指定店舖變體可另傳 `sct_rules`（16 種 Top 判定情況 → 首選RF／次選RF／建議RF／留空）
+  自動填寫 SCT建議，其餘兩個回覆欄維持留空。
 
 N 可選 80%（預設）或 70%；金額欄名隨數據截止日自動標示實際覆蓋日數（如 P73D），
 緊接 Sold Qty (P90D) 之後。本模式不作調貨、Safety 或退倉建議，亦不篩選列
@@ -58,6 +60,7 @@ Shop Stock Status／SCT建議 等）一律隱藏，開啟檔案即為 SCT 回覆
 import calendar
 import datetime
 import gc
+import itertools
 import re
 from io import BytesIO
 
@@ -81,6 +84,20 @@ __all__ = [
     "_SHOP_SIMPLIFY_SOLD_COLUMN",
     "_SHOP_SIMPLIFY_STOCK_COLUMN",
     "_SHOP_SIMPLIFY_SCT_COLUMN",
+    "_SHOP_SIMPLIFY_SCT_PREFERRED",
+    "_SHOP_SIMPLIFY_SCT_SECONDARY",
+    "_SHOP_SIMPLIFY_SCT_RF",
+    "_SHOP_SIMPLIFY_SCT_TIER_RANK",
+    "_SHOP_SIMPLIFY_SCT_TIER_LABELS",
+    "_shop_simplify_sct_tier_label",
+    "_SHOP_SIMPLIFY_SCT_OPTIONS",
+    "_SHOP_SIMPLIFY_SCT_FLAG_LABELS",
+    "_SHOP_SIMPLIFY_SCT_CASES",
+    "_SHOP_SIMPLIFY_SCT_PRESETS",
+    "_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET",
+    "_shop_simplify_sct_case_text",
+    "_shop_simplify_sct_case_compare",
+    "_shop_simplify_sct_series",
     "_SHOP_SIMPLIFY_NDRF_COLUMN",
     "_SHOP_SIMPLIFY_SAFETY_COLUMN",
     "_SHOP_SIMPLIFY_REPLY_COLUMNS",
@@ -229,6 +246,141 @@ _SHOP_SIMPLIFY_NET_SALES_COLUMNS = ("Net Sales (M-2)", "Net Sales (M-1)", "Net S
 _SHOP_SIMPLIFY_SHOP_TOP80_COLUMN = _SHOP_SIMPLIFY_SHOP_TOP_TEMPLATE.format(pct=80) + _SHOP_SIMPLIFY_QTY_SUFFIX
 _SHOP_SIMPLIFY_SHOP_VALUE_TOP80_COLUMN = _SHOP_SIMPLIFY_SHOP_TOP_TEMPLATE.format(pct=80) + _SHOP_SIMPLIFY_VALUE_SUFFIX
 _SHOP_SIMPLIFY_SHOP_COMPARE80_COLUMN = _SHOP_SIMPLIFY_SHOP_COMPARE_TEMPLATE.format(pct=80)
+
+
+# ── SCT建議：依四個 Top N% 判定自動填寫（2026-11-24 初步設定）──
+# 四個判定各只有「是／否」，對比欄由兩個判定自動合成，故全部情況＝2×2×2×2＝16 種。
+# 每個情況可指定「首選RF」「次選RF」「建議RF」或留空（留空＝由 SCT 自行判斷，例如 ND）。
+_SHOP_SIMPLIFY_SCT_PREFERRED = "首選RF"
+_SHOP_SIMPLIFY_SCT_SECONDARY = "次選RF"
+_SHOP_SIMPLIFY_SCT_RF = "建議RF"
+_SHOP_SIMPLIFY_SCT_OPTIONS = (
+    "",
+    _SHOP_SIMPLIFY_SCT_PREFERRED,
+    _SHOP_SIMPLIFY_SCT_SECONDARY,
+    _SHOP_SIMPLIFY_SCT_RF,
+)
+# 情況鍵：四個字母依次為 件數－店舖／件數－同Shop Nature／金額－店舖／金額－同Shop Nature，
+# Y＝Top（是）、N＝非 Top（否）；例如 "YNYY"＝只有本店件數不是 Top。
+_SHOP_SIMPLIFY_SCT_FLAG_LABELS = (
+    "件數－店舖", "件數－同Shop Nature", "金額－店舖", "金額－同Shop Nature",
+)
+_SHOP_SIMPLIFY_SCT_CASES = tuple("".join(bits) for bits in itertools.product("YN", repeat=4))
+
+
+def _shop_simplify_sct_case_text(case: str) -> str:
+    """情況鍵 → 人看的說明，例如 "YNYY" →「只有本店件數 Top；金額兩邊都是 Top」。"""
+
+    def part(site: str, nature: str, unit: str) -> str:
+        if site == "Y" and nature == "Y":
+            return f"{unit}兩邊都是 Top"
+        if site == "Y":
+            return f"只有本店{unit} Top"
+        if nature == "Y":
+            return f"只有同Nature{unit} Top"
+        return f"{unit}兩邊都不是 Top"
+
+    return f"{part(case[0], case[1], '件數')}；{part(case[2], case[3], '金額')}"
+
+
+def _shop_simplify_sct_case_compare(case: str) -> tuple[str, str]:
+    """情況鍵 → (件數對比, 金額對比) 兩個對比標籤。"""
+
+    def label(site: str, nature: str) -> str:
+        if site == "Y" and nature == "Y":
+            return _SHOP_SIMPLIFY_COMPARE_BOTH
+        if site == "Y":
+            return _SHOP_SIMPLIFY_COMPARE_SHOP_ONLY
+        if nature == "Y":
+            return _SHOP_SIMPLIFY_COMPARE_NATURE_ONLY
+        return _SHOP_SIMPLIFY_COMPARE_NEITHER
+
+    return label(case[0], case[1]), label(case[2], case[3])
+
+
+def _shop_simplify_sct_preset(rule) -> dict[str, str]:
+    """把「情況鍵 → 建議」的函數展開為 16 個情況的完整字典。"""
+    return {case: rule(case) for case in _SHOP_SIMPLIFY_SCT_CASES}
+
+
+# 四級建議：件數與金額各自判定，取兩者之中「最好」的一級。
+# 兩者皆是（兩邊都 Top）＞僅同Nature＞僅店舖＞兩者皆非
+_SHOP_SIMPLIFY_SCT_TIER_RANK = {
+    _SHOP_SIMPLIFY_COMPARE_BOTH: 3,
+    _SHOP_SIMPLIFY_COMPARE_NATURE_ONLY: 2,
+    _SHOP_SIMPLIFY_COMPARE_SHOP_ONLY: 1,
+    _SHOP_SIMPLIFY_COMPARE_NEITHER: 0,
+}
+_SHOP_SIMPLIFY_SCT_TIER_LABELS = {
+    3: _SHOP_SIMPLIFY_SCT_PREFERRED,
+    2: _SHOP_SIMPLIFY_SCT_SECONDARY,
+    1: _SHOP_SIMPLIFY_SCT_RF,
+    0: "",
+}
+
+
+def _shop_simplify_sct_tier_label(case: str) -> str:
+    """四級建議：按（件數對比、金額對比）之中較高的一級給建議。"""
+    qty_label, value_label = _shop_simplify_sct_case_compare(case)
+    best = max(_SHOP_SIMPLIFY_SCT_TIER_RANK[qty_label], _SHOP_SIMPLIFY_SCT_TIER_RANK[value_label])
+    return _SHOP_SIMPLIFY_SCT_TIER_LABELS[best]
+
+
+# 內建方案（介面可選；亦可自訂 16 種情況逐格指定）
+_SHOP_SIMPLIFY_SCT_PRESETS = {
+    "三級建議（兩者皆是→首選／同Nature→次選／只有店舖→建議RF／無Top→留空）": _shop_simplify_sct_preset(
+        _shop_simplify_sct_tier_label
+    ),
+    "件數優先（任一件數 Top → 首選RF）": _shop_simplify_sct_preset(
+        lambda c: _SHOP_SIMPLIFY_SCT_PREFERRED if "Y" in c[:2] else ""
+    ),
+    "雙重把關（件數＋金額都有 Top → 首選RF，只中一組 → 次選RF）": _shop_simplify_sct_preset(
+        lambda c: (
+            _SHOP_SIMPLIFY_SCT_PREFERRED
+            if ("Y" in c[:2] and "Y" in c[2:])
+            else _SHOP_SIMPLIFY_SCT_SECONDARY
+            if ("Y" in c[:2] or "Y" in c[2:])
+            else ""
+        )
+    ),
+    "店舖優先（店舖件數 Top → 首選RF，只有店舖金額 Top → 次選RF）": _shop_simplify_sct_preset(
+        lambda c: (
+            _SHOP_SIMPLIFY_SCT_PREFERRED
+            if c[0] == "Y"
+            else _SHOP_SIMPLIFY_SCT_SECONDARY
+            if c[2] == "Y"
+            else ""
+        )
+    ),
+    "命中項數分級（4～3 項 → 首選RF，2 項 → 次選RF）": _shop_simplify_sct_preset(
+        lambda c: (
+            _SHOP_SIMPLIFY_SCT_PREFERRED
+            if c.count("Y") >= 3
+            else _SHOP_SIMPLIFY_SCT_SECONDARY
+            if c.count("Y") == 2
+            else ""
+        )
+    ),
+}
+_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET = "三級建議（兩者皆是→首選／同Nature→次選／只有店舖→建議RF／無Top→留空）"
+
+
+def _shop_simplify_sct_series(df: pd.DataFrame, rules, columns) -> pd.Series:
+    """按四個判定欄與規則（情況鍵 → 建議）產生 SCT建議；未涵蓋的情況留空。
+
+    `columns` 次序固定為（件數店舖、件數同Nature、金額店舖、金額同Nature）；
+    傳 None 或缺欄時該項一律視為非 Top（金額口徑不可用時即 "??NN"）。
+    """
+    mapping = {str(k).strip(): str(v or "").strip() for k, v in dict(rules).items()}
+    letters = []
+    for name in columns:
+        if name and name in df.columns:
+            flags = _shop_simplify_cell_mask(df[name], _SHOP_SIMPLIFY_TOP80_YES)
+        else:
+            flags = np.zeros(len(df), dtype=bool)
+        letters.append(pd.Series(np.where(flags, "Y", "N"), index=df.index))
+    keys = letters[0].str.cat(letters[1:], sep="")
+    return keys.map(mapping).fillna("").astype(object)
 
 
 # ── Excel 輸出格式（對齊店舖精簡回覆表範本）──
@@ -1248,6 +1400,7 @@ def transform_shop_simplify_site(
     include_net_sales: bool = True,
     data_date=None,
     group_by=None,
+    sct_rules=None,
 ):
     """指定店舖模式：只輸出該店舖（Site Code）的 SKU 列，並加兩組（件數／金額）Top N% 判定欄。
 
@@ -1266,6 +1419,9 @@ def transform_shop_simplify_site(
     `top_ratio` 為累計比例：0.8（預設）或 0.7；亦接受 70、"70%" 等寫法。欄名隨比例改變，
     故切換比例重跑不會留下舊欄。`data_date` 為數據截止日（T-1），未提供時用「今天減一日」；
     金額欄名會帶實際覆蓋日數（如 `Net Sales (P73D)`）。
+
+    `sct_rules` 為 SCT建議的情況表（情況鍵 → 首選RF／次選RF／建議RF／留空），
+    提供時按其填寫「SCT建議」欄，未提供則維持留空（原本行為）。
 
     其餘清理、Item_Shop 解析、刪除 Value 欄、三個回覆欄留空與排序規則完全沿用
     `transform_shop_simplify`（以 `include_shop_top80=False`、`include_net_sales=False` 關閉
@@ -1518,6 +1674,24 @@ def transform_shop_simplify_site(
             shop_value_flags, nature_value_flags, nature_available
         )
 
+    # SCT建議：按四個判定欄與使用者指定的情況表自動填寫（未指定時維持留空）
+    if sct_rules:
+        _sct_columns = [site_top_column, nature_column, value_site_column, value_nature_column]
+        if not net_available:
+            # 金額口徑不可用時，金額兩項一律視為非 Top（情況鍵尾兩碼為 N）
+            _sct_columns = _sct_columns[:2] + [None, None]
+        shop_df[_SHOP_SIMPLIFY_SCT_COLUMN] = _shop_simplify_sct_series(shop_df, sct_rules, _sct_columns)
+        _sct_labels = shop_df[_SHOP_SIMPLIFY_SCT_COLUMN].replace("", np.nan).dropna()
+        if len(_sct_labels):
+            warnings.append(
+                f"已按 SCT建議規則填寫「{_SHOP_SIMPLIFY_SCT_COLUMN}」欄，"
+                f"共 {len(_sct_labels):,} 列（可按實際情況在 Excel 內修改）。"
+            )
+        else:
+            warnings.append(
+                "SCT建議規則沒有任何情況命中，該欄維持空白；請檢查情況表是否有指定建議。"
+            )
+
     # 判定欄緊接「過去90日有無存貨」（件數在前、金額在後），三個回覆欄維持最後；
     # 每個口徑依次為：店舖 Top、同 Nature Top、兩者對比；Net Sales (PxxD) 緊接 Sold Qty (P90D)
     cols = list(shop_df.columns)
@@ -1561,10 +1735,14 @@ def _shop_simplify_cell(value):
     return value
 
 
-def _shop_simplify_red_mask(series: pd.Series, target: str) -> np.ndarray:
-    """逐列判定是否套紅色底（去除前後空白、忽略大小寫；空白／缺值不命中）。"""
+def _shop_simplify_cell_mask(series: pd.Series, target: str) -> np.ndarray:
+    """逐列判定值是否等於目標值（去除前後空白、忽略大小寫；空白／缺值不命中）。
+
+    紅色底（Item Status＝Discontinued／RP Type＝ND／無存貨）與 Top N% 判定欄的
+    綠色底（＝「是」）共用同一比對規則。
+    """
     text = series.fillna("").astype(str).str.strip().str.lower()
-    return text.eq(target).to_numpy(dtype=bool)
+    return text.eq(str(target).strip().lower()).to_numpy(dtype=bool)
 
 
 def _shop_simplify_summary_levels(series: pd.Series) -> pd.Series:
@@ -1666,6 +1844,7 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
     1. × Item Status（原有版面，固定於 A3／A4）；
     1b. Item Status × RP Type（每個狀態再分 RF／ND，另有其他值時加「其他」）；
     2. × RP Type（RF／ND／其他）；
+    2b. × SCT建議（僅在該欄有值時輸出：首選RF／次選RF／建議RF）；
     3. × 四個 Top N% 判定欄（店舖件數／同Nature件數／店舖金額／同Nature金額，
        欄名取實際輸出欄，故 Top 70%／80% 與店舖代號自動跟隨）；
     4. RF／ND × 每個 Top N% 判定欄的四象限（店舖件數／同Nature件數／店舖金額／同Nature金額
@@ -1775,6 +1954,25 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
         )
         max_col = max(max_col, 2 + len(labels))
 
+    # ── 區塊 2b：× SCT建議（僅在該欄有值時輸出，方便核對自動建議的分佈）──
+    if _SHOP_SIMPLIFY_SCT_COLUMN in df.columns:
+        sct = df[_SHOP_SIMPLIFY_SCT_COLUMN].fillna("").astype(str).str.strip()
+        if bool((sct != "").any()):
+            known = [v for v in _SHOP_SIMPLIFY_SCT_OPTIONS if v]
+            labels = [v for v in known if bool(sct.eq(v).any())]
+            labels += sorted({v for v in sct.unique() if v and v not in known})
+            masks = [(label, sct.eq(label)) for label in labels]
+            counts = _shop_simplify_summary_counts(levels, masks, valid)
+            blocks_end, _ = _shop_simplify_summary_block(
+                ws,
+                f"計數 - SKU：{_SHOP_SIMPLIFY_SCT_COLUMN}",
+                blocks_end + 3,
+                row_order,
+                labels,
+                counts,
+            )
+            max_col = max(max_col, 2 + len(labels))
+
     # ── 區塊 3：× 四個 Top N% 判定欄 ──
     top_columns = _shop_simplify_summary_top_columns(df)
     for name in top_columns:
@@ -1850,6 +2048,11 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
 
     df = raw if raw is not None else pd.DataFrame()
     headers = list(df.columns)
+    # SCT建議 有任何值（自動規則命中）時保持顯示；全空則沿用「預設顯示欄」檢視把該欄隱藏
+    sct_filled = (
+        _SHOP_SIMPLIFY_SCT_COLUMN in df.columns
+        and bool((df[_SHOP_SIMPLIFY_SCT_COLUMN].fillna("").astype(str).str.strip() != "").any())
+    )
     ws.append([_shop_simplify_cell(c) for c in headers])
 
     total = len(df)
@@ -1910,20 +2113,31 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
             ws.column_dimensions[letter].width = width
         if name in _SHOP_SIMPLIFY_HIDDEN_COLUMNS:
             ws.column_dimensions[letter].hidden = True
-        elif site_view and not _is_shop_simplify_site_visible_column(name):
+        elif site_view and not (
+            _is_shop_simplify_site_visible_column(name)
+            or (sct_filled and name == _SHOP_SIMPLIFY_SCT_COLUMN)
+        ):
             # 指定店舖變體：不在預設顯示清單內的欄（Shop Name、OM、三個月庫存／銷量明細、
-            # Shop Stock Status、SCT建議 等）一律隱藏，需要時在 Excel 內取消隱藏即可
+            # Shop Stock Status 等）一律隱藏，需要時在 Excel 內取消隱藏即可；
+            # 例外：SCT建議 一經填寫（自動規則命中）便保持顯示，方便對照
             ws.column_dimensions[letter].hidden = True
 
-    # 資料格：綠色重點欄、紫色 Sold Qty (P90D)、「無賣」淡紅標示、
+    # 資料格：綠色重點欄、紫色 Sold Qty (P90D)、「無賣」淡紅標示、Top 判定欄「是」綠色底、
     # 以及紅色底重點（Item Status＝Discontinued／RP Type＝ND／過去90日有無存貨＝無存貨）
     green_cols = [i for i, name in enumerate(headers, start=1) if name in _SHOP_SIMPLIFY_GREEN_DATA_COLUMNS]
     purple_cols = [i for i, name in enumerate(headers, start=1) if name in _SHOP_SIMPLIFY_PURPLE_COLUMNS]
     sold_col_idx = headers.index(_SHOP_SIMPLIFY_SOLD_COLUMN) + 1 if _SHOP_SIMPLIFY_SOLD_COLUMN in headers else None
     red_rules = [
-        (headers.index(name) + 1, _shop_simplify_red_mask(df[name], target))
+        (headers.index(name) + 1, _shop_simplify_cell_mask(df[name], target))
         for name, target in _SHOP_SIMPLIFY_RED_RULES
         if name in headers and name in df.columns
+    ]
+    # Top N% 判定欄（是否{店舖}的Top N%／是否同Shop Nature的Top N%，件數與金額）：
+    # 值為「是」時以綠色底標示，方便一眼掃出核心 SKU；「否」不著色
+    top_yes_rules = [
+        (headers.index(name) + 1, _shop_simplify_cell_mask(df[name], _SHOP_SIMPLIFY_TOP80_YES))
+        for name in headers
+        if _is_shop_simplify_top80_column(name) and name in df.columns
     ]
     # 對比欄：兩者皆是＝青綠底、兩者皆非＝粉紅底，其餘（僅店舖／僅同Nature）不著色
     compare_rules = []
@@ -1956,6 +2170,9 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
             sold_cell = ws.cell(row=row_idx, column=sold_col_idx)
             if sold_cell.value == _SHOP_SIMPLIFY_SOLD_NO:
                 sold_cell.fill = fill_pink
+        for col_idx, mask in top_yes_rules:
+            if mask[row_idx - 2]:
+                ws.cell(row=row_idx, column=col_idx).fill = fill_green
         for col_idx, both_mask, neither_mask in compare_rules:
             if both_mask[row_idx - 2]:
                 ws.cell(row=row_idx, column=col_idx).fill = fill_compare_both

@@ -68,6 +68,15 @@ from transformer import (
     _SHOP_SIMPLIFY_COMPARE_NEITHER,
     _SHOP_SIMPLIFY_COMPARE_BOTH_FILL,
     _SHOP_SIMPLIFY_COMPARE_NEITHER_FILL,
+    _SHOP_SIMPLIFY_SCT_PRESETS,
+    _SHOP_SIMPLIFY_SCT_CASES,
+    _SHOP_SIMPLIFY_SCT_DEFAULT_PRESET,
+    _SHOP_SIMPLIFY_SCT_OPTIONS,
+    _SHOP_SIMPLIFY_SCT_PREFERRED,
+    _SHOP_SIMPLIFY_SCT_SECONDARY,
+    _shop_simplify_sct_series,
+    _shop_simplify_sct_case_text,
+    _shop_simplify_sct_case_compare,
 )
 
 BASE = {
@@ -1053,6 +1062,153 @@ def test_site_mode_excel_headers_widths_and_summary():
     assert round(ws.column_dimensions[get_column_letter(headers.index(_shop_simplify_compare_column("HA21")) + 1)].width, 2) == 26.0
     assert ws.freeze_panes == f"{get_column_letter(headers.index('SKU Desc') + 2)}2"
     assert wb.sheetnames == ["Summary", "Export"]
+
+
+def test_top_judgement_yes_cells_are_green():
+    """四個 Top 判定欄（店舖／同Nature × 件數／金額）值為「是」時綠色底，「否」不著色；
+    比對忽略前後空白與大小寫。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Sold Qty (P90D)": 100,
+         "Net Sales (M-2)": 100, "Net Sales (M-1)": 0, "Net Sales (CM - MTD)": 0},
+        {"SKU": "B", "Site Code": "HA21", "Sold Qty (P90D)": 1,
+         "Net Sales (M-2)": 1, "Net Sales (M-1)": 0, "Net Sales (CM - MTD)": 0},
+    ]
+    raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12))
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Export"]
+    col = {name: i + 1 for i, name in enumerate([c.value for c in ws[1]])}
+
+    def rgb(row, name):
+        return str(ws.cell(row=row, column=col[name]).fill.start_color.rgb)[-6:]
+
+    for name in (
+        "是否HA21的Top 80%（件數）",
+        "是否同Shop Nature的Top 80%（件數）",
+        "是否HA21的Top 80%（金額）",
+        "是否同Shop Nature的Top 80%（金額）",
+    ):
+        assert ws.cell(row=2, column=col[name]).value == _SHOP_SIMPLIFY_TOP80_YES
+        assert rgb(2, name) == "CCFF99"          # 「是」→ 綠色底
+        assert ws.cell(row=3, column=col[name]).value == _SHOP_SIMPLIFY_TOP80_NO
+        assert ws.cell(row=3, column=col[name]).fill.fill_type is None   # 「否」不著色
+
+
+def test_sct_presets_cover_all_sixteen_cases():
+    """所有內建方案都覆蓋 16 種情況，值只可以是選項之一；
+    情況鍵為（件數店舖、件數同Nature、金額店舖、金額同Nature），共 16 個且不重複。"""
+    assert len(_SHOP_SIMPLIFY_SCT_CASES) == 16
+    assert len(set(_SHOP_SIMPLIFY_SCT_CASES)) == 16
+    for name, rules in _SHOP_SIMPLIFY_SCT_PRESETS.items():
+        assert set(rules) == set(_SHOP_SIMPLIFY_SCT_CASES), name
+        assert all(v in _SHOP_SIMPLIFY_SCT_OPTIONS for v in rules.values()), name
+        assert any(v == _SHOP_SIMPLIFY_SCT_PREFERRED for v in rules.values()), name
+    # 件數優先：任一件數 Top 即首選RF（12 種）
+    qty_rules = _SHOP_SIMPLIFY_SCT_PRESETS["件數優先（任一件數 Top → 首選RF）"]
+    assert qty_rules["YYYY"] == "首選RF"
+    assert qty_rules["YNNN"] == "首選RF"
+    assert qty_rules["NNYY"] == ""      # 只有金額 Top、件數全非 Top → 留空
+    assert qty_rules["NNNN"] == ""
+
+
+def test_sct_tier_preset_is_default_and_maps_three_levels():
+    """預設「三級建議」：件數與金額各判一次，取較高的一級——
+    兩者皆是 → 首選RF；僅同Nature → 次選RF；僅店舖 → 建議RF；兩者皆非 → 留空（由 SCT 判斷）。"""
+    assert "三級建議" in _SHOP_SIMPLIFY_SCT_DEFAULT_PRESET
+    rules = _SHOP_SIMPLIFY_SCT_PRESETS[_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET]
+    expected = {
+        "YYYY": "首選RF", "YYYN": "首選RF", "YYNY": "首選RF", "YYNN": "首選RF",
+        "YNYY": "首選RF", "YNYN": "建議RF", "YNNY": "次選RF", "YNNN": "建議RF",
+        "NYYY": "首選RF", "NYYN": "次選RF", "NYNY": "次選RF", "NYNN": "次選RF",
+        "NNYY": "首選RF", "NNYN": "建議RF", "NNNY": "次選RF", "NNNN": "",
+    }
+    assert rules == expected
+    assert "建議ND" not in _SHOP_SIMPLIFY_SCT_OPTIONS
+
+
+def test_sct_case_text_and_compare_labels():
+    """情況鍵可轉為人看的說明與兩個對比標籤（與 Export 的對比欄一致）。"""
+    assert _shop_simplify_sct_case_text("YYYY") == "件數兩邊都是 Top；金額兩邊都是 Top"
+    assert _shop_simplify_sct_case_text("YNNN") == "只有本店件數 Top；金額兩邊都不是 Top"
+    assert _shop_simplify_sct_case_compare("YNYY") == (_SHOP_SIMPLIFY_COMPARE_SHOP_ONLY, _SHOP_SIMPLIFY_COMPARE_BOTH)
+    assert _shop_simplify_sct_case_compare("NNNN") == (_SHOP_SIMPLIFY_COMPARE_NEITHER, _SHOP_SIMPLIFY_COMPARE_NEITHER)
+
+
+def test_sct_series_maps_cases_and_ignores_unknown():
+    """逐列按四個判定欄組出情況鍵；「是」容許前後空白，規則未涵蓋的情況留空。"""
+    frame = pd.DataFrame({
+        "q_site": ["是" if c[0] == "Y" else "否" for c in _SHOP_SIMPLIFY_SCT_CASES],
+        "q_nature": ["是" if c[1] == "Y" else "否" for c in _SHOP_SIMPLIFY_SCT_CASES],
+        "v_site": ["是" if c[2] == "Y" else "否" for c in _SHOP_SIMPLIFY_SCT_CASES],
+        "v_nature": ["是" if c[3] == "Y" else "否" for c in _SHOP_SIMPLIFY_SCT_CASES],
+    })
+    rules = {case: f"建議-{case}" for case in _SHOP_SIMPLIFY_SCT_CASES}
+    out = _shop_simplify_sct_series(frame, rules, ["q_site", "q_nature", "v_site", "v_nature"])
+    assert list(out) == [f"建議-{case}" for case in _SHOP_SIMPLIFY_SCT_CASES]
+
+    frame.loc[0, "q_site"] = " 是 "
+    out2 = _shop_simplify_sct_series(frame.iloc[[0]], {"YYYY": _SHOP_SIMPLIFY_SCT_PREFERRED}, ["q_site", "q_nature", "v_site", "v_nature"])
+    assert list(out2) == [_SHOP_SIMPLIFY_SCT_PREFERRED]
+
+    out3 = _shop_simplify_sct_series(frame, {"YYYY": _SHOP_SIMPLIFY_SCT_PREFERRED}, ["q_site", "q_nature", "v_site", "v_nature"])
+    assert out3.iloc[0] == _SHOP_SIMPLIFY_SCT_PREFERRED
+    assert (out3.iloc[1:] == "").all()
+
+
+def test_site_mode_sct_rules_fill_column_and_show_it():
+    """指定店舖模式提供 sct_rules 時按情況填入 SCT建議；匯出時該欄保持顯示（不再隱藏）。"""
+    rows = _site_rows_with_net()
+    raw, warns = transform_shop_simplify_site(
+        _df(rows), "HA21", data_date=date(2026, 11, 12),
+        sct_rules=_SHOP_SIMPLIFY_SCT_PRESETS[_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET],
+    )
+    sct = dict(zip(raw["SKU"], raw[_SHOP_SIMPLIFY_SCT_COLUMN]))
+    # 件數 Top＝A、B、C（B／C 同銷量 10，整組納入）、金額 Top＝A → 預設四級建議：
+    # A＝兩者皆是（首選RF）；B／C＝僅店舖（建議RF）；D／E＝兩者皆非（留空，由 SCT 判斷）
+    assert sct["A"] == _SHOP_SIMPLIFY_SCT_PREFERRED
+    assert sct["B"] == "建議RF"
+    assert sct["C"] == "建議RF"
+    assert sct["D"] == "" and sct["E"] == ""
+    assert any("SCT建議" in w for w in warns)
+
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Export"]
+    headers = [c.value for c in ws[1]]
+    from openpyxl.utils import get_column_letter
+    assert not ws.column_dimensions[get_column_letter(headers.index(_SHOP_SIMPLIFY_SCT_COLUMN) + 1)].hidden
+    # 其餘兩個回覆欄仍然留空
+    ndrf_idx = headers.index(_SHOP_SIMPLIFY_NDRF_COLUMN) + 1
+    assert all(
+        (ws.cell(row=r, column=ndrf_idx).value in (None, ""))
+        for r in range(2, ws.max_row + 1)
+    )
+
+
+def test_summary_adds_sct_block_when_filled():
+    """SCT建議 有值時 Summary 多一個分佈區塊；沒有值時不加（維持原有區塊數）。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Shop Nature": "Non Tourist",
+         "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active", "RP Type": "RF",
+         "Sold Qty (P90D)": 100, "Net Sales (M-2)": 1000.0,
+         "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": "B", "Site Code": "HA21", "Shop Nature": "Non Tourist",
+         "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active", "RP Type": "RF",
+         "Sold Qty (P90D)": 1, "Net Sales (M-2)": 1.0,
+         "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+    ]
+    rules = {"YYYY": _SHOP_SIMPLIFY_SCT_PREFERRED}
+    raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12), sct_rules=rules)
+    summary = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Summary"]
+    header, first, total = _summary_block(summary, "計數 - SKU：SCT建議")
+    assert header == ["列標籤", "首選RF", "總計"]
+    assert first == ["01 - SKIN CARE", 1, 1]
+    assert total == ["總計", 1, 1]
+
+    raw_blank, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12))
+    summary_blank = load_workbook(BytesIO(generate_excel_shop_simplify(raw_blank, site_view=True).getvalue()))["Summary"]
+    titles = [
+        summary_blank.cell(row=i, column=1).value for i in range(1, summary_blank.max_row + 1)
+        if isinstance(summary_blank.cell(row=i, column=1).value, str)
+        and summary_blank.cell(row=i, column=1).value.startswith("計數 - SKU")
+    ]
+    assert all("SCT建議" not in str(x) for x in titles)
 
 
 def test_site_mode_default_view_hides_non_essential_columns():
