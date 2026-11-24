@@ -1,5 +1,43 @@
 # 版本記錄
 
+## v1.110.3 (2026-11-24)
+
+`Summary` 在每個計數區塊之後新增同名「佔比 - SKU：…」區塊，直接看分佈百分比，毋須自行用計數換算。
+
+### 規則
+
+- 每個計數區塊緊接一個佔比區塊：欄名、列次序、顏色標註與版面完全相同，數值改為百分比（格式 `0.0%`）
+- 分母＝該區塊總計（該區塊全部列 × 全部欄的 SKU 數），故總計列各欄為該欄佔比、右下角恆為 `100.0%`
+- 零值照舊留空（不顯示 `0.0%`），與計數區塊一致；計數區塊本身完全不變
+- 套用全部區塊：`Item Status`、`Item Status × RP Type`、`RP Type`、`SCT建議` 三個、四個 Top N% 判定、四個四象限
+
+### 實作
+
+- `_shop_simplify_summary_block()` 新增 `as_percent=False`：同一版面按 `count / grand` 寫入並設 `number_format = "0.0%"`（`grand` 先由 counts 計出，故總計列可正確顯示各欄佔比）
+- `_write_shop_simplify_summary()` 新增內部 `block_pair()`，一次寫計數與佔比兩個區塊；SCT 交叉區塊以 `rows=sct_row_order` 保留「列＝各建議值」的次序
+- 說明頁第六節加註佔比區塊的版面、分母與格式；README×2、`views/usage_page.py` 三處說明同步
+
+### 驗證
+
+- 4 列實測（3 Active／1 Discontinued）：`佔比 - SKU` 為 `75.0%`／`25.0%`、總計列 `75.0%`／`25.0%`／`100.0%`，全部 `0.0%` 格式；計數區塊維持 `3／1／4`
+- `py -m pytest tests` → 1875 passed、4 skipped（新增 1 項：佔比區塊版面、數值、格式與每個計數區塊均有對應佔比版本）
+
+## v1.110.2 (2026-11-24)
+
+修正填寫表把來源檔尾部雜列當成 SKU：使用者忘記刪除 Column A 的 `Total` 合計列與 `Applied filters: …` 註腳列時，`SKU` 為空白的列經 `astype(str)` 變成字串 `nan`，被當成一個叫「nan」的 SKU 寫入下表（截圖可見 SKU=`nan`、SKU Desc=`Applied filters: Brand is GBS`、現時Safety Qty=0）。
+
+### 修正
+
+- `modes/safety_review.py`：新增 `_SSR_TARGET_SKIP_LABELS`／`_SSR_TARGET_SKIP_NOTE_KEYWORD`／`_ssr_junk_row_mask()`——以原 series 的 `isna()`（不再靠 `astype(str)`）判斷空白，並涵蓋 `nan／None／<NA>／Total／Grand Total／Subtotal／總計／合計／小計` 與含 `Applied filters` 的文字
+- `_build_combined_target_template()`：改為 `_ssr_junk_row_mask(SKU) | _footer_row_mask(df)`。後者為全系統原有準則（檢查 Buyer／Item_Shop／Column A），且不會誤刪「Total Care 洗髮水」這類品名；另在組合後再檢查 Brand／SKU Desc／Buyer／Vendor MC 是否含 `Applied filters`，作第二重保險
+- 略過的列數寫入 `DataFrame.attrs["dropped_rows"]`，介面顯示「已略過 N 列空白／Total 合計／Applied filters 註腳列」
+- `_ssr_read_target_file()`：同樣改用 `_ssr_junk_row_mask()`，上載的清單尾部有 Total／註腳列亦不會產生「目標數量空白」的假 warning
+
+### 驗證
+
+- `py -m pytest tests` → 1874 passed、4 skipped（新增 2 項：範本略過 Total／Applied filters 列且保留「Total Care 洗髮水」；清單讀取略過註腳列）
+- 以截圖情境實測：3 列來源（Total／正常 SKU／Applied filters）→ 只餘 1 隻 SKU，現時Safety Qty 1,990，`dropped_rows=2`
+
 ## v1.110.1 (2026-11-24)
 
 指定總量分配的「方法二」改為**自動帶入來源檔的 SKU**：此前是一張空白表，要使用者自己抄 SKU、再自己查現時 Safety。現在上傳 By SKUxShop 檔後，表格直接列出每個 SKU 的 Brand／SKU／SKU Desc／Vendor MC／Buyer／現時Safety Qty，只留最後一欄「Target Safety (全線合計)」可編輯。

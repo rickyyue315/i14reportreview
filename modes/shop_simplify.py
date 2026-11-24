@@ -1998,11 +1998,14 @@ def _shop_simplify_summary_block(
     column_labels: list[str], counts: dict[tuple[str, str], int],
     row_fills: dict[str, str] | None = None,
     column_fills: dict[str, str] | None = None,
+    as_percent: bool = False,
 ) -> tuple[int, int]:
     """寫一個「列標籤 × 欄標籤」的 SKU 計數區塊（零值留空、底部總計列）。
 
     `row_fills`／`column_fills` 為選填的底色（hex，按列標籤／欄標籤），
     用於 SCT建議 分類的顏色標註；沒有對應顏色的標籤保持原狀。
+    `as_percent=True` 時版面不變，但數值改為佔該區塊總計的百分比（格式 `0.0%`），
+    總計列的每一欄為該欄佔比、右下角為 100.0%。
     回傳 (最後一列列號, 用到的最大欄號)。
     """
     ws.cell(row=start_row, column=1, value=title)
@@ -2020,6 +2023,18 @@ def _shop_simplify_summary_block(
     ws.cell(row=header, column=total_col, value="總計").alignment = header_align
     ws.row_dimensions[header].height = 30
 
+    grand = sum(
+        counts.get((level, label), 0) for level in row_levels for label in column_labels
+    )
+
+    def write(r: int, c: int, value: int) -> None:
+        cell = ws.cell(row=r, column=c)
+        if as_percent:
+            cell.value = value / grand if grand else 0
+            cell.number_format = "0.0%"
+        else:
+            cell.value = value
+
     column_totals = dict.fromkeys(column_labels, 0)
     last = header
     for i, level in enumerate(row_levels, start=header + 1):
@@ -2033,21 +2048,20 @@ def _shop_simplify_summary_block(
         for j, label in enumerate(column_labels, start=2):
             count = counts.get((level, label), 0)
             if count:
-                ws.cell(row=i, column=j, value=count)
+                write(i, j, count)
             row_total += count
             column_totals[label] += count
         if row_total:
-            ws.cell(row=i, column=total_col, value=row_total)
+            write(i, total_col, row_total)
         last = i
 
     total_row = last + 1
     ws.cell(row=total_row, column=1, value="總計")
     for j, label in enumerate(column_labels, start=2):
         if column_totals[label]:
-            ws.cell(row=total_row, column=j, value=column_totals[label])
-    grand = sum(column_totals.values())
+            write(total_row, j, column_totals[label])
     if grand:
-        ws.cell(row=total_row, column=total_col, value=grand)
+        write(total_row, total_col, grand)
     return total_row, total_col
 
 
@@ -2071,6 +2085,9 @@ def _shop_simplify_summary_top_columns(df: pd.DataFrame) -> list[str]:
 def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
     """Summary 工作表：以 Adj. MCH1 為列，逐個維度統計 SKU 列數。
 
+    每個計數區塊之後緊接同一區塊的「佔比」版本（標題 `佔比 - SKU：…`）：版面與欄名完全相同，
+    數值為佔該區塊總計的百分比（格式 0.0%，分母＝該區塊全部列與欄的總數），方便直接比較分佈。
+
     區塊次序：
     1. × Item Status（原有版面，固定於 A3／A4）；
     1b. Item Status × RP Type（每個狀態再分 RF／ND，另有其他值時加「其他」）；
@@ -2092,6 +2109,21 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
     levels = _shop_simplify_summary_levels(df[index_col])
     row_order = _shop_simplify_summary_row_order(levels)
     valid = df["SKU"].notna()
+
+    def block_pair(suffix, start, labels, counts, row_fills=None, column_fills=None, rows=None):
+        """先寫計數區塊，緊接同一區塊的「佔比」版本（版面相同，分母＝該區塊總計）。
+
+        `rows` 預設用 Adj. MCH1 的列次序；SCT建議 交叉區塊改傳 `sct_row_order`。
+        """
+        rows = row_order if rows is None else rows
+        end, last_col = _shop_simplify_summary_block(
+            ws, f"計數 - SKU：{suffix}", start, rows, labels, counts, row_fills, column_fills
+        )
+        end, last_col = _shop_simplify_summary_block(
+            ws, f"佔比 - SKU：{suffix}", end + 3, rows, labels, counts,
+            row_fills, column_fills, as_percent=True,
+        )
+        return end, last_col
 
     # ── 區塊 1：× Item Status（原有版面，測試與使用者習慣依賴 A3／A4 位置）──
     status_col = "Item Status" if "Item Status" in df.columns else None
@@ -2149,6 +2181,16 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
         blocks_end = 4 + len(table)
         max_col = total_col
 
+        # 同一區塊的佔比版本（分母＝區塊 1 的總計）
+        status_levels = _shop_simplify_summary_levels(df[status_col])
+        status_counts = _shop_simplify_summary_counts(
+            levels, [(label, status_levels.eq(label)) for label in status_labels], valid
+        )
+        blocks_end, _ = _shop_simplify_summary_block(
+            ws, "佔比 - SKU", blocks_end + 3, row_order, status_labels, status_counts,
+            as_percent=True,
+        )
+
     # ── 區塊 1b：Item Status × RP Type（每個狀態再分 RF／ND，另有其他值時加「其他」）──
     if status_labels and "RP Type" in df.columns:
         # RF／ND 比對忽略大小寫（與 Export 的紅色底判定一致，"nd" 亦計入 ND）
@@ -2166,8 +2208,8 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
                 labels.append(label)
                 masks.append((label, mask))
         counts = _shop_simplify_summary_counts(levels, masks, valid)
-        blocks_end, _ = _shop_simplify_summary_block(
-            ws, "計數 - SKU：Item Status × RP Type", blocks_end + 3, row_order, labels, counts
+        blocks_end, _ = block_pair(
+            "Item Status × RP Type", blocks_end + 3, labels, counts
         )
         max_col = max(max_col, 2 + len(labels))
 
@@ -2181,9 +2223,7 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
             labels.append("其他")
             masks.append(("其他", other))
         counts = _shop_simplify_summary_counts(levels, masks, valid)
-        blocks_end, _ = _shop_simplify_summary_block(
-            ws, "計數 - SKU：RP Type", blocks_end + 3, row_order, labels, counts
-        )
+        blocks_end, _ = block_pair("RP Type", blocks_end + 3, labels, counts)
         max_col = max(max_col, 2 + len(labels))
 
     # ── 區塊 2b–2d：SCT建議 分佈（僅在該欄有值時輸出，方便核對自動建議的分佈）──
@@ -2198,13 +2238,8 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
             # 2b：× SCT建議（列 = Adj. MCH1，欄 = 各建議值；欄名以顏色標註）
             masks = [(label, sct.eq(label)) for label in value_labels]
             counts = _shop_simplify_summary_counts(levels, masks, valid)
-            blocks_end, _ = _shop_simplify_summary_block(
-                ws,
-                f"計數 - SKU：{sct_column}",
-                blocks_end + 3,
-                row_order,
-                value_labels,
-                counts,
+            blocks_end, _ = block_pair(
+                sct_column, blocks_end + 3, value_labels, counts,
                 column_fills=_SHOP_SIMPLIFY_SCT_FILLS,
             )
             max_col = max(max_col, 2 + len(value_labels))
@@ -2219,14 +2254,9 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
                 status_levels = _shop_simplify_summary_levels(df[status_col])
                 masks = [(label, status_levels.eq(label)) for label in status_labels]
                 counts = _shop_simplify_summary_counts(sct_levels, masks, valid)
-                blocks_end, _ = _shop_simplify_summary_block(
-                    ws,
-                    f"計數 - SKU：{sct_column} × Item Status",
-                    blocks_end + 3,
-                    sct_row_order,
-                    status_labels,
-                    counts,
-                    row_fills=_SHOP_SIMPLIFY_SCT_FILLS,
+                blocks_end, _ = block_pair(
+                    f"{sct_column} × Item Status", blocks_end + 3, status_labels, counts,
+                    row_fills=_SHOP_SIMPLIFY_SCT_FILLS, rows=sct_row_order,
                 )
                 max_col = max(max_col, 2 + len(status_labels))
 
@@ -2239,14 +2269,9 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
                     rp_labels.append("其他")
                     rp_masks.append(("其他", rp_other))
                 counts = _shop_simplify_summary_counts(sct_levels, rp_masks, valid)
-                blocks_end, _ = _shop_simplify_summary_block(
-                    ws,
-                    f"計數 - SKU：{sct_column} × RP Type",
-                    blocks_end + 3,
-                    sct_row_order,
-                    rp_labels,
-                    counts,
-                    row_fills=_SHOP_SIMPLIFY_SCT_FILLS,
+                blocks_end, _ = block_pair(
+                    f"{sct_column} × RP Type", blocks_end + 3, rp_labels, counts,
+                    row_fills=_SHOP_SIMPLIFY_SCT_FILLS, rows=sct_row_order,
                 )
                 max_col = max(max_col, 2 + len(rp_labels))
 
@@ -2261,9 +2286,7 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
             labels.append("其他")
             masks.append(("其他", other))
         counts = _shop_simplify_summary_counts(levels, masks, valid)
-        blocks_end, _ = _shop_simplify_summary_block(
-            ws, f"計數 - SKU：{name}", blocks_end + 3, row_order, labels, counts
-        )
+        blocks_end, _ = block_pair(name, blocks_end + 3, labels, counts)
         max_col = max(max_col, 2 + len(labels))
 
     # ── 區塊 4：RF／ND × 各 Top 判定欄的四象限（件數與金額、店舖與同 Nature 各一個）──
@@ -2284,13 +2307,8 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
                 labels += ["其他 - Top", "其他 - 非Top"]
                 masks += [("其他 - Top", other & top), ("其他 - 非Top", other & ~top)]
             counts = _shop_simplify_summary_counts(levels, masks, valid)
-            blocks_end, _ = _shop_simplify_summary_block(
-                ws,
-                f"計數 - SKU：RF／ND × {name}（非Top 含「否」及未判定）",
-                blocks_end + 3,
-                row_order,
-                labels,
-                counts,
+            blocks_end, _ = block_pair(
+                f"RF／ND × {name}（非Top 含「否」及未判定）", blocks_end + 3, labels, counts
             )
             max_col = max(max_col, 2 + len(labels))
 
@@ -2602,7 +2620,9 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
     block_text = "；".join(f"（{i}）{text}" for i, text in enumerate(blocks, 1))
     row = paragraph(
         row,
-        f"Summary 以 Adj. MCH1 為列，逐個區塊統計 SKU 數；零值留空，每個區塊底部有「總計」列。區塊依次為：{block_text}。",
+        f"Summary 以 Adj. MCH1 為列，逐個區塊統計 SKU 數；零值留空，每個區塊底部有「總計」列。"
+        f"每個計數區塊之後緊接同一區塊的「佔比 - SKU：…」版本：欄名與版面相同，數值為佔該區塊"
+        f"總計的百分比（格式 0.0%，右下角為 100.0%），方便直接比較分佈。區塊依次為：{block_text}。",
     )
     row += 1
 

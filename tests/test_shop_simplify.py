@@ -1486,6 +1486,53 @@ def test_summary_adds_sct_by_status_and_rp_type_blocks():
     assert str(header_cell.fill.start_color.rgb)[-6:] == _SHOP_SIMPLIFY_SCT_FILLS[_SHOP_SIMPLIFY_SCT_PREFERRED]
 
 
+def test_summary_adds_percent_block_after_each_count_block():
+    """每個計數區塊之後緊接「佔比 - SKU：…」區塊：欄名與版面相同，數值為佔該區塊總計的
+    百分比（格式 0.0%），總計列各欄加起來為 100.0%；計數區塊本身不變。"""
+    rows = [
+        {"SKU": sku, "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE",
+         "Item Status": status, "RP Type": "RF", "Sold Qty (P90D)": qty,
+         "Net Sales (M-2)": 100.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0}
+        for sku, status, qty in (
+            ("A", "Active", 40), ("B", "Active", 30), ("C", "Active", 20),
+            ("D", "Discontinued", 10),
+        )
+    ]
+    raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12))
+    summary = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Summary"]
+
+    def find(title):
+        return next(
+            r for r in range(1, summary.max_row + 1)
+            if summary.cell(row=r, column=1).value == title
+        )
+
+    count_row = find("計數 - SKU")
+    pct_row = find("佔比 - SKU")
+    # 兩個區塊的欄名完全相同（列標籤、Active、Discontinued、總計）
+    assert [summary.cell(row=count_row + 1, column=c).value for c in range(1, 5)] == [
+        summary.cell(row=pct_row + 1, column=c).value for c in range(1, 5)
+    ]
+    # 計數區塊維持原值
+    assert [summary.cell(row=count_row + 2, column=c).value for c in range(1, 5)] == [
+        "01 - SKIN CARE", 3, 1, 4,
+    ]
+    # 佔比區塊：3/4、1/4，右下角 100.0%，全部以 0.0% 顯示
+    first = [summary.cell(row=pct_row + 2, column=c).value for c in range(1, 5)]
+    assert first[0] == "01 - SKIN CARE"
+    assert first[1] == pytest.approx(0.75) and first[2] == pytest.approx(0.25)
+    assert first[3] == pytest.approx(1.0)
+    assert all(
+        summary.cell(row=pct_row + 2, column=c).number_format == "0.0%" for c in range(2, 5)
+    )
+    total = [summary.cell(row=pct_row + 3, column=c).value for c in range(1, 5)]
+    assert total[0] == "總計" and total[1] == pytest.approx(0.75) and total[-1] == pytest.approx(1.0)
+
+    # 其他計數區塊亦各有一個佔比版本
+    for suffix in ("RP Type", "Item Status × RP Type"):
+        assert find(f"計數 - SKU：{suffix}") and find(f"佔比 - SKU：{suffix}")
+
+
 def test_guide_sheet_documents_sct_cases_and_colours():
     """「說明」為第一張工作表：列出本次輸出概況、16 種 SCT 情況（含本檔 SKU 數與實際
     寫入的 SCT建議）、三個值的分佈與顏色說明。"""

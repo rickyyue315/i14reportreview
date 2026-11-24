@@ -305,7 +305,7 @@ def test_read_target_file_csv_aliases_and_cleaning():
     assert df["SKU"].tolist() == ["1001", "1002"]
     assert df["Target Safety (全線合計)"].tolist() == [3000, 250]   # 千分位 + 重複取最後
     assert df["現時Safety"].tolist() == [800, 450]
-    assert any("合計列" in w for w in warnings)
+    assert any("合計（Total）" in w for w in warnings)
     assert any("重複" in w for w in warnings)
     assert any("≤ 0" in w for w in warnings)
 
@@ -437,3 +437,42 @@ def test_target_template_accepts_display_safety_column():
     ])
     out = _build_combined_target_template(df)
     assert out.iloc[0]["現時Safety Qty"] == 35
+
+
+def test_target_template_skips_total_and_applied_filters_rows():
+    """來源檔忘記刪 Column A 的 Total 列與 Applied filters 註腳列，不可變成「nan」SKU。"""
+    from modes.safety_review import _build_combined_target_template
+
+    df = pd.DataFrame([
+        {"Unnamed: 0": "Total", "SKU": None, "Brand": None, "Item_Shop": None,
+         "Adj. Safety Stock": None, "Site Code": None, "Buyer": None, "Vendor MC": None},
+        {"Unnamed: 0": None, "SKU": "107072300202", "Brand": "GBS - GOLDBOSS",
+         "Item_Shop": "(GBS) 107072302002-HONLUNG TONG Oi, V2, 40ML-新加坡專",
+         "Adj. Safety Stock": 1990, "Site Code": "SG01",
+         "Buyer": "123 - Cara Tsoi", "Vendor MC": None},
+        {"Unnamed: 0": None, "SKU": None, "Brand": None,
+         "Item_Shop": "Applied filters: Brand is GBS",
+         "Adj. Safety Stock": None, "Site Code": None, "Buyer": None, "Vendor MC": None},
+    ])
+    out = _build_combined_target_template(df)
+
+    assert len(out) == 1
+    assert out.iloc[0]["SKU"] == "107072300202"
+    assert out.iloc[0]["現時Safety Qty"] == 1990
+    assert out.iloc[0]["SKU Desc"] == "HONLUNG TONG Oi, V2, 40ML"
+    assert out.attrs["dropped_rows"] == 2
+    assert not out["SKU"].astype(str).str.lower().isin({"nan", "none"}).any()
+
+
+def test_read_target_file_skips_note_rows():
+    from modes.safety_review import _ssr_read_target_file
+
+    data = _target_csv([
+        ("BSK", "1001", "Hydra Serum", "VC1", "Cara", "800", "3,000"),
+        ("", "", "Applied filters: Brand is BSK", "", "", "", ""),
+        ("", "", "Total", "", "", "800", "3000"),
+    ])
+    df, warnings = _ssr_read_target_file(data, "target.csv")
+
+    assert df["SKU"].tolist() == ["1001"]
+    assert any("註腳" in w for w in warnings)

@@ -27,6 +27,7 @@ from modes.common import (
     _display_safety_header,
     _extract_shop_name,
     _extract_sku_desc,
+    _footer_row_mask,
     _iter_header_rows,
     _nature_rate_arr,
     _normalize_ref_date,
@@ -282,6 +283,26 @@ _SSR_TARGET_TEMPLATE_COLUMNS = (
     "Brand", "SKU", "SKU Desc", "Vendor MC", "Buyer",
     _SSR_TARGET_CURRENT_QTY_COLUMN, _SSR_TARGET_TOTAL_COLUMN,
 )
+# 來源檔常見的非資料列：PowerBI／Excel 貼出的「Total」合計列與「Applied filters: …」註腳列。
+# 使用者忘記刪除時不可讓它變成一個叫「nan」的 SKU（會被當成要分配的貨品）。
+_SSR_TARGET_SKIP_LABELS = ("total", "grand total", "subtotal", "總計", "合計", "小計")
+_SSR_TARGET_SKIP_NOTE_KEYWORD = "applied filters"
+
+
+def _ssr_junk_row_mask(series):
+    """判斷某欄是否屬「非資料列」：空白／NaN、Total 類合計標籤、或 Applied filters 註腳。
+
+    NaN 經 astype(str) 會變成「nan」字串，故必須以原 series 的 isna() 判斷，
+    否則整列空白會被當成一個 SKU。
+    """
+    text = series.astype(str).str.strip()
+    lower = text.str.lower()
+    return (
+        series.isna()
+        | text.eq("")
+        | lower.isin(("nan", "none", "<na>", "nat") + _SSR_TARGET_SKIP_LABELS)
+        | lower.str.contains(_SSR_TARGET_SKIP_NOTE_KEYWORD, regex=False, na=False)
+    )
 _SSR_TARGET_FILE_ALIASES = {
     "SKU": ("sku", "貨品編號", "貨號", "item code", "item"),
     "Brand": ("brand", "品牌"),
@@ -447,15 +468,10 @@ def _ssr_read_target_file(data, filename=""):
         raise ValueError("檔案沒有可讀的資料列。")
 
     warnings = []
-    _sku_text = best["SKU"].astype(str).str.strip()
-    _total_label = _sku_text.str.lower()
-    _skip_mask = (
-        _sku_text.eq("")
-        | _total_label.isin({"total", "grand total", "subtotal", "總計", "合計", "小計"})
-    )
+    _skip_mask = _ssr_junk_row_mask(best["SKU"])
     _dropped = int(_skip_mask.sum())
     if _dropped:
-        warnings.append(f"已略過 {_dropped} 列空白或合計列。")
+        warnings.append(f"已略過 {_dropped} 列空白、合計（Total）或 Applied filters 註腳列。")
     best = best[~_skip_mask].copy()
 
     def _num(series):
@@ -521,12 +537,17 @@ def _build_combined_target_template(df_input):
     - SKU 空白或無法辨識的列不納入；來源缺欄時對應欄留空
     """
     empty = pd.DataFrame(columns=list(_SSR_TARGET_TEMPLATE_COLUMNS))
+    empty.attrs["dropped_rows"] = 0
     if df_input is None or len(df_input) == 0 or "SKU" not in df_input.columns:
         return empty
 
-    sku_text = (
-        df_input["SKU"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-    )
+    sku_raw = df_input["SKU"]
+    sku_text = sku_raw.astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    # Total 合計列與 Applied filters 註腳列常被忘記刪除，一律不可當成 SKU。
+    # 先沿用全系統同一準則（`_footer_row_mask` 會看 Column A／Item_Shop／Buyer，
+    # 且不會誤刪「Total Care 洗髮水」這類品名），再補上 SKU 本身為空白／標籤的情況。
+    _junk = _ssr_junk_row_mask(sku_raw) | _footer_row_mask(df_input)
+    dropped_rows = int(_junk.sum())
     # 來源可能用顯示名「Safety Stock (現時)」，沿用全系統同一欄名解析
     _adj_col = _resolve_column_name(_ADJ_SAFETY_SOURCE_COL, set(df_input.columns))
     if _adj_col is not None:
@@ -534,7 +555,7 @@ def _build_combined_target_template(df_input):
     else:
         safety = _safe_default_series(0, df_input.index)
     work = pd.DataFrame({"_sku": sku_text, "_z": safety}, index=df_input.index)
-    work = work[work["_sku"].ne("")]
+    work = work[~_junk]
 
     for col in ("Brand", "Buyer", "Vendor MC"):
         if col in df_input.columns:
@@ -580,6 +601,24 @@ def _build_combined_target_template(df_input):
 
     out = out[list(_SSR_TARGET_TEMPLATE_COLUMNS)]
     out = out.sort_values(["Brand", "SKU"], kind="stable").reset_index(drop=True)
+
+    # 註腳文字若落在其他欄（例如 SKU 空白但 SKU Desc 寫「Applied filters: …」），一律剔走
+    _note_cols = [c for c in ("Brand", "SKU Desc", "Buyer", "Vendor MC") if c in out.columns]
+    if _note_cols and not out.empty:
+        _note = (
+            out[_note_cols].astype(str)
+            .apply(
+                lambda s: s.str.lower().str.contains(
+                    _SSR_TARGET_SKIP_NOTE_KEYWORD, regex=False, na=False
+                )
+            )
+            .any(axis=1)
+        )
+        if bool(_note.any()):
+            dropped_rows += int(_note.sum())
+            out = out[~_note].reset_index(drop=True)
+
+    out.attrs["dropped_rows"] = dropped_rows
     return out
 
 

@@ -111,7 +111,7 @@ MODES = [
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 三欄留空，供 SCT 與店舖填寫（SCT建議 可在側欄「SCT建議」啟用自動填寫）
 - 側欄「SCT建議」提供 4 情況表（件數 Top／金額 Top 各自是或否），預設兩者皆是→首選RF、只有件數→次選RF、只有金額→建議RF、兩者皆非→留空，自動填寫預設開啟
 - 側欄「SCT建議」提供 16 情況表逐格指定（首選RF／次選RF／建議RF／留空），預設帶入三級建議作起點，自動填寫預設開啟
-- 輸出：Summary（Adj. MCH1 為列，逐個維度統計 SKU 數：Item Status／Item Status × RP Type（每個狀態再分 RF／ND）／RP Type／四個 Top N% 判定欄／四個 RF-ND × Top N% 四象限）＋ Export（依 Brand／SKU 排序，套用範本欄寬、隱藏欄與顏色標示）
+- 輸出：Summary（Adj. MCH1 為列，逐個維度統計 SKU 數：Item Status／Item Status × RP Type（每個狀態再分 RF／ND）／RP Type／四個 Top N% 判定欄／四個 RF-ND × Top N% 四象限；每個區塊之後緊接同名「佔比 - SKU：…」版本，數值為佔該區塊總計的百分比）＋ Export（依 Brand／SKU 排序，套用範本欄寬、隱藏欄與顏色標示）
 - 匯出檔第一張工作表為「說明」，按本檔結果列出 SCT建議 4 情況表、三個值的分佈、Top N% 與顏色說明
      """,
      """
@@ -124,7 +124,7 @@ MODES = [
 7. **不篩選列** — 全店全 SKU 輸出，清理規則與其他模式一致（剔除合計列與 117 - Marketing）；Shop Nature 篩選為選填
 8. **SKU Desc／Shop Name** — 由 Item_Shop 以 Site Code 解析；SKU Desc 排於 Brand 之後、Shop Name 排於 Site Code 之後；Item_Shop 缺欄時兩欄留空並列 warning
 9. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄）一律刪除；大小寫敏感，Valuation Class 不會被刪除
-10. **排序與格式** — 依 Brand、SKU（文字）升序；Summary 以 Adj. MCH1 為列，第一個區塊為 × Item Status 的 SKU 列數，其後依次加 Item Status × RP Type（每個狀態再分 RF／ND，另有其他值時加「其他」）、× RP Type（RF／ND／其他，比對忽略大小寫）、SCT建議 有值時加 × SCT建議 與 SCT建議 × Item Status／RP Type 兩個交叉區塊（按建議值填色）、× 四個 Top N% 判定欄（店舖件數、同Nature件數、店舖金額、同Nature金額；70%／80% 與店舖代號自動跟隨）與四個 RF／ND × Top N% 四象限（店舖件數、同Nature件數、店舖金額、同Nature金額各一個，欄為 RF-Top／RF-非Top／ND-Top／ND-非Top；非Top 含「否」及未判定），零值留空、每區塊底部有總計；Export 凍結 F2、縮放 85%，套用範本欄寬、隱藏欄、數字格式與顏色（RP Type／Shop Stock Qty (CM) 綠色、Sold Qty (P90D) 紫色、四個 Top N% 判定欄值為「是」時綠色底（「否」不著色）、「無賣」列淡紅、Item Status＝Discontinued／RP Type＝ND／過去90日有無存貨＝無存貨 紅色底；對比欄兩者皆是青綠、兩者皆非粉紅）；Adj. SST 含「03 - Private Label」字眼時以醒目橙色底（#FFC000）標示
+10. **排序與格式** — 依 Brand、SKU（文字）升序；Summary 以 Adj. MCH1 為列，第一個區塊為 × Item Status 的 SKU 列數，其後依次加 Item Status × RP Type（每個狀態再分 RF／ND，另有其他值時加「其他」）、× RP Type（RF／ND／其他，比對忽略大小寫）、SCT建議 有值時加 × SCT建議 與 SCT建議 × Item Status／RP Type 兩個交叉區塊（按建議值填色）、× 四個 Top N% 判定欄（店舖件數、同Nature件數、店舖金額、同Nature金額；70%／80% 與店舖代號自動跟隨）與四個 RF／ND × Top N% 四象限（店舖件數、同Nature件數、店舖金額、同Nature金額各一個，欄為 RF-Top／RF-非Top／ND-Top／ND-非Top；非Top 含「否」及未判定），零值留空、每區塊底部有總計，每個計數區塊之後緊接同一區塊的「佔比 - SKU：…」版本（數值為佔該區塊總計的百分比 0.0%，合計 100.0%）；Export 凍結 F2、縮放 85%，套用範本欄寬、隱藏欄、數字格式與顏色（RP Type／Shop Stock Qty (CM) 綠色、Sold Qty (P90D) 紫色、四個 Top N% 判定欄值為「是」時綠色底（「否」不著色）、「無賣」列淡紅、Item Status＝Discontinued／RP Type＝ND／過去90日有無存貨＝無存貨 紅色底；對比欄兩者皆是青綠、兩者皆非粉紅）；Adj. SST 含「03 - Private Label」字眼時以醒目橙色底（#FFC000）標示
 11. **比例與視窗切換** — 欄名隨 Top 比例與數據截止日改變，重跑會自動移除舊判定欄與舊 `Net Sales (PxxD)`，不會兩套並存；已執行後在側欄改設定但未重算時，結果頁以結果檔欄名標示並提示重新執行
 12. **SCT建議自動填寫** — 側欄「SCT建議」提供 4 情況表（件數 Top／金額 Top 各自是或否），預設：兩者皆是→首選RF、只有件數 Top→次選RF、只有金額 Top→建議RF、兩者皆非→留空；逐格可改（首選RF／次選RF／建議RF／留空），自動填寫預設開啟，取消勾選則一律留空；填寫後 Summary 會多三個 SCT建議 區塊（× SCT建議、× Item Status、× RP Type，按建議值填色）；Item Status＝Discontinued 的 SKU 一律留空（不套用情況表），由 SCT 自行判斷；Buyer＝123 - Cara Tsoi 且 RP Type＝ND 的 SKU 改標示「需由Buyer決定」（淺黃底），不自動建議轉 RF（該 Buyer 的貨品有機會屬受限制 SKU，例如只限澳門出售）
 13. **說明工作表** — 匯出檔第一張工作表為「說明」：先列本次輸出概況（列數、店舖、Top 比例、金額視窗），再按本檔結果列出 SCT建議 4 情況表（含各情況 SKU 數與實際寫入的建議）、三個值的分佈、Top N% 與對比欄口徑、顏色對照（含 Adj. SST 的 Private Label 橙色）、Summary 區塊次序與回覆欄注意事項
@@ -140,7 +140,7 @@ MODES = [
 - 金額覆蓋日數＝MTD 日數＋M-1 全月＋M-2 全月（例：11 月 12 日 → 12＋31＋30＝73 日）
 - 「兩項皆非」即精簡候選；其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則同店舖精簡SKU模式
 - 匯出檔預設只顯示回覆表需要的 30 欄（識別、庫存、銷量、六欄 Top 判定與對比、回覆欄），其餘欄位（Shop Name／OM／三個月庫存與銷量明細／Shop Stock Status／SCT建議 等）預設隱藏，需要時可在 Excel 內取消隱藏
-- 輸出：Summary（Adj. MCH1 為列：Item Status／Item Status × RP Type（每個狀態再分 RF／ND）／RP Type／SCT建議（有值時）／四個 Top N% 判定欄／四個 RF-ND × Top N% 四象限）＋Export（Sold Qty 後加 Net Sales (PxxD)，存貨判定欄後加四欄判定＋兩欄對比，回覆欄維持最後）
+- 輸出：Summary（Adj. MCH1 為列：Item Status／Item Status × RP Type（每個狀態再分 RF／ND）／RP Type／SCT建議（有值時）／四個 Top N% 判定欄／四個 RF-ND × Top N% 四象限；每個區塊之後緊接同名「佔比 - SKU：…」版本，數值為佔該區塊總計的百分比 0.0%）＋Export（Sold Qty 後加 Net Sales (PxxD)，存貨判定欄後加四欄判定＋兩欄對比，回覆欄維持最後）
 - 匯出檔第一張工作表為「說明」，按本檔結果列出 SCT建議 16 情況表、三個值的分佈、Top N% 與顏色說明
      """,
      """
@@ -192,7 +192,7 @@ MODES = [
 9. 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因
 10. **SUMMARY 工作表** — 統計 Safety Qty Change 分類（增加 / 減少 / 不變）與 Recommendation of new Safety Qty / ND 分類（空白維持 / New SKU / 0 已是 ND / ND 系列加註）各行數與 SKU 數；總計列 SKU 數為全表不重複 SKU（同一 SKU 可跨分類）；另附 **③ Safety Qty Change 分類 × 分類維度交叉表**（各分組列數／SKU 數／Safety Qty Change 合計，含總計列；非標準 Shop Nature 值如 Other 不佔分組欄、只計入合計）；有指定總量分配時再加 **④ 逐 SKU 對帳**（Target 全線合計／已分配／差額／參與店舖數／超出庫存上限店數／低於缺貨底線店數，差額應為 0）
 11. **分類維度與銷量分類** — 分類維度七選一，只改 SUMMARY 區塊 ③ 的分組欄位（分組鍵與 Safety Stock x NetStock Review 同一準則；來源缺「OM」欄或全欄空白時 OM 兩個維度退回 Shop Nature；RAW 缺「銷量帶」欄時銷量兩個維度退回 Shop Nature 鍵）。RAW 恆附「銷量帶」與「銷量存貨分類」：銷量帶＝同 SKU 內按 Sold Qty (P90D) 排名分帶（前 25%＝高銷、最低 25%＝低銷、其餘＝中銷、P90D≤0＝零銷；有銷店舖少於 4 間時不區分高低）；銷量存貨分類＝高銷且店舖周轉日數（Shop Stock Qty (CM) ÷ 月銷 × 30.5，月銷缺欄時以 Sold Qty (P90D) ÷ 90 × 30.5 換算）低於缺貨線（預設 7 日）→「高銷缺貨」；低銷且周轉日數達積壓線（預設 30 日）且庫存達保底件數（預設 2 件）→「低銷積壓」；零銷且庫存達保底件數→「零銷積壓」；其餘→「正常」。來源缺「Sold Qty (P90D)」時不輸出銷量兩欄並列 warning；缺「Shop Stock Qty (CM)」時只輸出銷量帶並列 warning
-12. **指定總量分配（Target Safety，選用）** — 公司強制大幅加減 Safety 時（例如配合大堆頭陳列、推廣期），在側欄「🎯 指定總量分配」**上載 Target 清單**（.xlsx／.csv，欄位：Brand／SKU／SKU Desc／Vendor MC／Buyer／現時Safety／我想輸入的Safety Qty，只有 SKU 與數量為必要；每隻 SKU 一列，數量為**全線合計**而非每店件數），或在表格填寫（表格會自動帶入來源檔每個 SKU 的 Brand／SKU Desc／Vendor MC／Buyer／現時Safety Qty，只需填 Target）。表格除 SKU 與「Target Safety (全線合計)」外均為唯讀；「現時Safety Qty」是該 SKU 在本次資料全部店舖的 Safety 合計；SKU 超過 1,000 隻時會提示改用方法一，以免表格過大。上載後系統即時讀取並顯示：讀到幾隻 SKU、目標合計、哪些 SKU 在本次資料找不到、以及清單的「現時Safety」與本次資料全線合計的差異（只作核對，不參與計算），核對無誤再按「執行報表轉換與分析」。欄名會自動辨認（空白、全半形、括號寫法不拘）；Excel 會逐頁尋找同時有 SKU 與數量欄的工作表，故可另加說明頁。系統只覆寫被指定的 SKU，其餘 SKU 一律按上方計算基準計算，兩者可同時使用。分配權重 = 50% ×（該店 Sold Qty (P90D) ÷ 同 SKU 合計）＋ 50% ×（該店現有 Safety ÷ 同 SKU 合計），再按指定總量以**最大餘數法**分配整數件，分配總和恆等於指定值（某一半合計為 0 時該半不參與，兩半皆為 0 時退回均分）。RP Type＝ND 的店舖不參與（Safety 必須為 0）。分配值直接取代該 SKU 的建議值，**不受 Overstock Cap／OOS Floor 限制，亦不受「只可增加」限制**（否則指定值永遠達不到），逐店落差寫入 RAW 的「Target 分配提示」（超出庫存上限 X／低於缺貨底線 Y）。RAW 另附「Target Safety (全線合計)」與「Safety 分配佔比」兩欄。注意：此類 Safety 屬臨時性質，陳列期完結後需自行調回，否則下一次 Review 會計出「需減少」
+12. **指定總量分配（Target Safety，選用）** — 公司強制大幅加減 Safety 時（例如配合大堆頭陳列、推廣期），在側欄「🎯 指定總量分配」**上載 Target 清單**（.xlsx／.csv，欄位：Brand／SKU／SKU Desc／Vendor MC／Buyer／現時Safety／我想輸入的Safety Qty，只有 SKU 與數量為必要；每隻 SKU 一列，數量為**全線合計**而非每店件數），或在表格填寫（表格會自動帶入來源檔每個 SKU 的 Brand／SKU Desc／Vendor MC／Buyer／現時Safety Qty，只需填 Target）。表格除 SKU 與「Target Safety (全線合計)」外均為唯讀；「現時Safety Qty」是該 SKU 在本次資料全部店舖的 Safety 合計；SKU 超過 1,000 隻時會提示改用方法一，以免表格過大；來源檔尾部忘記刪除的 Total 合計列與「Applied filters: …」註腳列會自動略過（不會變成一個叫 nan 的 SKU），略過列數會顯示在表上方。上載後系統即時讀取並顯示：讀到幾隻 SKU、目標合計、哪些 SKU 在本次資料找不到、以及清單的「現時Safety」與本次資料全線合計的差異（只作核對，不參與計算），核對無誤再按「執行報表轉換與分析」。欄名會自動辨認（空白、全半形、括號寫法不拘）；Excel 會逐頁尋找同時有 SKU 與數量欄的工作表，故可另加說明頁。系統只覆寫被指定的 SKU，其餘 SKU 一律按上方計算基準計算，兩者可同時使用。分配權重 = 50% ×（該店 Sold Qty (P90D) ÷ 同 SKU 合計）＋ 50% ×（該店現有 Safety ÷ 同 SKU 合計），再按指定總量以**最大餘數法**分配整數件，分配總和恆等於指定值（某一半合計為 0 時該半不參與，兩半皆為 0 時退回均分）。RP Type＝ND 的店舖不參與（Safety 必須為 0）。分配值直接取代該 SKU 的建議值，**不受 Overstock Cap／OOS Floor 限制，亦不受「只可增加」限制**（否則指定值永遠達不到），逐店落差寫入 RAW 的「Target 分配提示」（超出庫存上限 X／低於缺貨底線 Y）。RAW 另附「Target Safety (全線合計)」與「Safety 分配佔比」兩欄。注意：此類 Safety 屬臨時性質，陳列期完結後需自行調回，否則下一次 Review 會計出「需減少」
      """,
      {"path": "assets/safety_logic_guide.png", "inline": True, "first": True,
       "caption": "🖼️ **Safety 計算邏輯圖**：Z＝Safety Stock (現時)（來源檔 Adj. Safety Stock）、X0＝Overstock Cap 上限、Y＝OOS Floor 底線。"

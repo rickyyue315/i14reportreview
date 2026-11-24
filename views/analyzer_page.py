@@ -1206,6 +1206,11 @@ if uploaded_file is not None:
                         f"已自動帶入 **{len(_ss_template):,} 隻 SKU**（Brand／SKU／SKU Desc／Vendor MC／Buyer／"
                         "現時Safety Qty）；只需在最後一欄填「Target Safety (全線合計)」。"
                     )
+                _ss_dropped = int((getattr(_ss_template, "attrs", {}) or {}).get("dropped_rows", 0) or 0)
+                if _ss_dropped:
+                    st.caption(
+                        f"已略過 **{_ss_dropped:,} 列**空白／Total 合計／Applied filters 註腳列（不納入填寫表）。"
+                    )
                 _ss_target_df = st.data_editor(
                     _ss_template,
                     hide_index=True,
