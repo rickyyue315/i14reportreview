@@ -1,4 +1,5 @@
 import ast
+import os
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -9,6 +10,7 @@ import pandas as pd
 from openpyxl import Workbook
 
 from views.analyzer_helpers import (
+    app_last_updated_hkt,
     build_hybrid_params,
     canonical_site_codes,
     filter_by_site_code,
@@ -166,3 +168,26 @@ def test_hybrid_download_entry_points_share_stale_guard():
     for call in (top, bottom):
         disabled = next(keyword.value for keyword in call.keywords if keyword.arg == "disabled")
         assert isinstance(disabled, ast.Name) and disabled.id == "hybrid_is_stale"
+
+
+def test_app_last_updated_hkt_uses_newest_python_mtime(tmp_path):
+    """頁尾時間取根目錄／views／modes 內最新 .py 的修改時間，非程式碼檔案不計。"""
+    (tmp_path / "views").mkdir()
+    (tmp_path / "modes").mkdir()
+    (tmp_path / "version.py").write_text("", encoding="utf-8")
+    (tmp_path / "views" / "usage_page.py").write_text("", encoding="utf-8")
+    (tmp_path / "modes" / "shop_simplify.py").write_text("", encoding="utf-8")
+    (tmp_path / "RAW 明細.xlsx").write_text("", encoding="utf-8")
+    os.utime(tmp_path / "version.py", (1_700_000_000, 1_700_000_000))
+    os.utime(tmp_path / "modes" / "shop_simplify.py", (1_700_001_800, 1_700_001_800))
+    os.utime(tmp_path / "views" / "usage_page.py", (1_700_003_600, 1_700_003_600))
+    # 非 .py 檔更新也不影響：時間戳刻意設得最新
+    os.utime(tmp_path / "RAW 明細.xlsx", (1_700_100_000, 1_700_100_000))
+
+    assert app_last_updated_hkt(tmp_path) == "2023-11-15 07:13"
+
+
+def test_app_last_updated_hkt_falls_back_to_now(tmp_path):
+    """讀不到任何 .py 時退回傳入的目前時間（HKT），確保頁尾不會留空。"""
+    moment = datetime(2026, 11, 24, 10, 46, tzinfo=ZoneInfo("Asia/Hong_Kong"))
+    assert app_last_updated_hkt(tmp_path, now=moment) == "2026-11-24 10:46"

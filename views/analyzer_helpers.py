@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime
 from io import BytesIO
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
+
+# 香港時間（UTC+8，無夏令時間）；容器與雲端平台預設為 UTC，顯示前須明確轉換
+_HKT = ZoneInfo("Asia/Hong_Kong")
+
+# 頁尾「最後更新」只計程式碼：專案根目錄、views、modes 三個資料夾的 .py
+_APP_SOURCE_DIRS = ("", "views", "modes")
 
 
 def build_hybrid_params(
@@ -113,3 +122,28 @@ def read_source_excel(raw_bytes):
         except Exception as exc:
             last_error = exc
     raise last_error
+
+
+def app_last_updated_hkt(root=None, now=None) -> str:
+    """回傳程式碼最後修改日期時間（HKT），格式 `YYYY-MM-DD HH:MM`。
+
+    以專案根目錄、`views`、`modes` 內 `.py` 檔案最新的修改時間為準：
+    容器映像經 `Dockerfile` 的 COPY 保留來源檔案時間，雲端部署則為 checkout 時間，
+    兩者都貼近實際更新時間。完全不寫死日期，避免換版後頁尾顯示過期時間。
+
+    `root` 可指定其他專案根目錄（測試用）；讀不到任何 `.py` 時退回 `now`
+    （預設目前時間），確保頁尾不會留空。
+    """
+    base = Path(root) if root is not None else Path(__file__).resolve().parent.parent
+    newest = None
+    for sub in _APP_SOURCE_DIRS:
+        folder = base / sub if sub else base
+        for path in folder.glob("*.py"):
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if newest is None or mtime > newest:
+                newest = mtime
+    moment = datetime.fromtimestamp(newest, _HKT) if newest is not None else (now or datetime.now(_HKT))
+    return moment.strftime("%Y-%m-%d %H:%M")

@@ -1,5 +1,16 @@
 # 版本記錄
 
+## v1.109.8 (2026-11-24)
+
+側邊欄頁尾署名調整，計算邏輯、資料契約與匯出報表零變動：
+
+- **UI: 側邊欄頁尾卡片** — `views/analyzer_page.py` 依次顯示「I14 報表計算工具 v1.109.8」／「最後更新：YYYY-MM-DD HH:MM (HKT)」／「Developed by Ricky Yue」；移除「Powered by Streamlit」
+- **頁尾「最後更新」時間** — 新增 `views/analyzer_helpers.py::app_last_updated_hkt()`：取根目錄、`views`、`modes` 內 `.py` 最新的修改時間並轉為香港時間（UTC+8）；不寫死日期，換版後頁尾自動更新；容器映像的 COPY 保留來源檔案時間，雲端部署則為 checkout 時間；讀不到任何 `.py` 時退回目前時間（HKT），頁尾不會留空
+- **UI: 主頁底部頁尾** — 同一頁最底部的一行署名移除「Streamlit」，只保留系統名稱、版本與作者
+- **測試** — `tests/test_analyzer_helpers.py` 新增 2 項：取最新 `.py` 修改時間且忽略非程式碼檔案；無 `.py` 時按傳入時間退回
+- **驗證** — `py -m pytest tests` → 1834 passed、4 skipped；Streamlit AppTest 實際渲染頁尾為「I14 報表計算工具 v1.109.8 ／ 最後更新：2026-11-24 10:49 (HKT) ／ Developed by Ricky Yue」，全頁不再出現「Streamlit」字眼
+- Change: `version.py` 1.109.7 → 1.109.8
+
 ## v1.109.7 (2026-11-24)
 
 `SCT建議` 新規則：**Item Status＝`Discontinued` 的 SKU 一律留空**，不套用情況表（即使 Top 判定命中首選RF／次選RF／建議RF）。停售品交由 SCT 按實際情況另行判斷，避免自動建議把已停售貨品推向 RF。兩個模式（多店輸出、指定店舖）同時生效。

@@ -99,6 +99,7 @@ from openpyxl import load_workbook
 from io import BytesIO
 from version import __version__
 from views.analyzer_helpers import (
+    app_last_updated_hkt,
     build_hybrid_params,
     canonical_site_codes,
     filter_by_site_code,
@@ -298,8 +299,8 @@ with st.sidebar:
     st.markdown(
         '<div class="sidebar-footer-card">'
         f'<b>I14 報表計算工具 v{__version__}</b><br>'
-        'Developed by Ricky Yue<br>'
-        '<span style="color:#64748b;">Powered by Streamlit</span>'
+        f'最後更新：{app_last_updated_hkt()} (HKT)<br>'
+        'Developed by Ricky Yue'
         '</div>',
         unsafe_allow_html=True
     )
@@ -5914,7 +5915,7 @@ else:
 st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 st.markdown(
     '<div style="text-align: center; color: #64748b; font-size: 0.8rem; padding: 10px 0;">'
-    '<b>I14 報表轉換與分析系統</b> &nbsp;&nbsp;•&nbsp;&nbsp; Streamlit &nbsp;&nbsp;•&nbsp;&nbsp; '
+    '<b>I14 報表轉換與分析系統</b> &nbsp;&nbsp;•&nbsp;&nbsp; '
     f'v{__version__} &nbsp;&nbsp;•&nbsp;&nbsp; Developed by Ricky Yue'
     '</div>',
     unsafe_allow_html=True,
