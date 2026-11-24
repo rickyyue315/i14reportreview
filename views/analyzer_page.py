@@ -5533,8 +5533,9 @@ if uploaded_file is not None:
                     if _value_ok else ""
                 )
                 + "已由 Item_Shop 解析 SKU Desc 與 Shop Name，並刪除欄名含 Value 的欄位；"
-                "輸出 Summary＋Export 兩個工作表（依 Brand／SKU 排序）。"
-                "「SCT建議」「Shop 回覆新的NDRF」「如果RF的Safety Qty」三欄一律留空，供 SCT／店舖填寫。"
+                "輸出 說明、Summary 與 Export 三個工作表（依 Brand／SKU 排序；說明頁列出 SCT建議 情況表與顏色說明）。"
+                "「Shop 回覆新的NDRF」「如果RF的Safety Qty」兩欄一律留空，供店舖填寫；"
+                "「SCT建議」按側欄 SCT建議 表自動填寫（預設開啟，可取消）。"
             )
 
             st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)

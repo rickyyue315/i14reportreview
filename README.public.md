@@ -155,11 +155,12 @@ Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）�
 7. **不篩選列** — 全店全 SKU 輸出；清理規則與其他模式一致（剔除合計列與 117 - Marketing），Shop Nature 篩選為選填
 8. **SKU Desc／Shop Name** — 由 `Item_Shop` 以 `Site Code` 解析；`SKU Desc` 排於 `Brand` 之後、`Shop Name` 排於 `Site Code` 之後，`Item_Shop` 缺欄時兩欄留空並列 warning
 9. **刪除 Value 欄** — 所有欄名含「Value」的欄位（金額欄，如 `Shop Stock Value (LM)`／`(CM)`、`Excess Stock Value`）一律刪除；判定為大小寫敏感的「含 Value」字串比對，故 `Valuation Class` 不會被刪除
-10. **排序與輸出** — 依 `Brand`、`SKU`（文字）升序；輸出 `Summary`（以 `Adj. MCH1` 為列，逐個維度統計 SKU 數：`Item Status`／`Item Status × RP Type`（每個狀態再分 RF／ND）／`RP Type`／四個 Top N% 判定欄（店舖件數、同Nature件數、店舖金額、同Nature金額）／四個 `RF-ND × Top N%` 四象限（店舖件數、同Nature件數、店舖金額、同Nature金額各一個），零值留空、每區塊底部有總計列）＋ `Export`（回覆明細，八個固定欄位排最後）兩個工作表
+10. **排序與輸出** — 依 `Brand`、`SKU`（文字）升序；輸出 `Summary`（以 `Adj. MCH1` 為列，逐個維度統計 SKU 數：`Item Status`／`Item Status × RP Type`（每個狀態再分 RF／ND）／`RP Type`／四個 Top N% 判定欄（店舖件數、同Nature件數、店舖金額、同Nature金額）／四個 `RF-ND × Top N%` 四象限（店舖件數、同Nature件數、店舖金額、同Nature金額各一個），零值留空、每區塊底部有總計列）＋ `Export`（回覆明細，八個固定欄位排最後）三個工作表（`說明` 排第一）
 11. **Export 格式** — 凍結 F2、縮放 85%、指定欄寬與隱藏欄；表頭列高 70.5 並自動換行；`RP Type`／`Shop Stock Qty (CM)` 綠色、四個 Top N% 判定欄（店舖／同Nature × 件數／金額）值為「是」時亦以綠色底標示、`Sold Qty (P90D)` 紫色、「無賣」列淡紅、`Item Status`＝`Discontinued`／`RP Type`＝`ND`／`過去90日有無存貨`＝`無存貨` 紅色底（比對忽略大小寫與前後空白，ND 的紅色底蓋過該欄綠色）；對比欄 `兩者皆是` 青綠底、`兩者皆非` 粉紅底；`Shop Monthly Sold Qty (P90D)`、`Safety VS Monthly Sold Qty`、`Turnday`、`Sold Qty (M-2／M-1／CM - MTD)`、`Net Sales (M-2／M-1／CM - MTD／P{N}D)` 套用指定數字格式；`Adj. SST` 含「03 - Private Label」字眼時以醒目橙色底（#FFC000）標示
 12. **比例與視窗切換** — 欄名隨 Top 比例與數據截止日改變，重跑會自動移除舊判定欄與舊 `Net Sales (PxxD)`，不會兩套並存；已執行後在側欄改設定但未重算時，結果頁以結果檔欄名標示並提示重新執行
 13. **來源工作表** — 多工作表檔案優先讀取 `Export`；沒有 Export 時沿用第一個工作表（例如手動另加樞紐的工作檔可直接上傳）
-14. **SCT建議自動填寫（v1.109.5）** — 側欄「SCT建議」提供一張 **4 情況表**（本模式每間店只有「件數 Top」「金額 Top」兩個判定，對比欄由判定自動合成，故 2×2＝4 種）：`兩者皆是 → 首選RF`／`只有件數 Top → 次選RF`／`只有金額 Top → 建議RF`／`兩者皆非 → 留空`。逐格下拉可改（首選RF／次選RF／建議RF／留空），自動填寫**預設開啟**；取消勾選則 SCT建議 一律留空（原本行為）。填寫後 `Summary` 會多一個「計數 - SKU：SCT建議」區塊。
+14. **SCT建議自動填寫（v1.109.5）** — 側欄「SCT建議」提供一張 **4 情況表**（本模式每間店只有「件數 Top」「金額 Top」兩個判定，對比欄由判定自動合成，故 2×2＝4 種）：`兩者皆是 → 首選RF`／`只有件數 Top → 次選RF`／`只有金額 Top → 建議RF`／`兩者皆非 → 留空`。逐格下拉可改（首選RF／次選RF／建議RF／留空），自動填寫**預設開啟**；取消勾選則 SCT建議 一律留空（原本行為）。填寫後 `Summary` 會多一個「計數 - SKU：SCT建議」區塊；Item Status＝`Discontinued` 的 SKU 一律留空（不套用情況表），由 SCT 自行判斷。
+15. **說明工作表（v1.109.6）** — 匯出檔第一張工作表為 `說明`：先列本次輸出的列數、店舖數目、Top 比例與金額視窗，再按本檔實際結果列出 SCT建議 的 **4 情況表**（每個情況的 SKU 數與實際寫入的建議）、三個值的分佈、Top N% 判定與對比欄的口徑、顏色對照（含 `Adj. SST` 的 Private Label 橙色）、`Summary` 區塊次序與回覆欄注意事項；數值按每次輸出的資料重新計算，換比例或改規則後說明同步更新
 
 ### 店舖精簡SKU模式（指定店舖）
 
@@ -177,7 +178,8 @@ Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）�
 10. **大檔效能** — 全表只做向量化清理（Site Code／SKU／Shop Nature／MCH2／MC／Sold Qty／三個月 Net Sales），`Item_Shop` 逐列解析與排序只套用在指定店舖的列，故轉換時間主要取決於讀檔與指定店舖的列數，而非全表行數。上傳上限已放寬至 **300MB**（以 80 萬行級、現有欄位密度估算約 200–220MB）
 11. **底色標示** — 對比欄：`兩者皆是` 青綠底、`兩者皆非` 粉紅底；`Item Status`＝`Discontinued`、`RP Type`＝`ND`、`過去90日有無存貨`＝`無存貨` 三類值以紅色底標示，方便一眼挑出精簡對象；四個 Top N% 判定欄（店舖／同Nature × 件數／金額）值為「是」時以綠色底標示，「否」不著色；與店舖精簡SKU模式共用同一匯出引擎（該模式一併生效）；`Adj. SST` 含「03 - Private Label」字眼（大小寫、前後空白不拘）時以**醒目橙色底（#FFC000）**標示，方便一眼分出 Private Label 貨品
 12. **預設顯示欄（v1.107.0）** — `Export` 一打開只顯示回覆表所需的 30 欄：`SKU`／`Brand`／`SKU Desc`／`Buyer`／`Adj. SST`／`Vendor MC`／`Adj. MCH1`／`Item Status`／`Launch Date`／`Item Class`／`Supply Source`／`Site Code`／`RP Type`／`Adj. Safety Stock`／`D001 Net Stock Qty (CM)`／`Shop Stock Qty (CM)`／`Sold Qty (P90D)`／`Net Sales (P{N}D)`／`Sold Qty (CM - MTD)`／`Net Sales (CM - MTD)`／`過去90日有無賣過`／`過去90日有無存貨`／六欄 Top 判定與對比（件數＋金額）／`Shop 回覆新的NDRF`／`如果RF的Safety Qty`；其餘欄位（`Item_Shop`／`Valuation Class`／`MCH2`／`MC`／`Shop Name`／`OM`／`Shop Nature`／`Shop Type`／`Shop Monthly Sold Qty (P90D)`／`Safety VS Monthly Sold Qty`／`D001` 各庫存欄／`Shop Stock Qty (LLM)`／`(LM)`／`Sold Qty (M-2)`／`(M-1)`／`Net Sales (M-2)`／`(M-1)`／`Shop Stock Status`／`Excess Stock Qty`／兩欄在途／`SCT建議`）一律隱藏。欄名、欄序、顏色、數字格式與 `Summary` 完全不變，需要時在 Excel 內取消隱藏即可；原模式（多店輸出）維持原有檢視（只隱藏範本指定的欄）
-13. **SCT建議自動填寫（v1.109.3）** — 側欄「SCT建議」只有一張 **16 情況表**：四個判定各只有「是／否」、對比欄由判定自動合成，故全部情況＝2×2×2×2＝**16 種**。表格逐格下拉指定 `首選RF`／`次選RF`／`建議RF`／留空（預設帶入三級建議作起點：兩者皆是→首選RF、僅同Nature→次選RF、只有本店 Top→建議RF、四項皆非→留空），可直接改任何一格，即時用於下一次匯出。自動填寫**預設開啟**；取消勾選則 `SCT建議` 一律留空（原本行為）。`SCT建議` 一經填寫，`Export` 會由隱藏改為顯示，`Summary` 亦多一個「計數 - SKU：SCT建議」區塊；另附 `SCT建議_16種情況設定表_YYYYMMDD.xlsx`（由 `scripts/make_sct_suggestion_matrix.py` 產生）供離線逐格規劃
+13. **SCT建議自動填寫（v1.109.3）** — 側欄「SCT建議」只有一張 **16 情況表**：四個判定各只有「是／否」、對比欄由判定自動合成，故全部情況＝2×2×2×2＝**16 種**。表格逐格下拉指定 `首選RF`／`次選RF`／`建議RF`／留空（預設帶入三級建議作起點：兩者皆是→首選RF、僅同Nature→次選RF、只有本店 Top→建議RF、四項皆非→留空），可直接改任何一格，即時用於下一次匯出。自動填寫**預設開啟**；取消勾選則 `SCT建議` 一律留空（原本行為）。`SCT建議` 一經填寫，`Export` 會由隱藏改為顯示，`Summary` 亦多一個「計數 - SKU：SCT建議」區塊；Item Status＝`Discontinued` 的 SKU 一律留空（不套用情況表），由 SCT 自行判斷；另附 `SCT建議_16種情況設定表_YYYYMMDD.xlsx`（由 `scripts/make_sct_suggestion_matrix.py` 產生）供離線逐格規劃
+14. **說明工作表（v1.109.6）** — 匯出檔第一張工作表為 `說明`：先列本次輸出的列數、店舖數目、Top 比例與金額視窗，再按本檔實際結果列出 SCT建議 的 **16 情況表**（每個情況的 SKU 數與實際寫入的建議）、三個值的分佈、Top N% 判定與對比欄的口徑、顏色對照（含 `Adj. SST` 的 Private Label 橙色）、`Summary` 區塊次序與回覆欄注意事項；數值按每次輸出的資料重新計算，換比例或改規則後說明同步更新
 
 ### Safety Stock Review
 
@@ -327,7 +329,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 
 | 工作表 | 說明 |
 |--------|------|
-| 說明 | 首頁導讀（混合模式、Safety Stock Review、Stock Checking 與 Forecast Review）— 列出本次執行參數、講解模式核心邏輯（如調貨段 14 日線／Review 段 Safety 基準／銷量帶與銷量存貨分類／0 Sales 轉 ND），並逐頁說明各工作表內容與建議留意的部分；開啟 Excel 時預設顯示本頁 |
+| 說明 | 首頁導讀（混合模式、Safety Stock Review、Stock Checking 與 Forecast Review）— 列出本次執行參數、講解模式核心邏輯（如調貨段 14 日線／Review 段 Safety 基準／銷量帶與銷量存貨分類／0 Sales 轉 ND），並逐頁說明各工作表內容與建議留意的部分（其他模式開啟 Excel 時預設顯示本頁）；店舖精簡SKU模式的「說明」則按本檔實際結果列出 SCT建議 情況表（16／4 種，含各情況 SKU 數）、三個值的分佈、Top N% 與顏色說明（該模式開啟時仍預設顯示 `Export`）|
 | RAW | 完整明細資料（含所有原始及計算欄位；Stock Checking 與混合模式另重排欄序，不顯示 Item_Shop 與 Value 金額欄） |
 | Export | 店舖精簡SKU模式 — 店舖×SKU 明細（已刪除含 Value 的欄位；來源欄位＋SKU Desc／Shop Name（由 Item_Shop 解析）＋`Net Sales (P{N}D)`（緊接 Sold Qty (P90D)，＝三個月 Net Sales 相加、容許退貨抵銷同品項其他月份銷貨，總和下限為 0）＋八個固定欄位：過去90日有無賣過／過去90日有無存貨／是否該店的Top N%（件數）／是否該店的Top N%（金額）／該店 件數 vs 該店 金額 Top N%／SCT建議／Shop 回覆新的NDRF／如果RF的Safety Qty；依 Brand／SKU 排序，固定欄位排最後，凍結 F2；N＝執行時所選的 70 或 80，三個月欄缺失時只加件數判定）；指定店舖變體只含該店列，不設原模式的店舖判定，另加 `Net Sales (P{N}D)` 及四欄判定：`是否{店舖}的Top N%（件數）`／`是否同Shop Nature的Top N%（件數）`／`是否{店舖}的Top N%（金額）`／`是否同Shop Nature的Top N%（金額）`，再加兩欄對比：`{店舖} vs 同Nature Top N%（件數）`／`（金額）`（值為兩者皆是／僅店舖／僅同Nature／兩者皆非；三個月欄缺失時只加件數兩欄及件數對比） |
 | Summary | 店舖精簡SKU模式 — 以 `Adj. MCH1` 為列逐個維度統計 SKU 數（含總計；零值留空）：① × `Item Status`（原版面，固定於 A3／A4）② `Item Status × RP Type`（每個狀態再分 RF／ND，另有其他值時加「其他」）③ × `RP Type`（RF／ND／其他，比對忽略大小寫）④ × 四個 Top N% 判定欄（店舖件數／同Nature件數／店舖金額／同Nature金額，欄名取實際輸出欄故 70%／80% 與店舖代號自動跟隨）⑤ 四個 `RF／ND × Top N%` 四象限（店舖件數／同Nature件數／店舖金額／同Nature金額各一個，欄為 RF-Top／RF-非Top／ND-Top／ND-非Top；非Top 含「否」及未判定）；`SCT建議` 有值時另加 ⑥ × `SCT建議` 區塊（首選RF／次選RF／建議RF）；來源缺該欄時該區塊自動略過；指定店舖變體只計該店 SKU |

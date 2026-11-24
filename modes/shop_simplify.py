@@ -28,8 +28,8 @@ Shop Nature 篩選為選填。
 另由 Item_Shop 以 Site Code 解析 SKU Desc 與 Shop Name（SKU Desc 排於 Brand 之後、
 Shop Name 排於 Site Code 之後），其餘來源欄序不變；欄名含「Value」的欄位一律刪除
 （大小寫敏感，與「RAW 明細轉化 (不含 Value)」同一判定，故 Valuation Class 不受影響）。
-輸出經 Brand／SKU（文字）排序，並產生 Summary（Adj. MCH1 × Item Status 計數）與
-Export（回覆明細）兩個工作表；Export 套用店舖精簡回覆表範本的欄寬、隱藏欄、
+輸出經 Brand／SKU（文字）排序，並產生 說明（SCT建議 情況表與顏色說明）、
+Summary（Adj. MCH1 × Item Status 計數）與 Export（回覆明細）三個工作表；Export 套用店舖精簡回覆表範本的欄寬、隱藏欄、
 數字格式、凍結窗格與顏色標示——其中 Item Status 為「Discontinued」、RP Type 為
 「ND」、過去90日有無存貨為「無存貨」三類值以紅色底標示（比對忽略大小寫與
 前後空白；RP Type 的紅色底會蓋過該欄的綠色），兩個模式共用同一匯出引擎。
@@ -95,6 +95,8 @@ __all__ = [
     "_SHOP_SIMPLIFY_SCT_CASES",
     "_SHOP_SIMPLIFY_SCT_PRESETS",
     "_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET",
+    "_SHOP_SIMPLIFY_SCT_SKIP_STATUS",
+    "_shop_simplify_sct_skip_discontinued",
     "_shop_simplify_sct_case_text",
     "_shop_simplify_sct_case_compare",
     "_shop_simplify_sct_series",
@@ -111,6 +113,7 @@ __all__ = [
     "_SHOP_SIMPLIFY_STOCK_NO",
     "_SHOP_SIMPLIFY_EXPORT_SHEET",
     "_SHOP_SIMPLIFY_SUMMARY_SHEET",
+    "_SHOP_SIMPLIFY_GUIDE_SHEET",
     "_SHOP_SIMPLIFY_TOP80_SHARE",
     "_SHOP_SIMPLIFY_TOP80_GROUP_COLUMN",
     "_SHOP_SIMPLIFY_GROUP_OPTIONS",
@@ -369,6 +372,8 @@ _SHOP_SIMPLIFY_SCT_PRESETS = {
     ),
 }
 _SHOP_SIMPLIFY_SCT_DEFAULT_PRESET = "三級建議（兩者皆是→首選／同Nature→次選／只有店舖→建議RF／無Top→留空）"
+# Item Status＝Discontinued 的列一律留空，不套用 SCT 規則（由 SCT 另行判斷）
+_SHOP_SIMPLIFY_SCT_SKIP_STATUS = "Discontinued"
 
 
 def _shop_simplify_sct_series(df: pd.DataFrame, rules, columns) -> pd.Series:
@@ -387,6 +392,23 @@ def _shop_simplify_sct_series(df: pd.DataFrame, rules, columns) -> pd.Series:
         letters.append(pd.Series(np.where(flags, "Y", "N"), index=df.index))
     keys = letters[0].str.cat(letters[1:], sep="")
     return keys.map(mapping).fillna("").astype(object)
+
+
+def _shop_simplify_sct_skip_discontinued(df: pd.DataFrame, series: pd.Series) -> tuple[pd.Series, int]:
+    """Item Status＝Discontinued 的列一律留空，回傳（新序列, 被留空的列數）。
+
+    停售品不論 Top 判定如何都不預設 RF／ND，交由 SCT 按實際情況判斷；
+    比對忽略大小寫與前後空白（與 Export 紅色底判定同一規則）。
+    """
+    if "Item Status" not in df.columns or not len(df):
+        return series, 0
+    skip = _shop_simplify_cell_mask(df["Item Status"], _SHOP_SIMPLIFY_SCT_SKIP_STATUS)
+    count = int(skip.sum())
+    if not count:
+        return series, 0
+    result = series.astype(object).copy()
+    result.loc[skip] = ""
+    return result, count
 
 
 # 原模式（多店輸出）只有「件數 Top」「金額 Top」兩個維度，故全部情況＝2×2＝4 種
@@ -1219,6 +1241,7 @@ def transform_shop_simplify(
       `include_net_sales=False` 關閉，避免重複欄位。
     - `sct_rules` 為 SCT建議 的 4 情況表（情況鍵 "YY"／"YN"／"NY"／"NN" →
       首選RF／次選RF／建議RF／留空）；提供時按其填寫「SCT建議」欄，否則維持留空。
+      Item Status＝Discontinued 的列一律留空，不套用規則（由 SCT 自行判斷）。
     - 回傳 (raw_df, warnings)。缺少 Sold Qty (P90D)，或 Shop Stock Qty (LLM)／(LM)／(CM)
       三個庫存欄同時缺失時拋出 ValueError（無法判定，不應靜默輸出）。
     """
@@ -1399,14 +1422,27 @@ def transform_shop_simplify(
 
     # SCT建議：按 4 種情況自動填寫（未指定時維持留空）
     if sct_rules and include_shop_top80 and qty_column in df.columns:
-        df[_SHOP_SIMPLIFY_SCT_COLUMN] = _shop_simplify_sct_shop_series(
-            df, sct_rules, qty_column, value_column if net_available else None
+        _sct_filled, _sct_skipped = _shop_simplify_sct_skip_discontinued(
+            df,
+            _shop_simplify_sct_shop_series(
+                df, sct_rules, qty_column, value_column if net_available else None
+            ),
         )
+        df[_SHOP_SIMPLIFY_SCT_COLUMN] = _sct_filled
         _sct_labels = df[_SHOP_SIMPLIFY_SCT_COLUMN].replace("", np.nan).dropna()
         if len(_sct_labels):
+            _sct_note = (
+                f"（Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS} 的 {_sct_skipped:,} 列一律留空）"
+                if _sct_skipped else ""
+            )
             warnings.append(
                 f"已按 SCT建議規則填寫「{_SHOP_SIMPLIFY_SCT_COLUMN}」欄，"
-                f"共 {len(_sct_labels):,} 列（可按實際情況在 Excel 內修改）。"
+                f"共 {len(_sct_labels):,} 列{_sct_note}（可按實際情況在 Excel 內修改）。"
+            )
+        elif _sct_skipped:
+            warnings.append(
+                f"全部列均為 Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS}，"
+                f"「{_SHOP_SIMPLIFY_SCT_COLUMN}」欄一律留空，由 SCT 自行判斷。"
             )
         else:
             warnings.append(
@@ -1492,7 +1528,8 @@ def transform_shop_simplify_site(
     金額欄名會帶實際覆蓋日數（如 `Net Sales (P73D)`）。
 
     `sct_rules` 為 SCT建議的情況表（情況鍵 → 首選RF／次選RF／建議RF／留空），
-    提供時按其填寫「SCT建議」欄，未提供則維持留空（原本行為）。
+    提供時按其填寫「SCT建議」欄，未提供則維持留空（原本行為）；
+    Item Status＝Discontinued 的列一律留空，不套用規則（由 SCT 自行判斷）。
 
     其餘清理、Item_Shop 解析、刪除 Value 欄、三個回覆欄留空與排序規則完全沿用
     `transform_shop_simplify`（以 `include_shop_top80=False`、`include_net_sales=False` 關閉
@@ -1751,12 +1788,24 @@ def transform_shop_simplify_site(
         if not net_available:
             # 金額口徑不可用時，金額兩項一律視為非 Top（情況鍵尾兩碼為 N）
             _sct_columns = _sct_columns[:2] + [None, None]
-        shop_df[_SHOP_SIMPLIFY_SCT_COLUMN] = _shop_simplify_sct_series(shop_df, sct_rules, _sct_columns)
+        _sct_filled, _sct_skipped = _shop_simplify_sct_skip_discontinued(
+            shop_df, _shop_simplify_sct_series(shop_df, sct_rules, _sct_columns)
+        )
+        shop_df[_SHOP_SIMPLIFY_SCT_COLUMN] = _sct_filled
         _sct_labels = shop_df[_SHOP_SIMPLIFY_SCT_COLUMN].replace("", np.nan).dropna()
         if len(_sct_labels):
+            _sct_note = (
+                f"（Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS} 的 {_sct_skipped:,} 列一律留空）"
+                if _sct_skipped else ""
+            )
             warnings.append(
                 f"已按 SCT建議規則填寫「{_SHOP_SIMPLIFY_SCT_COLUMN}」欄，"
-                f"共 {len(_sct_labels):,} 列（可按實際情況在 Excel 內修改）。"
+                f"共 {len(_sct_labels):,} 列{_sct_note}（可按實際情況在 Excel 內修改）。"
+            )
+        elif _sct_skipped:
+            warnings.append(
+                f"全部列均為 Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS}，"
+                f"「{_SHOP_SIMPLIFY_SCT_COLUMN}」欄一律留空，由 SCT 自行判斷。"
             )
         else:
             warnings.append(
@@ -2097,8 +2146,327 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
         ws.column_dimensions[get_column_letter(j)].width = width
 
 
+_SHOP_SIMPLIFY_GUIDE_SHEET = "說明"
+
+
+def _shop_simplify_guide_flags(df: pd.DataFrame) -> list[tuple[str, str]]:
+    """說明頁情況表用的 Top 判定欄與其簡短標籤。
+
+    次序跟 Export 一致：件數（店舖 → 同 Shop Nature）→ 金額（店舖 → 同 Shop Nature）；
+    原模式只有件數與金額兩個判定，故只有「件數」「金額」兩欄。
+    """
+    flags: list[tuple[str, str]] = []
+    for name in _shop_simplify_summary_top_columns(df):
+        text = str(name).strip()
+        unit = "金額" if text.endswith(_SHOP_SIMPLIFY_VALUE_SUFFIX) else "件數"
+        if text.startswith("是否同Shop Nature"):
+            label = f"{unit}－同 Shop Nature"
+        elif "該店" in text:
+            label = unit
+        else:
+            label = f"{unit}－店舖"
+        flags.append((name, label))
+    return flags
+
+
+def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
+    """「說明」工作表：SCT建議 的填寫規則（按本檔實際結果）、Top N% 與顏色說明。
+
+    情況表按輸出實際有的 Top 判定欄生成（指定店舖四個判定＝16 種、原模式兩個判定＝4 種），
+    並逐個情況列出本檔 SKU 數與實際寫入的 SCT建議，故更換比例、店舖或規則後說明仍然準確。
+    """
+    thin = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    header_fill = PatternFill(
+        start_color=_SHOP_SIMPLIFY_HEADER_BLUE,
+        end_color=_SHOP_SIMPLIFY_HEADER_BLUE,
+        fill_type="solid",
+    )
+    title_font = Font(bold=True, size=16, color="1F3864")
+    section_font = Font(bold=True, size=12, color="1F3864")
+    body_font = Font(size=10.5)
+    small_font = Font(size=10)
+    note_font = Font(size=9, italic=True, color="595959")
+
+    ws.sheet_view.showGridLines = False
+    for letter, width in {
+        "A": 2.5, "B": 10.0, "C": 20.0, "D": 24.0, "E": 20.0,
+        "F": 20.0, "G": 24.0, "H": 14.0, "I": 18.0,
+    }.items():
+        ws.column_dimensions[letter].width = width
+
+    def section(r: int, text: str) -> int:
+        cell = ws.cell(row=r, column=2, value=text)
+        cell.font = section_font
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=9)
+        ws.row_dimensions[r].height = 24
+        return r + 1
+
+    def paragraph(r: int, text: str, font=None, chars_per_line: int = 62) -> int:
+        cell = ws.cell(row=r, column=2, value=text)
+        cell.font = font or body_font
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=9)
+        lines = max(1, (len(text) + chars_per_line - 1) // chars_per_line)
+        ws.row_dimensions[r].height = 16 * lines + 6
+        return r + 1
+
+    def table_header(r: int, headers: list[str]) -> int:
+        for j, text in enumerate(headers, start=2):
+            cell = ws.cell(row=r, column=j, value=text)
+            cell.font = Font(bold=True, size=10)
+            cell.fill = header_fill
+            cell.border = thin
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        ws.row_dimensions[r].height = 32
+        return r + 1
+
+    flags = _shop_simplify_guide_flags(df)
+    valid = df["SKU"].notna() if "SKU" in df.columns else pd.Series(True, index=df.index)
+    sct_series = (
+        df[_SHOP_SIMPLIFY_SCT_COLUMN].fillna("").astype(str).str.strip()
+        if _SHOP_SIMPLIFY_SCT_COLUMN in df.columns
+        else pd.Series("", index=df.index)
+    )
+    sct_any = bool((sct_series != "").any())
+    case_rows: list[dict] = []
+
+    # ── 標題 ──
+    cell = ws.cell(row=1, column=2, value="店舖精簡SKU模式 — 輸出說明")
+    cell.font = title_font
+    ws.row_dimensions[1].height = 28
+
+    # ── 本次輸出概況（單行）──
+    parts = [f"{len(df):,} 列"]
+    if "Site Code" in df.columns:
+        shops = df["Site Code"].dropna().astype(str).str.strip()
+        shops = shops[shops != ""]
+        if len(shops):
+            n_shops = shops.nunique()
+            parts.append(f"{n_shops} 間店舖（{shops.iloc[0]}）" if n_shops == 1 else f"{n_shops} 間店舖")
+    if flags:
+        found = re.search(r"Top\s*(\d{1,3})%", " ".join(str(n) for n, _ in flags))
+        if found:
+            parts.append(f"Top {found.group(1)}%")
+    window = next(
+        (c for c in df.columns if re.fullmatch(r"Net Sales \(P\d+D\)", str(c).strip())),
+        None,
+    )
+    if window is not None:
+        found = re.search(r"P(\d+)D", str(window))
+        parts.append(f"金額視窗 {window}（{found.group(1)} 日）")
+    if sct_any:
+        filled = int((sct_series != "").sum())
+        parts.append(f"SCT建議 已填寫 {filled:,} 列（{filled / max(len(df), 1):.1%}）")
+    else:
+        parts.append("SCT建議 未填寫（全部留空）")
+    info = ws.cell(row=2, column=2, value="本次輸出：" + "｜".join(parts))
+    info.font = Font(size=10, color="404040")
+    ws.merge_cells(start_row=2, start_column=2, end_row=2, end_column=9)
+    ws.row_dimensions[2].height = 20
+
+    row = 4
+
+    # ── 一、SCT建議 是甚麼 ──
+    row = section(row, "一、SCT建議 是甚麼")
+    row = paragraph(
+        row,
+        "「SCT建議」按 Top N% 判定自動填寫，目的是在匯出時先為每個 SKU 標示一個 RF 取態，減少逐列人手判斷。"
+        "填寫規則由應用程式側欄「SCT建議」的情況表決定（指定店舖模式 16 種、店舖精簡SKU模式 4 種）；"
+        "第二節列出的是本檔實際採用的規則與結果。留空的 SKU 代表不預設建議，由 SCT 按實際情況判斷（例如 ND）。",
+    )
+    row += 1
+
+    # ── 二、情況表 ──
+    case_count = 2 ** len(flags) if flags else 0
+    row = section(row, "二、SCT建議 的情況表（本檔實際採用）")
+    if flags:
+        formula = "×".join(["2"] * len(flags))
+        row = paragraph(
+            row,
+            (
+                f"四個判定各只有「是／否」，兩欄對比由判定自動合成，故全部情況＝{formula}＝{case_count} 種。"
+                if len(flags) == 4
+                else f"本模式只有件數與金額兩個判定，對比欄由判定自動合成，故全部情況＝{formula}＝{case_count} 種。"
+            )
+            + "「本檔 SKU 數」為落在該情況的列數，「本檔 SCT建議」為實際寫入的文字。",
+        )
+        row = table_header(
+            row, ["編號"] + [label for _, label in flags] + ["本檔 SKU 數", "本檔 SCT建議"]
+        )
+
+        masks = [_shop_simplify_cell_mask(df[name], _SHOP_SIMPLIFY_TOP80_YES) for name, _ in flags]
+        valid_arr = valid.to_numpy(dtype=bool)
+        for index, case in enumerate(itertools.product("YN", repeat=len(flags)), start=1):
+            mask = valid_arr.copy()
+            for letter, hit in zip(case, masks):
+                mask &= hit if letter == "Y" else ~hit
+            count = int(mask.sum())
+            values: list[str] = []
+            if sct_any and count:
+                raw_values = df.loc[mask, _SHOP_SIMPLIFY_SCT_COLUMN].fillna("").astype(str).str.strip()
+                values = list(dict.fromkeys(raw_values.tolist()))
+            labels = [v for v in values if v]
+            shown = "／".join(labels) if labels else "（留空）"
+            if len(labels) > 1:
+                shown += "（同一情況有多個值）"
+            elif labels and "" in values:
+                shown += "（部分留空）"
+            case_rows.append({"count": count, "value": labels[0] if labels else ""})
+
+            first = ws.cell(row=row, column=2, value=index)
+            first.alignment = Alignment(horizontal="center")
+            for j, letter in enumerate(case, start=3):
+                cell = ws.cell(row=row, column=j, value="是" if letter == "Y" else "否")
+                cell.alignment = Alignment(horizontal="center")
+            count_cell = ws.cell(row=row, column=3 + len(flags), value=count)
+            count_cell.alignment = Alignment(horizontal="center")
+            count_cell.number_format = "#,##0"
+            value_cell = ws.cell(row=row, column=4 + len(flags), value=shown)
+            value_cell.alignment = Alignment(horizontal="center")
+            for j in range(2, 5 + len(flags)):
+                cell = ws.cell(row=row, column=j)
+                cell.border = thin
+                cell.font = small_font
+            ws.row_dimensions[row].height = 20
+            row += 1
+        row = paragraph(
+            row,
+            "註：同一情況若曾在 Excel 內手動改成不同值，會以「／」列出；SKU 數只計 SKU 非空白的列。"
+            "情況的欄序與 Export 的判定欄一致（件數 → 金額，店舖 → 同 Shop Nature）。"
+            f"Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS} 的 SKU 不套用情況表，一律留空，"
+            "故該情況會顯示「（部分留空）」。",
+            font=note_font,
+        )
+    else:
+        row = paragraph(
+            row,
+            "本檔沒有 Top N% 判定欄，故未能列出情況表；請確認已啟用 Top N% 判定，並提供 Sold Qty (P90D)。",
+        )
+    row += 1
+
+    # ── 三、SCT建議 的三個值 ──
+    row = section(row, "三、SCT建議 的三個值")
+    for label, meaning in (
+        (_SHOP_SIMPLIFY_SCT_PREFERRED, "最高優先：資源足夠時先處理這批 SKU。"),
+        (_SHOP_SIMPLIFY_SCT_SECONDARY, "次一級：首選處理完後才考慮。"),
+        (_SHOP_SIMPLIFY_SCT_RF, "可考慮：條件較弱，有剩餘資源時才處理。"),
+        (
+            "",
+            f"不預設建議，由 SCT 按實際情況判斷（例如 ND）；Item Status＝{_SHOP_SIMPLIFY_SCT_SKIP_STATUS} 亦一律留空。",
+        ),
+    ):
+        text = f"• {label} — {meaning}" if label else f"• 留空 — {meaning}"
+        if case_rows:
+            cases_hit = sum(1 for item in case_rows if item["value"] == label)
+            skus_hit = sum(item["count"] for item in case_rows if item["value"] == label)
+            text += f"（本檔：{cases_hit} 種情況、{skus_hit:,} 個 SKU）"
+        row = paragraph(row, text)
+    row += 1
+
+    # ── 四、Top N% 判定與對比欄 ──
+    row = section(row, "四、Top N% 判定與對比欄")
+    for text in (
+        "• 件數 Top：按 Sold Qty (P90D) 在每個分組內由高至低累加，累計銷量首次達該分組總銷量 N% 的 SKU 屬 Top；"
+        "同一銷量的整組會一併納入或排除，分組之間不互相擠佔。",
+        "• 金額 Top：同一分組與同一 N%，改按 Net Sales (P{N}D)（即 M-2、M-1 與本月至今相加，總和下限為 0）累計。",
+        "• 對比欄：兩者皆是／僅店舖／僅同 Shop Nature／兩者皆非，由兩個判定自動合成，不能獨立填寫。",
+        "• 「非 Top」包括「否」及未判定（空白）：判定欄沒有「是／否」時一律當作非 Top，故「非Top」欄會包含未判定的 SKU。",
+        "• 分組：指定店舖模式以 (Site Code, 側欄所選分組欄) 分組；店舖精簡SKU模式以每間店各自的所選分組欄分組；"
+        "件數與金額各自計算，互不影響。",
+    ):
+        row = paragraph(row, text)
+    row += 1
+
+    # ── 五、顏色說明 ──
+    row = section(row, "五、顏色說明")
+    row = table_header(row, ["顏色", "出現位置", "含意"])
+    for colour, where, meaning in (
+        (_SHOP_SIMPLIFY_PRIVATE_LABEL_FILL, "Adj. SST", "含「03 - Private Label」字眼，屬 Private Label 貨品"),
+        (_SHOP_SIMPLIFY_GREEN, "各 Top 判定欄（件數、金額）", "值為「是」，即屬該口徑的 Top N%"),
+        (_SHOP_SIMPLIFY_GREEN, "RP Type、Shop Stock Qty (CM) 等表頭", "綠色表頭代表重點欄"),
+        (_SHOP_SIMPLIFY_PURPLE, "Sold Qty (P90D)", "重點銷量欄（表頭與資料格均為紫色）"),
+        (_SHOP_SIMPLIFY_NO_SALE_PINK, "整列", "過去90日有無賣過＝無賣"),
+        (_SHOP_SIMPLIFY_RED, "Item Status／RP Type／過去90日有無存貨", "Discontinued／ND／無存貨"),
+        (_SHOP_SIMPLIFY_COMPARE_BOTH_FILL, "對比欄（件數、金額）", "兩者皆是：店舖與同 Shop Nature 均屬 Top"),
+        (_SHOP_SIMPLIFY_COMPARE_NEITHER_FILL, "對比欄（件數、金額）", "兩者皆非：兩邊都不是 Top，屬精簡候選"),
+        (_SHOP_SIMPLIFY_HEADER_BLUE, "其餘表頭", "一般欄"),
+    ):
+        swatch = ws.cell(row=row, column=2, value=f"#{colour}")
+        swatch.fill = PatternFill(start_color=colour, end_color=colour, fill_type="solid")
+        swatch.font = Font(size=9, bold=True, color="404040")
+        swatch.alignment = Alignment(horizontal="center", vertical="center")
+        where_cell = ws.cell(row=row, column=3, value=where)
+        where_cell.font = small_font
+        where_cell.alignment = Alignment(vertical="center", wrap_text=True)
+        meaning_cell = ws.cell(row=row, column=4, value=meaning)
+        meaning_cell.font = small_font
+        meaning_cell.alignment = Alignment(vertical="center", wrap_text=True)
+        for j in range(2, 5):
+            ws.cell(row=row, column=j).border = thin
+        lines = max((len(where) + 9) // 10, (len(meaning) + 11) // 12, 1)
+        ws.row_dimensions[row].height = 15 * lines + 10
+        row += 1
+    row += 1
+
+    # ── 六、Summary 工作表 ──
+    row = section(row, "六、Summary 工作表")
+    blocks = ["× Item Status", "Item Status × RP Type（每個狀態再分 RF／ND）", "× RP Type"]
+    if sct_any:
+        blocks.append("× SCT建議")
+    if flags:
+        blocks.append(
+            "× 兩個 Top N% 判定欄（是／否）" if len(flags) == 2 else "× 四個 Top N% 判定欄（是／否）"
+        )
+        blocks.append(
+            "兩個 RF／ND × Top N% 四象限"
+            if len(flags) == 2
+            else "四個 RF／ND × Top N% 四象限（RF-Top／RF-非Top／ND-Top／ND-非Top）"
+        )
+    block_text = "；".join(f"（{i}）{text}" for i, text in enumerate(blocks, 1))
+    row = paragraph(
+        row,
+        f"Summary 以 Adj. MCH1 為列，逐個區塊統計 SKU 數；零值留空，每個區塊底部有「總計」列。區塊依次為：{block_text}。",
+    )
+    row += 1
+
+    # ── 七、回覆欄與其他注意事項 ──
+    row = section(row, "七、回覆欄與其他注意事項")
+    notes = [
+        "• Shop 回覆新的NDRF、如果RF的Safety Qty 一律留空，供店舖填寫。",
+        "• SCT建議 可自行修改；建議只用三個值（首選RF／次選RF／建議RF），否則 Summary 的 SCT建議 區塊會多出一欄「其他」。",
+    ]
+    if len(flags) == 4:
+        notes.append(
+            "• 指定店舖模式的 Export 一打開只顯示回覆表所需的 30 欄，其餘欄隱藏；需要時在 Excel 選取相鄰欄「取消隱藏」即可。"
+        )
+    notes += [
+        "• 顏色、凍結窗格與隱藏欄只影響顯示，不影響篩選、排序與數值。",
+        "• 本頁數值按本次輸出的資料計算，換一批資料或改動 Top 比例後會重新產生。",
+    ]
+    for text in notes:
+        row = paragraph(row, text)
+    row += 1
+
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    try:
+        from version import __version__ as version_text
+    except Exception:  # pragma: no cover - 版本檔缺失時不影響匯出
+        version_text = ""
+    footer = f"本頁由系統自動產生：{stamp}" + (f"｜版本 {version_text}" if version_text else "")
+    cell = ws.cell(row=row, column=2, value=footer)
+    cell.font = note_font
+    ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=9)
+
+
 def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site_view: bool = False) -> BytesIO:
-    """產生兩個工作表：Summary（Adj. MCH1 × Item Status 計數）與 Export（回覆明細）。
+    """產生三個工作表：說明（SCT建議 與顏色說明）、Summary（Adj. MCH1 × Item Status 計數）
+    與 Export（回覆明細）。
+
+    說明頁按本檔實際結果列出 SCT建議 的情況表（16 或 4 種）、三個值的分佈、Top N% 與
+    顏色說明，並附本次輸出的列數、店舖、比例與金額視窗，方便店舖與 SCT 直接查閱。
 
     Export 沿用店舖精簡回覆表範本的格式：Brand／SKU 排序、凍結 F2、指定欄寬與隱藏欄、
     數字格式、綠色／紫色重點欄、「無賣」列的淡紅標示、三類紅色底標示
@@ -2111,8 +2479,10 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
     令匯出檔一打開就是回覆表需要的檢視（欄序、顏色、隱藏欄以外的格式完全不變）。
     """
     wb = Workbook()
-    ws_summary = wb.active
-    ws_summary.title = _SHOP_SIMPLIFY_SUMMARY_SHEET
+    # 工作表次序：說明（第一頁，與其他模式一致）→ Summary → Export
+    ws_guide = wb.active
+    ws_guide.title = _SHOP_SIMPLIFY_GUIDE_SHEET
+    ws_summary = wb.create_sheet(title=_SHOP_SIMPLIFY_SUMMARY_SHEET)
     ws = wb.create_sheet(title=_SHOP_SIMPLIFY_EXPORT_SHEET)
 
     if progress_callback:
@@ -2285,6 +2655,10 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
     if progress_callback:
         progress_callback(0.85, "建立 Summary 工作表...")
     _write_shop_simplify_summary(ws_summary, df)
+
+    if progress_callback:
+        progress_callback(0.90, "建立說明工作表...")
+    _write_shop_simplify_guide(ws_guide, df)
 
     # 開啟檔案時預設顯示 Export（範本行為）
     wb.active = wb.sheetnames.index(_SHOP_SIMPLIFY_EXPORT_SHEET)

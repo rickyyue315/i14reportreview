@@ -6,7 +6,7 @@
 - SCT建議、Shop 回覆新的NDRF、如果RF的Safety Qty 一律留空；
 - 是否該店的Top 80%：每間店以 MC（品類）分類為母體，每個分類各自一條 80% 線
   （缺 MC 時退回 Adj. SST；指定店舖變體改用「是否{店舖}的Top 80%」與「是否同Shop Nature的Top 80%」，不設本欄）；
-- 不篩選列，保留來源欄序，六個輸出欄固定排最後；輸出 Summary＋Export 兩個工作表，
+- 不篩選列，保留來源欄序，六個輸出欄固定排最後；輸出 說明＋Summary＋Export 三個工作表，
   並依 Brand／SKU（文字）排序、套用範本欄寬／隱藏欄／數字格式與顏色標示。
 """
 import warnings
@@ -80,6 +80,7 @@ from transformer import (
     _SHOP_SIMPLIFY_PRIVATE_LABEL_FILL,
     _SHOP_SIMPLIFY_SCT_SHOP_CASES,
     _SHOP_SIMPLIFY_SCT_SHOP_DEFAULT,
+    _SHOP_SIMPLIFY_SCT_SKIP_STATUS,
     _shop_simplify_sct_shop_case_text,
 )
 
@@ -516,7 +517,7 @@ def test_shop_top80_column_export_width_and_no_nature_column():
         assert round(ws.column_dimensions[letter].width, 2) == expected
 
 
-def test_excel_has_summary_and_export_sheets():
+def test_excel_has_guide_summary_and_export_sheets():
     df = _df([
         {"SKU": 1, "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
          "Net Sales (M-2)": 10, "Net Sales (M-1)": 10, "Net Sales (CM - MTD)": 10},
@@ -528,7 +529,7 @@ def test_excel_has_summary_and_export_sheets():
     raw, _ = transform_shop_simplify(df, data_date=date(2026, 11, 12))
     buf = generate_excel_shop_simplify(raw)
     wb = load_workbook(BytesIO(buf.getvalue()))
-    assert wb.sheetnames == ["Summary", "Export"]
+    assert wb.sheetnames == ["說明", "Summary", "Export"]
     assert wb.active.title == "Export"
 
     ws = wb["Export"]
@@ -1065,7 +1066,7 @@ def test_site_mode_excel_headers_widths_and_summary():
     assert round(ws.column_dimensions[get_column_letter(headers.index(_SHOP_SIMPLIFY_NATURE_TOP80_COLUMN) + 1)].width, 2) == 26.0
     assert round(ws.column_dimensions[get_column_letter(headers.index(_shop_simplify_compare_column("HA21")) + 1)].width, 2) == 26.0
     assert ws.freeze_panes == f"{get_column_letter(headers.index('SKU Desc') + 2)}2"
-    assert wb.sheetnames == ["Summary", "Export"]
+    assert wb.sheetnames == ["說明", "Summary", "Export"]
 
 
 def test_top_judgement_yes_cells_are_green():
@@ -1292,6 +1293,103 @@ def test_original_mode_sct_four_cases():
         and summary.cell(row=i, column=1).value.startswith("計數 - SKU：SCT")
     ]
     assert titles
+
+
+def test_sct_leaves_discontinued_rows_blank_in_both_modes():
+    """Item Status＝Discontinued（大小寫、前後空白不拘）的 SKU 一律留空，
+    即使 Top 判定命中規則；warning 會註明被留空的列數。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+         "Sold Qty (P90D)": 400,
+         "Net Sales (M-2)": 18000.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": "B", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Discontinued",
+         "Sold Qty (P90D)": 300,
+         "Net Sales (M-2)": 12000.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": "C", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "Item Status": "  discontinued  ",
+         "Sold Qty (P90D)": 30,
+         "Net Sales (M-2)": 1200.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+    ]
+    rules = _SHOP_SIMPLIFY_SCT_PRESETS[_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET]
+    raw, warns = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12), sct_rules=rules)
+    sct = dict(zip(raw["SKU"], raw[_SHOP_SIMPLIFY_SCT_COLUMN]))
+    assert sct["A"] == _SHOP_SIMPLIFY_SCT_PREFERRED
+    assert sct["B"] == "" and sct["C"] == ""
+    assert any(_SHOP_SIMPLIFY_SCT_SKIP_STATUS in w and "2 列" in w for w in warns)
+
+    raw2, warns2 = transform_shop_simplify(
+        _df(rows), data_date=date(2026, 11, 12), sct_rules=_SHOP_SIMPLIFY_SCT_SHOP_DEFAULT
+    )
+    sct2 = dict(zip(raw2["SKU"], raw2[_SHOP_SIMPLIFY_SCT_COLUMN]))
+    assert sct2["A"] != "" and sct2["B"] == "" and sct2["C"] == ""
+    assert any(_SHOP_SIMPLIFY_SCT_SKIP_STATUS in w for w in warns2)
+
+    # Summary 的 SCT建議 分佈只計有值的列
+    summary = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Summary"]
+    _, first, total = _summary_block(summary, "計數 - SKU：SCT建議")
+    assert total[-1] == 1
+
+
+def test_guide_sheet_documents_sct_cases_and_colours():
+    """「說明」為第一張工作表：列出本次輸出概況、16 種 SCT 情況（含本檔 SKU 數與實際
+    寫入的 SCT建議）、三個值的分佈與顏色說明。"""
+    rows = _site_rows_with_net()
+    rules = _SHOP_SIMPLIFY_SCT_PRESETS[_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET]
+    raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12), sct_rules=rules)
+    wb = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))
+    assert wb.sheetnames == ["說明", "Summary", "Export"]
+    ws = wb["說明"]
+
+    assert ws["B1"].value == "店舖精簡SKU模式 — 輸出說明"
+    assert str(ws["B2"].value).startswith("本次輸出：")
+    assert "SCT建議 已填寫" in str(ws["B2"].value)
+
+    header_row = next(r for r in range(1, ws.max_row + 1) if ws.cell(row=r, column=2).value == "編號")
+    assert [ws.cell(row=header_row, column=c).value for c in range(2, 9)] == [
+        "編號", "件數－店舖", "件數－同 Shop Nature", "金額－店舖", "金額－同 Shop Nature",
+        "本檔 SKU 數", "本檔 SCT建議",
+    ]
+    cases = [
+        [ws.cell(row=r, column=c).value for c in range(2, 9)]
+        for r in range(header_row + 1, header_row + 17)
+    ]
+    assert len(cases) == 16
+    assert [row[0] for row in cases] == list(range(1, 17))
+    # 情況鍵（是＝Y、否＝N），與 SCT 規則的情況鍵一致
+    keys = ["".join("Y" if row[i] == "是" else "N" for i in (1, 2, 3, 4)) for row in cases]
+    assert keys == list(_SHOP_SIMPLIFY_SCT_CASES)
+    assert sum(row[5] for row in cases) == len(raw)
+    for row in cases:
+        assert row[6] in (
+            _SHOP_SIMPLIFY_SCT_OPTIONS[1], _SHOP_SIMPLIFY_SCT_OPTIONS[2],
+            _SHOP_SIMPLIFY_SCT_OPTIONS[3], "（留空）",
+        )
+    assert any(row[6] == _SHOP_SIMPLIFY_SCT_PREFERRED for row in cases)
+
+    text = " ".join(
+        str(ws.cell(row=r, column=c).value)
+        for r in range(1, ws.max_row + 1)
+        for c in range(2, 10)
+        if ws.cell(row=r, column=c).value is not None
+    )
+    assert f"#{_SHOP_SIMPLIFY_PRIVATE_LABEL_FILL}" in text   # 顏色說明有列出 Private Label 橙色
+    assert "Top N% 判定與對比欄" in text and "顏色說明" in text
+
+
+def test_guide_sheet_uses_four_cases_for_original_mode():
+    """原模式只有件數／金額兩個判定，說明頁的情況表為 4 種。"""
+    rows = _site_rows_with_net()
+    raw, _ = transform_shop_simplify(_df(rows), data_date=date(2026, 11, 12), sct_rules=_SHOP_SIMPLIFY_SCT_SHOP_DEFAULT)
+    wb = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))
+    ws = wb["說明"]
+
+    header_row = next(r for r in range(1, ws.max_row + 1) if ws.cell(row=r, column=2).value == "編號")
+    assert [ws.cell(row=header_row, column=c).value for c in range(2, 7)] == [
+        "編號", "件數", "金額", "本檔 SKU 數", "本檔 SCT建議",
+    ]
+    keys = ["".join("Y" if ws.cell(row=r, column=c).value == "是" else "N" for c in (3, 4))
+            for r in range(header_row + 1, header_row + 5)]
+    assert keys == ["YY", "YN", "NY", "NN"]
+    assert sum(ws.cell(row=r, column=5).value for r in range(header_row + 1, header_row + 5)) == len(raw)
 
 
 def test_site_mode_default_view_hides_non_essential_columns():

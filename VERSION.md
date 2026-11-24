@@ -1,5 +1,56 @@
 # 版本記錄
 
+## v1.109.7 (2026-11-24)
+
+`SCT建議` 新規則：**Item Status＝`Discontinued` 的 SKU 一律留空**，不套用情況表（即使 Top 判定命中首選RF／次選RF／建議RF）。停售品交由 SCT 按實際情況另行判斷，避免自動建議把已停售貨品推向 RF。兩個模式（多店輸出、指定店舖）同時生效。
+
+### 規則
+
+- 比對忽略大小寫與前後空白（`Discontinued`／`discontinued`／`  discontinued  ` 均命中），與 Export 紅色底的判定同一準則
+- 只影響 `SCT建議` 一欄；Top 判定、對比欄、顏色與 `Summary` 其他區塊完全不變
+- `Summary` 的「計數 - SKU：SCT建議」只計有值的列，故停售品不會出現在該區塊
+- 沒有 `Item Status` 欄、或該欄沒有 Discontinued 時，行為與之前完全相同
+- 匯出後的 warning 會列出被留空的列數；若全部列都是停售品，warning 改為提示「一律留空，由 SCT 自行判斷」
+
+### 實作
+
+- `modes/shop_simplify.py`：新增 `_SHOP_SIMPLIFY_SCT_SKIP_STATUS = "Discontinued"` 與 `_shop_simplify_sct_skip_discontinued(df, series)`（回傳新序列與被留空列數）；`transform_shop_simplify` 與 `transform_shop_simplify_site` 在填寫後套用，warning 加入停售列數
+- `_write_shop_simplify_guide`：情況表註解補「Item Status＝Discontinued 的 SKU 不套用情況表，一律留空，故該情況會顯示『（部分留空）』」，「留空」一項亦註明停售品
+- 兩個轉換函數的 docstring 同步說明此規則
+
+### 驗證
+
+- 四個 SKU（A `Active`、B `Discontinued`、C `  discontinued  `、D `Active`）實測：兩個模式都是 A 首選RF、B／C 留空；warning「共 1 列（Item Status＝Discontinued 的 2 列一律留空）」
+- `Summary` 的 SCT建議 區塊總計 1，與實際有值列數相同
+- `py -m pytest tests` → 1832 passed、4 skipped（新增 1 項：兩個模式的停售留空、大小寫與空白比對、warning 與 Summary 計數）
+
+## v1.109.6 (2026-11-24)
+
+店舖精簡SKU模式的匯出檔新增**第一張工作表「說明」**：按本檔實際結果列出 SCT建議 的填寫規則（16 種／4 種情況，每種情況的 SKU 數與實際寫入值）、三個值的分佈、Top N% 與對比欄口徑、顏色對照、`Summary` 區塊次序與回覆欄注意事項，並在頂部列出本次輸出的列數、店舖數目、Top 比例與金額視窗。兩個模式（多店輸出、指定店舖）共用；`Export` 與 `Summary` 的欄位、顏色、隱藏欄與數值完全不變。
+
+### 說明頁內容
+
+- **標題與概況**：`店舖精簡SKU模式 — 輸出說明`；第二行列「本次輸出：N 列｜X 間店舖｜Top 80%｜金額視窗 Net Sales (P78D)（78 日）｜SCT建議 已填寫 N 列（xx.x%）」，全部按本次資料即時計算
+- **一、SCT建議 是甚麼**：自動填寫的目的、規則來源（側欄 16／4 情況表）、留空的含意（由 SCT 判斷，例如 ND）
+- **二、情況表（本檔實際採用）**：按輸出實際有的 Top 判定欄生成（指定店舖四個判定＝16 種、原模式兩個判定＝4 種）；逐列列出「是／否」＋`本檔 SKU 數`＋`本檔 SCT建議`；同一情況若曾在 Excel 內手動改成不同值，會以「／」列出
+- **三、三個值**：`首選RF`（最高優先）／`次選RF`（次一級）／`建議RF`（可考慮）／留空；每個值另列本檔的情況數與 SKU 數
+- **四、Top N% 判定與對比欄**：件數與金額的累計口徑、對比欄四值、非 Top 含「否」及未判定、兩種模式的分組方式
+- **五、顏色說明**：橙色 `#FFC000`（`Adj. SST` 含 03 - Private Label）、綠色 `#CCFF99`（Top 判定「是」／重點欄）、紫色 `#E4DFEC`（`Sold Qty (P90D)`）、淡紅 `#F2DCDB`（無賣整列）、紅色 `#FF9999`（Discontinued／ND／無存貨）、青綠 `#99E6CC`（兩者皆是）、粉紅 `#FFC7CE`（兩者皆非）、淺藍 `#D9E2F3`（一般表頭）；左欄以色塊顯示實際顏色
+- **六、Summary 工作表**：按模式列出區塊次序（`SCT建議` 有值時多一個 × `SCT建議` 區塊）
+- **七、回覆欄與其他注意事項**：兩個回覆欄留空、`SCT建議` 只用三個值、指定店舖的 30 欄檢視、顏色只影響顯示、數值按每次輸出新算
+- **頁尾**：產生時間與工具版本
+
+### 實作
+
+- `modes/shop_simplify.py`：新增 `_SHOP_SIMPLIFY_GUIDE_SHEET = "說明"`、`_shop_simplify_guide_flags()`（判定欄與其簡短標籤）、`_write_shop_simplify_guide()`（說明頁內容）；`generate_excel_shop_simplify` 先建立「說明」再建 `Summary`／`Export`，並在 `Summary` 之後寫入說明頁，進度回呼加 0.90 一步
+- 工作表次序改為 `說明｜Summary｜Export`（說明排第一，與其他模式一致）；開啟檔案仍預設顯示 `Export`
+
+### 驗證
+
+- 以合成資料（4 列、1 間店舖、Top 80%、P73D）實測：說明頁 63 列、情況表 16 列；概況行「SCT建議 已填寫 3 列（75.0%）」；三個值合計 2＋0＋1＋1＝4 個 SKU，與 `Export` 列數相同
+- 原模式（4 種情況）與指定店舖（16 種）各跑一次，說明頁表頭、情況數目與 SKU 數合計均正確
+- `py -m pytest tests` → 1831 passed、4 skipped（新增 2 項：說明頁 16 情況表與概況行、原模式 4 情況表；既有 2 個工作表清單斷言加入「說明」）
+
 ## v1.109.5 (2026-11-24)
 
 「店舖精簡SKU模式」（多店輸出）也加入 **SCT建議自動填寫**：本模式每間店只有「件數 Top」「金額 Top」兩個判定，對比欄由判定自動合成，故全部情況＝2×2＝**4 種**——`兩者皆是 → 首選RF`／`只有件數 Top → 次選RF`／`只有金額 Top → 建議RF`／`兩者皆非 → 留空`。側欄「SCT建議」一張 4 列小表，逐格可改，自動填寫**預設開啟**。
