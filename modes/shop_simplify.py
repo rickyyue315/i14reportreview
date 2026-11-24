@@ -519,6 +519,70 @@ _SHOP_SIMPLIFY_GREEN = "CCFF99"
 _SHOP_SIMPLIFY_PURPLE = "E4DFEC"
 _SHOP_SIMPLIFY_NO_SALE_PINK = "F2DCDB"
 
+# ── Summary 版面（美化）：顏色分類、格線與欄寬 ──
+# 標題深藍、表頭分兩種（計數＝藍、佔比＝灰）、框線淺灰，數值置中、總計列加粗。
+_SHOP_SIMPLIFY_SUMMARY_TITLE_COLOUR = "1F3864"
+_SHOP_SIMPLIFY_SUMMARY_COUNT_HEADER_FILL = _SHOP_SIMPLIFY_HEADER_BLUE
+_SHOP_SIMPLIFY_SUMMARY_PERCENT_HEADER_FILL = "E7E6E6"
+# 欄標籤顏色分類（與 Export 同一語言）：綠＝核心（Top／RF）、淡紅＝停售或 ND、灰＝非 Top。
+# 個別區塊另有 column_fills（SCT建議 分類）時以該色為先。
+_SHOP_SIMPLIFY_SUMMARY_COLUMN_FILLS = {
+    "是": _SHOP_SIMPLIFY_GREEN,
+    "否": "F2F2F2",
+    "RF": _SHOP_SIMPLIFY_GREEN,
+    "ND": "FFC7CE",
+    "Discontinued": "FFC7CE",
+    "RF - Top": _SHOP_SIMPLIFY_GREEN,
+    "RF - 非Top": "EAF7DD",
+    "ND - Top": "FFC7CE",
+    "ND - 非Top": "FBE2E5",
+    "其他 - Top": _SHOP_SIMPLIFY_GREEN,
+    "其他 - 非Top": "F2F2F2",
+}
+_SHOP_SIMPLIFY_SUMMARY_GRID_COLOUR = "BFBFBF"
+_SHOP_SIMPLIFY_SUMMARY_GRID_STRONG_COLOUR = "808080"
+_SHOP_SIMPLIFY_SUMMARY_MIN_WIDTH = 11.0
+_SHOP_SIMPLIFY_SUMMARY_MAX_WIDTH = 22.0
+_SHOP_SIMPLIFY_SUMMARY_MIN_LABEL_WIDTH = 32.0
+_SHOP_SIMPLIFY_SUMMARY_MAX_LABEL_WIDTH = 48.0
+
+
+def _shop_simplify_summary_text_width(text) -> float:
+    """估算顯示寬度（中日韓字元以 1.9 個英文字元計），只用於換算 Summary 欄寬。"""
+    return sum(1.9 if ord(ch) > 0x2E80 else 1.0 for ch in str(text))
+
+
+def _shop_simplify_summary_fill(colour: str) -> PatternFill:
+    return PatternFill(start_color=colour, end_color=colour, fill_type="solid")
+
+
+def _shop_simplify_summary_column_fill(label) -> str | None:
+    """欄標籤的分類底色；沒有對應分類時回傳 None（改用區塊表頭底色）。
+
+    交叉區塊的欄名如「Active - ND」「Discontinued - RF」，按結尾的 RF／ND 上色，
+    與 `_SHOP_SIMPLIFY_SUMMARY_COLUMN_FILLS` 的單值欄名同一套顏色語言。
+    """
+    text = str(label).strip()
+    colour = _SHOP_SIMPLIFY_SUMMARY_COLUMN_FILLS.get(text)
+    if colour:
+        return colour
+    if text.endswith(" - ND"):
+        return _SHOP_SIMPLIFY_SUMMARY_COLUMN_FILLS["ND"]
+    if text.endswith(" - RF"):
+        return _SHOP_SIMPLIFY_SUMMARY_COLUMN_FILLS["RF"]
+    return None
+
+
+def _shop_simplify_summary_border(strong_top: bool = False) -> Border:
+    """格線：四面細框；總計列另加一條較粗的上框線（不填色，與分類底色分開）。"""
+    thin = Side(style="thin", color=_SHOP_SIMPLIFY_SUMMARY_GRID_COLOUR)
+    top = (
+        Side(style="medium", color=_SHOP_SIMPLIFY_SUMMARY_GRID_STRONG_COLOUR)
+        if strong_top
+        else thin
+    )
+    return Border(left=thin, right=thin, top=top, bottom=thin)
+
 # 紅色底（醒目紅底；比「無賣」的淡紅 F2DCDB 明顯，故兩者不會混淆）
 _SHOP_SIMPLIFY_RED = "FF9999"
 # 對比欄底色：兩者皆是＝青綠（核心，優先保留）；兩者皆非＝粉紅（精簡候選）
@@ -1999,69 +2063,124 @@ def _shop_simplify_summary_block(
     row_fills: dict[str, str] | None = None,
     column_fills: dict[str, str] | None = None,
     as_percent: bool = False,
+    widths: dict[int, float] | None = None,
+    header_fill: str | None = None,
 ) -> tuple[int, int]:
     """寫一個「列標籤 × 欄標籤」的 SKU 計數區塊（零值留空、底部總計列）。
 
     `row_fills`／`column_fills` 為選填的底色（hex，按列標籤／欄標籤），
-    用於 SCT建議 分類的顏色標註；沒有對應顏色的標籤保持原狀。
+    用於 SCT建議 分類的顏色標註；沒有對應顏色的標籤改用
+    `_SHOP_SIMPLIFY_SUMMARY_COLUMN_FILLS` 的欄標籤分類色，最後才用區塊表頭底色。
     `as_percent=True` 時版面不變，但數值改為佔該區塊總計的百分比（格式 `0.0%`），
     總計列的每一欄為該欄佔比、右下角為 100.0%。
+
+    版面：區塊標題深藍加粗；表頭與資料格四面細框線（零值留空的格亦畫框線），
+    數值置中；總計列加粗並在頂部加一條較粗框線。`widths` 會累計每欄最長的
+    表頭／列標籤顯示寬度，供區塊全部寫完後一次過設定欄寬。
     回傳 (最後一列列號, 用到的最大欄號)。
     """
-    ws.cell(row=start_row, column=1, value=title)
-    header = start_row + 1
-    ws.cell(row=header, column=1, value="列標籤")
-    total_col = 2 + len(column_labels)
+    widths = widths if widths is not None else {}
+    base_fill = header_fill or _SHOP_SIMPLIFY_SUMMARY_COUNT_HEADER_FILL
+    grid = _shop_simplify_summary_border()
+    grid_total = _shop_simplify_summary_border(strong_top=True)
     header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    number_align = Alignment(horizontal="center", vertical="center")
+
+    title_cell = ws.cell(row=start_row, column=1, value=title)
+    title_cell.font = Font(bold=True, size=11.5, color=_SHOP_SIMPLIFY_SUMMARY_TITLE_COLOUR)
+    ws.row_dimensions[start_row].height = 20
+
+    header = start_row + 1
+    total_col = 2 + len(column_labels)
+
+    label_head = ws.cell(row=header, column=1, value="列標籤")
+    label_head.font = Font(bold=True)
+    label_head.fill = _shop_simplify_summary_fill(base_fill)
+    label_head.alignment = header_align
+    label_head.border = grid
+    widths[1] = max(widths.get(1, 0), _shop_simplify_summary_text_width("列標籤"))
+
     for j, label in enumerate(column_labels, start=2):
         cell = ws.cell(row=header, column=j, value=label)
         cell.alignment = header_align
-        colour = (column_fills or {}).get(label)
-        if colour:
-            cell.fill = PatternFill(start_color=colour, end_color=colour, fill_type="solid")
-            cell.font = Font(bold=True)
-    ws.cell(row=header, column=total_col, value="總計").alignment = header_align
+        colour = (
+            (column_fills or {}).get(label)
+            or _shop_simplify_summary_column_fill(label)
+            or base_fill
+        )
+        cell.fill = _shop_simplify_summary_fill(colour)
+        cell.font = Font(bold=True)
+        cell.border = grid
+        widths[j] = max(widths.get(j, 0), _shop_simplify_summary_text_width(label))
+
+    total_head = ws.cell(row=header, column=total_col, value="總計")
+    total_head.alignment = header_align
+    total_head.font = Font(bold=True)
+    total_head.fill = _shop_simplify_summary_fill(base_fill)
+    total_head.border = grid
+    widths[total_col] = max(widths.get(total_col, 0), _shop_simplify_summary_text_width("總計"))
     ws.row_dimensions[header].height = 30
 
     grand = sum(
         counts.get((level, label), 0) for level in row_levels for label in column_labels
     )
 
-    def write(r: int, c: int, value: int) -> None:
+    def write(r: int, c: int, value: int, border: Border = grid, bold: bool = False) -> None:
         cell = ws.cell(row=r, column=c)
         if as_percent:
             cell.value = value / grand if grand else 0
             cell.number_format = "0.0%"
         else:
             cell.value = value
+            cell.number_format = "#,##0"
+        cell.alignment = number_align
+        cell.border = border
+        if bold:
+            cell.font = Font(bold=True)
 
     column_totals = dict.fromkeys(column_labels, 0)
     last = header
     for i, level in enumerate(row_levels, start=header + 1):
         cell = ws.cell(row=i, column=1, value=level)
-        cell.alignment = Alignment(horizontal="left")
+        cell.alignment = Alignment(horizontal="left", vertical="center")
+        cell.border = grid
         colour = (row_fills or {}).get(level)
         if colour:
-            cell.fill = PatternFill(start_color=colour, end_color=colour, fill_type="solid")
+            cell.fill = _shop_simplify_summary_fill(colour)
             cell.font = Font(bold=True)
+        widths[1] = max(widths.get(1, 0), _shop_simplify_summary_text_width(level))
         row_total = 0
         for j, label in enumerate(column_labels, start=2):
             count = counts.get((level, label), 0)
             if count:
                 write(i, j, count)
+            else:
+                # 零值留空，但仍畫框線，令整個區塊看起來是一張完整的表
+                ws.cell(row=i, column=j).border = grid
             row_total += count
             column_totals[label] += count
         if row_total:
             write(i, total_col, row_total)
+        else:
+            ws.cell(row=i, column=total_col).border = grid
+        ws.row_dimensions[i].height = 18
         last = i
 
     total_row = last + 1
-    ws.cell(row=total_row, column=1, value="總計")
+    total_label = ws.cell(row=total_row, column=1, value="總計")
+    total_label.font = Font(bold=True)
+    total_label.alignment = Alignment(horizontal="left", vertical="center")
+    total_label.border = grid_total
     for j, label in enumerate(column_labels, start=2):
         if column_totals[label]:
-            write(total_row, j, column_totals[label])
+            write(total_row, j, column_totals[label], border=grid_total, bold=True)
+        else:
+            ws.cell(row=total_row, column=j).border = grid_total
     if grand:
-        write(total_row, total_col, grand)
+        write(total_row, total_col, grand, border=grid_total, bold=True)
+    else:
+        ws.cell(row=total_row, column=total_col).border = grid_total
+    ws.row_dimensions[total_row].height = 18
     return total_row, total_col
 
 
@@ -2099,6 +2218,11 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
     4. RF／ND × 每個 Top N% 判定欄的四象限（店舖件數／同Nature件數／店舖金額／同Nature金額
        各一個區塊，欄為 RF-Top／RF-非Top／ND-Top／ND-非Top；非Top 含「否」及未判定）。
     零值一律留空，每個區塊底部有總計列；來源缺該欄時該區塊自動略過。
+
+    版面（美化）：A1 為標題、A2 為本次輸出概況；每個區塊標題深藍加粗，表頭按分類填色
+    （計數＝藍、佔比＝灰；「是／RF」綠、「否／非Top」灰、「Discontinued／ND」淡紅，
+    SCT建議 沿用其分類色），全部表頭與資料格加四面細框線（等同格線），數值置中、
+    總計列加粗加上框線；欄寬按各欄最長內容自動換算，捲動時左邊的列標籤保持可見。
     """
     index_col = "Adj. MCH1" if "Adj. MCH1" in df.columns else (
         "Item Class" if "Item Class" in df.columns else None
@@ -2110,6 +2234,40 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
     row_order = _shop_simplify_summary_row_order(levels)
     valid = df["SKU"].notna()
 
+    # 全表欄寬需求（欄號 → 最長顯示寬度），區塊全部寫完後一次過設定
+    widths: dict[int, float] = {}
+
+    # ── 標題列（A1／A2；A3 起才是第一個區塊，沿用既有位置）──
+    ws.cell(row=1, column=1, value="店舖精簡SKU模式 — Summary").font = Font(
+        bold=True, size=15, color=_SHOP_SIMPLIFY_SUMMARY_TITLE_COLOUR
+    )
+    ws.row_dimensions[1].height = 26
+    overview = [f"共 {len(df):,} 列 SKU"]
+    if "Site Code" in df.columns:
+        shops = df["Site Code"].dropna().astype(str).str.strip()
+        shops = shops[shops != ""]
+        if len(shops):
+            n_shops = shops.nunique()
+            overview.append(
+                f"指定店舖 {shops.iloc[0]}" if n_shops == 1 else f"{n_shops} 間店舖"
+            )
+    tops = _shop_simplify_summary_top_columns(df)
+    if tops:
+        found = re.search(r"Top\s*(\d{1,3})%", " ".join(str(n) for n in tops))
+        if found:
+            overview.append(f"Top {found.group(1)}%")
+    window = next(
+        (c for c in df.columns if re.fullmatch(r"Net Sales \(P\d+D\)", str(c).strip())),
+        None,
+    )
+    if window is not None:
+        found = re.search(r"P(\d+)D", str(window))
+        overview.append(f"金額視窗 {window}（{found.group(1)} 日）")
+    overview.append("每個區塊先列計數、再列佔比（分母＝該區塊總計）")
+    info = ws.cell(row=2, column=1, value="｜".join(overview))
+    info.font = Font(size=10, color="595959")
+    ws.row_dimensions[2].height = 18
+
     def block_pair(suffix, start, labels, counts, row_fills=None, column_fills=None, rows=None):
         """先寫計數區塊，緊接同一區塊的「佔比」版本（版面相同，分母＝該區塊總計）。
 
@@ -2117,11 +2275,13 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
         """
         rows = row_order if rows is None else rows
         end, last_col = _shop_simplify_summary_block(
-            ws, f"計數 - SKU：{suffix}", start, rows, labels, counts, row_fills, column_fills
+            ws, f"計數 - SKU：{suffix}", start, rows, labels, counts, row_fills, column_fills,
+            widths=widths,
         )
         end, last_col = _shop_simplify_summary_block(
             ws, f"佔比 - SKU：{suffix}", end + 3, rows, labels, counts,
-            row_fills, column_fills, as_percent=True,
+            row_fills, column_fills, as_percent=True, widths=widths,
+            header_fill=_SHOP_SIMPLIFY_SUMMARY_PERCENT_HEADER_FILL,
         )
         return end, last_col
 
@@ -2131,8 +2291,12 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
     blocks_end = 2
     max_col = 0
     if status_col is not None:
-        ws["A3"] = "計數 - SKU"
-        ws["B3"] = "欄標籤"
+        # A3 標題／B3「欄標籤」與 A4 表頭位置為既有版面（測試與使用者習慣依賴），只加樣式不改位置
+        title_cell = ws.cell(row=3, column=1, value="計數 - SKU")
+        title_cell.font = Font(bold=True, size=11.5, color=_SHOP_SIMPLIFY_SUMMARY_TITLE_COLOUR)
+        ws.row_dimensions[3].height = 20
+        legacy_caption = ws.cell(row=3, column=2, value="欄標籤")
+        legacy_caption.font = Font(size=9, italic=True, color="808080")
 
         summary_df = df.copy()
         summary_df[index_col] = levels
@@ -2162,21 +2326,65 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
             columns=statuses + (["總計"] if "總計" in table.columns else []),
         )
 
-        ws.cell(row=4, column=1, value="列標籤")
+        # 表頭（藍底、加粗、細框、置中換行）與資料格（四面細框、數值置中）；
+        # 「總計」列加粗並在頂部加較粗框線，與其他列分開
+        grid = _shop_simplify_summary_border()
+        grid_total = _shop_simplify_summary_border(strong_top=True)
+        legacy_base = _SHOP_SIMPLIFY_SUMMARY_COUNT_HEADER_FILL
+        header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        head = ws.cell(row=4, column=1, value="列標籤")
+        head.font = Font(bold=True)
+        head.fill = _shop_simplify_summary_fill(legacy_base)
+        head.alignment = header_align
+        head.border = grid
+        widths[1] = max(widths.get(1, 0), _shop_simplify_summary_text_width("列標籤"))
         for j, status in enumerate(statuses, start=2):
-            ws.cell(row=4, column=j, value=str(status))
-        ws.cell(row=4, column=total_col, value="總計")
+            cell = ws.cell(row=4, column=j, value=str(status))
+            cell.font = Font(bold=True)
+            cell.fill = _shop_simplify_summary_fill(
+                _shop_simplify_summary_column_fill(status) or legacy_base
+            )
+            cell.alignment = header_align
+            cell.border = grid
+            widths[j] = max(widths.get(j, 0), _shop_simplify_summary_text_width(status))
+        total_head = ws.cell(row=4, column=total_col, value="總計")
+        total_head.font = Font(bold=True)
+        total_head.fill = _shop_simplify_summary_fill(legacy_base)
+        total_head.alignment = header_align
+        total_head.border = grid
+        widths[total_col] = max(
+            widths.get(total_col, 0), _shop_simplify_summary_text_width("總計")
+        )
+        ws.row_dimensions[4].height = 30
 
         for i, (idx, row) in enumerate(table.iterrows(), start=5):
+            is_total = str(idx) == "總計"
             cell = ws.cell(row=i, column=1, value=str(idx))
-            cell.alignment = Alignment(horizontal="left")
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+            cell.border = grid_total if is_total else grid
+            if is_total:
+                cell.font = Font(bold=True)
+            widths[1] = max(widths.get(1, 0), _shop_simplify_summary_text_width(idx))
             for j, status in enumerate(statuses, start=2):
                 count = int(row[status])
+                target = ws.cell(row=i, column=j)
                 if count:
-                    ws.cell(row=i, column=j, value=count)
+                    target.value = count
+                    target.number_format = "#,##0"
+                    target.alignment = Alignment(horizontal="center", vertical="center")
+                target.border = grid_total if is_total else grid
+                if is_total:
+                    target.font = Font(bold=True)
             total = int(row["總計"])
+            total_cell = ws.cell(row=i, column=total_col)
             if total:
-                ws.cell(row=i, column=total_col, value=total)
+                total_cell.value = total
+                total_cell.number_format = "#,##0"
+                total_cell.alignment = Alignment(horizontal="center", vertical="center")
+            total_cell.border = grid_total if is_total else grid
+            if is_total:
+                total_cell.font = Font(bold=True)
+            ws.row_dimensions[i].height = 18
         status_labels = [str(s) for s in statuses]
         blocks_end = 4 + len(table)
         max_col = total_col
@@ -2188,7 +2396,8 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
         )
         blocks_end, _ = _shop_simplify_summary_block(
             ws, "佔比 - SKU", blocks_end + 3, row_order, status_labels, status_counts,
-            as_percent=True,
+            as_percent=True, widths=widths,
+            header_fill=_SHOP_SIMPLIFY_SUMMARY_PERCENT_HEADER_FILL,
         )
 
     # ── 區塊 1b：Item Status × RP Type（每個狀態再分 RF／ND，另有其他值時加「其他」）──
@@ -2312,13 +2521,25 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
             )
             max_col = max(max_col, 2 + len(labels))
 
-    # 欄寬（對齊範本；區塊欄數多於 4 個時其餘用 12）
-    widths = [35.28515625, 9.7109375, 12.7109375, 8.28515625, 10.0, 5.28515625]
-    while len(widths) < max_col:
-        # 交叉區塊的欄名較長（如「Discontinued - ND」），配 15 並自動換行
-        widths.append(15.0)
-    for j, width in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(j)].width = width
+    # 欄寬：A 欄放列標籤（Adj. MCH1）與區塊標題，按其最長標籤換算（32–48 字元）；
+    # 其餘按各欄最長表頭／列標籤換算（下限 11、上限 22 字元，長欄名靠自動換行處理）
+    ws.column_dimensions["A"].width = min(
+        _SHOP_SIMPLIFY_SUMMARY_MAX_LABEL_WIDTH,
+        max(_SHOP_SIMPLIFY_SUMMARY_MIN_LABEL_WIDTH, widths.get(1, 0) + 6.0),
+    )
+    for j in range(2, max_col + 1):
+        needed = widths.get(j, 0) + 2.5
+        ws.column_dimensions[get_column_letter(j)].width = min(
+            _SHOP_SIMPLIFY_SUMMARY_MAX_WIDTH,
+            max(_SHOP_SIMPLIFY_SUMMARY_MIN_WIDTH, needed),
+        )
+
+    # 檢視：關閉預設格線（各表已用框線畫出格線，避免與框線重疊）、凍結 A 欄、
+    # 略微縮小以便一次看到整個區塊；分頁標籤用 Summary 表頭的藍色
+    ws.sheet_view.showGridLines = False
+    ws.sheet_view.zoomScale = 90
+    ws.freeze_panes = "B1"
+    ws.sheet_properties.tabColor = _SHOP_SIMPLIFY_SUMMARY_COUNT_HEADER_FILL
 
 
 _SHOP_SIMPLIFY_GUIDE_SHEET = "說明"
@@ -2622,7 +2843,9 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
         row,
         f"Summary 以 Adj. MCH1 為列，逐個區塊統計 SKU 數；零值留空，每個區塊底部有「總計」列。"
         f"每個計數區塊之後緊接同一區塊的「佔比 - SKU：…」版本：欄名與版面相同，數值為佔該區塊"
-        f"總計的百分比（格式 0.0%，右下角為 100.0%），方便直接比較分佈。區塊依次為：{block_text}。",
+        f"總計的百分比（格式 0.0%，右下角為 100.0%），方便直接比較分佈。區塊依次為：{block_text}。"
+        f"版面：表頭按分類填色——是／RF 綠、Discontinued／ND 淡紅、否／非Top 灰、SCT建議 用其"
+        f"分類色；計數區塊藍底、佔比區塊灰底，全表每格有框線，總計列加粗並加上框線。",
     )
     row += 1
 

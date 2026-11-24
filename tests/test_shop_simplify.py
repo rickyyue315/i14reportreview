@@ -2429,3 +2429,74 @@ def test_shop_mode_value_line_isolated_per_shop():
     assert flags[("HA21", "B")] == _SHOP_SIMPLIFY_TOP80_NO
     assert flags[("HA20", "A")] == _SHOP_SIMPLIFY_TOP80_NO
     assert flags[("HA20", "B")] == _SHOP_SIMPLIFY_TOP80_YES
+
+
+def test_summary_layout_colours_borders_and_widths():
+    """Summary 美化版面：A1 標題／A2 概況、表頭按分類填色、全表框線、數值置中、
+    總計列加粗加上框線、欄寬按內容換算、凍結 A 欄並關閉預設格線。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE",
+         "Item Status": "Active", "RP Type": "RF", "Sold Qty (P90D)": 70,
+         "Net Sales (M-2)": 3000, "Net Sales (M-1)": 3000, "Net Sales (CM - MTD)": 1000},
+        {"SKU": "B", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE",
+         "Item Status": "Discontinued", "RP Type": "ND", "Sold Qty (P90D)": 10,
+         "Net Sales (M-2)": 100, "Net Sales (M-1)": 100, "Net Sales (CM - MTD)": 100},
+        {"SKU": "C", "Site Code": "HA21", "Adj. MCH1": "02 - MAKE UP",
+         "Item Status": "Active", "RP Type": "RF", "Sold Qty (P90D)": 5,
+         "Net Sales (M-2)": 50, "Net Sales (M-1)": 50, "Net Sales (CM - MTD)": 50},
+    ]
+    raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12))
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Summary"]
+
+    # 標題與概況（A3／A4 的第一個區塊位置不變）
+    assert ws["A1"].value == "店舖精簡SKU模式 — Summary"
+    assert str(ws["A2"].value).startswith("共 3 列 SKU")
+    assert "指定店舖 HA21" in ws["A2"].value
+    assert ws["A3"].value == "計數 - SKU"
+    assert ws["A4"].value == "列標籤"
+
+    # 表頭分類填色：Active 用計數表頭藍、Discontinued 淡紅；全部表頭有細框線
+    assert ws["B4"].value == "Active" and ws["C4"].value == "Discontinued"
+    assert ws["B4"].fill.start_color.rgb[-6:] == "D9E2F3"
+    assert ws["C4"].fill.start_color.rgb[-6:] == "FFC7CE"
+    assert all(ws.cell(row=4, column=c).border.left.style == "thin" for c in range(1, 4))
+
+    # 資料格：列標籤靠左、數值置中、千分位格式，零值留空的格亦有框線
+    assert ws["A5"].alignment.horizontal == "left"
+    assert ws["B5"].alignment.horizontal == "center"
+    assert ws["B5"].number_format == "#,##0"
+    assert ws["C6"].border.bottom.style == "thin"
+
+    # 總計列：加粗、頂部較粗框線、不填色
+    assert ws["A7"].value == "總計" and ws["A7"].font.bold is True
+    assert ws["A7"].border.top.style == "medium"
+    assert ws["A7"].fill.fill_type is None
+
+    # 佔比區塊：表頭底色改灰，但分類欄（Discontinued）仍保留淡紅
+    pct_row = next(
+        r for r in range(1, ws.max_row + 1) if ws.cell(row=r, column=1).value == "佔比 - SKU"
+    )
+    assert ws.cell(row=pct_row + 1, column=1).fill.start_color.rgb[-6:] == "E7E6E6"
+    assert ws.cell(row=pct_row + 1, column=3).fill.start_color.rgb[-6:] == "FFC7CE"
+
+    # 交叉區塊的複合欄名按結尾的 RF／ND 上色
+    cross_row = next(
+        r for r in range(1, ws.max_row + 1)
+        if ws.cell(row=r, column=1).value == "計數 - SKU：Item Status × RP Type"
+    )
+    header = {
+        ws.cell(row=cross_row + 1, column=c).value: ws.cell(row=cross_row + 1, column=c)
+        for c in range(2, ws.max_column + 1)
+        if ws.cell(row=cross_row + 1, column=c).value
+    }
+    assert header["Active - RF"].fill.start_color.rgb[-6:] == "CCFF99"
+    assert header["Active - ND"].fill.start_color.rgb[-6:] == "FFC7CE"
+
+    # 欄寬：A 欄 32–48、其餘 11–22；凍結 A 欄、關閉預設格線
+    assert 32 <= ws.column_dimensions["A"].width <= 48
+    assert all(
+        11 <= ws.column_dimensions[letter].width <= 22
+        for letter in ("B", "C", "D")
+    )
+    assert ws.freeze_panes == "B1"
+    assert ws.sheet_view.showGridLines is False

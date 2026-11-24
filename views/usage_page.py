@@ -112,6 +112,7 @@ MODES = [
 - 側欄「SCT建議」提供 4 情況表（件數 Top／金額 Top 各自是或否），預設兩者皆是→首選RF、只有件數→次選RF、只有金額→建議RF、兩者皆非→留空，自動填寫預設開啟
 - 側欄「SCT建議」提供 16 情況表逐格指定（首選RF／次選RF／建議RF／留空），預設帶入三級建議作起點，自動填寫預設開啟
 - 輸出：Summary（Adj. MCH1 為列，逐個維度統計 SKU 數：Item Status／Item Status × RP Type（每個狀態再分 RF／ND）／RP Type／四個 Top N% 判定欄／四個 RF-ND × Top N% 四象限；每個區塊之後緊接同名「佔比 - SKU：…」版本，數值為佔該區塊總計的百分比）＋ Export（依 Brand／SKU 排序，套用範本欄寬、隱藏欄與顏色標示）
+- Summary 版面：每格加框線（等同格線）、數值置中、總計列加粗；表頭按分類填色——是／RF 綠、Discontinued／ND 淡紅、否／非Top 灰、SCT建議 用其分類色，計數區塊藍底、佔比區塊灰底；欄寬按內容自動調整，A 欄凍結
 - 匯出檔第一張工作表為「說明」，按本檔結果列出 SCT建議 4 情況表、三個值的分佈、Top N% 與顏色說明
      """,
      """
@@ -141,6 +142,7 @@ MODES = [
 - 「兩項皆非」即精簡候選；其餘欄位、Item_Shop 解析、刪除 Value 欄與回覆欄留空規則同店舖精簡SKU模式
 - 匯出檔預設只顯示回覆表需要的 30 欄（識別、庫存、銷量、六欄 Top 判定與對比、回覆欄），其餘欄位（Shop Name／OM／三個月庫存與銷量明細／Shop Stock Status／SCT建議 等）預設隱藏，需要時可在 Excel 內取消隱藏
 - 輸出：Summary（Adj. MCH1 為列：Item Status／Item Status × RP Type（每個狀態再分 RF／ND）／RP Type／SCT建議（有值時）／四個 Top N% 判定欄／四個 RF-ND × Top N% 四象限；每個區塊之後緊接同名「佔比 - SKU：…」版本，數值為佔該區塊總計的百分比 0.0%）＋Export（Sold Qty 後加 Net Sales (PxxD)，存貨判定欄後加四欄判定＋兩欄對比，回覆欄維持最後）
+- Summary 版面：每格加框線（等同格線）、數值置中、總計列加粗；表頭按分類填色——是／RF 綠、Discontinued／ND 淡紅、否／非Top 灰、SCT建議 用其分類色，計數區塊藍底、佔比區塊灰底；欄寬按內容自動調整，A 欄凍結
 - 匯出檔第一張工作表為「說明」，按本檔結果列出 SCT建議 16 情況表、三個值的分佈、Top N% 與顏色說明
      """,
      """
