@@ -25,6 +25,13 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+st.caption(
+    "ℹ️ 2026-11-24 起來源檔新增 `Shop Blocked Qty (CM)`（店舖已安排退貨）：所有模式計算 "
+    "`Shop Stock Qty (CM)` 時會先自動扣減此欄，`Shop Stock Value (CM)` 亦按同一比例調低；"
+    "扣減後為 0 的列不會再被當作有貨。原欄位會保留在 RAW／Export 供對帳，"
+    "上載後主頁面會顯示扣減列數、件數與金額。"
+)
+
 # 2b. 圖解操作流程（收合於展開區塊，避免進入頁面時即載入圖片拖慢顯示）
 with st.expander("🖼️ 圖解操作流程（實際畫面擷圖）", expanded=False):
     st.caption("以下為實際操作畫面：先選模式，再上傳檔案。")

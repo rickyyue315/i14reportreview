@@ -1,5 +1,31 @@
 # 版本記錄
 
+## v1.110.0 (2026-11-24)
+
+**Shop Blocked Qty (CM) 全模式自動扣減**：店舖投訴已完成退貨，但係統計算的 `Shop Stock Qty (CM)` 未扣數（例如 HB97 有 16 件待退，仍然當作有貨）。PowerBI 已於 `By SKUxShop` 新增 `Shop Blocked Qty (CM)`（店舖已安排退貨的件數），本版改為所有模式在清理階段自動扣減，並同步調整 `Shop Stock Value (CM)`。
+
+### 計算規則
+
+- **件數**：`Shop Stock Qty (CM)` 淨值 ＝ max(0, `Shop Stock Qty (CM)` − `Shop Blocked Qty (CM)`)，扣減後為 0 的列不會再被任何模式當作有貨
+- **金額**：`Shop Stock Value (CM)` 按「扣減後件數 ÷ 原件數」同一比例調減（單位成本不變）；原件數為 0 或負數時 Value 原樣保留，交由介面提示核對
+- **異常**：`Blocked` 大於現有件數時按 0 件計（Value 同步按比例調至 0；原件數為 0 時 Value 不變），並於上載後另行提示（不靜默處理）
+- **原欄保留**：`Shop Blocked Qty (CM)` 不改動，RAW／Export 原樣帶出供與 PowerBI 對帳；RAW 欄序緊隨 `Shop Stock Qty (CM)`
+- **相容**：欄位不存在或全為 0 時，行為與舊檔完全相同；PowerBI 自行計算的 `Shop Stock Status`／`Excess Stock Qty`／`Turnday (P90D Qty)` 等衍生欄不會跟隨重算（已在 README 註明）
+
+### 實作
+
+- `modes/common.py`：新增 `_SHOP_BLOCKED_QTY_COLUMN／_SHOP_STOCK_QTY_COLUMN／_SHOP_STOCK_VALUE_COLUMN`、`_shop_blocked_qty_parts()`、`_apply_shop_blocked_qty()`、`shop_blocked_qty_summary()`；`_clean_dataframe()` 新增 `apply_shop_blocked=True`，在篩選後原地扣減（避免 80 萬行寬表再複製一份），並將 `Shop Blocked Qty (CM)` 加入 `RAW_COLUMN_ORDER_NAMES`
+- `modes/shop_simplify.py`：`transform_shop_simplify()` 新增 `apply_shop_blocked=True`；指定店舖變體外層已扣一次，內層呼叫傳 `False`，避免重複扣減；說明頁第七節加註本檔扣減列數、件數與 Value 處理
+- `views/analyzer_page.py`：上載後新增提示卡（扣減列數、件數、金額；異常列 warning）
+- `views/usage_page.py`：操作流程下加全域說明
+
+### 驗證
+
+- 新增 `tests/test_shop_blocked_qty.py` 11 項：比例扣減、無欄／全 0 不變、缺 Value 欄、Blocked 大於庫存、Summary 統計（含剔除 Total／註腳列）、P90D 0 Sales 排除全數待退列、RAW 輸出淨值並保留原欄、指定店舖不重複扣減
+- `py -m pytest tests` → 1868 passed、4 skipped
+- 用 `By SKUxShop_110940603001_Blocked SKU_24Nov2026.xlsx` 實測：51 個明細列中 49 列有待退，合計 224 件；`Shop Stock Qty (CM)` 234 → 10 件，`Shop Stock Value (CM)` $34,620.30 → $1,479.50，無異常列（尾部 Total 列已剔除，不重複計算）
+- 未 commit／未 push
+
 ## v1.109.13 (2026-11-24)
 
 指定總量分配（Target Safety）改為**上載清單為主**：前線慣常逐隻 SKU 輸入 Target（一行一隻），並已有一份含 `Brand／SKU／SKU Desc／Vendor MC／Buyer／現時Safety／我想輸入的Safety Qty` 的檔案，逐格在網頁填寫不現實。上載後系統即時讀取並核對，確認無誤才執行計算。

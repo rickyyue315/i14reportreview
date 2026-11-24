@@ -64,6 +64,7 @@ from transformer import (
     build_mch_breakdown,
     transform_nd_transfer, generate_excel_nd_transfer, build_nd_transfer_candidates, receiver_limit_label,
     _clean_dataframe, _cached_safe_sku_series, _safe_numeric,
+    _SHOP_BLOCKED_QTY_COLUMN, shop_blocked_qty_summary,
     count_valid_source_rows,
     _build_op90d_by_sku, _build_op90d_by_buyer,
     _build_op90d_top_no_sales_sku,
@@ -888,6 +889,35 @@ if uploaded_file is not None:
             "店舖精簡SKU模式的存貨判定擴為 LLM／LM／CM 任一大於 0。"
         )
 
+    # 2026-11-24 起來源報表新增「Shop Blocked Qty (CM)」（店舖已安排退貨，PowerBI 尚未由
+    # Shop Stock Qty (CM) 扣減）：所有模式計算時自動扣減，此處只顯示扣減概況供核對。
+    _blocked_info = shop_blocked_qty_summary(df_input)
+    if _blocked_info["available"]:
+        if _blocked_info["rows"]:
+            _value_note = (
+                f"「Shop Stock Value (CM)」按同一比例自動調減，合計 **${_blocked_info['value_deduction']:,.2f}**。"
+                if _blocked_info["value_available"]
+                else ""
+            )
+            st.info(
+                f"偵測到「{_SHOP_BLOCKED_QTY_COLUMN}」（店舖已安排退貨、系統尚未扣減）："
+                f"**{_blocked_info['rows']:,} 列、合計 {_blocked_info['blocked_qty']:,.0f} 件**。"
+                "所有模式的「Shop Stock Qty (CM)」計算已先扣減此欄（扣減後為 0 的列不會再被當作有貨）；"
+                f"{_value_note}"
+                f"「{_SHOP_BLOCKED_QTY_COLUMN}」欄原樣保留在 RAW／Export 供核對。"
+            )
+            if _blocked_info["over_rows"]:
+                st.warning(
+                    f"有 {_blocked_info['over_rows']:,} 列的「{_SHOP_BLOCKED_QTY_COLUMN}」大於"
+                    "「Shop Stock Qty (CM)」，計算時已按 0 件處理（件數不會出現負數）；"
+                    "Shop Stock Value (CM) 按可扣減比例調減。請向 PowerBI 核對來源數據。"
+                )
+        else:
+            st.caption(
+                f"ℹ️ 偵測到「{_SHOP_BLOCKED_QTY_COLUMN}」欄，但全部為 0（沒有店舖已安排退貨的件數），"
+                "各項計算不受影響。"
+            )
+
     # 預覽原始資料摺疊區塊
     with st.expander("🔍 預覽前 20 筆原始資料", expanded=False):
         st.dataframe(df_input.head(20), width='stretch')
@@ -896,6 +926,10 @@ if uploaded_file is not None:
             st.caption(
                 f"ℹ️ 表格尾部的「Total」合計列與「Applied filters」註腳已自動剔除"
                 f"（共 {_excluded_rows:,} 行），不參與任何計算。"
+            )
+        if _blocked_info["available"] and _blocked_info["rows"]:
+            st.caption(
+                f"ℹ️ 此處顯示來源檔原始數值（未扣減）；實際計算時已先扣走「{_SHOP_BLOCKED_QTY_COLUMN}」。"
             )
 
     # P0：全域匯出選項（各模式共用，略過 RAW 明細可省三至七成匯出時間）

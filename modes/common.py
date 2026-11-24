@@ -24,6 +24,11 @@ __all__ = [
     "M2_STOCK_LLM_EFFECTIVE_DATE",
     "RAW_COLUMN_ORDER_NAMES",
     "REQUIRED_COLUMNS",
+    "_SHOP_BLOCKED_QTY_COLUMN",
+    "_SHOP_STOCK_QTY_COLUMN",
+    "_SHOP_STOCK_VALUE_COLUMN",
+    "_apply_shop_blocked_qty",
+    "shop_blocked_qty_summary",
     "available_m2_stock_columns",
     "_ADJ_SAFETY_DISPLAY_COL",
     "_ADJ_SAFETY_SOURCE_COL",
@@ -84,6 +89,16 @@ M2_STOCK_LLM_COLUMNS = [
 ]
 
 M2_STOCK_LLM_EFFECTIVE_DATE = "2026-10-26"
+
+
+# 2026-11-24 起來源報表（By SKUxShop）加入「Shop Blocked Qty (CM)」＝店舖已安排退貨、
+# 但 PowerBI／系統尚未由 Shop Stock Qty (CM) 扣減的件數。
+# 所有以 Shop Stock Qty (CM) 計算的模式一律先扣走此欄（下限 0），
+# Shop Stock Value (CM) 按「扣減後件數 ÷ 原件數」同一比例調減（來源 Value 不會自動扣減）；
+# 欄位不存在或全為 0 時行為與舊檔完全相同。Shop Blocked Qty (CM) 欄原樣保留供核對。
+_SHOP_BLOCKED_QTY_COLUMN = "Shop Blocked Qty (CM)"
+_SHOP_STOCK_QTY_COLUMN = "Shop Stock Qty (CM)"
+_SHOP_STOCK_VALUE_COLUMN = "Shop Stock Value (CM)"
 
 
 def available_m2_stock_columns(df: pd.DataFrame) -> list[str]:
@@ -159,6 +174,7 @@ RAW_COLUMN_ORDER_NAMES = [
     "Buyer reply",
     "D001 Net Stock Qty (CM)",
     "Shop Stock Qty (CM)",
+    "Shop Blocked Qty (CM)",
     "Sold Qty (P90D)",
     "Turnday (P90D Qty)",
     "Sold Qty (M-2)",
@@ -379,6 +395,118 @@ def _safe_default_series(value, index):
     if len(index) == 0:
         return pd.Series(dtype='object')
     return pd.Series(value, index=index)
+
+
+def _shop_blocked_qty_parts(df: pd.DataFrame) -> dict | None:
+    """計算「Shop Blocked Qty (CM)」扣減所需的中間結果。
+
+    回傳 None＝沒有此欄、缺少 Shop Stock Qty (CM)，或全部列皆無扣減（行為完全不變）。
+    否則回傳 blocked／qty／net／value／new_value 等序列；只讀不修改 df。
+    """
+    if df is None or len(df) == 0:
+        return None
+    avail = set(df.columns)
+    blocked_col = _resolve_column_name(_SHOP_BLOCKED_QTY_COLUMN, avail)
+    qty_col = _resolve_column_name(_SHOP_STOCK_QTY_COLUMN, avail)
+    if blocked_col is None or qty_col is None:
+        return None
+
+    blocked = pd.to_numeric(df[blocked_col], errors="coerce").fillna(0.0)
+    blocked = blocked.where(blocked > 0, 0.0)
+    if not bool((blocked > 0).any()):
+        return None
+
+    qty = pd.to_numeric(df[qty_col], errors="coerce").fillna(0.0)
+    # 扣減後件數下限為 0；Blocked 大於現有件數屬來源資料異常，按 0 件計算（介面另行提示）
+    net = (qty - blocked).clip(lower=0.0)
+
+    value_col = _resolve_column_name(_SHOP_STOCK_VALUE_COLUMN, avail)
+    value = None
+    new_value = None
+    if value_col is not None:
+        value = pd.to_numeric(df[value_col], errors="coerce").fillna(0.0)
+        positive = qty > 0
+        ratio = pd.Series(1.0, index=df.index, dtype="float64")
+        if bool(positive.any()):
+            ratio.loc[positive] = (net.loc[positive] / qty.loc[positive]).clip(lower=0.0, upper=1.0)
+        # 原件數為 0（或負數）時無法按比例分攤，Value 原樣保留，交由介面提示核對
+        new_value = (value * ratio).where(positive, value)
+
+    return {
+        "blocked_col": blocked_col,
+        "qty_col": qty_col,
+        "value_col": value_col,
+        "blocked": blocked,
+        "qty": qty,
+        "net": net,
+        "value": value,
+        "new_value": new_value,
+    }
+
+
+def _apply_shop_blocked_qty(df: pd.DataFrame) -> pd.DataFrame:
+    """由 Shop Stock Qty (CM) 扣走 Shop Blocked Qty (CM)，並按比例調減 Shop Stock Value (CM)。
+
+    直接修改傳入的 df（呼叫端須確保是本次計算專用的副本，例如清理後的新物件），
+    避免 80 萬行寬表再複製一份。沒有可扣減的列時原樣回傳。
+    Shop Blocked Qty (CM) 欄本身不改動，供使用者與 PowerBI 對帳。
+    """
+    parts = _shop_blocked_qty_parts(df)
+    if parts is None:
+        return df
+    df[parts["qty_col"]] = parts["net"]
+    if parts["value_col"] is not None:
+        df[parts["value_col"]] = parts["new_value"]
+    return df
+
+
+def shop_blocked_qty_summary(df: pd.DataFrame) -> dict:
+    """回傳 Shop Blocked Qty (CM) 的扣減概況，供上載後提示（只讀，不改動 df）。
+
+    統計前先剔除尾部合計／註腳列、Buyer 空白與「117 - Marketing」列，
+    與 `_clean_dataframe` 同一準則，避免 Total 列令件數與金額重複計算。
+
+    - available：來源檔有 Shop Blocked Qty (CM) 欄（且有 Shop Stock Qty (CM)）；
+    - rows：有安排退貨的列數；blocked_qty：待退件數合計；
+    - value_available／value_deduction：有 Shop Stock Value (CM) 時，按比例調減的金額合計；
+    - over_rows：Blocked 大於現有件數的異常列數（計算時按 0 件處理）。
+    """
+    info = {
+        "available": False,
+        "rows": 0,
+        "blocked_qty": 0.0,
+        "value_available": False,
+        "value_deduction": 0.0,
+        "over_rows": 0,
+    }
+    if df is None or len(df) == 0:
+        return info
+    if _resolve_column_name(_SHOP_BLOCKED_QTY_COLUMN, set(df.columns)) is None:
+        return info
+    info["available"] = True
+
+    # 只統計明細列（與 _clean_dataframe 相同的剔除準則）
+    df = df[~_footer_row_mask(df)]
+    if "Buyer" in df.columns:
+        df = df.dropna(subset=["Buyer"])
+        df = df[df["Buyer"].astype(str).str.strip() != "117 - Marketing"]
+    if len(df) == 0:
+        return info
+
+    parts = _shop_blocked_qty_parts(df)
+    if parts is None:
+        return info
+
+    blocked = parts["blocked"]
+    qty = parts["qty"]
+    info["rows"] = int((blocked > 0).sum())
+    info["blocked_qty"] = float(blocked.sum())
+    info["over_rows"] = int(((blocked > qty) & (blocked > 0)).sum())
+    if parts["value_col"] is not None:
+        info["value_available"] = True
+        diff = (parts["value"] - parts["new_value"]).clip(lower=0.0)
+        info["value_deduction"] = float(diff[blocked > 0].sum())
+    return info
 
 
 
@@ -619,7 +747,18 @@ def count_valid_source_rows(df_input: pd.DataFrame) -> tuple[int, int]:
     return valid, total - valid
 
 
-def _clean_dataframe(df_input: pd.DataFrame, shop_natures: list[str] | None = None, progress_callback=None) -> pd.DataFrame:
+def _clean_dataframe(
+    df_input: pd.DataFrame,
+    shop_natures: list[str] | None = None,
+    progress_callback=None,
+    apply_shop_blocked: bool = True,
+) -> pd.DataFrame:
+    """共用清理：剔除合計／註腳與 117 - Marketing 列，並按 Shop Nature 篩選。
+
+    ``apply_shop_blocked=True``（預設）時，另由 Shop Stock Qty (CM) 扣走
+    Shop Blocked Qty (CM) 並按比例調減 Shop Stock Value (CM)；
+    已扣減過的資料再傳入時須設 False，避免重複扣減（見 transform_shop_simplify_site）。
+    """
     df = _standardize_safety_column(df_input)
     # 先剔除尾部合計／註腳列，再處理 Buyer 空白列：Total 列的 Buyer 可能有值，
     # 只靠 dropna 不足以排除，且其餘欄位仍帶有全表合計數值
@@ -642,6 +781,9 @@ def _clean_dataframe(df_input: pd.DataFrame, shop_natures: list[str] | None = No
             is_tourist_or_mix = (sn_col == "tourist") | (sn_col == "mix")
             mask |= (sn_col != "") & ~is_tourist_or_mix
         df = df[mask]
+    if apply_shop_blocked:
+        # 此時 df 已由上述篩選成為新物件，可安全原地修改，無須再複製整張寬表
+        df = _apply_shop_blocked_qty(df)
     return df
 
 

@@ -72,6 +72,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from modes.common import (
+    _SHOP_BLOCKED_QTY_COLUMN,
     _cached_safe_sku_series,
     _clean_dataframe,
     _compute_raw_extra_columns,
@@ -1290,6 +1291,7 @@ def transform_shop_simplify(
     data_date=None,
     group_by=None,
     sct_rules=None,
+    apply_shop_blocked: bool = True,
 ):
     """清理來源資料並附加「過去90日有無賣過／過去90日有無存貨」、件數與金額兩組
     「是否該店的Top N%」、一欄「該店 件數 vs 該店 金額 Top N%」對比，以及三個空白回覆欄。
@@ -1308,6 +1310,9 @@ def transform_shop_simplify(
     - `sct_rules` 為 SCT建議 的 4 情況表（情況鍵 "YY"／"YN"／"NY"／"NN" →
       首選RF／次選RF／建議RF／留空）；提供時按其填寫「SCT建議」欄，否則維持留空。
       Item Status＝Discontinued 的列一律留空，不套用規則（由 SCT 自行判斷）。
+    - `apply_shop_blocked` 預設 True：清理時由 `Shop Stock Qty (CM)` 扣走
+      `Shop Blocked Qty (CM)` 並按比例調減 `Shop Stock Value (CM)`；
+      指定店舖變體已在外層扣減一次，內層呼叫須設 False 避免重複扣減。
     - 回傳 (raw_df, warnings)。缺少 Sold Qty (P90D)，或 Shop Stock Qty (LLM)／(LM)／(CM)
       三個庫存欄同時缺失時拋出 ValueError（無法判定，不應靜默輸出）。
     """
@@ -1350,7 +1355,12 @@ def transform_shop_simplify(
 
     if progress_callback:
         progress_callback(0.15, "清理資料中...")
-    df = _clean_dataframe(df_input, shop_natures=shop_natures, progress_callback=progress_callback).copy()
+    df = _clean_dataframe(
+        df_input,
+        shop_natures=shop_natures,
+        progress_callback=progress_callback,
+        apply_shop_blocked=apply_shop_blocked,
+    ).copy()
 
     warnings: list[str] = []
     _used_stock_names = [n for n, c in _stock_pairs if c is not None]
@@ -1769,6 +1779,7 @@ def transform_shop_simplify_site(
         shop_natures=None,
         include_shop_top80=False,
         include_net_sales=False,
+        apply_shop_blocked=False,
     )
     warnings = list(base_warnings) + warnings
 
@@ -2607,6 +2618,17 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
         notes.append(
             "• 指定店舖模式的 Export 一打開只顯示回覆表所需的 30 欄，其餘欄隱藏；需要時在 Excel 選取相鄰欄「取消隱藏」即可。"
         )
+    if _SHOP_BLOCKED_QTY_COLUMN in df.columns:
+        _blocked_s = pd.to_numeric(df[_SHOP_BLOCKED_QTY_COLUMN], errors="coerce").fillna(0.0)
+        _blocked_rows = int((_blocked_s > 0).sum())
+        if _blocked_rows:
+            notes.append(
+                f"• 「Shop Stock Qty (CM)」已扣走「{_SHOP_BLOCKED_QTY_COLUMN}」"
+                f"（店舖已安排退貨的件數）：本檔 {_blocked_rows:,} 列、合計 {_blocked_s.sum():,.0f} 件；"
+                "扣減後為 0 的列不會再被當作有貨，Shop Stock Value (CM) 亦按同一比例調減"
+                "（本模式不匯出 Value 欄）。"
+                f"「{_SHOP_BLOCKED_QTY_COLUMN}」欄原樣保留，供與 PowerBI 對帳。"
+            )
     notes += [
         "• 顏色、凍結窗格與隱藏欄只影響顯示，不影響篩選、排序與數值。",
         "• 本頁數值按本次輸出的資料計算，換一批資料或改動 Top 比例後會重新產生。",
