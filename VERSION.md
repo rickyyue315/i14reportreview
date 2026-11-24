@@ -1,5 +1,43 @@
 # 版本記錄
 
+## v1.109.10 (2026-11-24)
+
+說明頁的時間改用香港時間（HKT）。此前頁尾以 `datetime.now()` 取伺服器所在時區，部署在雲端（UTC）時會比香港慢 8 小時；同一原因亦令 HKT 凌晨執行的金額視窗退回一日。
+
+### 修正
+
+- `modes/shop_simplify.py`：新增 `_SHOP_SIMPLIFY_HKT_TZ`（固定 UTC+8，香港不設夏令時間，亦不依賴 `tzdata`）與 `_shop_simplify_now_hkt()`
+- 說明頁頁尾改為「本頁由系統自動產生：YYYY-MM-DD HH:MM（HKT）｜版本 x.y.z」，時間明確標示 HKT
+- `_shop_simplify_net_sales_window()` 未指定 `data_date` 時改用 HKT 的「今天減一日」：HKT 00:00–08:00 執行時（UTC 仍是前一日），金額視窗日數不再少一日（例如 HKT 12 月 1 日 00:30 執行仍為 `P91D`）
+
+### 驗證
+
+- `py -m pytest tests` → 1837 passed、4 skipped（新增 2 項：HKT 時區偏移；固定 HKT 時刻下頁尾與預設數據截止日）
+- 重新產生 `說明頁預覽_20261124.xlsx`，頁尾為「本頁由系統自動產生：2026-11-24 11:17（HKT）｜版本 1.109.10」
+
+## v1.109.9 (2026-11-24)
+
+`Summary` 的 SCT建議 統計由一個區塊擴為三個，並以顏色標註建議等級：新增「SCT建議 × Item Status」與「SCT建議 × RP Type」兩個交叉區塊，直接看出每個 MCH1 內首選RF／次選RF／建議RF／留空各有幾多 Active、幾多停售、幾多 RF／ND。
+
+### Summary 新增
+
+- ⑥ × `SCT建議`：欄名按建議值填色（首選RF 綠 `#CCFF99`、次選RF 黃 `#FFEB9C`、建議RF 橙 `#FFCC99`）
+- ⑦ `SCT建議 × Item Status`：列＝各建議值（另加「（留空）」一行，灰 `#D9D9D9`），欄＝區塊①的狀態（Active／Discontinued／Pending／Pending-S），列名按值填色
+- ⑧ `SCT建議 × RP Type`：同上，欄為 RF／ND（有其他值時加「其他」）
+- 三個區塊只在 `SCT建議` 有值時出現；零值照舊留空、每區塊底部有「總計」列；`SCT建議` 全空（未啟用自動填寫）時 `Summary` 與之前完全相同
+- 其餘區塊（Item Status／Item Status × RP Type／RP Type／四個 Top 判定／四個四象限）與 `Export` 完全不變
+
+### 實作
+
+- `modes/shop_simplify.py`：新增 `_SHOP_SIMPLIFY_SCT_FILLS`（建議值 → 底色）與 `_SHOP_SIMPLIFY_SCT_BLANK_LABEL = "（留空）"`；`_shop_simplify_summary_block` 加選填 `row_fills`／`column_fills`（按標籤填色，未列出的標籤不著色）；`_write_shop_simplify_summary` 的 2b 改為 2b＋2c＋2d，以 `_shop_simplify_summary_counts` 按建議值分組
+- `_write_shop_simplify_guide`：顏色表加四行 SCT 分類色；第六節區塊次序加入兩個交叉區塊
+
+### 驗證
+
+- 6 個 SKU（4 Active／2 Discontinued、4 RF／2 ND）實測：× Item Status 區塊 首選RF `[2, —]`＝2、（留空）`[2, 2]`＝4、總計 `[4, 2]`＝6；× RP Type 區塊 首選RF `[2, —]`、（留空）`[2, 2]`、總計 `[4, 2]`＝6
+- 顏色：首選RF 的列名與欄名為 `CCFF99`、留空列名 `D9D9D9`、總計列不填色
+- `py -m pytest tests` → 1835 passed、4 skipped（新增 1 項：兩個交叉區塊的數值、欄序與填色）
+
 ## v1.109.8 (2026-11-24)
 
 側邊欄頁尾署名調整，計算邏輯、資料契約與匯出報表零變動：

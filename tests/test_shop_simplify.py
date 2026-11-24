@@ -12,7 +12,7 @@
 import warnings
 warnings.filterwarnings("ignore")
 import importlib
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 
 import numpy as np
@@ -20,6 +20,7 @@ import pandas as pd
 import pytest
 from openpyxl import load_workbook
 
+import modes.shop_simplify as shop_simplify_mod
 from modes import MODE_REGISTRY
 from transformer import (
     transform_shop_simplify,
@@ -55,6 +56,7 @@ from transformer import (
     _shop_simplify_value_site_top_column,
     _shop_simplify_value_nature_top_column,
     _shop_simplify_net_sales_window,
+    _shop_simplify_now_hkt,
     _shop_simplify_top_share,
     _shop_simplify_ratio_percent,
     _shop_simplify_top80_mask,
@@ -81,6 +83,8 @@ from transformer import (
     _SHOP_SIMPLIFY_SCT_SHOP_CASES,
     _SHOP_SIMPLIFY_SCT_SHOP_DEFAULT,
     _SHOP_SIMPLIFY_SCT_SKIP_STATUS,
+    _SHOP_SIMPLIFY_SCT_BLANK_LABEL,
+    _SHOP_SIMPLIFY_SCT_FILLS,
     _shop_simplify_sct_shop_case_text,
 )
 
@@ -1329,6 +1333,91 @@ def test_sct_leaves_discontinued_rows_blank_in_both_modes():
     assert total[-1] == 1
 
 
+def test_summary_adds_sct_by_status_and_rp_type_blocks():
+    """SCT建議 有值時 Summary 另加兩個交叉區塊：SCT建議 × Item Status 與 × RP Type；
+    列為各建議值（含「（留空）」），列名按建議值填色（首選RF 綠、留空 灰）。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+         "RP Type": "RF", "Sold Qty (P90D)": 400,
+         "Net Sales (M-2)": 18000.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": "B", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+         "RP Type": "RF", "Sold Qty (P90D)": 300,
+         "Net Sales (M-2)": 12000.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": "C", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+         "RP Type": "RF", "Sold Qty (P90D)": 30,
+         "Net Sales (M-2)": 1200.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": "D", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active",
+         "RP Type": "RF", "Sold Qty (P90D)": 6,
+         "Net Sales (M-2)": 200.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": "E", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Discontinued",
+         "RP Type": "ND", "Sold Qty (P90D)": 5,
+         "Net Sales (M-2)": 100.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+        {"SKU": "F", "Site Code": "HA21", "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Discontinued",
+         "RP Type": "ND", "Sold Qty (P90D)": 4,
+         "Net Sales (M-2)": 80.0, "Net Sales (M-1)": 0.0, "Net Sales (CM - MTD)": 0.0},
+    ]
+    rules = _SHOP_SIMPLIFY_SCT_PRESETS[_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET]
+    raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12), sct_rules=rules)
+    summary = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Summary"]
+
+    def read_block(title):
+        """回傳 (欄標籤, {列標籤: 各欄值}, 總計列, 區塊起始列)。"""
+        block_start = next(
+            i for i in range(1, summary.max_row + 1)
+            if summary.cell(row=i, column=1).value == title
+        )
+        header = []
+        col = 2
+        while summary.cell(row=block_start + 1, column=col).value is not None:
+            header.append(summary.cell(row=block_start + 1, column=col).value)
+            col += 1
+        rows, r = {}, block_start + 2
+        while summary.cell(row=r, column=1).value not in (None, "總計"):
+            rows[summary.cell(row=r, column=1).value] = [
+                summary.cell(row=r, column=c).value for c in range(2, 2 + len(header))
+            ]
+            r += 1
+        total = [summary.cell(row=r, column=c).value for c in range(1, 2 + len(header))]
+        return header, rows, total, block_start
+
+    header, rows, total, _ = read_block("計數 - SKU：SCT建議 × Item Status")
+    assert header == ["Active", "Discontinued", "總計"]
+    assert rows[_SHOP_SIMPLIFY_SCT_PREFERRED] == [2, None, 2]
+    assert rows[_SHOP_SIMPLIFY_SCT_BLANK_LABEL] == [2, 2, 4]
+    assert total == ["總計", 4, 2, 6]
+
+    header, rows, total, _ = read_block("計數 - SKU：SCT建議 × RP Type")
+    assert header == ["RF", "ND", "總計"]
+    assert rows[_SHOP_SIMPLIFY_SCT_PREFERRED] == [2, None, 2]
+    assert rows[_SHOP_SIMPLIFY_SCT_BLANK_LABEL] == [2, 2, 4]
+    assert total == ["總計", 4, 2, 6]
+
+    # 顏色：首選RF 綠、留空 灰；「總計」列不填色
+    def rgb(row):
+        cell = summary.cell(row=row, column=1)
+        return str(cell.fill.start_color.rgb)[-6:] if cell.fill.fill_type else None
+
+    for title in ("計數 - SKU：SCT建議 × Item Status", "計數 - SKU：SCT建議 × RP Type"):
+        _, _, _, block_start = read_block(title)
+        row_no = block_start + 2
+        seen = {}
+        while summary.cell(row=row_no, column=1).value not in (None, "總計"):
+            seen[summary.cell(row=row_no, column=1).value] = row_no
+            row_no += 1
+        assert rgb(seen[_SHOP_SIMPLIFY_SCT_PREFERRED]) == _SHOP_SIMPLIFY_SCT_FILLS[_SHOP_SIMPLIFY_SCT_PREFERRED]
+        assert rgb(seen[_SHOP_SIMPLIFY_SCT_BLANK_LABEL]) == _SHOP_SIMPLIFY_SCT_FILLS[_SHOP_SIMPLIFY_SCT_BLANK_LABEL]
+        assert rgb(row_no) is None  # 總計列
+
+    # 原本的 × SCT建議 區塊欄名亦已按建議值填色
+    header_row = next(
+        r for r in range(1, summary.max_row + 1)
+        if summary.cell(row=r, column=1).value == "計數 - SKU：SCT建議"
+    )
+    header_cell = summary.cell(row=header_row + 1, column=2)
+    assert header_cell.value == _SHOP_SIMPLIFY_SCT_PREFERRED
+    assert str(header_cell.fill.start_color.rgb)[-6:] == _SHOP_SIMPLIFY_SCT_FILLS[_SHOP_SIMPLIFY_SCT_PREFERRED]
+
+
 def test_guide_sheet_documents_sct_cases_and_colours():
     """「說明」為第一張工作表：列出本次輸出概況、16 種 SCT 情況（含本檔 SKU 數與實際
     寫入的 SCT建議）、三個值的分佈與顏色說明。"""
@@ -1390,6 +1479,39 @@ def test_guide_sheet_uses_four_cases_for_original_mode():
             for r in range(header_row + 1, header_row + 5)]
     assert keys == ["YY", "YN", "NY", "NN"]
     assert sum(ws.cell(row=r, column=5).value for r in range(header_row + 1, header_row + 5)) == len(raw)
+
+
+def test_now_hkt_returns_utc_plus_8():
+    """時間來源固定為香港時間：回傳值必須帶 +08:00 時區（部署環境的系統時區多為 UTC）。"""
+    moment = _shop_simplify_now_hkt()
+    assert moment.utcoffset() == timedelta(hours=8)
+    expected = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8)))
+    assert abs((moment - expected).total_seconds()) < 60
+
+
+def test_guide_stamp_and_default_data_date_use_hkt(monkeypatch):
+    """說明頁頁尾與預設數據截止日一律用香港時間。
+
+    測試把「現在」固定在 HKT 12 月 1 日 00:30（UTC 仍為 11 月 30 日 16:30）：若程式改用
+    系統時區（容器／雲端為 UTC），頁尾會變成執行時的實際時間、數據截止日會退回 11 月 29 日，
+    兩種情況都會令此測試失敗。
+    """
+    fixed = datetime(2026, 12, 1, 0, 30, tzinfo=timezone(timedelta(hours=8)))
+    monkeypatch.setattr(shop_simplify_mod, "_shop_simplify_now_hkt", lambda: fixed)
+
+    window = shop_simplify_mod._shop_simplify_net_sales_window()
+    assert window["data_date"] == date(2026, 11, 30)
+    assert window["label"] == "P91D"   # 30＋31＋30 日
+
+    raw, _ = transform_shop_simplify(_df(_site_rows_with_net()), sct_rules=_SHOP_SIMPLIFY_SCT_SHOP_DEFAULT)
+    wb = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))
+    ws = wb["說明"]
+    footer = next(
+        str(ws.cell(row=r, column=2).value)
+        for r in range(ws.max_row, 0, -1)
+        if str(ws.cell(row=r, column=2).value or "").startswith("本頁由系統自動產生")
+    )
+    assert footer.startswith("本頁由系統自動產生：2026-12-01 00:30（HKT）")
 
 
 def test_site_mode_default_view_hides_non_essential_columns():

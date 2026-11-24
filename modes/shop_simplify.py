@@ -96,6 +96,8 @@ __all__ = [
     "_SHOP_SIMPLIFY_SCT_PRESETS",
     "_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET",
     "_SHOP_SIMPLIFY_SCT_SKIP_STATUS",
+    "_SHOP_SIMPLIFY_SCT_BLANK_LABEL",
+    "_SHOP_SIMPLIFY_SCT_FILLS",
     "_shop_simplify_sct_skip_discontinued",
     "_shop_simplify_sct_case_text",
     "_shop_simplify_sct_case_compare",
@@ -157,6 +159,7 @@ __all__ = [
     "_shop_simplify_value_site_top_column",
     "_shop_simplify_value_nature_top_column",
     "_shop_simplify_net_sales_column",
+    "_shop_simplify_now_hkt",
     "_shop_simplify_net_sales_window",
     "_shop_simplify_net_sales_series",
     "_shop_simplify_compare_column",
@@ -374,6 +377,14 @@ _SHOP_SIMPLIFY_SCT_PRESETS = {
 _SHOP_SIMPLIFY_SCT_DEFAULT_PRESET = "三級建議（兩者皆是→首選／同Nature→次選／只有店舖→建議RF／無Top→留空）"
 # Item Status＝Discontinued 的列一律留空，不套用 SCT 規則（由 SCT 另行判斷）
 _SHOP_SIMPLIFY_SCT_SKIP_STATUS = "Discontinued"
+# Summary 內 SCT建議 分類的標註顏色（與 16 情況設定表一致；留空用灰）
+_SHOP_SIMPLIFY_SCT_BLANK_LABEL = "（留空）"
+_SHOP_SIMPLIFY_SCT_FILLS = {
+    _SHOP_SIMPLIFY_SCT_PREFERRED: "CCFF99",
+    _SHOP_SIMPLIFY_SCT_SECONDARY: "FFEB9C",
+    _SHOP_SIMPLIFY_SCT_RF: "FFCC99",
+    _SHOP_SIMPLIFY_SCT_BLANK_LABEL: "D9D9D9",
+}
 
 
 def _shop_simplify_sct_series(df: pd.DataFrame, rules, columns) -> pd.Series:
@@ -831,14 +842,26 @@ def _shop_simplify_top_column_percent(name) -> int | None:
     return int(match.group(1)) if match else None
 
 
+# ── 時間：一律以香港時間（HKT）標示 ──
+# 部署環境（容器／雲端）的系統時區多為 UTC，直接呼叫 `datetime.now()` 會比香港慢 8 小時，
+# 令說明頁的產生時間與「今天」都出現偏差。香港自 1979 年起不設夏令時間，固定 UTC+8 已足夠，
+# 亦不依賴 tzdata（Windows 或精簡映像可能未安裝）。
+_SHOP_SIMPLIFY_HKT_TZ = datetime.timezone(datetime.timedelta(hours=8), "HKT")
+
+
+def _shop_simplify_now_hkt() -> datetime.datetime:
+    """回傳目前的香港時間（UTC+8，tz-aware）；請勿改用 `datetime.now()`。"""
+    return datetime.datetime.now(_SHOP_SIMPLIFY_HKT_TZ)
+
+
 def _shop_simplify_net_sales_window(data_date=None) -> dict:
     """回傳金額覆蓋日數的拆解：MTD 日數＋M-1 月日數＋M-2 月日數。
 
-    來源數據為 T-1，故未指定時以「今天減一日」為數據截止日。例如 11 月 13 日執行 →
-    截止 11 月 12 日：MTD 12 日＋10 月 31 日＋9 月 30 日＝73 日，標示 `P73D`。
+    來源數據為 T-1，故未指定時以「今天（香港時間）減一日」為數據截止日。例如 11 月 13 日執行
+    → 截止 11 月 12 日：MTD 12 日＋10 月 31 日＋9 月 30 日＝73 日，標示 `P73D`。
     """
     if data_date is None:
-        data_date = datetime.date.today() - datetime.timedelta(days=1)
+        data_date = _shop_simplify_now_hkt().date() - datetime.timedelta(days=1)
     if isinstance(data_date, datetime.datetime):
         data_date = data_date.date()
     if not isinstance(data_date, datetime.date):
@@ -1897,9 +1920,13 @@ def _shop_simplify_summary_counts(
 def _shop_simplify_summary_block(
     ws, title: str, start_row: int, row_levels: list[str],
     column_labels: list[str], counts: dict[tuple[str, str], int],
+    row_fills: dict[str, str] | None = None,
+    column_fills: dict[str, str] | None = None,
 ) -> tuple[int, int]:
     """寫一個「列標籤 × 欄標籤」的 SKU 計數區塊（零值留空、底部總計列）。
 
+    `row_fills`／`column_fills` 為選填的底色（hex，按列標籤／欄標籤），
+    用於 SCT建議 分類的顏色標註；沒有對應顏色的標籤保持原狀。
     回傳 (最後一列列號, 用到的最大欄號)。
     """
     ws.cell(row=start_row, column=1, value=title)
@@ -1910,6 +1937,10 @@ def _shop_simplify_summary_block(
     for j, label in enumerate(column_labels, start=2):
         cell = ws.cell(row=header, column=j, value=label)
         cell.alignment = header_align
+        colour = (column_fills or {}).get(label)
+        if colour:
+            cell.fill = PatternFill(start_color=colour, end_color=colour, fill_type="solid")
+            cell.font = Font(bold=True)
     ws.cell(row=header, column=total_col, value="總計").alignment = header_align
     ws.row_dimensions[header].height = 30
 
@@ -1918,6 +1949,10 @@ def _shop_simplify_summary_block(
     for i, level in enumerate(row_levels, start=header + 1):
         cell = ws.cell(row=i, column=1, value=level)
         cell.alignment = Alignment(horizontal="left")
+        colour = (row_fills or {}).get(level)
+        if colour:
+            cell.fill = PatternFill(start_color=colour, end_color=colour, fill_type="solid")
+            cell.font = Font(bold=True)
         row_total = 0
         for j, label in enumerate(column_labels, start=2):
             count = counts.get((level, label), 0)
@@ -1965,6 +2000,7 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
     1b. Item Status × RP Type（每個狀態再分 RF／ND，另有其他值時加「其他」）；
     2. × RP Type（RF／ND／其他）；
     2b. × SCT建議（僅在該欄有值時輸出：首選RF／次選RF／建議RF）；
+    2c／2d. SCT建議 × Item Status、SCT建議 × RP Type（列 = 各建議值，按值填色）；
     3. × 四個 Top N% 判定欄（店舖件數／同Nature件數／店舖金額／同Nature金額，
        欄名取實際輸出欄，故 Top 70%／80% 與店舖代號自動跟隨）；
     4. RF／ND × 每個 Top N% 判定欄的四象限（店舖件數／同Nature件數／店舖金額／同Nature金額
@@ -2074,24 +2110,69 @@ def _write_shop_simplify_summary(ws, df: pd.DataFrame) -> None:
         )
         max_col = max(max_col, 2 + len(labels))
 
-    # ── 區塊 2b：× SCT建議（僅在該欄有值時輸出，方便核對自動建議的分佈）──
-    if _SHOP_SIMPLIFY_SCT_COLUMN in df.columns:
-        sct = df[_SHOP_SIMPLIFY_SCT_COLUMN].fillna("").astype(str).str.strip()
+    # ── 區塊 2b–2d：SCT建議 分佈（僅在該欄有值時輸出，方便核對自動建議的分佈）──
+    sct_column = _SHOP_SIMPLIFY_SCT_COLUMN
+    if sct_column in df.columns:
+        sct = df[sct_column].fillna("").astype(str).str.strip()
         if bool((sct != "").any()):
             known = [v for v in _SHOP_SIMPLIFY_SCT_OPTIONS if v]
-            labels = [v for v in known if bool(sct.eq(v).any())]
-            labels += sorted({v for v in sct.unique() if v and v not in known})
-            masks = [(label, sct.eq(label)) for label in labels]
+            value_labels = [v for v in known if bool(sct.eq(v).any())]
+            value_labels += sorted({v for v in sct.unique() if v and v not in known})
+
+            # 2b：× SCT建議（列 = Adj. MCH1，欄 = 各建議值；欄名以顏色標註）
+            masks = [(label, sct.eq(label)) for label in value_labels]
             counts = _shop_simplify_summary_counts(levels, masks, valid)
             blocks_end, _ = _shop_simplify_summary_block(
                 ws,
-                f"計數 - SKU：{_SHOP_SIMPLIFY_SCT_COLUMN}",
+                f"計數 - SKU：{sct_column}",
                 blocks_end + 3,
                 row_order,
-                labels,
+                value_labels,
                 counts,
+                column_fills=_SHOP_SIMPLIFY_SCT_FILLS,
             )
-            max_col = max(max_col, 2 + len(labels))
+            max_col = max(max_col, 2 + len(value_labels))
+
+            # 2c／2d：SCT建議 × Item Status／RP Type（列 = 各建議值，欄 = 分類；列名以顏色標註）
+            sct_levels = sct.mask(sct == "", _SHOP_SIMPLIFY_SCT_BLANK_LABEL)
+            sct_row_order = list(value_labels)
+            if bool(sct_levels.eq(_SHOP_SIMPLIFY_SCT_BLANK_LABEL).any()):
+                sct_row_order.append(_SHOP_SIMPLIFY_SCT_BLANK_LABEL)
+
+            if status_labels:
+                status_levels = _shop_simplify_summary_levels(df[status_col])
+                masks = [(label, status_levels.eq(label)) for label in status_labels]
+                counts = _shop_simplify_summary_counts(sct_levels, masks, valid)
+                blocks_end, _ = _shop_simplify_summary_block(
+                    ws,
+                    f"計數 - SKU：{sct_column} × Item Status",
+                    blocks_end + 3,
+                    sct_row_order,
+                    status_labels,
+                    counts,
+                    row_fills=_SHOP_SIMPLIFY_SCT_FILLS,
+                )
+                max_col = max(max_col, 2 + len(status_labels))
+
+            if "RP Type" in df.columns:
+                sct_rp = _shop_simplify_summary_levels(df["RP Type"]).str.upper()
+                rp_labels = ["RF", "ND"]
+                rp_masks = [("RF", sct_rp.eq("RF")), ("ND", sct_rp.eq("ND"))]
+                rp_other = ~sct_rp.isin(["RF", "ND"])
+                if bool(rp_other.any()):
+                    rp_labels.append("其他")
+                    rp_masks.append(("其他", rp_other))
+                counts = _shop_simplify_summary_counts(sct_levels, rp_masks, valid)
+                blocks_end, _ = _shop_simplify_summary_block(
+                    ws,
+                    f"計數 - SKU：{sct_column} × RP Type",
+                    blocks_end + 3,
+                    sct_row_order,
+                    rp_labels,
+                    counts,
+                    row_fills=_SHOP_SIMPLIFY_SCT_FILLS,
+                )
+                max_col = max(max_col, 2 + len(rp_labels))
 
     # ── 區塊 3：× 四個 Top N% 判定欄 ──
     top_columns = _shop_simplify_summary_top_columns(df)
@@ -2392,6 +2473,10 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
         (_SHOP_SIMPLIFY_RED, "Item Status／RP Type／過去90日有無存貨", "Discontinued／ND／無存貨"),
         (_SHOP_SIMPLIFY_COMPARE_BOTH_FILL, "對比欄（件數、金額）", "兩者皆是：店舖與同 Shop Nature 均屬 Top"),
         (_SHOP_SIMPLIFY_COMPARE_NEITHER_FILL, "對比欄（件數、金額）", "兩者皆非：兩邊都不是 Top，屬精簡候選"),
+        (_SHOP_SIMPLIFY_SCT_FILLS[_SHOP_SIMPLIFY_SCT_PREFERRED], "Summary 的 SCT建議 分類", "首選RF（與 Top 判定「是」同色）"),
+        (_SHOP_SIMPLIFY_SCT_FILLS[_SHOP_SIMPLIFY_SCT_SECONDARY], "Summary 的 SCT建議 分類", "次選RF"),
+        (_SHOP_SIMPLIFY_SCT_FILLS[_SHOP_SIMPLIFY_SCT_RF], "Summary 的 SCT建議 分類", "建議RF"),
+        (_SHOP_SIMPLIFY_SCT_FILLS[_SHOP_SIMPLIFY_SCT_BLANK_LABEL], "Summary 的 SCT建議 分類", "留空（未給建議，例如停售品）"),
         (_SHOP_SIMPLIFY_HEADER_BLUE, "其餘表頭", "一般欄"),
     ):
         swatch = ws.cell(row=row, column=2, value=f"#{colour}")
@@ -2415,7 +2500,9 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
     row = section(row, "六、Summary 工作表")
     blocks = ["× Item Status", "Item Status × RP Type（每個狀態再分 RF／ND）", "× RP Type"]
     if sct_any:
-        blocks.append("× SCT建議")
+        blocks.append("× SCT建議（欄名按建議值填色）")
+        blocks.append("SCT建議 × Item Status（列 = 各建議值，按值填色）")
+        blocks.append("SCT建議 × RP Type（同上）")
     if flags:
         blocks.append(
             "× 兩個 Top N% 判定欄（是／否）" if len(flags) == 2 else "× 四個 Top N% 判定欄（是／否）"
@@ -2450,12 +2537,12 @@ def _write_shop_simplify_guide(ws, df: pd.DataFrame) -> None:
         row = paragraph(row, text)
     row += 1
 
-    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    stamp = _shop_simplify_now_hkt().strftime("%Y-%m-%d %H:%M")
     try:
         from version import __version__ as version_text
     except Exception:  # pragma: no cover - 版本檔缺失時不影響匯出
         version_text = ""
-    footer = f"本頁由系統自動產生：{stamp}" + (f"｜版本 {version_text}" if version_text else "")
+    footer = f"本頁由系統自動產生：{stamp}（HKT）" + (f"｜版本 {version_text}" if version_text else "")
     cell = ws.cell(row=row, column=2, value=footer)
     cell.font = note_font
     ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=9)
