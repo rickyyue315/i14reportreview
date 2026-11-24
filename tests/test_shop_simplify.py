@@ -77,6 +77,7 @@ from transformer import (
     _shop_simplify_sct_series,
     _shop_simplify_sct_case_text,
     _shop_simplify_sct_case_compare,
+    _SHOP_SIMPLIFY_PRIVATE_LABEL_FILL,
 )
 
 BASE = {
@@ -1209,6 +1210,34 @@ def test_summary_adds_sct_block_when_filled():
         and summary_blank.cell(row=i, column=1).value.startswith("計數 - SKU")
     ]
     assert all("SCT建議" not in str(x) for x in titles)
+
+
+def test_adj_sst_private_label_cells_are_orange():
+    """Adj. SST 含「03 - Private Label」（大小寫、前後空白不拘）的資料格填醒目橙色；
+    其他 Adj. SST 值（01 - Local／04 - Sole Agent）不著色。"""
+    def rgb(ws, row, name):
+        col = {c.value: i + 1 for i, c in enumerate(ws[1])}[name]
+        cell = ws.cell(row=row, column=col)
+        return str(cell.fill.start_color.rgb)[-6:] if cell.fill.fill_type else None
+
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Adj. SST": "03 - Private Label -(1)Major", "Sold Qty (P90D)": 100},
+        {"SKU": "B", "Site Code": "HA21", "Adj. SST": "  03 - PRIVATE LABEL  ", "Sold Qty (P90D)": 50},
+        {"SKU": "C", "Site Code": "HA21", "Adj. SST": "01 - Local", "Sold Qty (P90D)": 10},
+        {"SKU": "D", "Site Code": "HA21", "Adj. SST": "04 - Sole Agent -(2)Perfume", "Sold Qty (P90D)": 5},
+    ]
+    raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12))
+    ws = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))["Export"]
+
+    sku_col = {c.value: i + 1 for i, c in enumerate(ws[1])}["SKU"]
+    order = [ws.cell(row=r, column=sku_col).value for r in range(2, ws.max_row + 1)]
+    assert order == ["A", "B", "C", "D"]  # Brand／SKU 排序
+    assert rgb(ws, 2, "Adj. SST") == _SHOP_SIMPLIFY_PRIVATE_LABEL_FILL
+    assert rgb(ws, 3, "Adj. SST") == _SHOP_SIMPLIFY_PRIVATE_LABEL_FILL
+    assert rgb(ws, 4, "Adj. SST") is None
+    assert rgb(ws, 5, "Adj. SST") is None
+    # 其他欄不受影響（例如 RP Type 仍按原規則著色）
+    assert rgb(ws, 2, "RP Type") == "CCFF99"
 
 
 def test_site_mode_default_view_hides_non_essential_columns():

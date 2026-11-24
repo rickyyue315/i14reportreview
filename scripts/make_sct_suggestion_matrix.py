@@ -121,7 +121,7 @@ def build(output_dir: Path) -> Path:
         ws,
         "四個判定各只有「是／否」，兩個對比欄由判定自動合成，故全部情況＝2×2×2×2＝16 種。"
         "請在「你的SCT建議」欄逐格選擇（下拉：首選RF／次選RF／建議RF，留空＝由 SCT 自行判斷，例如 ND）；"
-        "填好後可在應用程式「SCT建議（依四個 Top 判定自動填寫）」的「自訂 16 種情況」照此設定。",
+        "填好後可在應用程式側欄「SCT建議」的 16 情況表逐格照填（表格預設帶入三級建議作起點）。",
         len(widths), 2,
     )
     headers = [
@@ -158,8 +158,8 @@ def build(output_dir: Path) -> Path:
     _title(ws2, "四個內建方案：同一組 16 種情況會得到甚麼建議", len(widths2))
     _note(
         ws2,
-        "綠＝首選RF、黃＝次選RF、橙＝建議RF、白＝留空。各方案只是起點，"
-        "可在「情況一覽」自訂後取代；應用程式側欄可即時切換方案或逐格修改。",
+        "綠＝首選RF、黃＝次選RF、橙＝建議RF、白＝留空。應用程式只提供 16 情況表（預設帶入三級建議），下表只作比較參考，"
+        "可在「情況一覽」自訂後取代；實際填寫以應用程式的 16 情況表為準。",
         len(widths2), 2,
     )
     headers2 = ["編號", "件數－店舖", "件數－同Nature", "件數對比", "情況說明"] + preset_names
@@ -238,9 +238,9 @@ def build(output_dir: Path) -> Path:
     ws3.cell(row=start, column=1, value="使用步驟").font = Font(bold=True)
     steps = [
         "1. 在「情況一覽」I 欄逐格選擇 SCT建議（留空＝不自動填寫）。",
-        "2. 應用程式 → 店舖精簡SKU模式(指定店舖) →「📝 SCT建議」→ 勾選自動填寫 → 規則來源選「自訂 16 種情況」，照本表設定。",
+        "2. 應用程式 → 店舖精簡SKU模式(指定店舖) → 開啟「SCT建議」→ 在 16 情況表逐格照本表設定（自動填寫預設已開啟）。",
         "3. 匯出後 Summary 會多一個「計數 - SKU：SCT建議」區塊，可直接核對首選RF／次選RF 的數量。",
-        "4. 若只想先用現成方案，直接在側欄選「件數優先／雙重把關／店舖優先／命中項數分級」。",
+        "4. 表格預設帶入三級建議作起點；如只想用其他方案分法，可參考「預設方案」工作表再逐格改。",
     ]
     for offset, text in enumerate(steps, start=start + 1):
         ws3.merge_cells(start_row=offset, start_column=1, end_row=offset, end_column=len(widths3))

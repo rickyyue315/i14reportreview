@@ -1,5 +1,38 @@
 # 版本記錄
 
+## v1.109.4 (2026-11-24)
+
+`Export` 的 `Adj. SST` 欄若含 **「03 - Private Label」** 字眼（大小寫、前後空白不拘），該資料格以**醒目橙色底（#FFC000）**標示，方便一眼分出 Private Label 貨品。只加底色，欄名、欄序、數值與其他格式完全不變；與店舖精簡SKU模式共用同一匯出引擎，兩個模式一併生效。
+
+### 實作
+
+- `modes/shop_simplify.py`：新增 `_SHOP_SIMPLIFY_PRIVATE_LABEL_KEYWORD = "03 - private label"` 與 `_SHOP_SIMPLIFY_PRIVATE_LABEL_FILL = "FFC000"`；`generate_excel_shop_simplify` 在資料格迴圈前以 `str.contains(..., regex=False)` 建立遮罩（先 strip 再轉小寫），命中即填橙色
+- 橙色與既有配色不重疊（紅＝Discontinued／ND／無存貨、綠＝Top「是」、青綠／粉紅＝對比、淡紅＝無賣），同一列可與其他欄的顏色並存
+- 涵蓋寫法如 `03 - Private Label -(1)Major`、`03 - Private Label -(2)Health`、`03 - PRIVATE LABEL`（含前後空白）
+
+### 驗證
+
+- 新增 `test_adj_sst_private_label_cells_are_orange()`：四個 Adj. SST 值（兩個命中、兩個不命中）逐格核對底色，並確認 `RP Type` 的綠色不受影響
+- `py -m pytest tests` → 1828 passed、4 skipped
+
+## v1.109.3 (2026-11-24)
+
+側欄的 SCT建議 設定簡化為**只有一張 16 情況表**：移除「規則來源」與五個內建方案選項，逐格下拉指定即可；自動填寫改為**預設開啟**；面板名稱由「📝 SCT建議（依四個 Top 判定自動填寫）」改為**「SCT建議」**。
+
+### 變更
+
+- 側欄「SCT建議」展開區：勾選框預設 **True**（取消勾選才回復「一律留空」）
+- 移除規則來源 radio；表格直接顯示 16 種情況，`SCT建議` 欄可逐格選 `首選RF`／`次選RF`／`建議RF`／留空
+- 表格預設值仍用三級建議作起點（兩者皆是→首選RF、僅同Nature→次選RF、只有本店 Top→建議RF、四項皆非→留空），可直接改任何一格
+- 目前設定摘要（首選RF／次選RF／建議RF 各幾種、其餘留空）移到展開區之外，收起時仍可看到
+- 模組內五個方案字典保留（作表格預設值與離線設定表參考），只是介面不再提供切換
+- 設定表說明同步：使用步驟改為「開啟 SCT建議 → 在 16 情況表逐格照填」，並注明應用程式只提供該表
+
+### 驗證
+
+- AppTest 渲染：展開區標籤為「SCT建議」、勾選框預設 `True`、表格 16 列、摘要顯示「首選RF 7 種」，無 exception
+- `py -m pytest tests` → 1827 passed、4 skipped（模組行為未變，`sct_rules` 仍由呼叫方傳入）
+
 ## v1.109.2 (2026-11-24)
 
 `SCT建議` 不再預設「建議ND」：**「無 Top」一律留空**，由 SCT 自行判斷。四級方案改名為**「三級建議」（並保持為預設）**——**兩者皆是 → 首選RF**、**僅同Nature → 次選RF**、**只有本店 Top → 建議RF**、**四項皆非 → 留空**。可選值同時收窄為 `首選RF`／`次選RF`／`建議RF`／留空。

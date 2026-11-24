@@ -123,6 +123,8 @@ __all__ = [
     "_SHOP_SIMPLIFY_COMPARE_TEMPLATE",
     "_SHOP_SIMPLIFY_COMPARE_BOTH_FILL",
     "_SHOP_SIMPLIFY_COMPARE_NEITHER_FILL",
+    "_SHOP_SIMPLIFY_PRIVATE_LABEL_KEYWORD",
+    "_SHOP_SIMPLIFY_PRIVATE_LABEL_FILL",
     "_SHOP_SIMPLIFY_MEASURE_COMPARE_QTY_ONLY",
     "_SHOP_SIMPLIFY_MEASURE_COMPARE_VALUE_ONLY",
     "_SHOP_SIMPLIFY_MEASURE_COMPARE_LABELS",
@@ -398,6 +400,9 @@ _SHOP_SIMPLIFY_RED = "FF9999"
 # 對比欄底色：兩者皆是＝青綠（核心，優先保留）；兩者皆非＝粉紅（精簡候選）
 _SHOP_SIMPLIFY_COMPARE_BOTH_FILL = "99E6CC"
 _SHOP_SIMPLIFY_COMPARE_NEITHER_FILL = "FFC7CE"
+# 「Adj. SST」含指定字眼（03 - Private Label）＝Private Label 貨品，以醒目橙色底標示
+_SHOP_SIMPLIFY_PRIVATE_LABEL_KEYWORD = "03 - private label"
+_SHOP_SIMPLIFY_PRIVATE_LABEL_FILL = "FFC000"
 # 紅色底判定：欄名 → 觸發值（比對前去除前後空白、忽略大小寫；欄位不存在時略過該條件）
 _SHOP_SIMPLIFY_RED_RULES = (
     ("Item Status", "discontinued"),
@@ -2032,7 +2037,8 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
     Export 沿用店舖精簡回覆表範本的格式：Brand／SKU 排序、凍結 F2、指定欄寬與隱藏欄、
     數字格式、綠色／紫色重點欄、「無賣」列的淡紅標示、三類紅色底標示
     （Item Status＝Discontinued、RP Type＝ND、過去90日有無存貨＝無存貨），
-    以及對比欄底色（兩者皆是＝青綠、兩者皆非＝粉紅）。
+    以及對比欄底色（兩者皆是＝青綠、兩者皆非＝粉紅）；另 `Adj. SST` 含
+    「03 - Private Label」時以醒目橙色底標示。
 
     `site_view=True`（指定店舖變體）：只顯示 `_SHOP_SIMPLIFY_SITE_VISIBLE_COLUMNS` 所列的
     23 個固定欄，加上 Net Sales (P{N}D) 與六個 Top 判定／對比欄；其餘欄一律隱藏，
@@ -2076,6 +2082,11 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
     fill_compare_neither = PatternFill(
         start_color=_SHOP_SIMPLIFY_COMPARE_NEITHER_FILL,
         end_color=_SHOP_SIMPLIFY_COMPARE_NEITHER_FILL,
+        fill_type="solid",
+    )
+    fill_private_label = PatternFill(
+        start_color=_SHOP_SIMPLIFY_PRIVATE_LABEL_FILL,
+        end_color=_SHOP_SIMPLIFY_PRIVATE_LABEL_FILL,
         fill_type="solid",
     )
 
@@ -2139,6 +2150,16 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
         for name in headers
         if _is_shop_simplify_top80_column(name) and name in df.columns
     ]
+    # Adj. SST 含「03 - Private Label」（大小寫、前後空白不拘）→ 醒目橙色底，
+    # 一眼分出 Private Label 貨品；該欄沒有其他底色，不會互相覆蓋
+    private_label_col = headers.index("Adj. SST") + 1 if "Adj. SST" in headers else None
+    private_label_mask = None
+    if private_label_col is not None and "Adj. SST" in df.columns:
+        _adj_text = df["Adj. SST"].fillna("").astype(str).str.strip().str.lower()
+        private_label_mask = _adj_text.str.contains(
+            _SHOP_SIMPLIFY_PRIVATE_LABEL_KEYWORD, regex=False
+        ).to_numpy(dtype=bool)
+
     # 對比欄：兩者皆是＝青綠底、兩者皆非＝粉紅底，其餘（僅店舖／僅同Nature）不著色
     compare_rules = []
     for name in headers:
@@ -2170,6 +2191,8 @@ def generate_excel_shop_simplify(raw: pd.DataFrame, progress_callback=None, site
             sold_cell = ws.cell(row=row_idx, column=sold_col_idx)
             if sold_cell.value == _SHOP_SIMPLIFY_SOLD_NO:
                 sold_cell.fill = fill_pink
+        if private_label_mask is not None and private_label_mask[row_idx - 2]:
+            ws.cell(row=row_idx, column=private_label_col).fill = fill_private_label
         for col_idx, mask in top_yes_rules:
             if mask[row_idx - 2]:
                 ws.cell(row=row_idx, column=col_idx).fill = fill_green
