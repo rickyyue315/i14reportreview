@@ -3240,7 +3240,8 @@ if uploaded_file is not None:
                 st.caption(
                     "本模式每間店只有「件數 Top」「金額 Top」兩個判定，對比欄由判定自動合成，"
                     "所以全部情況＝2×2＝**4 種**。逐格指定 **首選RF**／**次選RF**／**建議RF**／留空，"
-                    "匯出時自動寫入 `SCT建議`；留空的情況維持空白，由 SCT 自行判斷。"
+                    "匯出時自動寫入 `SCT建議`；留空的情況維持空白，由 Shop/OM 自行判斷。"
+                    "`SCT建議` 供店舖判斷 RF／ND 時參考，最終以「Shop 回覆新的NDRF」為準。"
                 )
                 _shopslim_sct_on = st.checkbox(
                     "依 Top 判定自動填寫 SCT建議",
@@ -3276,7 +3277,7 @@ if uploaded_file is not None:
                                 "SCT建議",
                                 options=list(_SHOP_SIMPLIFY_SCT_OPTIONS),
                                 required=False,
-                                help="留空＝不自動填寫，由 SCT 自行判斷",
+                                help="留空＝不自動填寫，由 Shop/OM 自行判斷",
                             ),
                         },
                     )
@@ -3297,7 +3298,7 @@ if uploaded_file is not None:
                 st.caption(
                     f"目前設定：**首選RF {_shop_counts[_SHOP_SIMPLIFY_SCT_PREFERRED]} 種情況**、"
                     f"**次選RF {_shop_counts[_SHOP_SIMPLIFY_SCT_SECONDARY]} 種**、"
-                    f"**建議RF {_shop_counts[_SHOP_SIMPLIFY_SCT_RF]} 種**，其餘 {_shop_blank} 種留空（由 SCT 判斷）。"
+                    f"**建議RF {_shop_counts[_SHOP_SIMPLIFY_SCT_RF]} 種**，其餘 {_shop_blank} 種留空（由 Shop/OM 判斷）。"
                 )
 
         _shopslimsite_site = None
@@ -3431,7 +3432,8 @@ if uploaded_file is not None:
                 st.caption(
                     "四個判定各只有「是／否」，兩欄對比由判定自動合成，所以全部情況＝2×2×2×2＝**16 種**。"
                     "逐格指定 **首選RF**／**次選RF**／**建議RF**／留空，匯出時自動寫入 `SCT建議`；"
-                    "留空的情況維持空白，由 SCT 自行判斷（例如 ND）。"
+                    "留空的情況維持空白，由 Shop/OM 自行判斷（例如 ND）。"
+                    "`SCT建議` 供店舖判斷 RF／ND 時參考，最終以「Shop 回覆新的NDRF」為準。"
                 )
                 _shopslimsite_sct_on = st.checkbox(
                     "依 Top 判定自動填寫 SCT建議",
@@ -3469,7 +3471,7 @@ if uploaded_file is not None:
                                 "SCT建議",
                                 options=list(_SHOP_SIMPLIFY_SCT_OPTIONS),
                                 required=False,
-                                help="留空＝不自動填寫，由 SCT 自行判斷",
+                                help="留空＝不自動填寫，由 Shop/OM 自行判斷",
                             ),
                         },
                     )
@@ -3490,7 +3492,7 @@ if uploaded_file is not None:
                 st.caption(
                     f"目前設定：**首選RF {_counts[_SHOP_SIMPLIFY_SCT_PREFERRED]} 種情況**、"
                     f"**次選RF {_counts[_SHOP_SIMPLIFY_SCT_SECONDARY]} 種**、"
-                    f"**建議RF {_counts[_SHOP_SIMPLIFY_SCT_RF]} 種**，其餘 {_blank} 種留空（由 SCT 判斷）。"
+                    f"**建議RF {_counts[_SHOP_SIMPLIFY_SCT_RF]} 種**，其餘 {_blank} 種留空（由 Shop/OM 判斷）。"
                     "匯出後 Summary 會多一個「計數 - SKU：SCT建議」區塊，可直接核對分佈。"
                 )
 
@@ -5813,7 +5815,7 @@ if uploaded_file is not None:
                     if _value_ok else ""
                 )
                 + "已由 Item_Shop 解析 SKU Desc 與 Shop Name，並刪除欄名含 Value 的欄位；"
-                "輸出 說明、Summary 與 Export 三個工作表（依 Brand／SKU 排序；說明頁列出 SCT建議 情況表與顏色說明）。"
+                "輸出 說明、Summary 與 Export 三個工作表（依 Brand／SKU 排序；說明頁以店舖為讀者，列出填寫指引、SCT建議 判定組合與顏色說明）。"
                 "「Shop 回覆新的NDRF」「如果RF的Safety Qty」兩欄一律留空，供店舖填寫；"
                 "「SCT建議」按側欄 SCT建議 表自動填寫（預設開啟，可取消）。"
             )

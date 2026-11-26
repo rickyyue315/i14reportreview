@@ -1124,7 +1124,7 @@ def test_sct_presets_cover_all_sixteen_cases():
 
 def test_sct_tier_preset_is_default_and_maps_three_levels():
     """預設「三級建議」：件數與金額各判一次，取較高的一級——
-    兩者皆是 → 首選RF；僅同Nature → 次選RF；僅店舖 → 建議RF；兩者皆非 → 留空（由 SCT 判斷）。"""
+    兩者皆是 → 首選RF；僅同Nature → 次選RF；僅店舖 → 建議RF；兩者皆非 → 留空（由 Shop/OM 判斷）。"""
     assert "三級建議" in _SHOP_SIMPLIFY_SCT_DEFAULT_PRESET
     rules = _SHOP_SIMPLIFY_SCT_PRESETS[_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET]
     expected = {
@@ -1175,7 +1175,7 @@ def test_site_mode_sct_rules_fill_column_and_show_it():
     )
     sct = dict(zip(raw["SKU"], raw[_SHOP_SIMPLIFY_SCT_COLUMN]))
     # 件數 Top＝A、B、C（B／C 同銷量 10，整組納入）、金額 Top＝A → 預設四級建議：
-    # A＝兩者皆是（首選RF）；B／C＝僅店舖（建議RF）；D／E＝兩者皆非（留空，由 SCT 判斷）
+    # A＝兩者皆是（首選RF）；B／C＝僅店舖（建議RF）；D／E＝兩者皆非（留空，由 Shop/OM 判斷）
     assert sct["A"] == _SHOP_SIMPLIFY_SCT_PREFERRED
     assert sct["B"] == "建議RF"
     assert sct["C"] == "建議RF"
@@ -1534,8 +1534,8 @@ def test_summary_adds_percent_block_after_each_count_block():
 
 
 def test_guide_sheet_documents_sct_cases_and_colours():
-    """「說明」為第一張工作表：列出本次輸出概況、16 種 SCT 情況（含本檔 SKU 數與實際
-    寫入的 SCT建議）、三個值的分佈與顏色說明。"""
+    """「說明」為第一張工作表，並以店舖為讀者：先講店舖要填哪兩欄、SCT建議 只是參考，
+    再列出本次輸出概況、16 種判定組合（含本檔 SKU 數與實際寫入的建議）、各值意思與顏色說明。"""
     rows = _site_rows_with_net()
     rules = _SHOP_SIMPLIFY_SCT_PRESETS[_SHOP_SIMPLIFY_SCT_DEFAULT_PRESET]
     raw, _ = transform_shop_simplify_site(_df(rows), "HA21", data_date=date(2026, 11, 12), sct_rules=rules)
@@ -1578,9 +1578,16 @@ def test_guide_sheet_documents_sct_cases_and_colours():
     assert f"#{_SHOP_SIMPLIFY_PRIVATE_LABEL_FILL}" in text   # 顏色說明有列出 Private Label 橙色
     assert "Top N% 判定與對比欄" in text and "顏色說明" in text
 
+    # 說明以店舖為讀者：SCT建議 是參考、回覆欄才是店舖要填的；留空由 Shop/OM 判斷
+    assert "一、店舖要做甚麼" in text
+    assert "參考，不是指令" in text
+    assert "每列只填 RF 或 ND" in text
+    assert "由 Shop/OM 按實際情況判斷" in text
+    assert "由 SCT 按實際情況判斷" not in text
+
 
 def test_guide_sheet_uses_four_cases_for_original_mode():
-    """原模式只有件數／金額兩個判定，說明頁的情況表為 4 種。"""
+    """原模式只有件數／金額兩個判定，說明頁的判定組合為 4 種。"""
     rows = _site_rows_with_net()
     raw, _ = transform_shop_simplify(_df(rows), data_date=date(2026, 11, 12), sct_rules=_SHOP_SIMPLIFY_SCT_SHOP_DEFAULT)
     wb = load_workbook(BytesIO(generate_excel_shop_simplify(raw).getvalue()))
