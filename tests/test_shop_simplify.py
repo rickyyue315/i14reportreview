@@ -1728,6 +1728,210 @@ def test_site_mode_excel_red_highlight_rules():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 8b. 指定店舖模式：多店舖群組（視為同一區域）
+# ──────────────────────────────────────────────────────────────────────────────
+def _site_group_rows():
+    """HA21 新舖（A40／C30／D20／E10）＋HA47 同區老舖（B100／C5）＋HA20 同 Nature 的 A500。
+
+    單獨計 HA21：總量 100、80%＝80 → A40＋C30＋D20＝90 → A、C、D 入選；
+    合併 HA21＋HA47：總量 205、80%＝164 → B100＋A40＋C35＝175 → 只有 A、B、C 入選（D 被擠出）。
+    金額與件數同值（M-2 等於 Sold Qty、其餘月份 0），故金額判定與件數一致。
+    """
+    def row(sku, site, sold, nature="Non Tourist"):
+        return {
+            "SKU": sku, "Site Code": site, "Shop Nature": nature,
+            "Adj. MCH1": "01 - SKIN CARE", "Item Status": "Active", "RP Type": "RF",
+            "Sold Qty (P90D)": sold,
+            "Net Sales (M-2)": sold, "Net Sales (M-1)": 0, "Net Sales (CM - MTD)": 0,
+        }
+
+    return [
+        row("A", "HA21", 40), row("C", "HA21", 30),
+        row("D", "HA21", 20), row("E", "HA21", 10),
+        row("B", "HA47", 100), row("C", "HA47", 5),
+        row("A", "HA20", 500),
+    ]
+
+
+def _group_flags(raw, column):
+    return {
+        (site, sku): flag
+        for site, sku, flag in zip(raw["Site Code"], raw["SKU"], raw[column])
+    }
+
+
+def test_group_mode_pools_selected_shops_and_outputs_all_rows():
+    raw, _ = transform_shop_simplify_site(_df(_site_group_rows()), ["HA21", "HA47"])
+    assert sorted(raw["Site Code"].unique().tolist()) == ["HA21", "HA47"]
+    assert len(raw) == 6
+    flags = _group_flags(raw, _shop_simplify_site_top80_column("HA21+HA47"))
+    # 合併後 B100＋A40＋C35＝175 ≥ 205×80%＝164；D20、E10 不入選
+    assert flags[("HA21", "A")] == _SHOP_SIMPLIFY_TOP80_YES
+    assert flags[("HA47", "B")] == _SHOP_SIMPLIFY_TOP80_YES
+    assert flags[("HA21", "C")] == _SHOP_SIMPLIFY_TOP80_YES
+    assert flags[("HA47", "C")] == _SHOP_SIMPLIFY_TOP80_YES
+    assert flags[("HA21", "D")] == _SHOP_SIMPLIFY_TOP80_NO
+    assert flags[("HA21", "E")] == _SHOP_SIMPLIFY_TOP80_NO
+
+
+def test_group_mode_pool_differs_from_single_shop():
+    """同一份資料：單店計 D 是 Top，合併後 D 被老舖的 B／C 擠出——證明分母真的合併。"""
+    single, _ = transform_shop_simplify_site(_df(_site_group_rows()), "HA21")
+    single_flags = dict(zip(single["SKU"], single[_shop_simplify_site_top80_column("HA21")]))
+    assert single_flags["D"] == _SHOP_SIMPLIFY_TOP80_YES
+
+    group, _ = transform_shop_simplify_site(_df(_site_group_rows()), ["HA21", "HA47"])
+    group_flags = _group_flags(group, _shop_simplify_site_top80_column("HA21+HA47"))
+    assert group_flags[("HA21", "D")] == _SHOP_SIMPLIFY_TOP80_NO
+
+
+def test_group_mode_value_columns_use_same_pool():
+    raw, _ = transform_shop_simplify_site(_df(_site_group_rows()), ["HA21", "HA47"])
+    value_col = _shop_simplify_value_site_top_column("HA21+HA47")
+    assert value_col in raw.columns
+    flags = _group_flags(raw, value_col)
+    assert flags[("HA47", "B")] == _SHOP_SIMPLIFY_TOP80_YES
+    assert flags[("HA21", "D")] == _SHOP_SIMPLIFY_TOP80_NO
+
+
+def test_group_mode_nature_top_uses_whole_nature_pool():
+    raw, _ = transform_shop_simplify_site(_df(_site_group_rows()), ["HA21", "HA47"])
+    flags = _group_flags(raw, _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN)
+    # 同 Nature 合計：A540、B100、C35、D20、E10＝705；80%＝564 → A、B 入選
+    assert flags[("HA21", "A")] == _SHOP_SIMPLIFY_TOP80_YES
+    assert flags[("HA47", "B")] == _SHOP_SIMPLIFY_TOP80_YES
+    assert flags[("HA21", "C")] == _SHOP_SIMPLIFY_TOP80_NO
+
+
+def test_group_mode_custom_label_used_in_columns():
+    raw, _ = transform_shop_simplify_site(
+        _df(_site_group_rows()), ["HA21", "HA47"], group_label="柴灣區"
+    )
+    assert _shop_simplify_site_top80_column("柴灣區") in raw.columns
+    assert _shop_simplify_value_site_top_column("柴灣區") in raw.columns
+    assert _shop_simplify_compare_column("柴灣區") in raw.columns
+    assert _shop_simplify_site_top80_column("HA21+HA47") not in raw.columns
+
+
+def test_group_mode_single_shop_keeps_site_code_label():
+    """只選一間（或清單只有一項）時，自訂群組名不生效，欄名仍用店碼——既有欄名契約不變。"""
+    raw, _ = transform_shop_simplify_site(
+        _df(_site_group_rows()), ["HA21"], group_label="柴灣區"
+    )
+    assert _shop_simplify_site_top80_column("HA21") in raw.columns
+    assert "是否柴灣區的Top 80%（件數）" not in raw.columns
+
+
+def test_group_mode_missing_shop_skipped_with_warning():
+    raw, warnings = transform_shop_simplify_site(_df(_site_group_rows()), ["HA21", "HA99"])
+    assert set(raw["Site Code"]) == {"HA21"}
+    # 只用實際存在的店碼作欄名，避免出現「HA21+HA99」這種與結果不符的名稱
+    assert _shop_simplify_site_top80_column("HA21") in raw.columns
+    assert any("已略過" in w and "HA99" in w for w in warnings)
+
+
+def test_group_mode_all_shops_missing_raises():
+    with pytest.raises(ValueError, match="HA98"):
+        transform_shop_simplify_site(_df(_site_group_rows()), ["HA98", "HA99"])
+
+
+def test_group_mode_dedupes_case_variants():
+    raw, _ = transform_shop_simplify_site(_df(_site_group_rows()), ["HA21", "ha21"])
+    assert set(raw["Site Code"]) == {"HA21"}
+    assert _shop_simplify_site_top80_column("HA21") in raw.columns
+
+
+def test_group_mode_stats_dedupes_case_variants():
+    """來源同時有 HA21／ha21 時視為同一間店：店舖數 1、欄名用首次出現的寫法。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 40},
+        {"SKU": "B", "Site Code": "ha21", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 10},
+    ]
+    raw, _ = transform_shop_simplify_site(_df(rows), "HA21")
+    stats = shop_simplify_site_stats(raw, "HA21")
+    assert stats["site"] == "HA21"
+    assert stats["site_count"] == 1
+    assert _shop_simplify_site_top80_column(stats["site"]) in raw.columns
+
+
+def test_group_mode_nature_judged_per_row_nature():
+    """群組跨兩個 Shop Nature：每列按自己的 Shop Nature 取同 Nature 判定，不會互相污染。"""
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 40},
+        {"SKU": "B", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 10},
+        {"SKU": "C", "Site Code": "HA47", "Shop Nature": "Tourist", "Sold Qty (P90D)": 100},
+        {"SKU": "D", "Site Code": "HA47", "Shop Nature": "Tourist", "Sold Qty (P90D)": 1},
+        {"SKU": "A", "Site Code": "HA20", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 1000},
+        {"SKU": "C", "Site Code": "HA19", "Shop Nature": "Tourist", "Sold Qty (P90D)": 500},
+    ]
+    raw, warnings = transform_shop_simplify_site(_df(rows), ["HA21", "HA47"])
+    flags = _group_flags(raw, _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN)
+    # Non Tourist：A1040、B10 → 80% 只有 A；Tourist：C600、D1 → 80% 只有 C
+    assert flags[("HA21", "A")] == _SHOP_SIMPLIFY_TOP80_YES
+    assert flags[("HA21", "B")] == _SHOP_SIMPLIFY_TOP80_NO
+    assert flags[("HA47", "C")] == _SHOP_SIMPLIFY_TOP80_YES
+    assert flags[("HA47", "D")] == _SHOP_SIMPLIFY_TOP80_NO
+    assert any("跨 2 個 Shop Nature" in w for w in warnings)
+
+
+def test_group_mode_blank_nature_rows_leave_columns_blank():
+    rows = [
+        {"SKU": "A", "Site Code": "HA21", "Shop Nature": "Non Tourist", "Sold Qty (P90D)": 40},
+        {"SKU": "B", "Site Code": "HA47", "Shop Nature": "", "Sold Qty (P90D)": 10},
+    ]
+    raw, warnings = transform_shop_simplify_site(_df(rows), ["HA21", "HA47"])
+    flags = _group_flags(raw, _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN)
+    compare = _group_flags(raw, _shop_simplify_compare_column("HA21+HA47"))
+    assert flags[("HA47", "B")] == ""
+    assert compare[("HA47", "B")] == ""
+    assert any("Shop Nature 空白" in w for w in warnings)
+
+
+def test_group_mode_stats_lists_sites_and_label():
+    raw, _ = transform_shop_simplify_site(
+        _df(_site_group_rows()), ["HA21", "HA47"], group_label="柴灣區"
+    )
+    stats = shop_simplify_site_stats(raw, ["HA21", "HA47"], group_label="柴灣區")
+    assert stats["site"] == "柴灣區"
+    assert stats["site_count"] == 2
+    assert set(stats["sites"]) == {"HA21", "HA47"}
+    assert stats["rows"] == 6
+    assert stats["skus"] == 5
+
+
+def test_group_mode_excel_keeps_judgement_columns_visible():
+    from openpyxl.utils import get_column_letter
+
+    raw, _ = transform_shop_simplify_site(_df(_site_group_rows()), ["HA21", "HA47"])
+    wb = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))
+    ws = wb["Export"]
+    headers = [c.value for c in ws[1]]
+    for name in (
+        _shop_simplify_site_top80_column("HA21+HA47"),
+        _SHOP_SIMPLIFY_NATURE_TOP80_COLUMN,
+        _shop_simplify_compare_column("HA21+HA47"),
+        _shop_simplify_value_site_top_column("HA21+HA47"),
+    ):
+        assert name in headers
+        letter = get_column_letter(headers.index(name) + 1)
+        assert not ws.column_dimensions[letter].hidden
+
+
+def test_group_mode_summary_and_guide_list_shops():
+    raw, _ = transform_shop_simplify_site(_df(_site_group_rows()), ["HA21", "HA47"])
+    wb = load_workbook(BytesIO(generate_excel_shop_simplify(raw, site_view=True).getvalue()))
+    assert "指定店舖 2 間" in wb["Summary"]["A2"].value
+    assert "HA21" in wb["Summary"]["A2"].value and "HA47" in wb["Summary"]["A2"].value
+    assert "2 間店舖" in wb["說明"]["B2"].value
+    # 說明頁的分組口徑要講明是「所選店舖合併後的池」，不能沿用單店的 (Site Code, 分組) 寫法
+    guide_text = "\n".join(
+        str(wb["說明"].cell(row=i, column=2).value or "")
+        for i in range(1, wb["說明"].max_row + 1)
+    )
+    assert "指定店舖群組模式" in guide_text
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 9. 指定店舖模式：Top 80% 以 Adj. SST 分類為母體
 # ──────────────────────────────────────────────────────────────────────────────
 def _sst_rows():

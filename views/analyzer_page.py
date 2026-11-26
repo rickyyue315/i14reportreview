@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import calendar
+import re
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from transformer import (
@@ -423,6 +424,9 @@ _RAW_CONVERT_NO_VALUE_MODE = "RAW 明細轉化 (不含 Value)"
 _RAW_CONVERT_MODES = (_RAW_CONVERT_MODE, _RAW_CONVERT_NO_VALUE_MODE)
 _SHOP_SIMPLIFY_MODE = "店舖精簡SKU模式"
 _SHOP_SIMPLIFY_SITE_MODE = "店舖精簡SKU模式(指定店舖)"
+# 指定店舖變體的兩種指定方式：單一店舖（原有）／多店舖群組（合併為同一區域計算）
+_SHOP_SIMPLIFY_SITE_SINGLE = "單一店舖"
+_SHOP_SIMPLIFY_SITE_GROUP = "多店舖群組（視為同一區域）"
 
 
 def _transfer_site_selector(df_input, shop_natures, *, prefix, nd_mode):
@@ -3297,6 +3301,8 @@ if uploaded_file is not None:
                 )
 
         _shopslimsite_site = None
+        _shopslimsite_sites: list[str] = []
+        _shopslimsite_group_name = ""
         _shopslimsite_ratio = 0.8
         _shopslimsite_data_date = None
         _shopslimsite_window = None
@@ -3348,27 +3354,77 @@ if uploaded_file is not None:
             if not _site_options:
                 st.error("❌ 來源檔案缺少「Site Code」或全欄空白，無法指定店舖。")
                 st.stop()
-            if st.session_state.get("shopslimsite_site") not in _site_options:
-                st.session_state.pop("shopslimsite_site", None)
-            _shopslimsite_site = st.selectbox(
-                "🏪 指定店舖 (Site Code)",
-                options=_site_options,
+            _site_scope = st.radio(
+                "🏪 指定方式",
+                options=[_SHOP_SIMPLIFY_SITE_SINGLE, _SHOP_SIMPLIFY_SITE_GROUP],
                 index=0,
-                key="shopslimsite_site",
-                help=f"只輸出此店舖的 SKU 列，並判定該店與同 Shop Nature 的 Top {_shopslimsite_pct}%，"
-                     "件數用 Sold Qty (P90D)、金額用 Net Sales（MTD＋M-1＋M-2）；"
-                     f"兩者均以 {_shopslimsite_group} 為分組，每個分類獨立累計。",
+                horizontal=True,
+                key="shopslimsite_scope",
+                help="「單一店舖」＝原本做法，只輸出一間店，Top N% 以該店為分母。"
+                     "「多店舖群組」＝勾選幾間店舖（例如新舖＋同區老舖），合併成一個池計算 Top N%，"
+                     "輸出所選店舖的全部 SKU 列；適合新舖銷量未夠、單店計 Top N% 會失真時使用。",
             )
-            _slim_site = _shopslimsite_site
+            _shopslimsite_site = ""
+            _shopslimsite_sites: list[str] = []
+            _shopslimsite_group_name = ""
+            if _site_scope == _SHOP_SIMPLIFY_SITE_SINGLE:
+                if st.session_state.get("shopslimsite_site") not in _site_options:
+                    st.session_state.pop("shopslimsite_site", None)
+                _shopslimsite_site = st.selectbox(
+                    "🏪 指定店舖 (Site Code)",
+                    options=_site_options,
+                    index=0,
+                    key="shopslimsite_site",
+                    help=f"只輸出此店舖的 SKU 列，並判定該店與同 Shop Nature 的 Top {_shopslimsite_pct}%，"
+                         "件數用 Sold Qty (P90D)、金額用 Net Sales（MTD＋M-1＋M-2）；"
+                         f"兩者均以 {_shopslimsite_group} 為分組，每個分類獨立累計。",
+                )
+                _shopslimsite_sites = [_shopslimsite_site]
+            else:
+                _prev_pick = st.session_state.get("shopslimsite_sites_pick", [])
+                _valid_pick = [x for x in _prev_pick if x in _site_options]
+                if _valid_pick != _prev_pick:
+                    st.session_state["shopslimsite_sites_pick"] = _valid_pick
+                _shopslimsite_sites = list(st.multiselect(
+                    "🏪 指定店舖（可選多間，輸入可篩選）",
+                    options=_site_options,
+                    key="shopslimsite_sites_pick",
+                    help=f"所選店舖會合併為同一個池計算 Top {_shopslimsite_pct}%（件數與金額），"
+                         "輸出包含所選店舖的全部 SKU 列；與單一店舖一樣不設 Shop Nature 篩選。",
+                ))
+                _auto_name = "+".join(_shopslimsite_sites)
+                _shopslimsite_group_name = st.text_input(
+                    "🏷️ 群組名稱（用於判定欄名，可留空）",
+                    key="shopslimsite_group_name",
+                    placeholder=f"留空＝{_auto_name}" if _auto_name else "留空＝以「+」串接所選店碼",
+                    help="例如輸入「柴灣區」，判定欄會顯示「是否柴灣區的Top 80%（件數）」，方便日後核對。",
+                )
+                if len(_shopslimsite_sites) < 2:
+                    st.info("請至少選擇 2 間店舖；只選 1 間時計算方式與「單一店舖」相同。")
             _slim_pct = _shopslimsite_pct
+            if len(_shopslimsite_sites) > 1:
+                _slim_tag = str(_shopslimsite_group_name or "").strip() or "+".join(_shopslimsite_sites)
+                _slim_scope = f"{len(_shopslimsite_sites)} 間店舖（{'、'.join(_shopslimsite_sites)}）"
+                _slim_prefix = "輸出所選店舖的全部 SKU（合併為一個池），並加四欄判定與兩欄對比——"
+                _slim_pool_note = (
+                    f" 四條判定都以所選 {len(_shopslimsite_sites)} 間店舖合併計算"
+                    f"（判定欄標示為「{_slim_tag}」）：同一 SKU 在多間所選店舖的銷量／金額會先加總，"
+                    "再按分組累計；同 Shop Nature 判定則按每列店舖自己的 Nature 計算。"
+                )
+            else:
+                _slim_tag = _shopslimsite_sites[0] if _shopslimsite_sites else "（未選店舖）"
+                _slim_scope = _slim_tag
+                _slim_prefix = "輸出該店全部 SKU，並加四欄判定與兩欄對比——"
+                _slim_pool_note = ""
             st.caption(
-                f"目前設定 → **{_slim_site}**、**Top {_slim_pct}%**、分組 **{_shopslimsite_group}**、金額 **{_shopslimsite_window['label']}**："
-                "輸出該店全部 SKU，並加四欄判定與兩欄對比——"
-                f"「是否{_slim_site}的Top {_slim_pct}%（件數）」、「是否同Shop Nature的Top {_slim_pct}%（件數）」、"
-                f"「是否{_slim_site}的Top {_slim_pct}%（金額）」、「是否同Shop Nature的Top {_slim_pct}%（金額）」，"
-                f"以及「{_slim_site} vs 同Nature Top {_slim_pct}%（件數）」、「…（金額）」；"
-                "Shop Nature 由來源檔該店的值決定（不設 Nature 篩選）；"
+                f"目前設定 → **{_slim_scope}**、**Top {_slim_pct}%**、分組 **{_shopslimsite_group}**、金額 **{_shopslimsite_window['label']}**："
+                + _slim_prefix
+                + f"「是否{_slim_tag}的Top {_slim_pct}%（件數）」、「是否同Shop Nature的Top {_slim_pct}%（件數）」、"
+                f"「是否{_slim_tag}的Top {_slim_pct}%（金額）」、「是否同Shop Nature的Top {_slim_pct}%（金額）」，"
+                f"以及「{_slim_tag} vs 同Nature Top {_slim_pct}%（件數）」、「…（金額）」；"
+                "Shop Nature 由來源檔每間店的值決定（不設 Nature 篩選）；"
                 f"每個 {_shopslimsite_group} 分類內累計首次達該分類 {_slim_pct}% 即屬 Top {_slim_pct}%（同一銷量／金額整組納入或排除）。"
+                + _slim_pool_note
             )
 
             with st.expander("SCT建議", expanded=False):
@@ -3943,18 +3999,20 @@ if uploaded_file is not None:
                 elif mode == _SHOP_SIMPLIFY_SITE_MODE:
                     raw_df, _warnings = transform_shop_simplify_site(
                         df_input,
-                        site_code=_shopslimsite_site,
+                        site_code=_shopslimsite_sites,
                         progress_callback=_cb_transform,
                         top_ratio=_shopslimsite_ratio,
                         data_date=_shopslimsite_data_date,
                         group_by=_shopslimsite_group,
                         sct_rules=_shopslimsite_sct_rules,
+                        group_label=_shopslimsite_group_name,
                     )
                     buf = generate_excel_shop_simplify(raw_df, progress_callback=_cb_excel, site_view=True)
                     st.session_state.shopslimsite_processed = True
                     st.session_state.shopslimsite_raw_df = raw_df
                     st.session_state.shopslimsite_stats = shop_simplify_site_stats(
-                        raw_df, _shopslimsite_site, _shopslimsite_ratio, group_by=_shopslimsite_group
+                        raw_df, _shopslimsite_sites, _shopslimsite_ratio,
+                        group_by=_shopslimsite_group, group_label=_shopslimsite_group_name,
                     )
                     st.session_state.shopslimsite_output_ratio = _shopslimsite_ratio
                     st.session_state.shopslimsite_excel_data = buf
@@ -5849,6 +5907,18 @@ if uploaded_file is not None:
             _stats = st.session_state.shopslimsite_stats or {}
             excel_data = st.session_state.shopslimsite_excel_data
             _site = str(_stats.get("site") or "").strip()
+            _sites = [str(s).strip() for s in (_stats.get("sites") or []) if str(s).strip()]
+            if not _sites and _site:
+                _sites = [part for part in _site.split("+") if part]
+            _site_count = int(_stats.get("site_count") or len(_sites) or 1)
+            _is_group = _site_count > 1
+            # 結果頁顯示用：多店舖時列出店碼（超過 5 間以「…」收尾），單店時即店碼
+            _scope = (
+                "、".join(_sites[:5]) + ("…" if len(_sites) > 5 else "")
+                if _is_group else _site
+            )
+            # 檔名不能含 \ / : * ? " < > |
+            _site_tag = re.sub(r'[\\/:*?"<>|]', "-", _site).strip() or "group"
             # 比例與金額視窗都以結果檔的欄名為準（上次執行時的設定），避免切換後把舊結果當新結果
             _pct_used = int(_stats.get("ratio") or 80)
             _pct_selected = int(round(float(_shopslimsite_ratio or 0.8) * 100))
@@ -5866,7 +5936,7 @@ if uploaded_file is not None:
             _window_txt = f"、金額 {_window_used}" if _value_ok and _window_used else ""
             st.markdown(
                 f'<div class="section-banner"><h3>✂️ 店舖精簡 SKU 分析摘要'
-                f'（指定店舖：{_site}、Top {_pct_used}%{_window_txt}）</h3></div>',
+                f'（指定店舖：{_scope}、Top {_pct_used}%{_window_txt}）</h3></div>',
                 unsafe_allow_html=True,
             )
             if _pct_selected != _pct_used:
@@ -5886,9 +5956,9 @@ if uploaded_file is not None:
                 )
             _top_download_button(
                 excel_data,
-                f"I14 店舖精簡SKU模式_{_site}_Top{_pct_used}"
+                f"I14 店舖精簡SKU模式_{_site_tag}_Top{_pct_used}"
                 + (f"_{_window_used}" if _value_ok and _window_used else "")
-                + "_指定店舖",
+                + ("_多店群組" if _is_group else "_指定店舖"),
                 "dl_top_shopslimsite",
             )
 
@@ -5906,8 +5976,10 @@ if uploaded_file is not None:
 
             st.markdown("##### 📦 件數口徑（Sold Qty (P90D)）")
             _render_cards([
-                ("指定店舖 SKU 數", _stats.get("rows", 0), f"只輸出 {_site} 的 SKU；其他店舖不列入", "#3b82f6"),
-                (f"{_site} 件數 Top {_pct_used}%", _stats.get("site_top80", 0), f"每個 {_group_used} 分類內累計達該分類 {_pct_used}%", "#8b5cf6"),
+                (f"{_site_count} 間店舖 SKU 數" if _is_group else "指定店舖 SKU 數",
+                 _stats.get("rows", 0), f"只輸出 {_scope} 的 SKU；其他店舖不列入", "#3b82f6"),
+                (f"{_site} 件數 Top {_pct_used}%", _stats.get("site_top80", 0),
+                 f"每個 {_group_used} 分類內累計達該分類 {_pct_used}%" + ("（所選店舖合併計算）" if _is_group else ""), "#8b5cf6"),
                 (f"同 Nature 件數 Top {_pct_used}%", _stats.get("nature_top80", 0), f"Shop Nature＝{_nature_label}，同 Nature 按 {_group_used} 分類合計", "#10b981"),
                 ("件數兩項皆非", _stats.get("neither", 0), f"既非店舖 Top {_pct_used}%，亦非同 Nature Top {_pct_used}%", "#f59e0b"),
             ])
@@ -5915,7 +5987,8 @@ if uploaded_file is not None:
             if _value_ok:
                 st.markdown(f"##### 💰 金額口徑（Net Sales ({_window_used})）")
                 _render_cards([
-                    (f"{_site} 金額 Top {_pct_used}%", _stats.get("value_site_top80", 0), f"每個 {_group_used} 分類內累計達該分類 {_pct_used}% 金額", "#0ea5e9"),
+                    (f"{_site} 金額 Top {_pct_used}%", _stats.get("value_site_top80", 0),
+                     f"每個 {_group_used} 分類內累計達該分類 {_pct_used}% 金額" + ("（所選店舖合併計算）" if _is_group else ""), "#0ea5e9"),
                     (f"同 Nature 金額 Top {_pct_used}%", _stats.get("value_nature_top80", 0), f"Shop Nature＝{_nature_label}，同 Nature 按 {_group_used} 分類合計", "#14b8a6"),
                     ("金額兩項皆非", _stats.get("value_neither", 0), f"既非店舖金額 Top {_pct_used}%，亦非同 Nature 金額 Top {_pct_used}%", "#f97316"),
                 ], columns=3)
@@ -5945,7 +6018,7 @@ if uploaded_file is not None:
                 )
 
             st.caption(
-                f"共 {int(_stats.get('rows', 0)):,} 個 SKU（{_site}）、{int(_stats.get('group_count', 0)):,} 個 {_stats.get('group_column', 'MC')} 分類；"
+                f"共 {int(_stats.get('rows', 0)):,} 個 SKU（{_scope}）、{int(_stats.get('group_count', 0)):,} 個 {_stats.get('group_column', 'MC')} 分類；"
                 f"過去90日無賣 {int(_stats.get('sold_no', 0)):,} 個、無存貨 {int(_stats.get('stock_no', 0)):,} 個。"
                 f"件數與金額都以 {_group_used} 為分組：每個分類內由高至低累計，首次達該分類 {_pct_used}% 即屬 Top {_pct_used}%；"
                 "同一銷量／金額的 SKU 整組納入或整組排除，分類之間不互相擠佔（故實際覆蓋率可能略高於門檻）。"
@@ -6060,9 +6133,12 @@ if uploaded_file is not None:
             _hk_time_site = datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%Y%m%d_%H%M")
             _dl_suffix = f"_Top{_pct_used}" + (f"_{_window_used}" if _value_ok and _window_used else "")
             st.download_button(
-                label=f"📥 下載店舖精簡SKU報表（{_site}、Top {_pct_used}%{('、' + _window_used) if _value_ok and _window_used else ''}）(.xlsx)",
+                label=f"📥 下載店舖精簡SKU報表（{_scope}、Top {_pct_used}%{('、' + _window_used) if _value_ok and _window_used else ''}）(.xlsx)",
                 data=excel_data,
-                file_name=f"I14 店舖精簡SKU模式_{_site}{_dl_suffix}_指定店舖_{_hk_time_site}.xlsx",
+                file_name=(
+                    f"I14 店舖精簡SKU模式_{_site_tag}{_dl_suffix}"
+                    f"{'_多店群組' if _is_group else '_指定店舖'}_{_hk_time_site}.xlsx"
+                ),
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
                 width='stretch',

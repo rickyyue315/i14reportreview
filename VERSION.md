@@ -1,5 +1,32 @@
 # 版本記錄
 
+## v1.112.0 (2026-11-26)
+
+「店舖精簡SKU模式(指定店舖)」新增**多店舖群組**：可勾選幾間店舖（例如新舖＋同區老舖），合併成一個池計算 Top N%，代替只能指定單一店舖——新舖銷量未夠時，不會把全部 SKU 判成 Top。
+
+### 規則
+
+- **指定方式**：側欄新增「🏪 指定方式」，可選 **單一店舖**（原有行為，預設）或 **多店舖群組（視為同一區域）**；後者以多選列出 `Site Code`（可輸入篩選），至少 2 間，選 1 間時計算方式與單一店舖相同
+- **合併計算**：所選店舖的 `Sold Qty (P90D)`（件數）與 `Net Sales (P{N}D)`（金額）先按 `(所選分組, SKU)` **加總**，再按分組累計 Top N%——同一 SKU 在多間所選店舖的數字會先合併，四條判定欄（店舖／同Nature × 件數／金額）都用同一個池；分類之間仍不互相擠佔，同一銷量／金額整組納入或排除
+- **輸出範圍**：所選店舖的全部 SKU 列（以 `Site Code` 區分），其餘店舖不列入
+- **欄名**：預設以「+」串接實際店碼（`是否HA21+HA47的Top 80%（件數）`、`HA21+HA47 vs 同Nature Top 80%（件數）`）；可輸入「🏷️ 群組名稱」（如「柴灣區」）自訂，判定欄與對比欄即用該名稱。單一店舖（或只選 1 間）時自訂名稱不生效，欄名一律用店碼，既有欄名契約完全不變
+- **同 Shop Nature 判定**：改為按**每列店舖自己的 Shop Nature** 取值（單店時只有一個 Nature，結果與舊版相同）；群組跨多個 Nature 時各店按自己的 Nature 比較，並列 warning；該列 Nature 空白時，同 Nature 與對比欄留空（不再整欄留空）
+- **找不到的店舖**：所選店碼在清理後沒有資料列時**略過該店**並列 warning（判定欄名只用實際存在的店碼），不再整體報錯；全部所選店舖都找不到才停止並提示；店碼大小寫不敏感比對沿用原有做法並列 warning
+- **Summary／說明頁**：`Summary` A2 與 `說明` 概況在多店時列為「指定店舖 N 間（HA21、HA47）」（超過 5 間以「…」收尾），單店維持「指定店舖 HA21」
+- **下載檔名**：多店時為 `I14 店舖精簡SKU模式_{群組名}_Top{N}_{PxxD}_多店群組_{YYYYMMDD_HHMM}.xlsx`，單店仍為 `…_指定店舖_…`；群組名含 `\ / : * ? " < > |` 時以「-」取代，避免存檔失敗
+
+### 實作
+
+- `modes/shop_simplify.py`：新增 `_shop_simplify_site_codes()`（店碼清單正規化：去空白、大小寫不敏感去重）、`_shop_simplify_site_label()`（單店用店碼、多店用自訂名或「+」串接）、`_shop_simplify_site_scope_text()`（warning 用的範圍文字）、`_shop_simplify_site_codes_text()`（Summary／說明頁短標示）與 `_SHOP_SIMPLIFY_SITE_SEPARATOR`
+- `transform_shop_simplify_site()`：`site_code` 改為接受單一店碼或店碼清單，新增 `group_label`；逐個店碼比對（精確 → 大小寫不敏感 → 略過並列 warning），以 `sites.str.upper().isin(...)` 一次篩出所選店舖；同 Nature 判定改為 `nature_keys_by_value` / `nature_value_keys_by_value` 逐個 Nature 計算，再按每列的 `Shop Nature` 映射，Nature 空白列以 `Series.where` 留空
+- `shop_simplify_site_stats()`：接受店碼清單與 `group_label`；新增 `sites`（結果檔實際店碼）與 `site_count`，`site` 改為判定欄使用的群組名；`nature` 改為列出不重複值（>3 個以「…」收尾）
+- `views/analyzer_page.py`：側欄加「指定方式」電台鈕與多選店舖、群組名稱輸入（`shopslimsite_scope`／`shopslimsite_sites_pick`／`shopslimsite_group_name`）；結果頁標題、指標卡、說明文字與下載檔名按單店／多店切換，檔名加 `re.sub` 過濾非法字元
+
+### 驗證
+
+- `py -m pytest tests` → 1891 passed、4 skipped（新增 15 項：合併池判定、單店 vs 群組的 D 反轉、金額口徑同一池、同 Nature 全 Nature 分母、跨 Nature 逐列映射、空白 Nature 留空、自訂群組名、只選一間保留店碼、缺店略過、全部缺店報錯、大小寫重複去重（轉換與統計各一）、stats 店碼清單、Excel 判定欄保持顯示、Summary／說明頁列店碼與分組口徑）
+- 手動核對 `說明` B2 與 `Summary` A2：多店時顯示「2 間店舖（HA21、HA47）」且無重複店碼
+
 ## v1.111.0 (2026-11-24)
 
 `Summary` 版面美化：加顏色分類、格線與按內容自動換算的欄寬，令十幾個區塊一眼分得開、捲動時不會迷路（資料、欄名、列次序、零值留空與百分比口徑完全不變）。
