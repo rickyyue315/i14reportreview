@@ -1,5 +1,33 @@
 # 版本記錄
 
+## v1.114.0 (2026-11-27)
+
+Safety Stock Review 的 `SUMMARY` 工作表新增三個統計區塊，以 **Brand／Buyer／店舖** 為單位總結「店舖問題 SKU」：一眼看出多少個 Brand、Buyer、店舖有 ND 退場／Safety 設定不足／Safety 設定過高，再以兩張仿樞紐分析表的版面（列＝Buyer＞Brand、Site Code／Shop Name；欄＝問題類型 × 行數／加總 - Safety Qty Change）列出明細，代替人手以該表做樞紐分析。現有區塊 ①–④ 的欄位、次序與數字不變。
+
+### 規則
+
+- **統計來源**：三個區塊一律以「店舖問題 SKU」工作表同一批需行動列、同一「問題類型」為準——`Safety Qty Change > 0` → Safety 設定不足；`< 0` → Safety 設定過高；`= 0` 而有 ND 建議或已是 ND → ND 退場。故數字與該表、以及自行以該表做成的樞紐分析一致（三類互斥，相加等於總計）
+- **⑤ 影響範圍統計（Brand／Buyer／店舖）**：三列 × 五欄——`總數`（統計範圍內不重複對象數）、`ND 退場`、`Safety 設定不足`、`Safety 設定過高`（有任何一列屬該類即計入，同一對象可同時計入多欄，故各欄相加不等於總數）、`無需行動`（該表沒有任何列）
+- **對象鍵**：Brand／Buyer 以 `Brand`／`Buyer` 欄計（去首尾空白），店舖以 `Site Code` 計（與 `By Shop` 同一鍵）；鍵空白的列不計入該維度的對象數
+- **⑥ 按 Buyer／Brand 統計**：每個 Buyer 一列小計（黃底粗體），其下按 Brand 分列明細（縮排、列入摺疊群組，Excel 左側可按「−」收合）；Buyer 與 Brand 各依名稱排序，缺值顯示「（空白）」
+- **⑦ 按店舖統計**：每個 Site Code 一列（Shop Name 取該店第一個可解析名稱），依 Site Code 排序；表頭設自動篩選（範圍至最後一間店舖，總計列不在內，篩選時仍會顯示）
+- **欄位**：ND 退場／Safety 設定不足／Safety 設定過高 各佔「行數」「加總 - Safety Qty Change」兩欄，最後一組為 `總計`（淺黃底）；只列出有需行動列的對象，沒有列的問題類型留白（與樞紐分析表相同）；末列 `總計`（淺藍底粗體）
+- **篩選限制**：Excel 每張工作表只容許一個自動篩選範圍，故只設在列數較多的店舖表
+- **欄寬**：SUMMARY 各區塊共用欄寬，`說明` 長句與區塊標題原本把 A／D／E 欄撐至 47–50；改設上限（A 欄 36、其餘 30），長句以自動換行顯示，令 ⑥⑦ 各欄均勻
+- **畫面同步**：結果頁「🧮 分類交叉表」tab 顯示同三個區塊（Buyer 小計列黃底粗體）；「店舖問題 SKU」改為只建立一次，供樞紐分析與明細表共用
+
+### 實作
+
+- `modes/safety_review.py`：新增 `_ssr_entity_keys()`（Brand／Buyer／Site Code 鍵）、`_ssr_issue_frame()`／`_ssr_issue_wide()`（問題類型樞紐的底表與彙總）、`_build_combined_impact_summary()`（⑤，新增選用參數 `issues`）、`_build_combined_issue_pivot()`（⑥⑦，以 `by="buyer_brand"／"shop"` 切換）與 `_write_issue_pivot_block()`（兩層表頭、黃底小計、摺疊群組、自動篩選）；`_write_summary_sheet()` 新增 `impact_summary`／`buyer_brand_pivot`／`shop_pivot` 三個選用參數，未提供時只寫 ①②③④（舊呼叫方式相容），並在自動欄寬後套用欄寬上限；`generate_excel_combined()` 把 `_build_combined_shop_issues()` 的結果同時用於「店舖問題 SKU」與 SUMMARY ⑤–⑦
+- `views/analyzer_page.py`：「🧮 分類交叉表」tab 在銷量 × 存貨分類之後顯示三個新統計
+- `views/usage_page.py`、`README.md`、`README.public.md`：同步 SUMMARY 區塊說明
+
+### 驗證
+
+- `py -m pytest tests` → 1911 passed、4 skipped（新增 20 項：樞紐每列等於直接 groupby「店舖問題 SKU」、三層級對象數與樞紐表互相對照、只可增加模式、已是 ND／New SKU、空白鍵、空表與缺欄、Buyer＞Brand 小計結構、店舖表排序與 Shop Name、亂序或重複 index、版面（兩層表頭／黃底小計／摺疊群組／自動篩選範圍／欄寬上限）、端到端 Excel 與「店舖問題 SKU」對帳）
+- 以 Streamlit AppTest 走一次上載 → 執行 → 結果頁流程，確認三個新區塊可渲染且無例外（過程中發現並修正 `Styler.apply` 不接受非唯一 index 的問題）
+- 重新產生 `Safety SUMMARY 預覽_20261127.xlsx` 核對排版：⑥⑦ 總計等於「店舖問題 SKU」的列數與 Safety Qty Change 合計
+
 ## v1.113.0 (2026-11-26)
 
 `說明` 工作表改寫為**店舖導向的填寫指引**：`SCT建議` 定位為「方便店舖判斷 RF／ND 的參考」，說明集中講店舖要填哪兩欄、怎樣看建議、留空怎樣處理，不再以 SCT 的設定情況表為主軸。

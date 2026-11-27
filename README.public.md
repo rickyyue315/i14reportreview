@@ -203,9 +203,9 @@ Safety Stock 月度變化分析額外必要欄位（缺少時停止並提示）�
 
 品項分為 Overstock / OOS / Balanced (Safety Adjusted) 三類，標示調整原因。
 輸出包含 **說明（首頁導讀：Review 邏輯＋本次執行參數＋工作表導讀，開啟 Excel 時預設顯示本頁）**、RAW、Shop Stock Status、By Shop、店舖問題 SKU（每間店舖需行動列：Safety 需增加／減少、ND 退場，問題＋建議方法（調整量以「增加／減少 X 件」標明方向；附建議值周轉日數，受最低 3 件保底影響時加註保底原因）；表末另附「銷量帶」「銷量存貨分類」兩欄）、SUMMARY、Safety Stock 數據分析摘要共 **7 個工作表**。
-SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）與 Recommendation of new Safety Qty / ND 分類（空白維持 / New SKU / 0 已是 ND / ND 系列加註）的行數、SKU 數與調整量合計；另附 **③ Safety Qty Change 分類 × 分類維度交叉表**（見下）；有指定總量分配時再加 **④ 逐 SKU 對帳**（Target 全線合計／已分配／差額／參與店舖數／超出庫存上限店數／低於缺貨底線店數，差額應為 0）。
+SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）與 Recommendation of new Safety Qty / ND 分類（空白維持 / New SKU / 0 已是 ND / ND 系列加註）的行數、SKU 數與調整量合計；另附 **③ Safety Qty Change 分類 × 分類維度交叉表**（見下）；有指定總量分配時再加 **④ 逐 SKU 對帳**（Target 全線合計／已分配／差額／參與店舖數／超出庫存上限店數／低於缺貨底線店數，差額應為 0）；最後 **⑤ 影響範圍統計** 以 Brand／Buyer／店舖（以 Site Code 計）為單位，統計有多少個有 **ND 退場／Safety 設定不足／Safety 設定過高**（只計「店舖問題 SKU」的需行動列；有任何一列屬該問題類型即計入，同一對象可同時計入多欄；「無需行動」＝該表沒有任何列），並附兩張仿樞紐分析表的 **⑥ 按 Buyer／Brand**（每個 Buyer 一列黃底小計，其下為 Brand 明細，可按左側「−」收合）與 **⑦ 按店舖**（Site Code／Shop Name，表頭設自動篩選）：欄為 問題類型 × 量值（行數／加總 - Safety Qty Change）再加總計，只列出有需行動列的對象，沒有列的問題類型留白。問題類型與「店舖問題 SKU」相同（Safety Qty Change > 0 → Safety 設定不足；< 0 → Safety 設定過高；＝ 0 而有 ND 建議或已是 ND → ND 退場），故數字與該表、以及自行以該表做成的樞紐分析一致。
 
-可選擇 **分類維度**（七選一，選項與 Safety Stock x NetStock Review 相同：Shop Nature／RP Type／Shop Nature＋RP Type／OM／Shop Nature＋OM／銷量／銷量＋Shop Nature；預設 Shop Nature）——本模式所有維度**只改分組顯示**（SUMMARY 區塊 ③），計算基準、倍率、MTD 月銷預估、退場建議等 Safety 計算一律不變。RAW 恆附「銷量帶」與「銷量存貨分類」顯示欄（門檻缺貨線 7 日／積壓線 30 日／保底 2 件，UI 可調，準則與 Safety Stock x NetStock Review 相同；銷量帶按本次上傳資料內同 SKU 排名計算，篩選範圍不同時分帶結果會不同）。來源缺「Sold Qty (P90D)」時不輸出銷量兩欄並列 warning；缺「Shop Stock Qty (CM)」時只輸出銷量帶並列 warning；缺「Shop Monthly Sold Qty (P90D)」時店舖周轉日數以 Sold Qty (P90D) ÷ 90 × 30.5 換算並列 warning；OM 兩個維度缺「OM」欄或全欄空白時退回 Shop Nature。結果頁「🧮 分類交叉表」tab 即時顯示區塊 ③ 與銷量 × 存貨分類分佈（後者統計範圍為全部店舖×SKU 列）。
+可選擇 **分類維度**（七選一，選項與 Safety Stock x NetStock Review 相同：Shop Nature／RP Type／Shop Nature＋RP Type／OM／Shop Nature＋OM／銷量／銷量＋Shop Nature；預設 Shop Nature）——本模式所有維度**只改分組顯示**（SUMMARY 區塊 ③），計算基準、倍率、MTD 月銷預估、退場建議等 Safety 計算一律不變。RAW 恆附「銷量帶」與「銷量存貨分類」顯示欄（門檻缺貨線 7 日／積壓線 30 日／保底 2 件，UI 可調，準則與 Safety Stock x NetStock Review 相同；銷量帶按本次上傳資料內同 SKU 排名計算，篩選範圍不同時分帶結果會不同）。來源缺「Sold Qty (P90D)」時不輸出銷量兩欄並列 warning；缺「Shop Stock Qty (CM)」時只輸出銷量帶並列 warning；缺「Shop Monthly Sold Qty (P90D)」時店舖周轉日數以 Sold Qty (P90D) ÷ 90 × 30.5 換算並列 warning；OM 兩個維度缺「OM」欄或全欄空白時退回 Shop Nature。結果頁「🧮 分類交叉表」tab 即時顯示區塊 ③、銷量 × 存貨分類分佈（統計範圍為全部店舖×SKU 列），以及區塊 ⑤–⑦（影響範圍統計、Buyer／Brand 與店舖的問題類型樞紐分析）。
 
 ### Stock Checking（調貨檢查）
 
@@ -341,7 +341,7 @@ SUMMARY 工作表統計 Safety Qty Change 分類（增加 / 減少 / 不變）�
 | 店舖問題 SKU | 每間店舖需行動列（問題＋建議方法；Stock Checking／Safety Stock Review／混合模式；Safety Stock Review 與混合模式的建議方法附建議值周轉日數，建議值受最低 3 件保底影響時另加註保底原因；Stock Checking 與 Safety Stock Review 表末另附「銷量帶」「銷量存貨分類」兩欄） |
 | Shop Stock Status | 採購人員 x 品牌之庫存異常交叉統計表 |
 | By Shop | 各店舖層級之彙總分析 |
-| SUMMARY | 分類統計 — ① Safety Qty Change 分類（增加/減少/不變）與 ② ND 建議分類，另附 ③ Safety Qty Change 分類 × 分類維度交叉表（列數／SKU 數／Safety Qty Change 合計，含總計列；分組按所選分類維度切換）（Safety Stock Review） |
+| SUMMARY | 分類統計 — ① Safety Qty Change 分類（增加/減少/不變）與 ② ND 建議分類，另附 ③ Safety Qty Change 分類 × 分類維度交叉表（列數／SKU 數／Safety Qty Change 合計，含總計列；分組按所選分類維度切換）、④ 指定總量分配逐 SKU 對帳（僅有指定 SKU 時）、⑤ 影響範圍統計（多少個 Brand／Buyer／店舖有 ND 退場／Safety 設定不足／Safety 設定過高），以及兩張「店舖問題 SKU」的樞紐分析表：⑥ Buyer＞Brand（黃底小計，可收合）、⑦ Site Code／Shop Name（表頭可篩選），欄為 問題類型 × 行數／加總 - Safety Qty Change（Safety Stock Review） |
 | 分析摘要 | 儀表板 — 關鍵指標總覽 |
 | Summary | SKU 級調貨彙總 — 庫存/月銷加總、TurnDay、涉及店舖數、佔比、調貨提示、存貨偏重提示（門檻按維度切換：nature／rp／both 為分組庫存佔比 ≥40% 且較銷量佔比高 ≥20 個百分點，om 為 ≥25% 且差距 ≥12 個百分點，nature_om／sales_nature 為 ≥12% 且差距 ≥8 個百分點，sales 為 ≥30% 且差距 ≥15 個百分點；店舖數為同 SKU 同組 Site Code 不重複計數，空白不計；混合模式按所選分類維度分組——nature 三組／rp 兩組 RF／ND／both 六組／om 動態 OM 名單／nature_om 三 Nature × OM／sales 四銷量帶／sales_nature 三 Nature × 四帶 12 組；Stock Checking 與混合模式的 Summary 均以醒目橘底加強顯示偏重提示與偏重分組的庫存佔比欄；混合模式另於以銷量／銷量＋Shop Nature 分類時以醒目紅底標示零銷組庫存佔比大於 0% 的儲存格（零銷售而仍有存貨，理論上全屬 Overstock））（Stock Checking 及混合模式均按所選分類維度分組——Stock Checking 於 v1.37.0 起支援七選一維度，調貨計算不隨維度改變） |
 | 調貨分析摘要 | 調貨 Dashboard — 需求/調入/轉出/缺口（Stock Checking） |

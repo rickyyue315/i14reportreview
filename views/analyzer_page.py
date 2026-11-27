@@ -49,6 +49,9 @@ from transformer import (
     _build_hybrid_return_d001,
     _HYBRID_RETURN_D001_COLUMN, _HYBRID_RETURN_D001_SHEET, _HYBRID_RETURN_D001_COLUMNS,
     _build_combined_dimension_cross_tab,
+    _build_combined_impact_summary,
+    _build_combined_issue_pivot,
+    _SSR_PIVOT_LEVEL_COL,
     _STOCK_CHECKING_SHOP_ISSUE_COLUMNS, _COMBINED_SHOP_ISSUE_COLUMNS,
     _HYBRID_SHOP_ISSUE_COLUMNS,
     _HYBRID_SAFETY_DAYS_DEFAULT, _HYBRID_SAFETY_DAYS_MIN, _HYBRID_SAFETY_DAYS_MAX,
@@ -1460,6 +1463,12 @@ if uploaded_file is not None:
                 help="選擇特定 Site Code 過濾下方表格。僅影響 RAW 明細預覽。"
             )
 
+            # 「店舖問題 SKU」只建立一次：分類交叉表 tab 的樞紐分析與店舖問題 SKU tab 的明細表共用
+            try:
+                _ss_issues = _build_combined_shop_issues(raw_df)
+            except Exception:
+                _ss_issues = None
+
             tab1, tab_cross, tab2, tab3, tab4 = st.tabs(["📋 統計彙總表 (Shop Stock Status)", "🧮 分類交叉表", "🏪 By Shop 明細", "🏪 店舖問題 SKU", "📄 RAW 原始明細"])
 
             with tab1:
@@ -1501,6 +1510,54 @@ if uploaded_file is not None:
                 else:
                     st.info("無符合資料（來源檔缺少「Sold Qty (P90D)」或「Shop Stock Qty (CM)」時不產生銷量存貨分類）")
 
+                st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
+                st.markdown("#### 影響範圍統計：多少個 Brand／Buyer／店舖有 Safety 設定不足、設定過高或 ND 退場（SUMMARY 區塊 ⑤）")
+                try:
+                    _ss_impact = _build_combined_impact_summary(raw_df, issues=_ss_issues)
+                    _ss_bb_tab = _build_combined_issue_pivot(_ss_issues, "buyer_brand")
+                    _ss_shop_tab = _build_combined_issue_pivot(_ss_issues, "shop")
+                except Exception:
+                    _ss_impact = _ss_bb_tab = _ss_shop_tab = None
+                if _ss_impact is not None and not _ss_impact.empty:
+                    st.dataframe(_ss_impact, width='stretch', hide_index=True)
+                    st.caption("只計「店舖問題 SKU」的需行動列；有任何一列屬該問題類型即計入，同一對象可同時計入多欄；"
+                               "「無需行動」＝該表沒有任何列；店舖以 Site Code 計。")
+                else:
+                    st.info("無符合資料")
+
+                def _ss_show_pivot(table):
+                    """樞紐分析表的畫面版：隱藏「層級」欄，Buyer 小計列黃底粗體、總計列淺藍底粗體（與 Excel 匯出相同）。"""
+                    if table is None or table.empty:
+                        st.info("無符合資料")
+                        return
+                    view = table.drop(columns=[_SSR_PIVOT_LEVEL_COL]).rename(
+                        columns=lambda c: c.replace(" 加總 - Safety Qty Change", " Safety Qty Change")
+                    )
+                    # Styler.apply 不接受非唯一 index，故以列位置查「層級」
+                    levels = table[_SSR_PIVOT_LEVEL_COL].tolist()
+
+                    def _paint(row):
+                        level = levels[row.name]
+                        if level == "Buyer":
+                            return ["background-color: #FFFF99; font-weight: bold"] * len(row)
+                        if level == "總計":
+                            return ["background-color: #DDEBF7; font-weight: bold"] * len(row)
+                        return [""] * len(row)
+
+                    try:
+                        st.dataframe(view.style.apply(_paint, axis=1), width='stretch', hide_index=True)
+                    except Exception:
+                        st.dataframe(view, width='stretch', hide_index=True)
+
+                st.markdown("##### 按 Buyer／Brand 統計（SUMMARY 區塊 ⑥）")
+                st.caption("即「店舖問題 SKU」的樞紐分析：列＝Buyer 小計（黃底）＞Brand；欄＝問題類型 × 行數／Safety Qty Change。"
+                           "問題類型：Safety 設定不足＝Safety Qty Change > 0；Safety 設定過高＝< 0；"
+                           "ND 退場＝Safety Qty Change 為 0 而有 ND 建議或已是 ND")
+                _ss_show_pivot(_ss_bb_tab)
+
+                st.markdown("##### 按店舖統計（Site Code／Shop Name；SUMMARY 區塊 ⑦）")
+                _ss_show_pivot(_ss_shop_tab)
+
             with tab2:
                 by_shop_df = summary_df  # placeholder, real by_shop is built in excel gen
                 st.markdown("#### 各 Site 層級彙總分析")
@@ -1519,10 +1576,6 @@ if uploaded_file is not None:
             with tab3:
                 st.markdown("#### 每間店舖需行動 SKU（問題＋建議方法）")
                 st.markdown("只收錄需行動列（Safety 需增加／減少、ND 退場），按店舖分組、店內按嚴重度排序；建議方法附建議值周轉日數，受最低 3 件保底影響時另加註保底原因（保底只適用於有銷量或 90 天內上市的新品，舊品零銷量維持 0）：")
-                try:
-                    _ss_issues = _build_combined_shop_issues(raw_df)
-                except Exception:
-                    _ss_issues = None
                 if _ss_issues is not None and not _ss_issues.empty:
                     _ss_cols = [c for c in _COMBINED_SHOP_ISSUE_COLUMNS if c in _ss_issues.columns]
                     st.dataframe(_ss_issues[_ss_cols].rename(columns=_display_safety_header), width='stretch', hide_index=True)

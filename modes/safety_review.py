@@ -75,6 +75,7 @@ __all__ = [
     "_SSR_SAFETY_BASIS_TURNDAY",
     "_SSR_SAFETY_BASIS_LABELS",
     "_SSR_SAFETY_DAYS_COLUMN",
+    "_SSR_PIVOT_LEVEL_COL",
     "_SSR_SAFETY_LINE_COLUMN",
     "_SSR_TARGET_TOTAL_COLUMN",
     "_SSR_TARGET_SHARE_COLUMN",
@@ -98,6 +99,9 @@ __all__ = [
     "_build_combined_classification_summary",
     "_build_combined_dimension_cross_tab",
     "_build_combined_target_summary",
+    "_build_combined_impact_summary",
+    "_build_combined_issue_pivot",
+    "_write_issue_pivot_block",
     "_build_nd_rec_qty_nd",
     "_write_combined_guide_sheet",
     "_write_summary_sheet",
@@ -1268,6 +1272,284 @@ def _build_combined_dimension_cross_tab(raw, dimension="nature", om_groups=None)
 
 
 
+# ── SUMMARY 區塊 ⑤–⑦：影響範圍統計與樞紐分析式統計 ──
+# 三個區塊一律以「店舖問題 SKU」工作表同一批需行動列、同一「問題類型」為準，令 SUMMARY
+# 與該表（以及使用者自行以該表做成的樞紐分析表）數字一致。問題類型由該表判定：
+#   Safety Qty Change > 0 → Safety 設定不足；< 0 → Safety 設定過高；
+#   = 0 而有 ND 建議或已是 ND → ND 退場。其餘列（不變且無 ND 建議）不屬任何問題類型。
+# ⑤ 以 Brand／Buyer／店舖為單位回答「多少個」有問題；⑥⑦ 仿樞紐分析表版面列出明細：
+# 列＝Buyer（小計）＞Brand，或 Site Code／Shop Name；欄＝問題類型 × 量值（行數／
+# 加總 - Safety Qty Change），最後一組為總計。
+_SSR_ISSUE_TYPES = ("ND 退場", "Safety 設定不足", "Safety 設定過高")
+_SSR_ISSUE_COUNT = "行數"
+_SSR_ISSUE_SUM = "加總 - Safety Qty Change"
+_SSR_PIVOT_TOTAL = "總計"
+_SSR_PIVOT_LEVEL_COL = "層級"
+_SSR_PIVOT_BLANK = "（空白）"
+_SSR_PIVOT_LABELS = {"buyer_brand": ("Buyer / Brand",), "shop": ("Site Code", "Shop Name")}
+# SUMMARY 工作表欄寬上限（A 欄為列標籤，放寬少許以容納較長的 Buyer／Brand 名稱）
+_SSR_SUMMARY_COL_MAX = 30
+_SSR_SUMMARY_LABEL_COL_MAX = 36
+# 計算規則寫在區塊標題；每列說明只補該對象的計法，並保持簡短，以免撐闊 ⑥⑦ 的數值欄
+_SSR_IMPACT_ENTITIES = (
+    ("Brand", "Brand", "不重複 Brand"),
+    ("Buyer", "Buyer", "不重複 Buyer"),
+    ("Site Code", "店舖", "不重複店舖；以 Site Code 計"),
+)
+_SSR_IMPACT_COLUMNS = ["統計對象", "總數", *_SSR_ISSUE_TYPES, "無需行動", "說明"]
+
+
+def _ssr_entity_keys(raw) -> pd.DataFrame:
+    """RAW 的 Brand／Buyer／Site Code 鍵（去首尾空白；缺欄為空字串）；不修改 raw。
+
+    一律以位置陣列建立（新的 RangeIndex），不依賴 raw 的 index——重複或非整數 index
+    亦不影響對齊。
+    """
+    def _key(col):
+        if col not in raw.columns:
+            return np.full(len(raw), "", dtype=object)
+        return raw[col].fillna("").astype(str).str.strip().to_numpy(dtype=object)
+
+    return pd.DataFrame({c: _key(c) for c in ("Brand", "Buyer", "Site Code")})
+
+
+def _build_combined_impact_summary(raw, issues=None):
+    """SUMMARY 區塊 ⑤：影響範圍統計（Brand／Buyer／店舖 × 問題類型）。
+
+    每欄為「有任何一列屬該問題類型」的不重複對象數（同一對象可同時計入多欄，故
+    各欄相加不等於總數）；「無需行動」＝在「店舖問題 SKU」中沒有任何列的對象數。
+    問題類型沿用該表（issues，即 `_build_combined_shop_issues` 的輸出）的判定，
+    未傳時即時建立。空白鍵的列不計入對象數；店舖以 Site Code 計（與 By Shop 同一鍵）。
+    """
+    if issues is None:
+        issues = _build_combined_shop_issues(raw)
+    keys = _ssr_entity_keys(raw)
+    has_issues = issues is not None and not issues.empty and "問題類型" in issues.columns
+    types = (
+        issues["問題類型"].fillna("").astype(str).str.strip() if has_issues
+        else pd.Series([], dtype=object)
+    )
+    rows = []
+    for col, label, desc in _SSR_IMPACT_ENTITIES:
+        valid_keys = keys[col][keys[col] != ""]
+        total = int(valid_keys.nunique())
+        row = {"統計對象": label, "總數": total, "說明": desc, **dict.fromkeys(_SSR_ISSUE_TYPES, 0)}
+        touched = 0
+        if has_issues and col in issues.columns:
+            ikeys = issues[col].fillna("").astype(str).str.strip()
+            keep = ikeys != ""
+            touched = int(ikeys[keep].nunique())
+            for t in _SSR_ISSUE_TYPES:
+                row[t] = int(ikeys[keep & (types == t).to_numpy()].nunique())
+        row["無需行動"] = total - touched
+        rows.append(row)
+    return pd.DataFrame(rows, columns=_SSR_IMPACT_COLUMNS)
+
+
+def _ssr_issue_frame(issues) -> pd.DataFrame:
+    """問題類型樞紐的底表：識別欄（去首尾空白，空白顯示為「（空白）」）、問題類型與 Safety Qty Change。
+
+    一律以位置陣列取值（新的 RangeIndex），不依賴 issues 的 index。
+    """
+    n = len(issues)
+    out = pd.DataFrame(index=pd.RangeIndex(n))
+    for c in ("Buyer", "Brand", "Site Code", "Shop Name"):
+        vals = (
+            issues[c].fillna("").astype(str).str.strip().to_numpy(dtype=object)
+            if c in issues.columns else np.full(n, "", dtype=object)
+        )
+        s = pd.Series(vals)
+        out[c] = s.mask(s == "", _SSR_PIVOT_BLANK).to_numpy()
+    out["問題類型"] = issues["問題類型"].fillna("").astype(str).str.strip().to_numpy()
+    out["_chg"] = pd.to_numeric(
+        issues.get("Safety Qty Change", _safe_default_series(0, issues.index)), errors="coerce"
+    ).fillna(0).to_numpy(dtype=float)
+    return out
+
+
+def _ssr_issue_wide(frame, keys):
+    """依 keys 彙總每個問題類型的行數與 Safety Qty Change 加總，另加總計；數值為 Python int。
+
+    keys 為空時回傳只有一列的全表合計。不屬於 `_SSR_ISSUE_TYPES` 的問題類型只計入總計。
+    """
+    columns = [
+        f"{t} {m}" for t in _SSR_ISSUE_TYPES + (_SSR_PIVOT_TOTAL,) for m in (_SSR_ISSUE_COUNT, _SSR_ISSUE_SUM)
+    ]
+    if frame.empty:
+        return pd.DataFrame([[0] * len(columns)], columns=columns)
+    keyed = bool(keys)
+    if not keyed:
+        # 全表合計：借用同一條 groupby 路徑（以固定鍵分組），確保行數與加總的 index 一致
+        frame = frame.assign(_all=0)
+        keys = ["_all"]
+    g = frame.groupby([*keys, "問題類型"], sort=False, observed=True, dropna=False)["_chg"].agg(["size", "sum"])
+    n = g["size"].unstack(fill_value=0)
+    s = g["sum"].unstack(fill_value=0)
+    out = pd.DataFrame(index=n.index)
+
+    def _col(x):
+        return x if isinstance(x, pd.Series) else pd.Series(x, index=out.index, dtype=int)
+
+    for t in _SSR_ISSUE_TYPES + (_SSR_PIVOT_TOTAL,):
+        if t == _SSR_PIVOT_TOTAL:
+            cnt, tot = n.sum(axis=1), s.sum(axis=1)
+        else:
+            cnt = n[t] if t in n.columns else 0
+            tot = s[t] if t in s.columns else 0
+        out[f"{t} {_SSR_ISSUE_COUNT}"] = _col(cnt)
+        out[f"{t} {_SSR_ISSUE_SUM}"] = np.round(_col(tot).astype(float)).astype(int)
+    return out if keyed else out.reset_index(drop=True)
+
+
+def _build_combined_issue_pivot(issues, by="buyer_brand"):
+    """SUMMARY 區塊 ⑥（by="buyer_brand"）／⑦（by="shop"）：「店舖問題 SKU」的樞紐分析。
+
+    issues 為 `_build_combined_shop_issues` 的輸出。by="buyer_brand"：每個 Buyer 一列小計
+    （層級＝Buyer），其下按 Brand 分列明細（層級＝Brand），依名稱排序；by="shop"：每個
+    Site Code 一列（Shop Name 取該店第一個可解析名稱），依 Site Code 排序。只列出有
+    需行動列的對象，末列為總計。回傳扁平欄名的表（「{問題類型} {量值}」），
+    Excel 寫入時再還原成兩層表頭。
+    """
+    label_cols = _SSR_PIVOT_LABELS[by]
+    measure_cols = [
+        f"{t} {m}" for t in _SSR_ISSUE_TYPES + (_SSR_PIVOT_TOTAL,) for m in (_SSR_ISSUE_COUNT, _SSR_ISSUE_SUM)
+    ]
+    columns = [*label_cols, _SSR_PIVOT_LEVEL_COL, *measure_cols]
+    has_issues = issues is not None and not issues.empty and "問題類型" in issues.columns
+    base = _ssr_issue_frame(issues) if has_issues else pd.DataFrame(columns=["問題類型", "_chg"])
+    records = []
+    if has_issues and by == "buyer_brand":
+        brand_w = _ssr_issue_wide(base, ["Buyer", "Brand"]).reset_index()
+        for b in _ssr_issue_wide(base, ["Buyer"]).reset_index().sort_values("Buyer").to_dict("records"):
+            records.append({label_cols[0]: b["Buyer"], _SSR_PIVOT_LEVEL_COL: "Buyer", **{c: b[c] for c in measure_cols}})
+            sub = brand_w[brand_w["Buyer"] == b["Buyer"]].sort_values("Brand")
+            for r in sub.to_dict("records"):
+                records.append({label_cols[0]: r["Brand"], _SSR_PIVOT_LEVEL_COL: "Brand", **{c: r[c] for c in measure_cols}})
+    elif has_issues:
+        names = base[base["Shop Name"] != _SSR_PIVOT_BLANK].groupby("Site Code")["Shop Name"].first()
+        for r in _ssr_issue_wide(base, ["Site Code"]).reset_index().sort_values("Site Code").to_dict("records"):
+            records.append({
+                label_cols[0]: r["Site Code"],
+                label_cols[1]: names.get(r["Site Code"], _SSR_PIVOT_BLANK),
+                _SSR_PIVOT_LEVEL_COL: "店舖",
+                **{c: r[c] for c in measure_cols},
+            })
+    total = _ssr_issue_wide(base, []).iloc[0]
+    records.append({
+        **dict.fromkeys(label_cols, ""),
+        label_cols[0]: _SSR_PIVOT_TOTAL,
+        _SSR_PIVOT_LEVEL_COL: _SSR_PIVOT_TOTAL,
+        **{c: total[c] for c in measure_cols},
+    })
+    return pd.DataFrame(records, columns=columns)
+
+
+def _write_issue_pivot_block(ws, start_row, title, table, by, thin_border):
+    """SUMMARY 區塊 ⑥／⑦：仿樞紐分析表版面寫入問題類型樞紐；回傳下一個可用列號。
+
+    兩層表頭（問題類型跨兩欄置中，下為 行數／加總 - Safety Qty Change）；Buyer 小計列
+    黃底粗體，其下 Brand 明細列入摺疊群組（Excel 左側可按「−」收合）；總計欄淺黃底、
+    總計列淺藍底粗體；沒有列的問題類型留白（與樞紐分析表相同）。店舖表（by="shop"）
+    另設自動篩選——Excel 每張工作表只容許一個篩選範圍，故只設在列數較多的店舖表，
+    範圍由表頭至最後一間店舖（總計列不在內，篩選時仍會顯示）。
+    """
+    header_fill = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
+    subtotal_fill = PatternFill(start_color="FFFF99", end_color="FFFF99", fill_type="solid")
+    total_col_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+    section_fill = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+    bold_font = Font(bold=True, size=11)
+    base_font = Font(size=11)
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    # 「跨越選取範圍置中」：不合併儲存格亦可令問題類型名稱置中於兩欄之上
+    group_align = Alignment(horizontal="centerContinuous", vertical="center")
+    num_align = Alignment(horizontal="right", vertical="center")
+    left_align = Alignment(horizontal="left", vertical="center")
+
+    label_cols = _SSR_PIVOT_LABELS[by]
+    n_label = len(label_cols)
+    groups = _SSR_ISSUE_TYPES + (_SSR_PIVOT_TOTAL,)
+    n_cols = n_label + 2 * len(groups)
+
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=n_cols)
+    sc = ws.cell(row=start_row, column=1, value=title)
+    sc.font = Font(bold=True, size=12, color="1E40AF")
+    sc.fill = section_fill
+    sc.alignment = Alignment(horizontal="left", vertical="center")
+
+    r_group, r_head = start_row + 1, start_row + 2
+    for r in (r_group, r_head):
+        for c in range(1, n_cols + 1):
+            cell = ws.cell(row=r, column=c)
+            cell.fill = header_fill
+            cell.border = thin_border
+            cell.font = bold_font
+    # 標籤欄表頭：Buyer／Brand 跨兩列置中；店舖表因設有自動篩選，表頭不可合併
+    if by == "buyer_brand":
+        ws.merge_cells(start_row=r_group, start_column=1, end_row=r_head, end_column=1)
+        ws.cell(row=r_group, column=1, value=label_cols[0]).alignment = header_align
+    else:
+        for i, name in enumerate(label_cols, 1):
+            ws.cell(row=r_head, column=i, value=name).alignment = header_align
+    for gi, t in enumerate(groups):
+        c0 = n_label + 1 + 2 * gi
+        for c in (c0, c0 + 1):
+            cell = ws.cell(row=r_group, column=c)
+            cell.alignment = group_align
+            if t == _SSR_PIVOT_TOTAL:
+                cell.fill = total_col_fill
+        ws.cell(row=r_group, column=c0, value=t)
+        for off, m in enumerate((_SSR_ISSUE_COUNT, _SSR_ISSUE_SUM)):
+            cell = ws.cell(row=r_head, column=c0 + off, value=m)
+            cell.alignment = header_align
+            if t == _SSR_PIVOT_TOTAL:
+                cell.fill = total_col_fill
+    ws.row_dimensions[r_group].height = 20
+    ws.row_dimensions[r_head].height = 24
+
+    if by == "buyer_brand":
+        # 小計（Buyer）列顯示在群組上方，與樞紐分析表相同
+        ws.sheet_properties.outlinePr.summaryBelow = False
+    r = r_head + 1
+    first_data = r
+    for rec in table.to_dict("records"):
+        level = rec.get(_SSR_PIVOT_LEVEL_COL)
+        is_sub, is_total = level == "Buyer", level == _SSR_PIVOT_TOTAL
+        for i, name in enumerate(label_cols, 1):
+            cell = ws.cell(row=r, column=i, value=rec.get(name) or None)
+            cell.border = thin_border
+            cell.font = bold_font if (is_sub or is_total) else base_font
+            if level == "Brand":
+                cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+            else:
+                cell.alignment = left_align
+        for gi, t in enumerate(groups):
+            # 沒有列的問題類型兩格留白；總計一律顯示
+            blank = t != _SSR_PIVOT_TOTAL and not int(rec.get(f"{t} {_SSR_ISSUE_COUNT}", 0) or 0)
+            for off, m in enumerate((_SSR_ISSUE_COUNT, _SSR_ISSUE_SUM)):
+                cell = ws.cell(
+                    row=r, column=n_label + 1 + 2 * gi + off,
+                    value=None if blank else int(rec.get(f"{t} {m}", 0) or 0),
+                )
+                cell.border = thin_border
+                cell.number_format = "#,##0"
+                cell.alignment = num_align
+                cell.font = bold_font if (is_sub or is_total) else base_font
+                if t == _SSR_PIVOT_TOTAL:
+                    cell.fill = total_col_fill
+        if is_sub or is_total:
+            row_fill = subtotal_fill if is_sub else header_fill
+            for c in range(1, n_cols + 1):
+                ws.cell(row=r, column=c).fill = row_fill
+        if level == "Brand":
+            ws.row_dimensions[r].outlineLevel = 1
+        r += 1
+    last_data = r - 2
+    if by == "shop" and last_data >= first_data:
+        ws.auto_filter.ref = f"A{r_head}:{get_column_letter(n_cols)}{last_data}"
+    return r  # 末列的下一列（與 _write_block 相同：呼叫端再加一列空白）
+
+
+
 def transform_combined(
     df_input: pd.DataFrame,
     progress_callback=None,
@@ -1428,10 +1710,15 @@ def transform_combined(
 
 
 
-def _write_summary_sheet(ws, change_summary, nd_summary, thin_border, cross_tab=None, target_summary=None):
+def _write_summary_sheet(
+    ws, change_summary, nd_summary, thin_border, cross_tab=None, target_summary=None,
+    impact_summary=None, buyer_brand_pivot=None, shop_pivot=None,
+):
     """SUMMARY sheet — 區塊：Safety Qty Change 分類、ND 建議分類 統計表，
-    另附 Safety Qty Change 分類 × 分類維度交叉表（cross_tab，Safety Stock Review 引入分類維度用）
-    與指定總量分配逐 SKU 對帳（target_summary，只在有指定 SKU 時出現）."""
+    另附 Safety Qty Change 分類 × 分類維度交叉表（cross_tab，Safety Stock Review 引入分類維度用）、
+    指定總量分配逐 SKU 對帳（target_summary，只在有指定 SKU 時出現）、
+    影響範圍統計（impact_summary）與「店舖問題 SKU」的樞紐分析
+    （buyer_brand_pivot＝Buyer＞Brand；shop_pivot＝Site Code／Shop Name）."""
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     bold_font = Font(bold=True, size=11)
@@ -1486,13 +1773,75 @@ def _write_summary_sheet(ws, change_summary, nd_summary, thin_border, cross_tab=
     if cross_tab is not None and not cross_tab.empty:
         next_row = _write_block(next_row + 1, "③ Safety Qty Change 分類 × 分類維度交叉表", cross_tab)
     if target_summary is not None and not target_summary.empty:
-        _write_block(
+        next_row = _write_block(
             next_row + 1,
             "④ 指定總量分配（Target Safety）逐 SKU 對帳"
             f"（分配基準：{_SSR_TARGET_BASIS_LABEL}；差額應為 0）",
             target_summary,
         )
+    if impact_summary is not None and not impact_summary.empty:
+        next_row = _write_block(
+            next_row + 1,
+            "⑤ 影響範圍統計（Brand／Buyer／店舖）"
+            "— 只計「店舖問題 SKU」的需行動列；有任何一列屬該問題類型即計入，同一對象可同時計入多欄；"
+            "「無需行動」＝該表沒有任何列",
+            impact_summary,
+        )
+    if buyer_brand_pivot is not None and not buyer_brand_pivot.empty:
+        next_row = _write_issue_pivot_block(
+            ws, next_row + 1,
+            "⑥ 按 Buyer／Brand 統計 —「店舖問題 SKU」的樞紐分析（列＝Buyer 小計＞Brand；"
+            "欄＝問題類型 × 行數／加總 - Safety Qty Change）"
+            f"。問題類型：Safety 設定不足＝Safety Qty Change > 0；Safety 設定過高＝< 0；"
+            "ND 退場＝Safety Qty Change 為 0 而有 ND 建議或已是 ND。"
+            "Buyer 列黃底粗體，其下 Brand 可按左側「−」收合",
+            buyer_brand_pivot, "buyer_brand", thin_border,
+        )
+    if shop_pivot is not None and not shop_pivot.empty:
+        _write_issue_pivot_block(
+            ws, next_row + 1,
+            "⑦ 按店舖統計（Site Code／Shop Name）—「店舖問題 SKU」的樞紐分析"
+            "（欄＝問題類型 × 行數／加總 - Safety Qty Change；問題類型定義見 ⑥）。表頭設有自動篩選",
+            shop_pivot, "shop", thin_border,
+        )
     _auto_width(ws)
+    # 各區塊共用欄寬：①② 的「說明」長句與區塊標題會把 A／D／E 欄撐至 47–50，令 ⑥⑦ 的
+    # 「行數／加總」欄寬窄懸殊。收窄至上限後，長句改以自動換行顯示（相關格已設 wrap_text）。
+    for col_idx in range(1, ws.max_column + 1):
+        dim = ws.column_dimensions[get_column_letter(col_idx)]
+        cap = _SSR_SUMMARY_LABEL_COL_MAX if col_idx == 1 else _SSR_SUMMARY_COL_MAX
+        if dim.width and dim.width > cap:
+            dim.width = cap
+    _ssr_fit_wrapped_rows(ws)
+
+
+def _ssr_fit_wrapped_rows(ws, line_pt=15.0):
+    """為設有自動換行的長文字格調整列高，確保收窄欄寬後文字仍完整顯示。
+
+    以顯示寬度估算所需行數（全形字元約佔 2 個欄寬單位），列高取該列最大行數；
+    只會加大、不會縮小原有列高。合併格（如區塊標題）不計——其文字在合併範圍內延伸。
+    """
+    merged = set()
+    for m in ws.merged_cells.ranges:
+        for r in range(m.min_row, m.max_row + 1):
+            for c in range(m.min_col, m.max_col + 1):
+                if m.max_col > m.min_col or (r, c) != (m.min_row, m.min_col):
+                    merged.add((r, c))
+    for row in ws.iter_rows():
+        lines = 1
+        for cell in row:
+            if (cell.row, cell.column) in merged or not isinstance(cell.value, str):
+                continue
+            if not cell.alignment or not cell.alignment.wrap_text:
+                continue
+            width = ws.column_dimensions[get_column_letter(cell.column)].width or 8.43
+            text_w = sum(2.0 if unicodedata.east_asian_width(ch) in ("W", "F") else 1.0 for ch in cell.value)
+            lines = max(lines, int(-(-text_w // max(width - 2.0, 1.0))))
+        if lines > 1:
+            dim = ws.row_dimensions[row[0].row]
+            need = lines * line_pt + 3
+            if (dim.height or 0) < need:
+                dim.height = need
 
 
 
@@ -1628,9 +1977,11 @@ def generate_excel_combined(
         progress_callback(0.85, "建立店舖問題 SKU 工作表...")
 
     # ── Sheet 4: 店舖問題 SKU（每間店舖需行動列；空表寫「無符合資料」）──
+    # 同一批需行動列亦是 SUMMARY ⑤–⑦ 的統計來源，只建立一次
     ws_shop_issue = wb.create_sheet(title="店舖問題 SKU")
+    shop_issues = _build_combined_shop_issues(raw_df)
     _write_shop_issue_sheet(
-        ws_shop_issue, _build_combined_shop_issues(raw_df),
+        ws_shop_issue, shop_issues,
         title="店舖問題 SKU — 每間店舖需行動列（問題＋建議方法）",
         progress_callback=progress_callback, progress_start=0.85, progress_end=0.86,
     )
@@ -1638,13 +1989,16 @@ def generate_excel_combined(
     if progress_callback:
         progress_callback(0.86, "建立 SUMMARY 工作表...")
 
-    # ── Sheet 5: SUMMARY（Safety Qty Change 分類 / ND 建議分類 統計）──
+    # ── Sheet 5: SUMMARY（Safety Qty Change 分類 / ND 建議分類 / 影響範圍 / 問題類型樞紐）──
     change_summary, nd_summary = _build_combined_classification_summary(raw_df)
     target_summary = _build_combined_target_summary(raw_df)
     ws_class_summary = wb.create_sheet(title="SUMMARY")
     _write_summary_sheet(
         ws_class_summary, change_summary, nd_summary, thin_border,
         cross_tab=cross_tab, target_summary=target_summary,
+        impact_summary=_build_combined_impact_summary(raw_df, issues=shop_issues),
+        buyer_brand_pivot=_build_combined_issue_pivot(shop_issues, "buyer_brand"),
+        shop_pivot=_build_combined_issue_pivot(shop_issues, "shop"),
     )
 
     if progress_callback:
@@ -1821,8 +2175,10 @@ def _write_combined_guide_sheet(ws, stats, dimension):
         ("By Shop", "各店舖層級彙總", "留意「安全庫存調整總量」與需增／需減 SKU 數較多的店舖"),
         ("店舖問題 SKU", "每間店舖需行動列（問題＋建議方法）",
          "店務同事可先從這一頁著手；含 Safety 需增加／減少、ND 退場建議與調入缺口跟進；建議方法附建議周轉日數"),
-        ("SUMMARY", "① Safety Qty Change 分類 ／ ② ND 建議分類 ／ ③ 分類維度交叉表 ／ ④ 指定總量分配對帳",
-         "④ 只在有指定 SKU 時出現；核對「已分配」是否等於「Target 全線合計」（差額應為 0）"),
+        ("SUMMARY", "① Safety Qty Change 分類 ／ ② ND 建議分類 ／ ③ 分類維度交叉表 ／ ④ 指定總量分配對帳 ／ ⑤ 影響範圍統計（Brand／Buyer／店舖）／ ⑥ Buyer＞Brand 樞紐分析 ／ ⑦ 店舖樞紐分析",
+         "④ 只在有指定 SKU 時出現；核對「已分配」是否等於「Target 全線合計」（差額應為 0）；"
+         "⑤ 一眼看出多少個 Brand／Buyer／店舖有 Safety 設定不足、設定過高或 ND 退場；"
+         "⑥⑦ 以「店舖問題 SKU」同一批列按問題類型列出，可按 Buyer 收合 Brand、或按店舖篩選"),
         ("Safety Stock 數據分析摘要", "指標卡總覽", "留意 Overstock／OOS／調整行數與調整總量"),
     ]
 
